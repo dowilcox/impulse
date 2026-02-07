@@ -3,7 +3,7 @@ name = "impulse-linux"
 version = "0.1.0"
 edition = "2021"
 description = "Impulse terminal IDE - Linux GTK4 frontend"
-license = "MIT"
+license = "GPL-3.0-only"
 
 [[bin]]
 name = "impulse"
