@@ -299,12 +299,27 @@ pub fn build_window(app: &adw::Application) {
         .tooltip_text("Toggle Sidebar (Ctrl+Shift+B)")
         .active(settings.borrow().sidebar_visible)
         .build();
+    sidebar_btn.set_cursor_from_name(Some("pointer"));
     header.pack_start(&sidebar_btn);
 
     // New tab button
     let new_tab_btn = gtk4::Button::from_icon_name("tab-new-symbolic");
     new_tab_btn.set_tooltip_text(Some("New Tab (Ctrl+T)"));
+    new_tab_btn.set_cursor_from_name(Some("pointer"));
     header.pack_start(&new_tab_btn);
+
+    // Settings button (right side of header)
+    let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
+    settings_btn.set_tooltip_text(Some("Settings"));
+    settings_btn.set_cursor_from_name(Some("pointer"));
+    {
+        let window_ref = window.clone();
+        let settings = settings.clone();
+        settings_btn.connect_clicked(move |_| {
+            crate::settings_page::show_settings_window(&window_ref, &settings, |_s| {});
+        });
+    }
+    header.pack_end(&settings_btn);
 
     main_box.append(&header);
 
@@ -1906,6 +1921,10 @@ pub fn build_window(app: &adw::Application) {
         tab_view.connect_selected_page_notify(move |tv| {
             if let Some(page) = tv.selected_page() {
                 let child = page.child();
+
+                // Always save outgoing tab's tree state before switching
+                sidebar_state.save_active_tab_state();
+
                 if let Some(term) = terminal_container::get_active_terminal(&child) {
                     term.grab_focus();
                     status_bar.borrow().hide_editor_info();
@@ -1924,6 +1943,9 @@ pub fn build_window(app: &adw::Application) {
                         let path = url_decode(path);
                         status_bar.borrow().update_cwd(&path);
                         sidebar_state.switch_to_tab(&child, &path);
+                    } else {
+                        // New terminal without CWD yet — just set active tab
+                        sidebar_state.set_active_tab(&child);
                     }
                 } else if editor::is_editor(&child) {
                     // Editor tab: focus the editor and show its parent directory

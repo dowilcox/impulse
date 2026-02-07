@@ -312,7 +312,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {cyan};
             background-color: {bg_highlight};
         }}
-        window, .background {{
+        window.background {{
             background-color: {bg};
         }}
         /* --- Quick open --- */
@@ -334,21 +334,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .quick-open list row label {{
             padding: 6px 12px;
             color: {fg};
-        }}
-        /* --- Context menu --- */
-        popover.menu contents {{
-            background-color: {bg};
-            border: 1px solid {bg_highlight};
-            border-radius: 6px;
-            padding: 4px;
-        }}
-        popover.menu modelbutton {{
-            padding: 4px 12px;
-            border-radius: 4px;
-            color: {fg};
-        }}
-        popover.menu modelbutton:hover {{
-            background-color: {bg_highlight};
         }}
         /* --- Terminal search bar --- */
         .terminal-search-bar {{

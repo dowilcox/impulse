@@ -43,12 +43,14 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         .build();
     files_btn.add_css_class("sidebar-tab");
     files_btn.add_css_class("sidebar-tab-active");
+    files_btn.set_cursor_from_name(Some("pointer"));
 
     let search_btn = gtk4::ToggleButton::builder()
         .label("Search")
         .active(false)
         .build();
     search_btn.add_css_class("sidebar-tab");
+    search_btn.set_cursor_from_name(Some("pointer"));
 
     // Link them as a group
     search_btn.set_group(Some(&files_btn));
@@ -65,8 +67,9 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
     file_tree_scroll.set_child(Some(&file_tree_list));
     stack.add_named(&file_tree_scroll, Some("files"));
 
-    // Create tree_nodes early so context menu actions can reference it
+    // Create shared state early so context menu actions can reference it
     let tree_nodes: Rc<RefCell<Vec<TreeNode>>> = Rc::new(RefCell::new(Vec::new()));
+    let current_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 
     // --- Right-click context menu for file tree ---
     let clicked_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
@@ -487,6 +490,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         let clicked_path = clicked_path.clone();
         let file_menu = file_menu.clone();
         let dir_menu = dir_menu.clone();
+        let current_path = current_path.clone();
         gesture.connect_pressed(move |_gesture, _n_press, x, y| {
             if let Some(row) = file_tree_list_ref.row_at_y(y as i32) {
                 if let Some(child) = row.child() {
@@ -494,7 +498,6 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                     let is_dir = std::path::Path::new(&path).is_dir();
                     *clicked_path.borrow_mut() = path;
 
-                    // Set the appropriate menu model based on file/dir
                     if is_dir {
                         popover.set_menu_model(Some(&dir_menu));
                     } else {
@@ -504,7 +507,17 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                     let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
                     popover.set_pointing_to(Some(&rect));
                     popover.popup();
+                    return;
                 }
+            }
+            // Right-clicked on empty space — show dir menu for current directory
+            let cur = current_path.borrow().clone();
+            if !cur.is_empty() {
+                *clicked_path.borrow_mut() = cur;
+                popover.set_menu_model(Some(&dir_menu));
+                let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+                popover.set_pointing_to(Some(&rect));
+                popover.popup();
             }
         });
     }
@@ -578,7 +591,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         file_tree_scroll: file_tree_scroll.clone(),
         search_entry,
         search_list,
-        current_path: Rc::new(RefCell::new(String::new())),
+        current_path: current_path.clone(),
         on_file_activated: on_file_activated.clone(),
         on_open_terminal: on_open_terminal.clone(),
         tree_nodes: tree_nodes.clone(),
@@ -591,6 +604,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let on_file_activated = on_file_activated.clone();
+        let scroll = file_tree_scroll.clone();
         state
             .file_tree_list
             .connect_row_activated(move |_list, row| {
@@ -598,6 +612,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 let tree_nodes_ref = tree_nodes.clone();
                 let list = file_tree_list.clone();
                 let on_file_activated = on_file_activated.clone();
+                let scroll = scroll.clone();
 
                 let node = {
                     let nodes = tree_nodes_ref.borrow();
@@ -608,6 +623,9 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 };
 
                 if node.entry.is_dir {
+                    // Save scroll position before re-rendering
+                    let scroll_pos = scroll.vadjustment().value();
+
                     if node.expanded {
                         // Collapse: remove all descendant nodes
                         let mut nodes = tree_nodes_ref.borrow_mut();
@@ -627,6 +645,10 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                         let nodes_snapshot: Vec<TreeNode> = nodes.clone();
                         drop(nodes);
                         render_tree(&list, &nodes_snapshot);
+                        let scroll = scroll.clone();
+                        glib::idle_add_local_once(move || {
+                            scroll.vadjustment().set_value(scroll_pos);
+                        });
                     } else {
                         // Expand: mark as expanded, render immediately, then load children async
                         {
@@ -635,12 +657,17 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                             let nodes_snapshot: Vec<TreeNode> = nodes.clone();
                             drop(nodes);
                             render_tree(&list, &nodes_snapshot);
+                            let scroll = scroll.clone();
+                            glib::idle_add_local_once(move || {
+                                scroll.vadjustment().set_value(scroll_pos);
+                            });
                         }
 
                         let child_depth = node.depth + 1;
                         let path = node.entry.path.clone();
                         let tree_nodes_ref2 = tree_nodes_ref.clone();
                         let list2 = list.clone();
+                        let scroll2 = scroll.clone();
                         glib::spawn_future_local(async move {
                             let path_clone = path.clone();
                             let result = gio::spawn_blocking(move || {
@@ -652,8 +679,8 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                             .await;
 
                             if let Ok(Ok(entries)) = result {
+                                let scroll_pos = scroll2.vadjustment().value();
                                 let mut nodes = tree_nodes_ref2.borrow_mut();
-                                // Find the parent index again (it could have shifted)
                                 let insert_idx = nodes
                                     .iter()
                                     .position(|n| n.entry.path == path)
@@ -673,6 +700,9 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                                     let snapshot: Vec<TreeNode> = nodes.clone();
                                     drop(nodes);
                                     render_tree(&list2, &snapshot);
+                                    glib::idle_add_local_once(move || {
+                                        scroll2.vadjustment().set_value(scroll_pos);
+                                    });
                                 }
                             }
                         });
@@ -895,6 +925,7 @@ fn render_tree(list: &gtk4::ListBox, nodes: &[TreeNode]) {
         let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         row.add_css_class("file-entry");
         row.set_widget_name(&node.entry.path);
+        row.set_cursor_from_name(Some("pointer"));
 
         // Indent based on depth
         if node.depth > 0 {

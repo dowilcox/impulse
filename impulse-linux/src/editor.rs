@@ -192,22 +192,7 @@ pub fn create_editor(
 
     scroll.set_child(Some(&view));
 
-    // Add minimap
-    let map = sourceview5::Map::new();
-    map.set_view(&view);
-    let mut map_font = gtk4::pango::FontDescription::new();
-    map_font.set_family("monospace");
-    map_font.set_size(gtk4::pango::SCALE); // tiny font for overview
-    map.set_font_desc(Some(&map_font));
-    map.set_width_request(100);
-
-    let editor_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    editor_hbox.set_hexpand(true);
-    editor_hbox.set_vexpand(true);
-    editor_hbox.append(&scroll);
-    editor_hbox.append(&map);
-
-    container.append(&editor_hbox);
+    container.append(&scroll);
 
     (container, buffer)
 }
