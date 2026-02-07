@@ -269,6 +269,23 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {comment};
             padding-left: 12px;
         }}
+        .status-bar .blame-info {{
+            color: {comment};
+            font-size: 11px;
+        }}
+        /* --- Completion popup --- */
+        .completion-list row {{
+            padding: 2px 4px;
+        }}
+        .completion-kind {{
+            color: {cyan};
+            font-size: 10px;
+            font-weight: bold;
+        }}
+        .completion-detail {{
+            color: {comment};
+            font-size: 11px;
+        }}
         /* --- Terminal --- */
         vte-terminal {{
             padding: 8px 12px;

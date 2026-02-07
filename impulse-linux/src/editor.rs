@@ -149,6 +149,30 @@ pub fn create_editor(
     info_attrs.set_icon_name("dialog-information-symbolic");
     view.set_mark_attributes("info", &info_attrs, 80);
 
+    // Git diff gutter indicators
+    let added_attrs = sourceview5::MarkAttributes::new();
+    added_attrs.set_background(&gtk4::gdk::RGBA::new(0.62, 0.81, 0.42, 0.15));
+    view.set_mark_attributes("git-added", &added_attrs, 50);
+
+    let modified_attrs = sourceview5::MarkAttributes::new();
+    modified_attrs.set_background(&gtk4::gdk::RGBA::new(0.88, 0.69, 0.41, 0.15));
+    view.set_mark_attributes("git-modified", &modified_attrs, 40);
+
+    // Apply git diff marks to the buffer
+    if let Ok(diff) = impulse_core::git::get_file_diff(file_path) {
+        for (&line_num, &status) in &diff.changed_lines {
+            let category = match status {
+                impulse_core::git::DiffLineStatus::Added => "git-added",
+                impulse_core::git::DiffLineStatus::Modified => "git-modified",
+                impulse_core::git::DiffLineStatus::Unchanged => continue,
+            };
+            let iter = buffer.iter_at_line((line_num as i32) - 1);
+            if let Some(iter) = iter {
+                buffer.create_source_mark(None, category, &iter);
+            }
+        }
+    }
+
     // Bracket auto-close
     {
         let view_clone = view.clone();
@@ -280,6 +304,31 @@ pub fn get_editor_indent_info(widget: &gtk4::Widget) -> Option<String> {
         }
     } else {
         None
+    }
+}
+
+/// Apply settings changes to an existing editor view and buffer.
+pub fn apply_settings(widget: &gtk4::Widget, settings: &crate::settings::Settings) {
+    if let Some(view) = get_editor_view(widget) {
+        view.set_show_line_numbers(settings.show_line_numbers);
+        view.set_highlight_current_line(settings.highlight_current_line);
+        view.set_show_right_margin(settings.show_right_margin);
+        view.set_right_margin_position(settings.right_margin_position);
+        if settings.word_wrap {
+            view.set_wrap_mode(gtk4::WrapMode::Word);
+        } else {
+            view.set_wrap_mode(gtk4::WrapMode::None);
+        }
+
+        // Apply color scheme to buffer
+        if let Some(buf) = get_editor_buffer(widget) {
+            if !settings.editor_color_scheme.is_empty() {
+                let scheme_manager = sourceview5::StyleSchemeManager::default();
+                if let Some(scheme) = scheme_manager.scheme(&settings.editor_color_scheme) {
+                    buf.set_style_scheme(Some(&scheme));
+                }
+            }
+        }
     }
 }
 

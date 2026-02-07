@@ -12,6 +12,7 @@ pub struct StatusBar {
     language_label: gtk4::Label,
     encoding_label: gtk4::Label,
     indent_label: gtk4::Label,
+    blame_label: gtk4::Label,
 }
 
 impl StatusBar {
@@ -47,9 +48,15 @@ impl StatusBar {
         indent_label.add_css_class("indent-info");
         indent_label.set_visible(false);
 
+        let blame_label = gtk4::Label::new(None);
+        blame_label.add_css_class("blame-info");
+        blame_label.set_visible(false);
+        blame_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
         widget.append(&shell_label);
         widget.append(&branch_label);
         widget.append(&cwd_label);
+        widget.append(&blame_label);
         widget.append(&encoding_label);
         widget.append(&indent_label);
         widget.append(&language_label);
@@ -64,6 +71,7 @@ impl StatusBar {
             language_label,
             encoding_label,
             indent_label,
+            blame_label,
         }
     }
 
@@ -124,11 +132,21 @@ impl StatusBar {
         self.indent_label.set_visible(true);
     }
 
+    pub fn update_blame(&self, info: &str) {
+        self.blame_label.set_text(info);
+        self.blame_label.set_visible(true);
+    }
+
+    pub fn clear_blame(&self) {
+        self.blame_label.set_visible(false);
+    }
+
     pub fn hide_editor_info(&self) {
         self.language_label.set_visible(false);
         self.encoding_label.set_visible(false);
         self.cursor_label.set_visible(false);
         self.indent_label.set_visible(false);
+        self.blame_label.set_visible(false);
     }
 }
 

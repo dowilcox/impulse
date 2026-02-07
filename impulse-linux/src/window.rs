@@ -273,6 +273,12 @@ pub fn build_window(app: &adw::Application) {
     let lsp_doc_versions: Rc<RefCell<std::collections::HashMap<String, i32>>> =
         Rc::new(RefCell::new(std::collections::HashMap::new()));
 
+    // Track the current CSS provider so we can swap themes at runtime
+    let css_provider: Rc<RefCell<gtk4::CssProvider>> = {
+        let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+        Rc::new(RefCell::new(crate::theme::load_css(theme)))
+    };
+
     // Main vertical layout
     let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
 
@@ -308,17 +314,10 @@ pub fn build_window(app: &adw::Application) {
     new_tab_btn.set_cursor_from_name(Some("pointer"));
     header.pack_start(&new_tab_btn);
 
-    // Settings button (right side of header)
+    // Settings button (right side of header, click handler wired below after tab_view setup)
     let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
     settings_btn.set_tooltip_text(Some("Settings"));
     settings_btn.set_cursor_from_name(Some("pointer"));
-    {
-        let window_ref = window.clone();
-        let settings = settings.clone();
-        settings_btn.connect_clicked(move |_| {
-            crate::settings_page::show_settings_window(&window_ref, &settings, |_s| {});
-        });
-    }
     header.pack_end(&settings_btn);
 
     main_box.append(&header);
@@ -492,13 +491,14 @@ pub fn build_window(app: &adw::Application) {
                     });
                 }
 
-                // Live cursor position updates
+                // Live cursor position updates + git blame
                 {
                     let status_bar = status_bar.clone();
                     let tab_view = tab_view.clone();
                     let editor_widget_name = editor_widget.widget_name().to_string();
+                    let file_path_for_blame = path.to_string();
+                    let last_blame_line: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
                     buffer.connect_notify_local(Some("cursor-position"), move |buf, _| {
-                        // Only update if this editor's tab is currently selected
                         if let Some(page) = tab_view.selected_page() {
                             if page.child().widget_name().as_str() == editor_widget_name {
                                 let insert_mark = buf.get_insert();
@@ -506,6 +506,26 @@ pub fn build_window(app: &adw::Application) {
                                 let line = iter.line();
                                 let col = iter.line_offset();
                                 status_bar.borrow().update_cursor_position(line, col);
+
+                                // Update blame only when line changes
+                                if line != last_blame_line.get() {
+                                    last_blame_line.set(line);
+                                    match impulse_core::git::get_line_blame(
+                                        &file_path_for_blame,
+                                        (line + 1) as u32,
+                                    ) {
+                                        Ok(blame) => {
+                                            let text = format!(
+                                                "{} \u{2022} {} \u{2022} {}",
+                                                blame.author, blame.date, blame.summary
+                                            );
+                                            status_bar.borrow().update_blame(&text);
+                                        }
+                                        Err(_) => {
+                                            status_bar.borrow().clear_blame();
+                                        }
+                                    }
+                                }
                             }
                         }
                     });
@@ -936,7 +956,43 @@ pub fn build_window(app: &adw::Application) {
                     LspResponse::ServerExited { language_id } => {
                         log::info!("LSP server exited for: {}", language_id);
                     }
-                    _ => {}
+                    LspResponse::CompletionResult { items } => {
+                        // Show completion popup on the active editor tab
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child) {
+                                if let Some(view) = editor::get_editor_view(&child) {
+                                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                                        crate::lsp_completion::show_completion_popup(
+                                            &view, &buf, &items,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::HoverResult { contents } => {
+                        // Show hover popover on the active editor tab at cursor
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child) {
+                                if let Some(view) = editor::get_editor_view(&child) {
+                                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                                        let text = crate::lsp_hover::extract_hover_text(&contents);
+                                        let insert_mark = buf.get_insert();
+                                        let iter = buf.iter_at_mark(&insert_mark);
+                                        crate::lsp_hover::show_hover_popover(
+                                            &view,
+                                            &buf,
+                                            iter.line() as u32,
+                                            iter.line_offset() as u32,
+                                            &text,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             gtk4::glib::ControlFlow::Continue
@@ -970,6 +1026,48 @@ pub fn build_window(app: &adw::Application) {
         let sidebar_btn = sidebar_btn.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>b", move || {
             sidebar_btn.set_active(!sidebar_btn.is_active());
+        });
+    }
+
+    // Shared closure to open settings and apply changes live
+    let open_settings: Rc<dyn Fn()> = {
+        let window_ref = window.clone();
+        let settings = settings.clone();
+        let tab_view = tab_view.clone();
+        let css_provider = css_provider.clone();
+        Rc::new(move || {
+            let tab_view = tab_view.clone();
+            let css_provider = css_provider.clone();
+            crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
+                // Swap theme CSS
+                let new_theme = crate::theme::get_theme(&s.color_scheme);
+                let display = gtk4::gdk::Display::default().expect("No display");
+                gtk4::style_context_remove_provider_for_display(
+                    &display,
+                    &*css_provider.borrow(),
+                );
+                let new_provider = crate::theme::load_css(new_theme);
+                *css_provider.borrow_mut() = new_provider;
+
+                // Apply to all open tabs
+                for i in 0..tab_view.n_pages() {
+                    let page = tab_view.nth_page(i);
+                    let child = page.child();
+                    if let Some(term) = crate::terminal_container::get_active_terminal(&child) {
+                        crate::terminal::apply_settings(&term, s, new_theme);
+                    } else if crate::editor::is_editor(&child) {
+                        crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
+                    }
+                }
+            });
+        })
+    };
+
+    // Wire the settings button
+    {
+        let open_settings = open_settings.clone();
+        settings_btn.connect_clicked(move |_| {
+            open_settings();
         });
     }
 
@@ -1112,12 +1210,9 @@ pub fn build_window(app: &adw::Application) {
                 name: "Open Settings".to_string(),
                 shortcut: "Ctrl+,".to_string(),
                 action: Rc::new({
-                    let window_ref = window_ref.clone();
-                    let settings = settings.clone();
+                    let open_settings = open_settings.clone();
                     move || {
-                        crate::settings_page::show_settings_window(&window_ref, &settings, |_s| {
-                            // Settings changed callback — could reload theme/etc at runtime
-                        });
+                        open_settings();
                     }
                 }),
             },
@@ -1135,10 +1230,9 @@ pub fn build_window(app: &adw::Application) {
 
     // Ctrl+,: Open Settings
     {
-        let window_ref = window.clone();
-        let settings = settings.clone();
+        let open_settings = open_settings.clone();
         add_shortcut(&shortcut_controller, "<Ctrl>comma", move || {
-            crate::settings_page::show_settings_window(&window_ref, &settings, |_s| {});
+            open_settings();
         });
     }
 
@@ -1832,6 +1926,52 @@ pub fn build_window(app: &adw::Application) {
                             uri: format!("file://{}", path),
                             line,
                             character,
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    // Ctrl+Space: Trigger LSP completion
+    {
+        let tab_view = tab_view.clone();
+        let lsp_tx = lsp_request_tx.clone();
+        add_shortcut(&shortcut_controller, "<Ctrl>space", move || {
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                if editor::is_editor(&child) {
+                    let path = child.widget_name().to_string();
+                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                        let insert_mark = buf.get_insert();
+                        let iter = buf.iter_at_mark(&insert_mark);
+                        let _ = lsp_tx.send(LspRequest::Completion {
+                            uri: format!("file://{}", path),
+                            line: iter.line() as u32,
+                            character: iter.line_offset() as u32,
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    // Ctrl+Shift+I: Show LSP hover info
+    {
+        let tab_view = tab_view.clone();
+        let lsp_tx = lsp_request_tx.clone();
+        add_shortcut(&shortcut_controller, "<Ctrl><Shift>i", move || {
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                if editor::is_editor(&child) {
+                    let path = child.widget_name().to_string();
+                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                        let insert_mark = buf.get_insert();
+                        let iter = buf.iter_at_mark(&insert_mark);
+                        let _ = lsp_tx.send(LspRequest::Hover {
+                            uri: format!("file://{}", path),
+                            line: iter.line() as u32,
+                            character: iter.line_offset() as u32,
                         });
                     }
                 }

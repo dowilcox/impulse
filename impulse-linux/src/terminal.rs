@@ -71,6 +71,35 @@ pub fn create_terminal(
     terminal
 }
 
+/// Apply settings changes to an existing terminal (font, cursor, scrollback, etc.).
+pub fn apply_settings(terminal: &vte4::Terminal, settings: &crate::settings::Settings, theme: &ThemeColors) {
+    let palette = theme.terminal_palette_rgba();
+    let palette_refs: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
+    terminal.set_colors(Some(&theme.fg_rgba()), Some(&theme.bg_rgba()), &palette_refs);
+
+    let font_family = if !settings.terminal_font_family.is_empty() {
+        &settings.terminal_font_family
+    } else {
+        &settings.font_family
+    };
+    let mut font_desc = gtk4::pango::FontDescription::from_string(font_family);
+    font_desc.set_size(settings.font_size * 1024);
+    terminal.set_font_desc(Some(&font_desc));
+
+    terminal.set_cursor_blink_mode(if settings.terminal_cursor_blink {
+        vte4::CursorBlinkMode::On
+    } else {
+        vte4::CursorBlinkMode::Off
+    });
+    terminal.set_cursor_shape(match settings.terminal_cursor_shape.as_str() {
+        "ibeam" => vte4::CursorShape::Ibeam,
+        "underline" => vte4::CursorShape::Underline,
+        _ => vte4::CursorShape::Block,
+    });
+    terminal.set_scrollback_lines(settings.terminal_scrollback);
+    terminal.set_audible_bell(settings.terminal_bell);
+}
+
 /// Spawn the user's shell inside a VTE terminal with Impulse integration scripts.
 pub fn spawn_shell(terminal: &vte4::Terminal) {
     let shell_path = impulse_core::shell::get_default_shell_path();

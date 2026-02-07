@@ -25,8 +25,6 @@ fn main() {
     app.connect_startup(|_app| {
         let style_manager = adw::StyleManager::default();
         style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
-        let settings = settings::load();
-        theme::load_css(theme::get_theme(&settings.color_scheme));
     });
 
     app.connect_activate(move |app| {

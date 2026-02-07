@@ -218,6 +218,108 @@ fn ensure_diagnostic_tags(buffer: &sourceview5::Buffer) {
     }
 }
 
+/// Show a completion popup near the cursor in the given view.
+/// Inserts the selected completion text when an item is activated.
+pub fn show_completion_popup(
+    view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    items: &[CompletionInfo],
+) {
+    if items.is_empty() {
+        return;
+    }
+
+    // Get cursor position
+    let insert_mark = buffer.get_insert();
+    let iter = buffer.iter_at_mark(&insert_mark);
+    let rect = view.iter_location(&iter);
+    let (wx, wy) = view.buffer_to_window_coords(gtk4::TextWindowType::Widget, rect.x(), rect.y());
+
+    let popover = gtk4::Popover::new();
+    popover.set_parent(view);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(wx, wy + rect.height(), 1, 1)));
+
+    let list_box = gtk4::ListBox::new();
+    list_box.set_selection_mode(gtk4::SelectionMode::Browse);
+    list_box.add_css_class("completion-list");
+
+    for item in items.iter().take(20) {
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        row.set_margin_start(6);
+        row.set_margin_end(6);
+        row.set_margin_top(2);
+        row.set_margin_bottom(2);
+
+        let kind_label = gtk4::Label::new(Some(&item.kind));
+        kind_label.add_css_class("completion-kind");
+        kind_label.set_width_chars(3);
+        row.append(&kind_label);
+
+        let name_label = gtk4::Label::new(Some(&item.label));
+        name_label.set_xalign(0.0);
+        name_label.set_hexpand(true);
+        row.append(&name_label);
+
+        if let Some(ref detail) = item.detail {
+            let detail_label = gtk4::Label::new(Some(detail));
+            detail_label.add_css_class("completion-detail");
+            detail_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            detail_label.set_max_width_chars(40);
+            row.append(&detail_label);
+        }
+
+        list_box.append(&row);
+    }
+
+    // Select first row
+    if let Some(first) = list_box.row_at_index(0) {
+        list_box.select_row(Some(&first));
+    }
+
+    // Handle item activation (Enter/click)
+    {
+        let buf = buffer.clone();
+        let pop = popover.clone();
+        let completion_items: Vec<CompletionInfo> = items.iter().take(20).cloned().collect();
+        list_box.connect_row_activated(move |_, row| {
+            let idx = row.index() as usize;
+            if let Some(item) = completion_items.get(idx) {
+                let text = item.insert_text.as_deref().unwrap_or(&item.label);
+                // Find the start of the current word to replace
+                let insert_mark = buf.get_insert();
+                let mut end_iter = buf.iter_at_mark(&insert_mark);
+                let mut start_iter = end_iter;
+                // Walk backwards to find word start
+                while start_iter.backward_char() {
+                    let ch = start_iter.char();
+                    if !ch.is_alphanumeric() && ch != '_' {
+                        start_iter.forward_char();
+                        break;
+                    }
+                }
+                buf.delete(&mut start_iter, &mut end_iter);
+                buf.insert(&mut start_iter, text);
+            }
+            pop.popdown();
+        });
+    }
+
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_max_content_height(250);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_min_content_width(300);
+    scroll.set_child(Some(&list_box));
+
+    popover.set_child(Some(&scroll));
+    popover.popup();
+
+    popover.connect_closed(move |p| {
+        p.unparent();
+    });
+}
+
 /// Clear all diagnostic marks and tags from a buffer.
 pub fn clear_diagnostics(buffer: &sourceview5::Buffer) {
     let start = buffer.start_iter();
