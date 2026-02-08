@@ -46,6 +46,9 @@ pub fn build_window(app: &adw::Application) {
     let (lsp_gtk_tx, lsp_gtk_rx) = std::sync::mpsc::channel::<LspResponse>();
     let lsp_gtk_rx = Rc::new(RefCell::new(lsp_gtk_rx));
 
+    // Track the last hover request position so the popover appears at the hovered symbol
+    let last_hover_pos: Rc<Cell<(u32, u32)>> = Rc::new(Cell::new((0, 0)));
+
     // Spawn the tokio runtime in a background thread
     {
         let initial_dir = if !settings.borrow().last_directory.is_empty()
@@ -449,6 +452,7 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let lsp_tx = lsp_request_tx.clone();
         let doc_versions = lsp_doc_versions.clone();
+        let last_hover_pos = last_hover_pos.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             // Check if the file is already open in a tab
             let n = tab_view.n_pages();
@@ -649,6 +653,50 @@ pub fn build_window(app: &adw::Application) {
 
                         *auto_save_source.borrow_mut() = Some(source_id);
                     });
+                }
+
+                // LSP: hover on mouse motion (debounced)
+                if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
+                    let lsp_tx = lsp_tx.clone();
+                    let path_for_hover = path.to_string();
+                    let hover_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
+                        Rc::new(RefCell::new(None));
+                    let last_hover_pos = last_hover_pos.clone();
+                    let motion = gtk4::EventControllerMotion::new();
+                    let view_for_motion = view.clone();
+                    motion.connect_motion(move |_, x, y| {
+                        if let Some(source_id) = hover_source.borrow_mut().take() {
+                            source_id.remove();
+                        }
+                        let lsp_tx = lsp_tx.clone();
+                        let path = path_for_hover.clone();
+                        let hover_inner = hover_source.clone();
+                        let view_ref = view_for_motion.clone();
+                        let last_hover_pos = last_hover_pos.clone();
+                        let source_id = gtk4::glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(400),
+                            move || {
+                                let (bx, by) = view_ref.window_to_buffer_coords(
+                                    gtk4::TextWindowType::Widget,
+                                    x as i32,
+                                    y as i32,
+                                );
+                                if let Some((iter, _)) = view_ref.iter_at_position(bx, by) {
+                                    let line = iter.line() as u32;
+                                    let character = iter.line_offset() as u32;
+                                    last_hover_pos.set((line, character));
+                                    let _ = lsp_tx.send(LspRequest::Hover {
+                                        uri: format!("file://{}", path),
+                                        line,
+                                        character,
+                                    });
+                                }
+                                *hover_inner.borrow_mut() = None;
+                            },
+                        );
+                        *hover_source.borrow_mut() = Some(source_id);
+                    });
+                    view.add_controller(motion);
                 }
 
                 tab_view.set_selected_page(&page);
@@ -883,6 +931,7 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let sidebar_state = sidebar_state.clone();
         let lsp_gtk_rx = lsp_gtk_rx.clone();
+        let last_hover_pos = last_hover_pos.clone();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let rx = lsp_gtk_rx.borrow();
             while let Ok(response) = rx.try_recv() {
@@ -972,20 +1021,19 @@ pub fn build_window(app: &adw::Application) {
                         }
                     }
                     LspResponse::HoverResult { contents } => {
-                        // Show hover popover on the active editor tab at cursor
+                        // Show hover popover at the last hover request position
                         if let Some(page) = tab_view.selected_page() {
                             let child = page.child();
                             if editor::is_editor(&child) {
                                 if let Some(view) = editor::get_editor_view(&child) {
                                     if let Some(buf) = editor::get_editor_buffer(&child) {
                                         let text = crate::lsp_hover::extract_hover_text(&contents);
-                                        let insert_mark = buf.get_insert();
-                                        let iter = buf.iter_at_mark(&insert_mark);
+                                        let (line, character) = last_hover_pos.get();
                                         crate::lsp_hover::show_hover_popover(
                                             &view,
                                             &buf,
-                                            iter.line() as u32,
-                                            iter.line_offset() as u32,
+                                            line,
+                                            character,
                                             &text,
                                         );
                                     }
@@ -1960,6 +2008,7 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let last_hover_pos = last_hover_pos.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>i", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1968,10 +2017,13 @@ pub fn build_window(app: &adw::Application) {
                     if let Some(buf) = editor::get_editor_buffer(&child) {
                         let insert_mark = buf.get_insert();
                         let iter = buf.iter_at_mark(&insert_mark);
+                        let line = iter.line() as u32;
+                        let character = iter.line_offset() as u32;
+                        last_hover_pos.set((line, character));
                         let _ = lsp_tx.send(LspRequest::Hover {
                             uri: format!("file://{}", path),
-                            line: iter.line() as u32,
-                            character: iter.line_offset() as u32,
+                            line,
+                            character,
                         });
                     }
                 }

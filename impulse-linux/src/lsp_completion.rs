@@ -306,6 +306,70 @@ pub fn show_completion_popup(
         });
     }
 
+    // Keyboard navigation: Up/Down to move selection, Enter/Tab to accept, Escape to dismiss
+    {
+        let lb = list_box.clone();
+        let buf = buffer.clone();
+        let pop = popover.clone();
+        let completion_items: Vec<CompletionInfo> = items.iter().take(20).cloned().collect();
+        let key_controller = gtk4::EventControllerKey::new();
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            use gtk4::gdk::Key;
+            match key {
+                k if k == Key::Up => {
+                    if let Some(selected) = lb.selected_row() {
+                        let idx = selected.index();
+                        if idx > 0 {
+                            if let Some(prev) = lb.row_at_index(idx - 1) {
+                                lb.select_row(Some(&prev));
+                                prev.grab_focus();
+                            }
+                        }
+                    }
+                    gtk4::glib::Propagation::Stop
+                }
+                k if k == Key::Down => {
+                    if let Some(selected) = lb.selected_row() {
+                        let idx = selected.index();
+                        if let Some(next) = lb.row_at_index(idx + 1) {
+                            lb.select_row(Some(&next));
+                            next.grab_focus();
+                        }
+                    }
+                    gtk4::glib::Propagation::Stop
+                }
+                k if k == Key::Return || k == Key::Tab => {
+                    if let Some(selected) = lb.selected_row() {
+                        let idx = selected.index() as usize;
+                        if let Some(item) = completion_items.get(idx) {
+                            let text = item.insert_text.as_deref().unwrap_or(&item.label);
+                            let insert_mark = buf.get_insert();
+                            let mut end_iter = buf.iter_at_mark(&insert_mark);
+                            let mut start_iter = end_iter;
+                            while start_iter.backward_char() {
+                                let ch = start_iter.char();
+                                if !ch.is_alphanumeric() && ch != '_' {
+                                    start_iter.forward_char();
+                                    break;
+                                }
+                            }
+                            buf.delete(&mut start_iter, &mut end_iter);
+                            buf.insert(&mut start_iter, text);
+                        }
+                    }
+                    pop.popdown();
+                    gtk4::glib::Propagation::Stop
+                }
+                k if k == Key::Escape => {
+                    pop.popdown();
+                    gtk4::glib::Propagation::Stop
+                }
+                _ => gtk4::glib::Propagation::Proceed,
+            }
+        });
+        popover.add_controller(key_controller);
+    }
+
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_max_content_height(250);
     scroll.set_propagate_natural_height(true);
@@ -313,7 +377,13 @@ pub fn show_completion_popup(
     scroll.set_child(Some(&list_box));
 
     popover.set_child(Some(&scroll));
+
+    // Focus the list so keyboard navigation works immediately
+    list_box.set_can_focus(true);
     popover.popup();
+    if let Some(first) = list_box.row_at_index(0) {
+        first.grab_focus();
+    }
 
     popover.connect_closed(move |p| {
         p.unparent();
