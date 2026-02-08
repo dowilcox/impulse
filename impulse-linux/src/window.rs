@@ -453,6 +453,10 @@ pub fn build_window(app: &adw::Application) {
         let lsp_tx = lsp_request_tx.clone();
         let doc_versions = lsp_doc_versions.clone();
         let last_hover_pos = last_hover_pos.clone();
+        let tree_states = sidebar_state.tab_tree_states.clone();
+        let tree_nodes = sidebar_state.tree_nodes.clone();
+        let tree_current_path = sidebar_state.current_path.clone();
+        let tree_scroll = sidebar_state.file_tree_scroll.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             // Check if the file is already open in a tab
             let n = tab_view.n_pages();
@@ -475,6 +479,15 @@ pub fn build_window(app: &adw::Application) {
                 let preview = editor::create_image_preview(path);
                 let page = tab_view.append(&preview);
                 page.set_title(&filename);
+                // Preserve sidebar tree state for the new tab
+                tree_states.borrow_mut().insert(
+                    preview.clone().upcast::<gtk4::Widget>(),
+                    crate::sidebar::TabTreeState {
+                        nodes: tree_nodes.borrow().clone(),
+                        current_path: tree_current_path.borrow().clone(),
+                        scroll_position: tree_scroll.vadjustment().value(),
+                    },
+                );
                 tab_view.set_selected_page(&page);
             } else if !editor::is_binary_file(path) {
                 // Open file in new editor tab
@@ -699,6 +712,15 @@ pub fn build_window(app: &adw::Application) {
                     view.add_controller(motion);
                 }
 
+                // Preserve sidebar tree state for the new tab
+                tree_states.borrow_mut().insert(
+                    editor_widget.clone().upcast::<gtk4::Widget>(),
+                    crate::sidebar::TabTreeState {
+                        nodes: tree_nodes.borrow().clone(),
+                        current_path: tree_current_path.borrow().clone(),
+                        scroll_position: tree_scroll.vadjustment().value(),
+                    },
+                );
                 tab_view.set_selected_page(&page);
             }
         }));
@@ -1030,11 +1052,7 @@ pub fn build_window(app: &adw::Application) {
                                         let text = crate::lsp_hover::extract_hover_text(&contents);
                                         let (line, character) = last_hover_pos.get();
                                         crate::lsp_hover::show_hover_popover(
-                                            &view,
-                                            &buf,
-                                            line,
-                                            character,
-                                            &text,
+                                            &view, &buf, line, character, &text,
                                         );
                                     }
                                 }
@@ -1090,10 +1108,7 @@ pub fn build_window(app: &adw::Application) {
                 // Swap theme CSS
                 let new_theme = crate::theme::get_theme(&s.color_scheme);
                 let display = gtk4::gdk::Display::default().expect("No display");
-                gtk4::style_context_remove_provider_for_display(
-                    &display,
-                    &*css_provider.borrow(),
-                );
+                gtk4::style_context_remove_provider_for_display(&display, &*css_provider.borrow());
                 let new_provider = crate::theme::load_css(new_theme);
                 *css_provider.borrow_mut() = new_provider;
 
@@ -2742,6 +2757,7 @@ fn language_from_uri(uri: &str) -> String {
         "rb" => "ruby".to_string(),
         "lua" => "lua".to_string(),
         "zig" => "zig".to_string(),
+        "php" => "php".to_string(),
         _ => ext,
     }
 }

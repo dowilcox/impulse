@@ -89,7 +89,9 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     let mut last_hunk_header: Option<(u32, u32, u32, u32)> = None;
 
     let classify_hunk =
-        |added: &mut Vec<u32>, removed: &mut u32, lines: &mut std::collections::HashMap<u32, DiffLineStatus>| {
+        |added: &mut Vec<u32>,
+         removed: &mut u32,
+         lines: &mut std::collections::HashMap<u32, DiffLineStatus>| {
             if !added.is_empty() && *removed > 0 {
                 let modify_count = added.len().min(*removed as usize);
                 for &lineno in added.iter().take(modify_count) {
@@ -106,14 +108,8 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
         None,
         Some(&mut |_delta, hunk, line| {
             // Detect hunk transitions by comparing hunk header values
-            let current_hunk = hunk.map(|h| {
-                (
-                    h.old_start(),
-                    h.old_lines(),
-                    h.new_start(),
-                    h.new_lines(),
-                )
-            });
+            let current_hunk =
+                hunk.map(|h| (h.old_start(), h.old_lines(), h.new_start(), h.new_lines()));
             if current_hunk != last_hunk_header {
                 // New hunk - classify previous hunk's collected lines
                 classify_hunk(&mut hunk_added, &mut hunk_removed_count, &mut changed_lines);
@@ -146,8 +142,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
 /// line is 1-based.
 pub fn get_line_blame(file_path: &str, line: u32) -> Result<BlameInfo, String> {
     let path = Path::new(file_path);
-    let repo =
-        git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
 
     let repo_root = repo.workdir().ok_or("Bare repository")?;
     let rel_path = path

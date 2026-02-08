@@ -202,10 +202,10 @@ pub fn create_editor(
                     let view = view_clone.clone();
                     let close = close_char.to_string();
                     move || {
-                        let mut iter = buf.iter_at_offset(offset);
+                        let mut iter = buf.iter_at_offset(offset + 1);
                         buf.insert(&mut iter, &close);
                         // Move cursor back between the brackets
-                        let cursor = buf.iter_at_offset(offset);
+                        let cursor = buf.iter_at_offset(offset + 1);
                         buf.place_cursor(&cursor);
                         view.scroll_mark_onscreen(&buf.get_insert());
                     }

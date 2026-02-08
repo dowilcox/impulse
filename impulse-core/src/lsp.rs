@@ -602,6 +602,13 @@ impl Default for LspConfig {
                 args: vec!["--stdio".into()],
             },
         );
+        servers.insert(
+            "php".into(),
+            LspServerConfig {
+                command: "intelephense".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
         LspConfig { servers }
     }
 }

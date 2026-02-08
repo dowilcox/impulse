@@ -239,7 +239,12 @@ pub fn show_completion_popup(
     popover.set_parent(view);
     popover.set_autohide(true);
     popover.set_has_arrow(false);
-    popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(wx, wy + rect.height(), 1, 1)));
+    popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(
+        wx,
+        wy + rect.height(),
+        1,
+        1,
+    )));
 
     let list_box = gtk4::ListBox::new();
     list_box.set_selection_mode(gtk4::SelectionMode::Browse);

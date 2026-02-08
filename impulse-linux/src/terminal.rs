@@ -72,10 +72,18 @@ pub fn create_terminal(
 }
 
 /// Apply settings changes to an existing terminal (font, cursor, scrollback, etc.).
-pub fn apply_settings(terminal: &vte4::Terminal, settings: &crate::settings::Settings, theme: &ThemeColors) {
+pub fn apply_settings(
+    terminal: &vte4::Terminal,
+    settings: &crate::settings::Settings,
+    theme: &ThemeColors,
+) {
     let palette = theme.terminal_palette_rgba();
     let palette_refs: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
-    terminal.set_colors(Some(&theme.fg_rgba()), Some(&theme.bg_rgba()), &palette_refs);
+    terminal.set_colors(
+        Some(&theme.fg_rgba()),
+        Some(&theme.bg_rgba()),
+        &palette_refs,
+    );
 
     let font_family = if !settings.terminal_font_family.is_empty() {
         &settings.terminal_font_family
