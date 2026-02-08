@@ -16,11 +16,139 @@ mod window;
 
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use std::backtrace::Backtrace;
+use std::io::Write;
+use std::path::PathBuf;
 
 const APP_ID: &str = "dev.impulse.Impulse";
 
+enum StartupMode {
+    RunGui,
+    InstallLspServers,
+    CheckLspServers,
+}
+
+fn parse_startup_mode() -> StartupMode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--install-lsp-servers") {
+        StartupMode::InstallLspServers
+    } else if args.iter().any(|a| a == "--check-lsp-servers") {
+        StartupMode::CheckLspServers
+    } else {
+        StartupMode::RunGui
+    }
+}
+
+fn run_lsp_install() -> i32 {
+    match impulse_core::lsp::install_managed_web_lsp_servers() {
+        Ok(bin_dir) => {
+            println!("Installed managed web LSP servers to {}", bin_dir.display());
+            let statuses = impulse_core::lsp::managed_web_lsp_status();
+            let installed = statuses
+                .iter()
+                .filter(|s| s.resolved_path.is_some())
+                .count();
+            println!(
+                "Resolved {}/{} recommended server commands.",
+                installed,
+                statuses.len()
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("Failed to install managed web LSP servers: {}", e);
+            1
+        }
+    }
+}
+
+fn run_lsp_check() -> i32 {
+    let statuses = impulse_core::lsp::managed_web_lsp_status();
+    for status in &statuses {
+        match &status.resolved_path {
+            Some(path) => println!("OK   {:32} {}", status.command, path.display()),
+            None => println!("MISS {:32} not found", status.command),
+        }
+    }
+    let missing = statuses
+        .iter()
+        .filter(|s| s.resolved_path.is_none())
+        .count();
+    if missing == 0 {
+        println!("All managed web LSP commands are available.");
+        0
+    } else {
+        println!(
+            "{} managed web LSP command(s) are missing. Run --install-lsp-servers.",
+            missing
+        );
+        1
+    }
+}
+
+fn state_dir() -> Option<PathBuf> {
+    if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
+        if !xdg_state_home.is_empty() {
+            return Some(PathBuf::from(xdg_state_home).join("impulse"));
+        }
+    }
+
+    std::env::var("HOME").ok().map(|home| {
+        PathBuf::from(home)
+            .join(".local")
+            .join("state")
+            .join("impulse")
+    })
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let timestamp = chrono_like_now();
+        let backtrace = Backtrace::force_capture();
+        let msg = format!(
+            "[{}] panic: {}\nbacktrace:\n{}\n\n",
+            timestamp, panic_info, backtrace
+        );
+
+        if let Some(dir) = state_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("panic.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = f.write_all(msg.as_bytes());
+            }
+        }
+
+        eprintln!("{}", msg);
+        default_hook(panic_info);
+    }));
+}
+
+fn chrono_like_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => format!("{}.{:03}", d.as_secs(), d.subsec_millis()),
+        Err(_) => "unknown-time".to_string(),
+    }
+}
+
 fn main() {
     env_logger::init();
+    install_panic_hook();
+
+    match parse_startup_mode() {
+        StartupMode::InstallLspServers => {
+            std::process::exit(run_lsp_install());
+        }
+        StartupMode::CheckLspServers => {
+            std::process::exit(run_lsp_check());
+        }
+        StartupMode::RunGui => {}
+    }
 
     let app = adw::Application::builder().application_id(APP_ID).build();
 

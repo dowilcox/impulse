@@ -14,6 +14,9 @@ pub fn show_hover_popover(
     if content.is_empty() {
         return;
     }
+    if !view.is_visible() || !view.is_mapped() || view.width() <= 0 || view.height() <= 0 {
+        return;
+    }
 
     // Get the location in the buffer
     let iter = match buffer.iter_at_line_offset(line as i32, character as i32) {
@@ -55,11 +58,7 @@ pub fn show_hover_popover(
 
     popover.set_child(Some(&scroll));
     popover.popup();
-
-    // Auto-close when the popover loses focus
-    popover.connect_closed(move |p| {
-        p.unparent();
-    });
+    // Let GTK manage popover lifecycle; manual unparent here can race teardown.
 }
 
 /// Extract plain text from LSP hover content (MarkupContent or MarkedString).

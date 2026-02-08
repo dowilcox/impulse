@@ -6,6 +6,19 @@ use std::rc::Rc;
 
 use impulse_core::search::SearchResult;
 
+fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "non-string panic payload"
+        };
+        log::error!("UI callback panic in '{}': {}", label, msg);
+    }
+}
+
 /// State for the project-wide search panel, used to wire callbacks from window.rs.
 pub struct ProjectSearchState {
     pub widget: gtk4::Box,
@@ -102,68 +115,75 @@ pub fn build_project_search_panel() -> ProjectSearchState {
         let current_results = current_results.clone();
         let current_root = current_root.clone();
         search_entry.connect_search_changed(move |entry| {
-            // Cancel any pending search
-            if let Some(id) = pending_search.borrow_mut().take() {
-                id.remove();
-            }
+            run_guarded_ui("project-search-changed", || {
+                // Cancel any pending search
+                let previous_id = { pending_search.borrow_mut().take() };
+                if let Some(id) = previous_id {
+                    id.remove();
+                }
 
-            let query = entry.text().to_string();
-            let root = current_root.borrow().clone();
-            if query.is_empty() || root.is_empty() {
-                clear_list(&result_list);
-                result_count_label.set_text("");
-                current_results.borrow_mut().clear();
-                return;
-            }
+                let query = entry.text().to_string();
+                let root = current_root.borrow().clone();
+                if query.is_empty() || root.is_empty() {
+                    clear_list(&result_list);
+                    result_count_label.set_text("");
+                    current_results.borrow_mut().clear();
+                    return;
+                }
 
-            let result_list = result_list.clone();
-            let result_count_label = result_count_label.clone();
-            let case_sensitive = *case_sensitive.borrow();
-            let current_results = current_results.clone();
-            let pending_clear = pending_search.clone();
+                let result_list = result_list.clone();
+                let result_count_label = result_count_label.clone();
+                let case_sensitive = *case_sensitive.borrow();
+                let current_results = current_results.clone();
+                let pending_clear = pending_search.clone();
 
-            let id =
-                glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
-                    // Clear the pending source ID so it won't be double-removed
-                    pending_clear.borrow_mut().take();
-                    let result_list = result_list.clone();
-                    let result_count_label = result_count_label.clone();
-                    let current_results = current_results.clone();
-                    glib::spawn_future_local(async move {
-                        let q = query.clone();
-                        let r = root.clone();
-                        let cs = case_sensitive;
-                        let results = gio::spawn_blocking(move || {
-                            impulse_core::search::search_contents(&r, &q, 500, cs)
-                        })
-                        .await;
-                        match results {
-                            Ok(Ok(results)) => {
-                                let count = results.len();
-                                *current_results.borrow_mut() = results.clone();
-                                populate_project_results(&result_list, &results);
-                                if count == 0 {
-                                    result_count_label.set_text("No results");
-                                } else if count == 500 {
-                                    result_count_label
-                                        .set_text(&format!("{} results (limit reached)", count));
-                                } else {
-                                    result_count_label.set_text(&format!(
-                                        "{} result{}",
-                                        count,
-                                        if count == 1 { "" } else { "s" }
-                                    ));
+                let id = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(300),
+                    move || {
+                        // Clear the pending source ID so it won't be double-removed
+                        let _ = pending_clear.borrow_mut().take();
+                        let result_list = result_list.clone();
+                        let result_count_label = result_count_label.clone();
+                        let current_results = current_results.clone();
+                        glib::spawn_future_local(async move {
+                            let q = query.clone();
+                            let r = root.clone();
+                            let cs = case_sensitive;
+                            let results = gio::spawn_blocking(move || {
+                                impulse_core::search::search_contents(&r, &q, 500, cs)
+                            })
+                            .await;
+                            match results {
+                                Ok(Ok(results)) => {
+                                    let count = results.len();
+                                    *current_results.borrow_mut() = results.clone();
+                                    populate_project_results(&result_list, &results);
+                                    if count == 0 {
+                                        result_count_label.set_text("No results");
+                                    } else if count == 500 {
+                                        result_count_label.set_text(&format!(
+                                            "{} results (limit reached)",
+                                            count
+                                        ));
+                                    } else {
+                                        result_count_label.set_text(&format!(
+                                            "{} result{}",
+                                            count,
+                                            if count == 1 { "" } else { "s" }
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    clear_list(&result_list);
+                                    result_count_label.set_text("Search error");
+                                    current_results.borrow_mut().clear();
                                 }
                             }
-                            _ => {
-                                clear_list(&result_list);
-                                result_count_label.set_text("Search error");
-                                current_results.borrow_mut().clear();
-                            }
-                        }
-                    });
-                });
-            *pending_search.borrow_mut() = Some(id);
+                        });
+                    },
+                );
+                *pending_search.borrow_mut() = Some(id);
+            });
         });
     }
 

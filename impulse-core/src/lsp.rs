@@ -1,21 +1,59 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
+use url::Url;
 
 type PendingRequests =
     Arc<TokioMutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, String>>>>>;
 
-// ---------------------------------------------------------------------------
-// JSON-RPC 2.0 Transport Types
-// ---------------------------------------------------------------------------
+const START_RETRY_COOLDOWN: Duration = Duration::from_secs(15);
+const IMPULSE_INSTALL_HINT: &str =
+    "Run `impulse --install-lsp-servers` (or `cargo run -p impulse-linux -- --install-lsp-servers`) to install managed web LSP servers.";
+
+const RECOMMENDED_WEB_LSP_PACKAGES: &[&str] = &[
+    "typescript",
+    "typescript-language-server",
+    "intelephense",
+    "vscode-langservers-extracted",
+    "@tailwindcss/language-server",
+    "@vue/language-server",
+    "svelte-language-server",
+    "graphql-language-service-cli",
+    "emmet-ls",
+    "yaml-language-server",
+    "dockerfile-language-server-nodejs",
+    "bash-language-server",
+];
+
+const MANAGED_NPM_SERVER_COMMANDS: &[&str] = &[
+    "typescript-language-server",
+    "intelephense",
+    "vscode-html-language-server",
+    "vscode-css-language-server",
+    "vscode-json-language-server",
+    "vscode-eslint-language-server",
+    "tailwindcss-language-server",
+    "vue-language-server",
+    "svelteserver",
+    "graphql-lsp",
+    "emmet-ls",
+    "yaml-language-server",
+    "docker-langserver",
+    "bash-language-server",
+];
 
 #[derive(Serialize)]
 struct JsonRpcRequest {
-    jsonrpc: &'static str, // always "2.0"
+    jsonrpc: &'static str,
     id: i64,
     method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -23,10 +61,10 @@ struct JsonRpcRequest {
 }
 
 #[derive(Deserialize, Debug)]
-struct JsonRpcResponse {
+struct JsonRpcMessage {
     #[allow(dead_code)]
     jsonrpc: String,
-    id: Option<i64>,
+    id: Option<serde_json::Value>,
     result: Option<serde_json::Value>,
     error: Option<JsonRpcError>,
     method: Option<String>,
@@ -39,73 +77,261 @@ struct JsonRpcError {
     message: String,
 }
 
-// ---------------------------------------------------------------------------
-// LspEvent – sent from the LSP backend to the frontend
-// ---------------------------------------------------------------------------
-
-/// Events sent from the LSP backend to the frontend.
 #[derive(Debug)]
 pub enum LspEvent {
     Diagnostics {
         uri: String,
+        version: Option<i32>,
         diagnostics: Vec<lsp_types::Diagnostic>,
     },
     Initialized {
-        language_id: String,
+        client_key: String,
+        server_id: String,
     },
     ServerError {
-        language_id: String,
+        client_key: String,
+        server_id: String,
         message: String,
     },
     ServerExited {
-        language_id: String,
+        client_key: String,
+        server_id: String,
     },
 }
-
-// ---------------------------------------------------------------------------
-// Helper: parse a string into an lsp_types::Uri
-// ---------------------------------------------------------------------------
 
 fn parse_uri(s: &str) -> Result<lsp_types::Uri, String> {
     lsp_types::Uri::from_str(s).map_err(|e| e.to_string())
 }
 
-// ---------------------------------------------------------------------------
-// LspClient – a client connected to a single language server process
-// ---------------------------------------------------------------------------
+fn uri_to_file_path(uri: &str) -> Option<PathBuf> {
+    Url::parse(uri).ok()?.to_file_path().ok()
+}
 
-/// A client connected to a single language server process.
+fn path_to_file_uri(path: &Path) -> Option<String> {
+    if path.is_dir() {
+        Url::from_directory_path(path).ok().map(|u| u.to_string())
+    } else {
+        Url::from_file_path(path).ok().map(|u| u.to_string())
+    }
+}
+
+fn workspace_folder_name(root_uri: &str) -> String {
+    uri_to_file_path(root_uri)
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "workspace".to_string())
+}
+
+fn data_home_dir() -> Option<PathBuf> {
+    if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
+        if !xdg_data_home.is_empty() {
+            return Some(PathBuf::from(xdg_data_home));
+        }
+    }
+
+    std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".local").join("share"))
+}
+
+pub fn managed_lsp_root_dir() -> Option<PathBuf> {
+    data_home_dir().map(|dir| dir.join("impulse").join("lsp"))
+}
+
+pub fn managed_lsp_bin_dir() -> Option<PathBuf> {
+    managed_lsp_root_dir().map(|dir| dir.join("node_modules").join(".bin"))
+}
+
+pub fn managed_web_lsp_commands() -> &'static [&'static str] {
+    MANAGED_NPM_SERVER_COMMANDS
+}
+
+fn command_looks_like_path(command: &str) -> bool {
+    command.contains(std::path::MAIN_SEPARATOR)
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn find_command_in_path(command: &str) -> Option<PathBuf> {
+    if command_looks_like_path(command) {
+        let path = PathBuf::from(command);
+        return is_executable_file(&path).then_some(path);
+    }
+
+    let path_env: OsString = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(command);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn find_managed_command(command: &str) -> Option<PathBuf> {
+    let managed = managed_lsp_bin_dir()?.join(command);
+    is_executable_file(&managed).then_some(managed)
+}
+
+pub fn resolve_lsp_command_path(command: &str) -> Option<PathBuf> {
+    find_command_in_path(command).or_else(|| find_managed_command(command))
+}
+
+fn is_managed_npm_server_command(command: &str) -> bool {
+    MANAGED_NPM_SERVER_COMMANDS.contains(&command)
+}
+
+fn missing_command_message(server_id: &str, command: &str) -> String {
+    if is_managed_npm_server_command(command) {
+        format!(
+            "LSP server '{}' requires '{}' but it is not installed. {}",
+            server_id, command, IMPULSE_INSTALL_HINT
+        )
+    } else {
+        format!(
+            "LSP server '{}' requires '{}' but it is not in PATH. Install it or override `servers.{}` in lsp.json.",
+            server_id, command, server_id
+        )
+    }
+}
+
+fn npm_is_available() -> bool {
+    StdCommand::new("npm")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+pub fn install_managed_web_lsp_servers() -> Result<PathBuf, String> {
+    if !npm_is_available() {
+        return Err(
+            "npm is required but was not found in PATH. Install Node.js + npm first.".to_string(),
+        );
+    }
+
+    let root = managed_lsp_root_dir()
+        .ok_or_else(|| "Unable to determine data directory for managed LSPs".to_string())?;
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create {}: {}", root.display(), e))?;
+
+    let package_json = root.join("package.json");
+    if !package_json.exists() {
+        let package_doc = serde_json::json!({
+            "name": "impulse-lsp-servers",
+            "private": true,
+            "description": "Managed web LSP dependencies for Impulse",
+            "license": "UNLICENSED"
+        });
+        let content = serde_json::to_string_pretty(&package_doc)
+            .map_err(|e| format!("Failed to serialize package.json: {}", e))?;
+        fs::write(&package_json, content)
+            .map_err(|e| format!("Failed to write {}: {}", package_json.display(), e))?;
+    }
+
+    let status = StdCommand::new("npm")
+        .arg("install")
+        .arg("--prefix")
+        .arg(&root)
+        .arg("--no-audit")
+        .arg("--no-fund")
+        .args(RECOMMENDED_WEB_LSP_PACKAGES)
+        .status()
+        .map_err(|e| format!("Failed to run npm install: {}", e))?;
+
+    if !status.success() {
+        return Err(format!(
+            "npm install failed with status {} while installing managed LSP servers",
+            status
+        ));
+    }
+
+    managed_lsp_bin_dir().ok_or_else(|| {
+        "Installation completed but managed bin directory could not be determined".to_string()
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct LspCommandStatus {
+    pub command: String,
+    pub resolved_path: Option<PathBuf>,
+}
+
+pub fn managed_web_lsp_status() -> Vec<LspCommandStatus> {
+    MANAGED_NPM_SERVER_COMMANDS
+        .iter()
+        .map(|cmd| LspCommandStatus {
+            command: (*cmd).to_string(),
+            resolved_path: resolve_lsp_command_path(cmd),
+        })
+        .collect()
+}
+
+fn send_jsonrpc_result(
+    sender: &mpsc::UnboundedSender<Vec<u8>>,
+    id: serde_json::Value,
+    result: serde_json::Value,
+) {
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
+    });
+    if let Ok(body) = serde_json::to_vec(&msg) {
+        let _ = sender.send(body);
+    }
+}
+
+fn send_jsonrpc_error(
+    sender: &mpsc::UnboundedSender<Vec<u8>>,
+    id: serde_json::Value,
+    code: i64,
+    message: &str,
+) {
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    });
+    if let Ok(body) = serde_json::to_vec(&msg) {
+        let _ = sender.send(body);
+    }
+}
+
 pub struct LspClient {
-    /// Channel to send outgoing requests/notifications to the writer task.
     sender: mpsc::UnboundedSender<Vec<u8>>,
-    /// Pending request handlers, keyed by request ID.
     pending: PendingRequests,
-    /// Next request ID counter.
     next_id: Arc<TokioMutex<i64>>,
-    /// Server capabilities (set after initialization).
     pub capabilities: Arc<TokioMutex<Option<lsp_types::ServerCapabilities>>>,
-    /// Channel for sending events to the frontend.
     event_tx: mpsc::UnboundedSender<LspEvent>,
-    /// Language ID this client serves.
-    language_id: String,
+    client_key: String,
+    server_id: String,
 }
 
 impl LspClient {
-    /// Spawn a language server process and connect to it over stdio.
     pub async fn start(
         command: &str,
         args: &[String],
         root_uri: &str,
-        language_id: &str,
+        server_id: &str,
+        client_key: &str,
         event_tx: mpsc::UnboundedSender<LspEvent>,
     ) -> Result<Self, String> {
         log::info!(
-            "LSP: starting server '{}' with args {:?} for language '{}', root_uri={}",
+            "LSP: starting server '{}' with args {:?} for server_id '{}', root_uri={}, key={}",
             command,
             args,
-            language_id,
-            root_uri
+            server_id,
+            root_uri,
+            client_key
         );
+
         let mut child = TokioCommand::new(command)
             .args(args)
             .stdin(std::process::Stdio::piped())
@@ -122,20 +348,30 @@ impl LspClient {
         let pending: PendingRequests = Arc::new(TokioMutex::new(HashMap::new()));
         let next_id = Arc::new(TokioMutex::new(1i64));
 
-        // Spawn writer task
         tokio::spawn(Self::writer_task(stdin, receiver));
 
-        // Spawn reader task
         let pending_clone = pending.clone();
         let event_tx_clone = event_tx.clone();
-        let lang_id = language_id.to_string();
+        let sender_clone = sender.clone();
+        let client_key_reader = client_key.to_string();
+        let server_id_reader = server_id.to_string();
+        let root_uri_reader = root_uri.to_string();
         tokio::spawn(async move {
-            Self::reader_task(stdout, pending_clone, event_tx_clone, &lang_id).await;
+            Self::reader_task(
+                stdout,
+                pending_clone,
+                sender_clone,
+                event_tx_clone,
+                &client_key_reader,
+                &server_id_reader,
+                &root_uri_reader,
+            )
+            .await;
         });
 
-        // Spawn stderr reader to log server errors
         if let Some(stderr) = stderr {
             let cmd_name = command.to_string();
+            let key = client_key.to_string();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
@@ -146,7 +382,7 @@ impl LspClient {
                         Ok(_) => {
                             let trimmed = line.trim();
                             if !trimmed.is_empty() {
-                                log::warn!("LSP stderr [{}]: {}", cmd_name, trimmed);
+                                log::warn!("LSP stderr [{}:{}]: {}", cmd_name, key, trimmed);
                             }
                         }
                         Err(_) => break,
@@ -155,19 +391,21 @@ impl LspClient {
             });
         }
 
-        // Spawn a task to detect server exit
         let event_tx_exit = event_tx.clone();
-        let lang_exit = language_id.to_string();
+        let client_key_exit = client_key.to_string();
+        let server_id_exit = server_id.to_string();
         let cmd_for_exit = command.to_string();
         tokio::spawn(async move {
             let status = child.wait().await;
             log::warn!(
-                "LSP server '{}' exited with status: {:?}",
+                "LSP server '{}' exited with status: {:?} (key={})",
                 cmd_for_exit,
-                status
+                status,
+                client_key_exit
             );
             let _ = event_tx_exit.send(LspEvent::ServerExited {
-                language_id: lang_exit,
+                client_key: client_key_exit,
+                server_id: server_id_exit,
             });
         });
 
@@ -177,24 +415,20 @@ impl LspClient {
             next_id,
             capabilities: Arc::new(TokioMutex::new(None)),
             event_tx: event_tx.clone(),
-            language_id: language_id.to_string(),
+            client_key: client_key.to_string(),
+            server_id: server_id.to_string(),
         };
 
-        // Perform initialization handshake
         client.initialize(root_uri).await?;
         log::info!(
-            "LSP: server '{}' initialized successfully for '{}'",
+            "LSP: server '{}' initialized successfully for key={}",
             command,
-            language_id
+            client_key
         );
 
         Ok(client)
     }
 
-    // -- internal tasks -----------------------------------------------------
-
-    /// Writer task: reads messages from channel and writes to stdin with
-    /// `Content-Length` headers.
     async fn writer_task(
         mut stdin: tokio::process::ChildStdin,
         mut receiver: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -213,26 +447,27 @@ impl LspClient {
         }
     }
 
-    /// Reader task: reads JSON-RPC messages from stdout and dispatches them.
     async fn reader_task(
         stdout: tokio::process::ChildStdout,
         pending: PendingRequests,
+        sender: mpsc::UnboundedSender<Vec<u8>>,
         event_tx: mpsc::UnboundedSender<LspEvent>,
-        language_id: &str,
+        client_key: &str,
+        server_id: &str,
+        root_uri: &str,
     ) {
         let mut reader = BufReader::new(stdout);
         loop {
-            // Read headers until the blank line separator.
             let mut header_line = String::new();
             let mut content_length: usize = 0;
             loop {
                 header_line.clear();
                 match reader.read_line(&mut header_line).await {
-                    Ok(0) => return, // EOF
+                    Ok(0) => return,
                     Ok(_) => {
                         let trimmed = header_line.trim();
                         if trimmed.is_empty() {
-                            break; // End of headers
+                            break;
                         }
                         if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
                             if let Ok(len) = len_str.parse::<usize>() {
@@ -248,14 +483,12 @@ impl LspClient {
                 continue;
             }
 
-            // Read the message body.
             let mut body = vec![0u8; content_length];
             if reader.read_exact(&mut body).await.is_err() {
                 return;
             }
 
-            // Parse JSON-RPC message.
-            let msg: JsonRpcResponse = match serde_json::from_slice(&body) {
+            let msg: JsonRpcMessage = match serde_json::from_slice(&body) {
                 Ok(m) => m,
                 Err(e) => {
                     log::warn!("Failed to parse LSP message: {}", e);
@@ -263,27 +496,71 @@ impl LspClient {
                 }
             };
 
-            // If it has an id and no method, it is a response to one of our
-            // requests.
-            if let Some(id) = msg.id {
+            if let Some(id) = msg.id.clone() {
                 if msg.method.is_none() {
-                    let mut pending = pending.lock().await;
-                    if let Some(tx) = pending.remove(&id) {
-                        if let Some(error) = msg.error {
-                            let _ = tx
-                                .send(Err(format!("LSP error {}: {}", error.code, error.message)));
-                        } else {
-                            let _ = tx.send(Ok(msg.result.unwrap_or(serde_json::Value::Null)));
+                    if let Some(id_num) = id.as_i64() {
+                        let mut pending = pending.lock().await;
+                        if let Some(tx) = pending.remove(&id_num) {
+                            if let Some(error) = msg.error {
+                                let _ = tx.send(Err(format!(
+                                    "LSP error {}: {}",
+                                    error.code, error.message
+                                )));
+                            } else {
+                                let _ = tx.send(Ok(msg.result.unwrap_or(serde_json::Value::Null)));
+                            }
                         }
                     }
                     continue;
                 }
             }
 
-            // If it has a method, it is a notification or server-to-client
-            // request.
             if let Some(method) = &msg.method {
-                Self::handle_server_notification(method, msg.params, &event_tx, language_id);
+                if let Some(id) = msg.id {
+                    Self::handle_server_request(method, id, msg.params, &sender, root_uri);
+                    continue;
+                }
+
+                Self::handle_server_notification(
+                    method, msg.params, &event_tx, client_key, server_id,
+                );
+            }
+        }
+    }
+
+    fn handle_server_request(
+        method: &str,
+        id: serde_json::Value,
+        params: Option<serde_json::Value>,
+        sender: &mpsc::UnboundedSender<Vec<u8>>,
+        root_uri: &str,
+    ) {
+        match method {
+            "workspace/configuration" => {
+                let count = params
+                    .as_ref()
+                    .and_then(|p| p.get("items"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+                let result = serde_json::Value::Array(vec![serde_json::Value::Null; count]);
+                send_jsonrpc_result(sender, id, result);
+            }
+            "window/workDoneProgress/create" => {
+                send_jsonrpc_result(sender, id, serde_json::Value::Null);
+            }
+            "workspace/workspaceFolders" => {
+                let folder = serde_json::json!({
+                    "uri": root_uri,
+                    "name": workspace_folder_name(root_uri),
+                });
+                send_jsonrpc_result(sender, id, serde_json::Value::Array(vec![folder]));
+            }
+            "client/registerCapability" | "client/unregisterCapability" => {
+                send_jsonrpc_result(sender, id, serde_json::Value::Null);
+            }
+            _ => {
+                send_jsonrpc_error(sender, id, -32601, "Method not found");
             }
         }
     }
@@ -292,7 +569,8 @@ impl LspClient {
         method: &str,
         params: Option<serde_json::Value>,
         event_tx: &mpsc::UnboundedSender<LspEvent>,
-        _language_id: &str,
+        _client_key: &str,
+        _server_id: &str,
     ) {
         match method {
             "textDocument/publishDiagnostics" => {
@@ -302,20 +580,19 @@ impl LspClient {
                     {
                         let _ = event_tx.send(LspEvent::Diagnostics {
                             uri: diag_params.uri.to_string(),
+                            version: diag_params.version,
                             diagnostics: diag_params.diagnostics,
                         });
                     }
                 }
             }
+            "window/logMessage" | "window/showMessage" | "$/logTrace" | "$/progress" => {}
             _ => {
                 log::debug!("Unhandled LSP notification: {}", method);
             }
         }
     }
 
-    // -- public API ---------------------------------------------------------
-
-    /// Send a JSON-RPC request and wait for the response.
     pub async fn request<P: Serialize>(
         &self,
         method: &str,
@@ -348,7 +625,6 @@ impl LspClient {
         rx.await.map_err(|_| "Request cancelled".to_string())?
     }
 
-    /// Send a JSON-RPC notification (no response expected).
     pub fn notify<P: Serialize>(&self, method: &str, params: P) -> Result<(), String> {
         let msg = serde_json::json!({
             "jsonrpc": "2.0",
@@ -359,19 +635,31 @@ impl LspClient {
         self.sender.send(body).map_err(|e| e.to_string())
     }
 
-    // -- initialization -----------------------------------------------------
-
-    /// Perform the LSP initialization handshake.
-    #[allow(deprecated)] // root_uri is deprecated in favour of workspace_folders
+    #[allow(deprecated)]
     async fn initialize(&self, root_uri: &str) -> Result<(), String> {
+        let workspace_folders = Some(vec![lsp_types::WorkspaceFolder {
+            uri: parse_uri(root_uri)?,
+            name: workspace_folder_name(root_uri),
+        }]);
+
         let params = lsp_types::InitializeParams {
             root_uri: Some(parse_uri(root_uri)?),
+            workspace_folders,
             capabilities: lsp_types::ClientCapabilities {
+                workspace: Some(lsp_types::WorkspaceClientCapabilities {
+                    configuration: Some(true),
+                    workspace_folders: Some(true),
+                    ..Default::default()
+                }),
                 text_document: Some(lsp_types::TextDocumentClientCapabilities {
                     completion: Some(lsp_types::CompletionClientCapabilities {
                         completion_item: Some(lsp_types::CompletionItemCapability {
-                            snippet_support: Some(false),
-                            documentation_format: Some(vec![lsp_types::MarkupKind::PlainText]),
+                            snippet_support: Some(true),
+                            documentation_format: Some(vec![
+                                lsp_types::MarkupKind::PlainText,
+                                lsp_types::MarkupKind::Markdown,
+                            ]),
+                            insert_replace_support: Some(true),
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -385,10 +673,11 @@ impl LspClient {
                     }),
                     publish_diagnostics: Some(lsp_types::PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
+                        version_support: Some(true),
                         ..Default::default()
                     }),
                     definition: Some(lsp_types::GotoCapability {
-                        link_support: Some(false),
+                        link_support: Some(true),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -404,22 +693,19 @@ impl LspClient {
 
         let result = self.request("initialize", params).await?;
 
-        // Parse server capabilities.
         if let Ok(init_result) = serde_json::from_value::<lsp_types::InitializeResult>(result) {
             *self.capabilities.lock().await = Some(init_result.capabilities);
         }
 
-        // Send "initialized" notification.
         self.notify("initialized", lsp_types::InitializedParams {})?;
 
         let _ = self.event_tx.send(LspEvent::Initialized {
-            language_id: self.language_id.clone(),
+            client_key: self.client_key.clone(),
+            server_id: self.server_id.clone(),
         });
 
         Ok(())
     }
-
-    // -- document lifecycle methods -----------------------------------------
 
     pub fn did_open(
         &self,
@@ -481,8 +767,6 @@ impl LspClient {
         )
     }
 
-    // -- feature requests ---------------------------------------------------
-
     pub async fn completion(
         &self,
         uri: &str,
@@ -499,14 +783,16 @@ impl LspClient {
                         },
                         position: lsp_types::Position { line, character },
                     },
-                    context: None,
+                    context: Some(lsp_types::CompletionContext {
+                        trigger_kind: lsp_types::CompletionTriggerKind::INVOKED,
+                        trigger_character: None,
+                    }),
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 },
             )
             .await?;
 
-        // CompletionResponse can be either an array or a CompletionList.
         if let Ok(list) = serde_json::from_value::<lsp_types::CompletionResponse>(result) {
             match list {
                 lsp_types::CompletionResponse::Array(items) => Ok(items),
@@ -574,211 +860,489 @@ impl LspClient {
         }
     }
 
-    /// Shutdown the language server gracefully.
     pub async fn shutdown(&self) -> Result<(), String> {
         let _ = self.request("shutdown", serde_json::Value::Null).await;
         self.notify("exit", serde_json::Value::Null)
     }
 }
 
-// ---------------------------------------------------------------------------
-// LspConfig – maps language IDs to their LSP server configurations
-// ---------------------------------------------------------------------------
-
-/// Configuration for a language server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LspServerConfig {
     pub command: String,
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
-/// Maps language IDs to their LSP server configurations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LspConfig {
     pub servers: HashMap<String, LspServerConfig>,
+    pub language_servers: HashMap<String, Vec<String>>,
+    pub root_markers: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct LspConfigOverrides {
+    servers: Option<HashMap<String, LspServerConfig>>,
+    language_servers: Option<HashMap<String, Vec<String>>>,
+    root_markers: Option<Vec<String>>,
+}
+
+impl LspConfig {
+    pub fn load(fallback_root_uri: &str) -> Self {
+        let mut cfg = Self::default();
+
+        if let Some(global_path) = global_lsp_config_path() {
+            cfg.apply_file(&global_path);
+        }
+
+        if let Some(root_path) = uri_to_file_path(fallback_root_uri) {
+            let project_config_paths = [
+                root_path.join(".impulse").join("lsp.json"),
+                root_path.join(".impulse-lsp.json"),
+            ];
+            for path in project_config_paths {
+                cfg.apply_file(&path);
+            }
+        }
+
+        cfg
+    }
+
+    fn apply_file(&mut self, path: &Path) {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let overrides = match serde_json::from_str::<LspConfigOverrides>(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Invalid LSP config at {}: {}", path.display(), e);
+                return;
+            }
+        };
+
+        if let Some(servers) = overrides.servers {
+            self.servers.extend(servers);
+        }
+        if let Some(language_servers) = overrides.language_servers {
+            self.language_servers.extend(language_servers);
+        }
+        if let Some(root_markers) = overrides.root_markers {
+            if !root_markers.is_empty() {
+                self.root_markers = root_markers;
+            }
+        }
+    }
+}
+
+fn global_lsp_config_path() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("impulse").join("lsp.json"));
+    }
+
+    std::env::var("HOME").ok().map(|home| {
+        PathBuf::from(home)
+            .join(".config")
+            .join("impulse")
+            .join("lsp.json")
+    })
 }
 
 impl Default for LspConfig {
     fn default() -> Self {
         let mut servers = HashMap::new();
         servers.insert(
-            "rust".into(),
+            "rust-analyzer".into(),
             LspServerConfig {
                 command: "rust-analyzer".into(),
                 args: vec![],
             },
         );
         servers.insert(
-            "python".into(),
+            "pyright".into(),
             LspServerConfig {
                 command: "pyright-langserver".into(),
                 args: vec!["--stdio".into()],
             },
         );
         servers.insert(
-            "c".into(),
+            "clangd".into(),
             LspServerConfig {
                 command: "clangd".into(),
                 args: vec![],
             },
         );
         servers.insert(
-            "cpp".into(),
-            LspServerConfig {
-                command: "clangd".into(),
-                args: vec![],
-            },
-        );
-        servers.insert(
-            "javascript".into(),
+            "typescript-language-server".into(),
             LspServerConfig {
                 command: "typescript-language-server".into(),
                 args: vec!["--stdio".into()],
             },
         );
         servers.insert(
-            "typescript".into(),
-            LspServerConfig {
-                command: "typescript-language-server".into(),
-                args: vec!["--stdio".into()],
-            },
-        );
-        servers.insert(
-            "php".into(),
+            "intelephense".into(),
             LspServerConfig {
                 command: "intelephense".into(),
                 args: vec!["--stdio".into()],
             },
         );
-        LspConfig { servers }
+        servers.insert(
+            "vscode-html-language-server".into(),
+            LspServerConfig {
+                command: "vscode-html-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "vscode-css-language-server".into(),
+            LspServerConfig {
+                command: "vscode-css-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "vscode-json-language-server".into(),
+            LspServerConfig {
+                command: "vscode-json-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "vscode-eslint-language-server".into(),
+            LspServerConfig {
+                command: "vscode-eslint-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "tailwindcss-language-server".into(),
+            LspServerConfig {
+                command: "tailwindcss-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "vue-language-server".into(),
+            LspServerConfig {
+                command: "vue-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "svelteserver".into(),
+            LspServerConfig {
+                command: "svelteserver".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "graphql-lsp".into(),
+            LspServerConfig {
+                command: "graphql-lsp".into(),
+                args: vec!["server".into(), "-m".into(), "stream".into()],
+            },
+        );
+        servers.insert(
+            "emmet-ls".into(),
+            LspServerConfig {
+                command: "emmet-ls".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "yaml-language-server".into(),
+            LspServerConfig {
+                command: "yaml-language-server".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "docker-langserver".into(),
+            LspServerConfig {
+                command: "docker-langserver".into(),
+                args: vec!["--stdio".into()],
+            },
+        );
+        servers.insert(
+            "bash-language-server".into(),
+            LspServerConfig {
+                command: "bash-language-server".into(),
+                args: vec!["start".into()],
+            },
+        );
+
+        let mut language_servers = HashMap::new();
+        language_servers.insert("rust".into(), vec!["rust-analyzer".into()]);
+        language_servers.insert("python".into(), vec!["pyright".into()]);
+        language_servers.insert("c".into(), vec!["clangd".into()]);
+        language_servers.insert("cpp".into(), vec!["clangd".into()]);
+        language_servers.insert(
+            "javascript".into(),
+            vec![
+                "typescript-language-server".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "javascriptreact".into(),
+            vec![
+                "typescript-language-server".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "typescript".into(),
+            vec![
+                "typescript-language-server".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "typescriptreact".into(),
+            vec![
+                "typescript-language-server".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert("php".into(), vec!["intelephense".into()]);
+        language_servers.insert(
+            "html".into(),
+            vec![
+                "vscode-html-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "css".into(),
+            vec![
+                "vscode-css-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "scss".into(),
+            vec![
+                "vscode-css-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "less".into(),
+            vec![
+                "vscode-css-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert("json".into(), vec!["vscode-json-language-server".into()]);
+        language_servers.insert("jsonc".into(), vec!["vscode-json-language-server".into()]);
+        language_servers.insert("yaml".into(), vec!["yaml-language-server".into()]);
+        language_servers.insert(
+            "vue".into(),
+            vec![
+                "vue-language-server".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert(
+            "svelte".into(),
+            vec![
+                "svelteserver".into(),
+                "vscode-eslint-language-server".into(),
+                "tailwindcss-language-server".into(),
+                "emmet-ls".into(),
+            ],
+        );
+        language_servers.insert("graphql".into(), vec!["graphql-lsp".into()]);
+        language_servers.insert("dockerfile".into(), vec!["docker-langserver".into()]);
+        language_servers.insert("shellscript".into(), vec!["bash-language-server".into()]);
+
+        let root_markers = vec![
+            "Cargo.toml".to_string(),
+            "package.json".to_string(),
+            "tsconfig.json".to_string(),
+            "jsconfig.json".to_string(),
+            "pnpm-workspace.yaml".to_string(),
+            "yarn.lock".to_string(),
+            "package-lock.json".to_string(),
+            "bun.lockb".to_string(),
+            "turbo.json".to_string(),
+            "nx.json".to_string(),
+            "go.mod".to_string(),
+            "pyproject.toml".to_string(),
+            "setup.py".to_string(),
+            "composer.json".to_string(),
+            "Gemfile".to_string(),
+            "deno.json".to_string(),
+            "deno.jsonc".to_string(),
+        ];
+
+        LspConfig {
+            servers,
+            language_servers,
+            root_markers,
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// LspRegistry – manages multiple LSP client instances, one per language
-// ---------------------------------------------------------------------------
-
-/// Manages multiple LSP client instances, one per language.
 pub struct LspRegistry {
     clients: Arc<TokioMutex<HashMap<String, Arc<LspClient>>>>,
-    /// Languages that failed to start, so we don't keep retrying.
-    failed: Arc<TokioMutex<HashSet<String>>>,
-    /// Languages currently being started (prevents concurrent startup race).
+    failed_until: Arc<TokioMutex<HashMap<String, Instant>>>,
     starting: Arc<TokioMutex<HashSet<String>>>,
     config: LspConfig,
     fallback_root_uri: String,
     event_tx: mpsc::UnboundedSender<LspEvent>,
 }
 
-/// Detect the project root by walking up from a file path.
-/// Uses `.git` as the definitive project boundary. Falls back to the
-/// nearest directory containing a build-system marker (Cargo.toml, etc.).
-fn detect_project_root(file_uri: &str) -> Option<String> {
-    let path = file_uri.strip_prefix("file://")?;
-    let mut dir = std::path::Path::new(path).parent()?;
-    let build_markers = [
-        "Cargo.toml",
-        "package.json",
-        "go.mod",
-        "pyproject.toml",
-        "setup.py",
-        "composer.json",
-    ];
-    let mut best = None;
+fn detect_project_root(file_uri: &str, markers: &[String]) -> Option<String> {
+    let path = uri_to_file_path(file_uri)?;
+    let mut dir = path.parent()?;
+    let mut best: Option<String> = None;
+
     loop {
         if dir.join(".git").exists() {
-            // .git is the definitive project boundary
-            return Some(format!("file://{}", dir.display()));
+            return path_to_file_uri(dir);
         }
+
         if best.is_none() {
-            for marker in &build_markers {
+            for marker in markers {
                 if dir.join(marker).exists() {
-                    best = Some(format!("file://{}", dir.display()));
+                    best = path_to_file_uri(dir);
                     break;
                 }
             }
         }
+
         match dir.parent() {
             Some(parent) if parent != dir => dir = parent,
             _ => break,
         }
     }
+
     best
 }
 
 impl LspRegistry {
     pub fn new(root_uri: String, event_tx: mpsc::UnboundedSender<LspEvent>) -> Self {
+        let config = LspConfig::load(&root_uri);
         Self {
             clients: Arc::new(TokioMutex::new(HashMap::new())),
-            failed: Arc::new(TokioMutex::new(HashSet::new())),
+            failed_until: Arc::new(TokioMutex::new(HashMap::new())),
             starting: Arc::new(TokioMutex::new(HashSet::new())),
-            config: LspConfig::default(),
+            config,
             fallback_root_uri: root_uri,
             event_tx,
         }
     }
 
-    /// Get or start an LSP client for the given language ID.
-    /// The `file_uri` is used to detect the project root for the server.
-    ///
-    /// Uses a `starting` set to prevent multiple concurrent tasks from each
-    /// trying to start a server for the same language. If another task is
-    /// already starting the server, this waits for it to finish.
-    pub async fn get_client(&self, language_id: &str, file_uri: &str) -> Option<Arc<LspClient>> {
+    fn resolve_server_ids(&self, language_id: &str) -> Vec<String> {
+        if let Some(ids) = self.config.language_servers.get(language_id) {
+            return ids.clone();
+        }
+
+        if self.config.servers.contains_key(language_id) {
+            return vec![language_id.to_string()];
+        }
+
+        Vec::new()
+    }
+
+    fn detect_root_uri(&self, file_uri: &str) -> String {
+        detect_project_root(file_uri, &self.config.root_markers)
+            .unwrap_or_else(|| self.fallback_root_uri.clone())
+    }
+
+    fn client_key(server_id: &str, root_uri: &str) -> String {
+        format!("{}@{}", server_id, root_uri)
+    }
+
+    async fn get_or_start_client(&self, server_id: &str, root_uri: &str) -> Option<Arc<LspClient>> {
+        let client_key = Self::client_key(server_id, root_uri);
+
         loop {
-            // Check if already running.
             {
                 let clients = self.clients.lock().await;
-                if let Some(client) = clients.get(language_id) {
+                if let Some(client) = clients.get(&client_key) {
                     return Some(client.clone());
                 }
             }
 
-            // Don't retry languages that already failed to start.
-            if self.failed.lock().await.contains(language_id) {
-                return None;
+            {
+                let mut failed = self.failed_until.lock().await;
+                if let Some(until) = failed.get(&client_key).copied() {
+                    if Instant::now() < until {
+                        return None;
+                    }
+                    failed.remove(&client_key);
+                }
             }
 
-            // Check if another task is already starting this server.
             {
                 let starting = self.starting.lock().await;
-                if starting.contains(language_id) {
+                if starting.contains(&client_key) {
                     drop(starting);
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    tokio::time::sleep(Duration::from_millis(120)).await;
                     continue;
                 }
             }
 
-            // Mark as starting (we won the race).
-            self.starting.lock().await.insert(language_id.to_string());
+            self.starting.lock().await.insert(client_key.clone());
             break;
         }
 
-        // We are responsible for starting the server.
-        let result = self.start_server(language_id, file_uri).await;
-        self.starting.lock().await.remove(language_id);
+        let result = self.start_server(server_id, root_uri).await;
+        self.starting.lock().await.remove(&client_key);
         result
     }
 
-    /// Actually start an LSP server. Called only from `get_client` after
-    /// winning the startup race.
-    async fn start_server(&self, language_id: &str, file_uri: &str) -> Option<Arc<LspClient>> {
-        let server_config = match self.config.servers.get(language_id) {
+    async fn start_server(&self, server_id: &str, root_uri: &str) -> Option<Arc<LspClient>> {
+        let server_config = match self.config.servers.get(server_id) {
             Some(cfg) => cfg,
             None => {
-                log::info!("No LSP server configured for language: {}", language_id);
+                log::info!("No LSP server configured for server id: {}", server_id);
                 return None;
             }
         };
 
-        let root_uri =
-            detect_project_root(file_uri).unwrap_or_else(|| self.fallback_root_uri.clone());
+        let client_key = Self::client_key(server_id, root_uri);
+        let resolved_command = match resolve_lsp_command_path(&server_config.command) {
+            Some(path) => path,
+            None => {
+                let message = missing_command_message(server_id, &server_config.command);
+                log::warn!("LSP startup skipped for {}: {}", server_id, message);
+                self.failed_until
+                    .lock()
+                    .await
+                    .insert(client_key.clone(), Instant::now() + START_RETRY_COOLDOWN);
+                let _ = self.event_tx.send(LspEvent::ServerError {
+                    client_key,
+                    server_id: server_id.to_string(),
+                    message,
+                });
+                return None;
+            }
+        };
+        let resolved_command = resolved_command.to_string_lossy().to_string();
 
         match LspClient::start(
-            &server_config.command,
+            &resolved_command,
             &server_config.args,
-            &root_uri,
-            language_id,
+            root_uri,
+            server_id,
+            &client_key,
             self.event_tx.clone(),
         )
         .await
@@ -788,14 +1352,23 @@ impl LspRegistry {
                 self.clients
                     .lock()
                     .await
-                    .insert(language_id.to_string(), client.clone());
+                    .insert(client_key.clone(), client.clone());
                 Some(client)
             }
             Err(e) => {
-                log::warn!("Failed to start LSP server for '{}': {}", language_id, e);
-                self.failed.lock().await.insert(language_id.to_string());
+                log::warn!(
+                    "Failed to start LSP server for '{}' (key='{}'): {}",
+                    server_id,
+                    client_key,
+                    e
+                );
+                self.failed_until
+                    .lock()
+                    .await
+                    .insert(client_key.clone(), Instant::now() + START_RETRY_COOLDOWN);
                 let _ = self.event_tx.send(LspEvent::ServerError {
-                    language_id: language_id.to_string(),
+                    client_key,
+                    server_id: server_id.to_string(),
                     message: e,
                 });
                 None
@@ -803,21 +1376,35 @@ impl LspRegistry {
         }
     }
 
-    /// Remove a client (e.g., after server exits).
-    pub async fn remove_client(&self, language_id: &str) {
+    pub async fn get_clients(&self, language_id: &str, file_uri: &str) -> Vec<Arc<LspClient>> {
+        let server_ids = self.resolve_server_ids(language_id);
+        if server_ids.is_empty() {
+            log::debug!("No LSP servers configured for language: {}", language_id);
+            return Vec::new();
+        }
+
+        let root_uri = self.detect_root_uri(file_uri);
+        let mut out = Vec::new();
+        for server_id in server_ids {
+            if let Some(client) = self.get_or_start_client(&server_id, &root_uri).await {
+                out.push(client);
+            }
+        }
+        out
+    }
+
+    pub async fn remove_client(&self, client_key: &str) {
         let mut clients = self.clients.lock().await;
-        clients.remove(language_id);
+        clients.remove(client_key);
     }
 
-    /// Mark a language as failed so we don't keep retrying.
-    pub async fn mark_failed(&self, language_id: &str) {
-        self.failed.lock().await.insert(language_id.to_string());
-    }
-
-    /// Shutdown all running servers.
     pub async fn shutdown_all(&self) {
-        let clients = self.clients.lock().await;
-        for (_, client) in clients.iter() {
+        let clients: Vec<Arc<LspClient>> = {
+            let clients = self.clients.lock().await;
+            clients.values().cloned().collect()
+        };
+
+        for client in clients {
             let _ = client.shutdown().await;
         }
     }

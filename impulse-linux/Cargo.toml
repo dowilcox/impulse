@@ -22,3 +22,4 @@ log = "0.4"
 env_logger = "0.11"
 notify = "7"
 lsp-types = { version = "0.97", features = ["proposed"] }
+url = "2"

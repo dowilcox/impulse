@@ -6,7 +6,9 @@ use sourceview5::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
+use url::Url;
 
 use crate::editor;
 use crate::lsp_completion::{LspRequest, LspResponse};
@@ -59,7 +61,8 @@ pub fn build_window(app: &adw::Application) {
         } else {
             impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string())
         };
-        let root_uri = format!("file://{}", initial_dir);
+        let root_uri = file_path_to_uri(std::path::Path::new(&initial_dir))
+            .unwrap_or_else(|| "file:///".to_string());
         let gtk_tx = lsp_gtk_tx.clone();
 
         std::thread::spawn(move || {
@@ -83,7 +86,11 @@ pub fn build_window(app: &adw::Application) {
                 tokio::spawn(async move {
                     while let Some(event) = event_rx.recv().await {
                         let response = match event {
-                            impulse_core::lsp::LspEvent::Diagnostics { uri, diagnostics } => {
+                            impulse_core::lsp::LspEvent::Diagnostics {
+                                uri,
+                                version,
+                                diagnostics,
+                            } => {
                                 let diags = diagnostics
                                     .into_iter()
                                     .map(|d| {
@@ -112,23 +119,35 @@ pub fn build_window(app: &adw::Application) {
                                     .collect();
                                 LspResponse::Diagnostics {
                                     uri,
+                                    version,
                                     diagnostics: diags,
                                 }
                             }
-                            impulse_core::lsp::LspEvent::Initialized { language_id } => {
-                                LspResponse::ServerInitialized { language_id }
-                            }
+                            impulse_core::lsp::LspEvent::Initialized {
+                                client_key,
+                                server_id,
+                            } => LspResponse::ServerInitialized {
+                                client_key,
+                                server_id,
+                            },
                             impulse_core::lsp::LspEvent::ServerError {
-                                language_id,
+                                client_key,
+                                server_id,
                                 message,
                             } => LspResponse::ServerError {
-                                language_id,
+                                client_key,
+                                server_id,
                                 message,
                             },
-                            impulse_core::lsp::LspEvent::ServerExited { language_id } => {
-                                registry_for_exit.remove_client(&language_id).await;
-                                registry_for_exit.mark_failed(&language_id).await;
-                                LspResponse::ServerExited { language_id }
+                            impulse_core::lsp::LspEvent::ServerExited {
+                                client_key,
+                                server_id,
+                            } => {
+                                registry_for_exit.remove_client(&client_key).await;
+                                LspResponse::ServerExited {
+                                    client_key,
+                                    server_id,
+                                }
                             }
                         };
                         if gtk_tx_events.send(response).is_err() {
@@ -138,163 +157,141 @@ pub fn build_window(app: &adw::Application) {
                 });
 
                 // Main request processing loop.
-                // Each request is spawned concurrently. The race condition for
-                // simultaneous server starts is handled inside LspRegistry::get_client
-                // via the `starting` set.
+                // Requests are processed in-order to keep didOpen/didChange/completion
+                // sequencing deterministic per document.
                 let gtk_tx_req = gtk_tx;
                 while let Some(request) = lsp_request_rx.recv().await {
-                    let registry = registry.clone();
                     let gtk_tx = gtk_tx_req.clone();
-                    tokio::spawn(async move {
-                        match request {
-                            LspRequest::DidOpen {
-                                uri,
-                                language_id,
-                                version,
-                                text,
-                            } => {
-                                if let Some(client) =
-                                    registry.get_client(&language_id, &uri).await
-                                {
-                                    let _ = client.did_open(
-                                        &uri,
-                                        &language_id,
-                                        version,
-                                        &text,
-                                    );
-                                }
+                    match request {
+                        LspRequest::DidOpen {
+                            uri,
+                            language_id,
+                            version,
+                            text,
+                        } => {
+                            let clients = registry.get_clients(&language_id, &uri).await;
+                            for client in clients {
+                                let _ = client.did_open(&uri, &language_id, version, &text);
                             }
-                            LspRequest::DidChange {
-                                uri,
-                                version,
-                                text,
-                            } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    let _ = client.did_change(&uri, version, &text);
-                                }
+                        }
+                        LspRequest::DidChange { uri, version, text } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                let _ = client.did_change(&uri, version, &text);
                             }
-                            LspRequest::DidSave { uri } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    let _ = client.did_save(&uri);
-                                }
+                        }
+                        LspRequest::DidSave { uri } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                let _ = client.did_save(&uri);
                             }
-                            LspRequest::DidClose { uri } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    let _ = client.did_close(&uri);
-                                }
+                        }
+                        LspRequest::DidClose { uri } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                let _ = client.did_close(&uri);
                             }
-                            LspRequest::Completion {
-                                uri,
-                                line,
-                                character,
-                            } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    if let Ok(items) =
-                                        client.completion(&uri, line, character).await
-                                    {
-                                        let completions = items
-                                            .into_iter()
-                                            .map(|item| {
-                                                crate::lsp_completion::CompletionInfo {
-                                                    label: item.label,
-                                                    detail: item.detail,
-                                                    insert_text: item.insert_text,
-                                                    kind: format!(
-                                                        "{:?}",
-                                                        item.kind.unwrap_or(
-                                                            lsp_types::CompletionItemKind::TEXT
-                                                        )
-                                                    ),
-                                                }
-                                            })
-                                            .collect();
-                                        let _ =
-                                            gtk_tx.send(LspResponse::CompletionResult {
-                                                items: completions,
-                                            });
-                                    }
-                                }
-                            }
-                            LspRequest::Hover {
-                                uri,
-                                line,
-                                character,
-                            } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    if let Ok(Some(hover)) =
-                                        client.hover(&uri, line, character).await
-                                    {
-                                        let content =
-                                            crate::lsp_hover::hover_content_to_string(
-                                                &hover,
-                                            );
-                                        let _ =
-                                            gtk_tx.send(LspResponse::HoverResult {
-                                                contents: content,
-                                            });
-                                    }
-                                }
-                            }
-                            LspRequest::Definition {
-                                uri,
-                                line,
-                                character,
-                            } => {
-                                let lang = language_from_uri(&uri);
-                                if let Some(client) =
-                                    registry.get_client(&lang, &uri).await
-                                {
-                                    if let Ok(Some(def)) =
-                                        client.definition(&uri, line, character).await
-                                    {
-                                        let location = match def {
-                                            lsp_types::GotoDefinitionResponse::Scalar(
-                                                loc,
-                                            ) => Some(loc),
-                                            lsp_types::GotoDefinitionResponse::Array(
-                                                locs,
-                                            ) => locs.into_iter().next(),
-                                            lsp_types::GotoDefinitionResponse::Link(
-                                                links,
-                                            ) => links.into_iter().next().map(|l| {
-                                                lsp_types::Location {
-                                                    uri: l.target_uri,
-                                                    range: l.target_selection_range,
-                                                }
-                                            }),
-                                        };
-                                        if let Some(loc) = location {
-                                            let _ = gtk_tx.send(
-                                                LspResponse::DefinitionResult {
-                                                    uri: loc.uri.to_string(),
-                                                    line: loc.range.start.line,
-                                                    character: loc.range.start.character,
-                                                },
-                                            );
+                        }
+                        LspRequest::Completion {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            let mut seen = std::collections::HashSet::<String>::new();
+                            let mut completions = Vec::new();
+                            for client in clients {
+                                if let Ok(items) = client.completion(&uri, line, character).await {
+                                    for item in items {
+                                        let dedupe_key = format!(
+                                            "{}|{}|{}",
+                                            item.label,
+                                            item.detail.clone().unwrap_or_default(),
+                                            item.insert_text.clone().unwrap_or_default()
+                                        );
+                                        if seen.insert(dedupe_key) {
+                                            completions.push(completion_item_to_info(item));
                                         }
                                     }
                                 }
                             }
-                            LspRequest::Shutdown => {
-                                registry.shutdown_all().await;
+                            let _ = gtk_tx.send(LspResponse::CompletionResult {
+                                request_id,
+                                uri,
+                                version,
+                                items: completions,
+                            });
+                        }
+                        LspRequest::Hover {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(Some(hover)) = client.hover(&uri, line, character).await {
+                                    let content = crate::lsp_hover::hover_content_to_string(&hover);
+                                    let _ = gtk_tx.send(LspResponse::HoverResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        contents: content,
+                                    });
+                                    break;
+                                }
                             }
                         }
-                    });
+                        LspRequest::Definition {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(Some(def)) = client.definition(&uri, line, character).await {
+                                    let location = match def {
+                                        lsp_types::GotoDefinitionResponse::Scalar(loc) => Some(loc),
+                                        lsp_types::GotoDefinitionResponse::Array(locs) => {
+                                            locs.into_iter().next()
+                                        }
+                                        lsp_types::GotoDefinitionResponse::Link(links) => links
+                                            .into_iter()
+                                            .next()
+                                            .map(|l| lsp_types::Location {
+                                                uri: l.target_uri,
+                                                range: l.target_selection_range,
+                                            }),
+                                    };
+                                    if let Some(loc) = location {
+                                        let _ = gtk_tx.send(LspResponse::DefinitionResult {
+                                            request_id,
+                                            source_uri: uri.clone(),
+                                            source_version: version,
+                                            uri: loc.uri.to_string(),
+                                            line: loc.range.start.line,
+                                            character: loc.range.start.character,
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        LspRequest::Shutdown => {
+                            registry.shutdown_all().await;
+                        }
+                    }
                 }
             });
         });
@@ -303,6 +300,18 @@ pub fn build_window(app: &adw::Application) {
     // Shared document version counter for LSP
     let lsp_doc_versions: Rc<RefCell<std::collections::HashMap<String, i32>>> =
         Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let lsp_request_seq: Rc<Cell<u64>> = Rc::new(Cell::new(1));
+    let latest_completion_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_hover_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_definition_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let lsp_error_toast_dedupe: Rc<RefCell<HashSet<String>>> =
+        Rc::new(RefCell::new(HashSet::new()));
+    let (lsp_install_result_tx, lsp_install_result_rx) =
+        std::sync::mpsc::channel::<Result<String, String>>();
+    let lsp_install_result_rx = Rc::new(RefCell::new(lsp_install_result_rx));
 
     // Track the current CSS provider so we can swap themes at runtime
     let css_provider: Rc<RefCell<gtk4::CssProvider>> = {
@@ -486,347 +495,315 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let lsp_tx = lsp_request_tx.clone();
         let doc_versions = lsp_doc_versions.clone();
-        let last_hover_pos = last_hover_pos.clone();
         let tree_states = sidebar_state.tab_tree_states.clone();
         let tree_nodes = sidebar_state.tree_nodes.clone();
         let tree_current_path = sidebar_state.current_path.clone();
         let tree_scroll = sidebar_state.file_tree_scroll.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
-            // Check if the file is already open in a tab
-            let n = tab_view.n_pages();
-            for i in 0..n {
-                let page = tab_view.nth_page(i);
-                if page.child().widget_name().as_str() == path {
+            run_guarded_ui("on-file-activated", || {
+                // Check if the file is already open in a tab
+                let n = tab_view.n_pages();
+                for i in 0..n {
+                    let page = tab_view.nth_page(i);
+                    if page.child().widget_name().as_str() == path {
+                        tab_view.set_selected_page(&page);
+                        return;
+                    }
+                }
+
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+                    .to_string();
+
+                if editor::is_image_file(path) {
+                    // Open image preview
+                    let preview = editor::create_image_preview(path);
+                    let page = tab_view.append(&preview);
+                    page.set_title(&filename);
+                    // Preserve sidebar tree state for the new tab
+                    tree_states.borrow_mut().insert(
+                        preview.clone().upcast::<gtk4::Widget>(),
+                        crate::sidebar::TabTreeState {
+                            nodes: tree_nodes.borrow().clone(),
+                            current_path: tree_current_path.borrow().clone(),
+                            scroll_position: tree_scroll.vadjustment().value(),
+                        },
+                    );
                     tab_view.set_selected_page(&page);
-                    return;
-                }
-            }
+                } else if !editor::is_binary_file(path) {
+                    // Open file in new editor tab
+                    let (editor_widget, buffer) = editor::create_editor(path, &settings.borrow());
+                    let page = tab_view.append(&editor_widget);
+                    page.set_title(&filename);
 
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path)
-                .to_string();
+                    // Track unsaved changes
+                    {
+                        let page = page.clone();
+                        let filename = filename.clone();
+                        buffer.connect_modified_changed(move |buf| {
+                            if buf.is_modified() {
+                                page.set_title(&format!("\u{25CF} {}", filename));
+                            // ● dot prefix
+                            } else {
+                                page.set_title(&filename);
+                            }
+                        });
+                    }
 
-            if editor::is_image_file(path) {
-                // Open image preview
-                let preview = editor::create_image_preview(path);
-                let page = tab_view.append(&preview);
-                page.set_title(&filename);
-                // Preserve sidebar tree state for the new tab
-                tree_states.borrow_mut().insert(
-                    preview.clone().upcast::<gtk4::Widget>(),
-                    crate::sidebar::TabTreeState {
-                        nodes: tree_nodes.borrow().clone(),
-                        current_path: tree_current_path.borrow().clone(),
-                        scroll_position: tree_scroll.vadjustment().value(),
-                    },
-                );
-                tab_view.set_selected_page(&page);
-            } else if !editor::is_binary_file(path) {
-                // Open file in new editor tab
-                let (editor_widget, buffer) = editor::create_editor(path, &settings.borrow());
-                let page = tab_view.append(&editor_widget);
-                page.set_title(&filename);
+                    // Live cursor position updates + git blame
+                    {
+                        let status_bar = status_bar.clone();
+                        let tab_view = tab_view.clone();
+                        let editor_widget_name = editor_widget.widget_name().to_string();
+                        let file_path_for_blame = path.to_string();
+                        let last_blame_line: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
+                        buffer.connect_notify_local(Some("cursor-position"), move |buf, _| {
+                            if let Some(page) = tab_view.selected_page() {
+                                if page.child().widget_name().as_str() == editor_widget_name {
+                                    let insert_mark = buf.get_insert();
+                                    let iter = buf.iter_at_mark(&insert_mark);
+                                    let line = iter.line();
+                                    let col = iter.line_offset();
+                                    status_bar.borrow().update_cursor_position(line, col);
 
-                // Track unsaved changes
-                {
-                    let page = page.clone();
-                    let filename = filename.clone();
-                    buffer.connect_modified_changed(move |buf| {
-                        if buf.is_modified() {
-                            page.set_title(&format!("\u{25CF} {}", filename)); // ● dot prefix
-                        } else {
-                            page.set_title(&filename);
-                        }
-                    });
-                }
-
-                // Live cursor position updates + git blame
-                {
-                    let status_bar = status_bar.clone();
-                    let tab_view = tab_view.clone();
-                    let editor_widget_name = editor_widget.widget_name().to_string();
-                    let file_path_for_blame = path.to_string();
-                    let last_blame_line: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
-                    buffer.connect_notify_local(Some("cursor-position"), move |buf, _| {
-                        if let Some(page) = tab_view.selected_page() {
-                            if page.child().widget_name().as_str() == editor_widget_name {
-                                let insert_mark = buf.get_insert();
-                                let iter = buf.iter_at_mark(&insert_mark);
-                                let line = iter.line();
-                                let col = iter.line_offset();
-                                status_bar.borrow().update_cursor_position(line, col);
-
-                                // Update blame only when line changes
-                                if line != last_blame_line.get() {
-                                    last_blame_line.set(line);
-                                    match impulse_core::git::get_line_blame(
-                                        &file_path_for_blame,
-                                        (line + 1) as u32,
-                                    ) {
-                                        Ok(blame) => {
-                                            let text = format!(
-                                                "{} \u{2022} {} \u{2022} {}",
-                                                blame.author, blame.date, blame.summary
-                                            );
-                                            status_bar.borrow().update_blame(&text);
-                                        }
-                                        Err(_) => {
-                                            status_bar.borrow().clear_blame();
+                                    // Update blame only when line changes
+                                    if line != last_blame_line.get() {
+                                        last_blame_line.set(line);
+                                        match impulse_core::git::get_line_blame(
+                                            &file_path_for_blame,
+                                            (line + 1) as u32,
+                                        ) {
+                                            Ok(blame) => {
+                                                let text = format!(
+                                                    "{} \u{2022} {} \u{2022} {}",
+                                                    blame.author, blame.date, blame.summary
+                                                );
+                                                status_bar.borrow().update_blame(&text);
+                                            }
+                                            Err(_) => {
+                                                status_bar.borrow().clear_blame();
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    });
-                }
+                        });
+                    }
 
-                // LSP: send didOpen
-                {
-                    let uri = format!("file://{}", path);
-                    let language_id = language_from_uri(&uri);
-                    log::info!("LSP didOpen: uri={}, language_id={}", uri, language_id);
-                    let start = buffer.start_iter();
-                    let end = buffer.end_iter();
-                    let text = buffer.text(&start, &end, true).to_string();
-                    let mut versions = doc_versions.borrow_mut();
-                    let version = versions.entry(path.to_string()).or_insert(0);
-                    *version += 1;
-                    let _ = lsp_tx.send(LspRequest::DidOpen {
-                        uri,
-                        language_id,
-                        version: *version,
-                        text,
-                    });
-                }
+                    // LSP: send didOpen
+                    {
+                        let uri = file_path_to_uri(std::path::Path::new(path))
+                            .unwrap_or_else(|| format!("file://{}", path));
+                        let language_id = language_from_uri(&uri);
+                        log::info!("LSP didOpen: uri={}, language_id={}", uri, language_id);
+                        let start = buffer.start_iter();
+                        let end = buffer.end_iter();
+                        let text = buffer.text(&start, &end, true).to_string();
+                        let mut versions = doc_versions.borrow_mut();
+                        let version = versions.entry(path.to_string()).or_insert(0);
+                        *version += 1;
+                        let _ = lsp_tx.send(LspRequest::DidOpen {
+                            uri,
+                            language_id,
+                            version: *version,
+                            text,
+                        });
+                    }
 
-                // LSP: send didChange on buffer modifications (debounced with auto-save)
-                {
-                    let lsp_tx = lsp_tx.clone();
-                    let doc_versions = doc_versions.clone();
-                    let path_for_lsp = path.to_string();
-                    let lsp_change_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
-                        Rc::new(RefCell::new(None));
-                    buffer.connect_changed({
-                        let buf = buffer.clone();
-                        move |_| {
-                            // Cancel pending LSP change notification
-                            if let Some(source_id) = lsp_change_source.borrow_mut().take() {
-                                source_id.remove();
+                    // LSP: send didChange on buffer modifications (debounced with auto-save)
+                    {
+                        let lsp_tx = lsp_tx.clone();
+                        let doc_versions = doc_versions.clone();
+                        let path_for_lsp = path.to_string();
+                        let lsp_change_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
+                            Rc::new(RefCell::new(None));
+                        buffer.connect_changed({
+                            let buf = buffer.clone();
+                            move |_| {
+                                // Cancel pending LSP change notification
+                                let previous_source = { lsp_change_source.borrow_mut().take() };
+                                if let Some(source_id) = previous_source {
+                                    source_id.remove();
+                                }
+                                let lsp_tx = lsp_tx.clone();
+                                let doc_versions = doc_versions.clone();
+                                let path = path_for_lsp.clone();
+                                let buf = buf.clone();
+                                let lsp_inner = lsp_change_source.clone();
+                                let source_id = gtk4::glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(500),
+                                    move || {
+                                        let start = buf.start_iter();
+                                        let end = buf.end_iter();
+                                        let text = buf.text(&start, &end, true).to_string();
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let mut versions = doc_versions.borrow_mut();
+                                        let version = versions.entry(path.clone()).or_insert(0);
+                                        *version += 1;
+                                        let _ = lsp_tx.send(LspRequest::DidChange {
+                                            uri,
+                                            version: *version,
+                                            text,
+                                        });
+                                        *lsp_inner.borrow_mut() = None;
+                                    },
+                                );
+                                *lsp_change_source.borrow_mut() = Some(source_id);
                             }
-                            let lsp_tx = lsp_tx.clone();
-                            let doc_versions = doc_versions.clone();
-                            let path = path_for_lsp.clone();
-                            let buf = buf.clone();
-                            let lsp_inner = lsp_change_source.clone();
-                            let source_id = gtk4::glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(500),
-                                move || {
-                                    let start = buf.start_iter();
-                                    let end = buf.end_iter();
-                                    let text = buf.text(&start, &end, true).to_string();
-                                    let uri = format!("file://{}", path);
-                                    let mut versions = doc_versions.borrow_mut();
-                                    let version = versions.entry(path.clone()).or_insert(0);
-                                    *version += 1;
-                                    let _ = lsp_tx.send(LspRequest::DidChange {
-                                        uri,
-                                        version: *version,
-                                        text,
-                                    });
-                                    *lsp_inner.borrow_mut() = None;
-                                },
-                            );
-                            *lsp_change_source.borrow_mut() = Some(source_id);
-                        }
-                    });
-                }
+                        });
+                    }
 
-                // Auto-save after 2 seconds of inactivity
-                {
-                    let path = path.to_string();
-                    let auto_save_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
-                        Rc::new(RefCell::new(None));
-                    let settings = settings.clone();
-                    let lsp_tx = lsp_tx.clone();
-
-                    buffer.connect_changed(move |buf| {
-                        if !settings.borrow().auto_save {
-                            return;
-                        }
-                        // Cancel any pending auto-save
-                        if let Some(source_id) = auto_save_source.borrow_mut().take() {
-                            source_id.remove();
-                        }
-
-                        // Only auto-save if modified
-                        if !buf.is_modified() {
-                            return;
-                        }
-
-                        let buf = buf.clone();
-                        let path = path.clone();
-                        let auto_save_inner = auto_save_source.clone();
+                    // Auto-save after 2 seconds of inactivity
+                    {
+                        let path = path.to_string();
+                        let auto_save_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
+                            Rc::new(RefCell::new(None));
                         let settings = settings.clone();
                         let lsp_tx = lsp_tx.clone();
 
-                        let source_id = gtk4::glib::timeout_add_local_once(
-                            std::time::Duration::from_secs(2),
-                            move || {
-                                if buf.is_modified() {
-                                    let start = buf.start_iter();
-                                    let end = buf.end_iter();
-                                    let text = buf.text(&start, &end, true);
-                                    if let Err(e) = std::fs::write(&path, text.as_str()) {
-                                        log::error!("Auto-save failed for {}: {}", path, e);
-                                    } else {
-                                        buf.set_modified(false);
-                                        log::info!("Auto-saved: {}", path);
-                                        // LSP: send didSave
-                                        let _ = lsp_tx.send(LspRequest::DidSave {
-                                            uri: format!("file://{}", path),
-                                        });
-                                        // Run commands on save in a background thread
-                                        let commands = settings.borrow().commands_on_save.clone();
-                                        let save_path = path.clone();
-                                        std::thread::spawn(move || {
-                                            run_commands_on_save(&save_path, &commands);
-                                        });
+                        buffer.connect_changed(move |buf| {
+                            if !settings.borrow().auto_save {
+                                return;
+                            }
+                            // Cancel any pending auto-save
+                            let previous_source = { auto_save_source.borrow_mut().take() };
+                            if let Some(source_id) = previous_source {
+                                source_id.remove();
+                            }
+
+                            // Only auto-save if modified
+                            if !buf.is_modified() {
+                                return;
+                            }
+
+                            let buf = buf.clone();
+                            let path = path.clone();
+                            let auto_save_inner = auto_save_source.clone();
+                            let settings = settings.clone();
+                            let lsp_tx = lsp_tx.clone();
+
+                            let source_id = gtk4::glib::timeout_add_local_once(
+                                std::time::Duration::from_secs(2),
+                                move || {
+                                    if buf.is_modified() {
+                                        let start = buf.start_iter();
+                                        let end = buf.end_iter();
+                                        let text = buf.text(&start, &end, true);
+                                        if let Err(e) = std::fs::write(&path, text.as_str()) {
+                                            log::error!("Auto-save failed for {}: {}", path, e);
+                                        } else {
+                                            buf.set_modified(false);
+                                            log::info!("Auto-saved: {}", path);
+                                            // LSP: send didSave
+                                            let _ = lsp_tx.send(LspRequest::DidSave {
+                                                uri: file_path_to_uri(std::path::Path::new(&path))
+                                                    .unwrap_or_else(|| format!("file://{}", path)),
+                                            });
+                                            // Run commands on save in a background thread
+                                            let commands =
+                                                settings.borrow().commands_on_save.clone();
+                                            let save_path = path.clone();
+                                            std::thread::spawn(move || {
+                                                run_commands_on_save(&save_path, &commands);
+                                            });
+                                        }
                                     }
+                                    // Clear the source ID
+                                    *auto_save_inner.borrow_mut() = None;
+                                },
+                            );
+
+                            *auto_save_source.borrow_mut() = Some(source_id);
+                        });
+                    }
+
+                    // Automatic hover-on-mouse-move is temporarily disabled for stability.
+                    // Manual hover remains available with Ctrl+Shift+I.
+
+                    // Multi-cursor key interception on editor views
+                    if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
+                        let mc_state = multi_cursor_state.clone();
+                        let mc_buf = buffer.clone();
+                        let key_ctrl = gtk4::EventControllerKey::new();
+                        key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                        key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
+                            let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+                            let has_mc =
+                                mc_state.borrow().as_ref().is_some_and(|mc| mc.is_active());
+
+                            // Ctrl+D: add next occurrence
+                            if ctrl && key == gtk4::gdk::Key::d {
+                                if multi_cursor::handle_ctrl_d(&mc_state, &mc_buf) {
+                                    return gtk4::glib::Propagation::Stop;
                                 }
-                                // Clear the source ID
-                                *auto_save_inner.borrow_mut() = None;
-                            },
-                        );
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                        *auto_save_source.borrow_mut() = Some(source_id);
-                    });
-                }
+                            if !has_mc {
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                // LSP: hover on mouse motion (debounced)
-                if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
-                    let lsp_tx = lsp_tx.clone();
-                    let path_for_hover = path.to_string();
-                    let hover_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
-                        Rc::new(RefCell::new(None));
-                    let last_hover_pos = last_hover_pos.clone();
-                    let motion = gtk4::EventControllerMotion::new();
-                    let view_for_motion = view.clone();
-                    motion.connect_motion(move |_, x, y| {
-                        if let Some(source_id) = hover_source.borrow_mut().take() {
-                            source_id.remove();
-                        }
-                        let lsp_tx = lsp_tx.clone();
-                        let path = path_for_hover.clone();
-                        let hover_inner = hover_source.clone();
-                        let view_ref = view_for_motion.clone();
-                        let last_hover_pos = last_hover_pos.clone();
-                        let source_id = gtk4::glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(400),
-                            move || {
-                                let (bx, by) = view_ref.window_to_buffer_coords(
-                                    gtk4::TextWindowType::Widget,
-                                    x as i32,
-                                    y as i32,
-                                );
-                                if let Some((iter, _)) = view_ref.iter_at_position(bx, by) {
-                                    let line = iter.line() as u32;
-                                    let character = iter.line_offset() as u32;
-                                    last_hover_pos.set((line, character));
-                                    let _ = lsp_tx.send(LspRequest::Hover {
-                                        uri: format!("file://{}", path),
-                                        line,
-                                        character,
-                                    });
-                                }
-                                *hover_inner.borrow_mut() = None;
-                            },
-                        );
-                        *hover_source.borrow_mut() = Some(source_id);
-                    });
-                    view.add_controller(motion);
-                }
-
-                // Multi-cursor key interception on editor views
-                if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
-                    let mc_state = multi_cursor_state.clone();
-                    let mc_buf = buffer.clone();
-                    let key_ctrl = gtk4::EventControllerKey::new();
-                    key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
-                    key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
-                        let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
-                        let has_mc = mc_state.borrow().as_ref().is_some_and(|mc| mc.is_active());
-
-                        // Ctrl+D: add next occurrence
-                        if ctrl && key == gtk4::gdk::Key::d {
-                            if multi_cursor::handle_ctrl_d(&mc_state, &mc_buf) {
+                            // Escape: clear extra cursors
+                            if key == gtk4::gdk::Key::Escape {
+                                multi_cursor::handle_escape(&mc_state);
                                 return gtk4::glib::Propagation::Stop;
                             }
-                            return gtk4::glib::Propagation::Proceed;
-                        }
 
-                        if !has_mc {
-                            return gtk4::glib::Propagation::Proceed;
-                        }
+                            // Backspace
+                            if key == gtk4::gdk::Key::BackSpace {
+                                multi_cursor::handle_backspace(&mc_state);
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                        // Escape: clear extra cursors
-                        if key == gtk4::gdk::Key::Escape {
-                            multi_cursor::handle_escape(&mc_state);
-                            return gtk4::glib::Propagation::Stop;
-                        }
+                            // Delete
+                            if key == gtk4::gdk::Key::Delete {
+                                multi_cursor::handle_delete(&mc_state);
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                        // Backspace
-                        if key == gtk4::gdk::Key::BackSpace {
-                            multi_cursor::handle_backspace(&mc_state);
-                            return gtk4::glib::Propagation::Proceed;
-                        }
+                            // Return/Enter
+                            if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
+                                multi_cursor::handle_insert(&mc_state, "\n");
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                        // Delete
-                        if key == gtk4::gdk::Key::Delete {
-                            multi_cursor::handle_delete(&mc_state);
-                            return gtk4::glib::Propagation::Proceed;
-                        }
+                            // Tab
+                            if key == gtk4::gdk::Key::Tab {
+                                multi_cursor::handle_insert(&mc_state, "\t");
+                                return gtk4::glib::Propagation::Proceed;
+                            }
 
-                        // Return/Enter
-                        if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
-                            multi_cursor::handle_insert(&mc_state, "\n");
-                            return gtk4::glib::Propagation::Proceed;
-                        }
-
-                        // Tab
-                        if key == gtk4::gdk::Key::Tab {
-                            multi_cursor::handle_insert(&mc_state, "\t");
-                            return gtk4::glib::Propagation::Proceed;
-                        }
-
-                        // Regular character input: replicate to extra cursors
-                        if !ctrl {
-                            if let Some(ch) = key.to_unicode() {
-                                if !ch.is_control() {
-                                    multi_cursor::handle_insert(&mc_state, &ch.to_string());
-                                    return gtk4::glib::Propagation::Proceed;
+                            // Regular character input: replicate to extra cursors
+                            if !ctrl {
+                                if let Some(ch) = key.to_unicode() {
+                                    if !ch.is_control() {
+                                        multi_cursor::handle_insert(&mc_state, &ch.to_string());
+                                        return gtk4::glib::Propagation::Proceed;
+                                    }
                                 }
                             }
-                        }
 
-                        gtk4::glib::Propagation::Proceed
-                    });
+                            gtk4::glib::Propagation::Proceed
+                        });
 
-                    view.add_controller(key_ctrl);
+                        view.add_controller(key_ctrl);
+                    }
+
+                    // Preserve sidebar tree state for the new tab
+                    tree_states.borrow_mut().insert(
+                        editor_widget.clone().upcast::<gtk4::Widget>(),
+                        crate::sidebar::TabTreeState {
+                            nodes: tree_nodes.borrow().clone(),
+                            current_path: tree_current_path.borrow().clone(),
+                            scroll_position: tree_scroll.vadjustment().value(),
+                        },
+                    );
+                    tab_view.set_selected_page(&page);
                 }
-
-                // Preserve sidebar tree state for the new tab
-                tree_states.borrow_mut().insert(
-                    editor_widget.clone().upcast::<gtk4::Widget>(),
-                    crate::sidebar::TabTreeState {
-                        nodes: tree_nodes.borrow().clone(),
-                        current_path: tree_current_path.borrow().clone(),
-                        scroll_position: tree_scroll.vadjustment().value(),
-                    },
-                );
-                tab_view.set_selected_page(&page);
-            }
+            });
         }));
     }
 
@@ -838,26 +815,28 @@ pub fn build_window(app: &adw::Application) {
             .project_search
             .on_result_activated
             .borrow_mut() = Some(Box::new(move |path: &str, line: u32| {
-            // First, open the file (reuse sidebar's callback)
-            if let Some(cb) = sidebar_on_file.borrow().as_ref() {
-                cb(path);
-            }
-            // Then scroll to the specific line in the editor
-            let n = tab_view.n_pages();
-            for i in 0..n {
-                let page = tab_view.nth_page(i);
-                if page.child().widget_name().as_str() == path {
-                    if let Some(view) = editor::get_editor_view(&page.child()) {
-                        let buf = view.buffer();
-                        let mut iter = buf.iter_at_line((line as i32).saturating_sub(1));
-                        if let Some(ref mut it) = iter {
-                            buf.place_cursor(it);
-                            view.scroll_to_iter(it, 0.1, false, 0.0, 0.0);
-                        }
-                    }
-                    break;
+            run_guarded_ui("project-search-result-activated", || {
+                // First, open the file (reuse sidebar's callback)
+                if let Some(cb) = sidebar_on_file.borrow().as_ref() {
+                    cb(path);
                 }
-            }
+                // Then scroll to the specific line in the editor
+                let n = tab_view.n_pages();
+                for i in 0..n {
+                    let page = tab_view.nth_page(i);
+                    if page.child().widget_name().as_str() == path {
+                        if let Some(view) = editor::get_editor_view(&page.child()) {
+                            let buf = view.buffer();
+                            let mut iter = buf.iter_at_line((line as i32).saturating_sub(1));
+                            if let Some(ref mut it) = iter {
+                                buf.place_cursor(it);
+                                view.scroll_to_iter(it, 0.1, false, 0.0, 0.0);
+                            }
+                        }
+                        break;
+                    }
+                }
+            });
         }));
     }
 
@@ -911,55 +890,46 @@ pub fn build_window(app: &adw::Application) {
                 let sidebar_state = sidebar_state.clone();
                 let tab_view = tab_view.clone();
                 term.connect_current_directory_uri_notify(move |terminal| {
-                    if let Some(uri) = terminal.current_directory_uri() {
-                        let uri_str = uri.to_string();
-                        // Strip file:// prefix
-                        let path = if let Some(rest) = uri_str.strip_prefix("file://") {
-                            // Skip hostname
-                            if let Some(slash_idx) = rest.find('/') {
-                                &rest[slash_idx..]
-                            } else {
-                                rest
-                            }
-                        } else {
-                            &uri_str
-                        };
-                        let path = url_decode(path);
+                    run_guarded_ui("terminal-cwd-notify", || {
+                        if let Some(uri) = terminal.current_directory_uri() {
+                            let uri_str = uri.to_string();
+                            let path = uri_to_file_path(&uri_str);
 
-                        // Only update sidebar/status bar if this terminal is in the active tab
-                        let is_active = tab_view
-                            .selected_page()
-                            .is_some_and(|p| terminal.is_ancestor(&p.child()));
-                        if is_active {
-                            status_bar.borrow().update_cwd(&path);
-                            sidebar_state.load_directory(&path);
-                            *project_search_root.borrow_mut() = path.to_string();
-                        } else {
-                            // Background tab CWD changed: invalidate saved tree state
+                            // Only update sidebar/status bar if this terminal is in the active tab
+                            let is_active = tab_view
+                                .selected_page()
+                                .is_some_and(|p| terminal.is_ancestor(&p.child()));
+                            if is_active {
+                                status_bar.borrow().update_cwd(&path);
+                                sidebar_state.load_directory(&path);
+                                *project_search_root.borrow_mut() = path.to_string();
+                            } else {
+                                // Background tab CWD changed: invalidate saved tree state
+                                let n = tab_view.n_pages();
+                                for i in 0..n {
+                                    let page = tab_view.nth_page(i);
+                                    if terminal.is_ancestor(&page.child()) {
+                                        sidebar_state.remove_tab_state(&page.child());
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Always update tab title to directory name
+                            let dir_name = std::path::Path::new(&path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(&path);
                             let n = tab_view.n_pages();
                             for i in 0..n {
                                 let page = tab_view.nth_page(i);
                                 if terminal.is_ancestor(&page.child()) {
-                                    sidebar_state.remove_tab_state(&page.child());
+                                    page.set_title(dir_name);
                                     break;
                                 }
                             }
                         }
-
-                        // Always update tab title to directory name
-                        let dir_name = std::path::Path::new(&path)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(&path);
-                        let n = tab_view.n_pages();
-                        for i in 0..n {
-                            let page = tab_view.nth_page(i);
-                            if terminal.is_ancestor(&page.child()) {
-                                page.set_title(dir_name);
-                                break;
-                            }
-                        }
-                    }
+                    });
                 });
             }
 
@@ -968,15 +938,17 @@ pub fn build_window(app: &adw::Application) {
                 let tab_view = tab_view.clone();
                 let term_clone = term.clone();
                 term.connect_child_exited(move |_terminal, _status| {
-                    // Find and close the tab page containing this terminal
-                    let n = tab_view.n_pages();
-                    for i in 0..n {
-                        let page = tab_view.nth_page(i);
-                        if term_clone.is_ancestor(&page.child()) {
-                            tab_view.close_page(&page);
-                            break;
+                    run_guarded_ui("terminal-child-exited", || {
+                        // Find and close the tab page containing this terminal
+                        let n = tab_view.n_pages();
+                        for i in 0..n {
+                            let page = tab_view.nth_page(i);
+                            if term_clone.is_ancestor(&page.child()) {
+                                tab_view.close_page(&page);
+                                break;
+                            }
                         }
-                    }
+                    });
                 });
             }
         })
@@ -1114,113 +1086,247 @@ pub fn build_window(app: &adw::Application) {
         let sidebar_state = sidebar_state.clone();
         let lsp_gtk_rx = lsp_gtk_rx.clone();
         let last_hover_pos = last_hover_pos.clone();
+        let doc_versions = lsp_doc_versions.clone();
+        let latest_completion_req = latest_completion_req.clone();
+        let latest_hover_req = latest_hover_req.clone();
+        let latest_definition_req = latest_definition_req.clone();
+        let toast_overlay = toast_overlay.clone();
+        let lsp_error_toast_dedupe = lsp_error_toast_dedupe.clone();
+        let lsp_install_result_rx = lsp_install_result_rx.clone();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            let rx = lsp_gtk_rx.borrow();
-            while let Ok(response) = rx.try_recv() {
-                match response {
-                    LspResponse::Diagnostics { uri, diagnostics } => {
-                        let file_path = uri_to_file_path(&uri);
-                        let n = tab_view.n_pages();
-                        for i in 0..n {
-                            let page = tab_view.nth_page(i);
-                            let child = page.child();
-                            if child.widget_name().as_str() == file_path {
-                                if let Some(buf) = editor::get_editor_buffer(&child) {
-                                    if let Some(view) = editor::get_editor_view(&child) {
-                                        crate::lsp_completion::apply_diagnostics(
-                                            &buf,
-                                            &view,
-                                            &diagnostics,
-                                        );
-                                    }
+            run_guarded_ui("lsp-gtk-poll", || {
+                {
+                    let install_rx = lsp_install_result_rx.borrow();
+                    while let Ok(result) = install_rx.try_recv() {
+                        let text = match result {
+                            Ok(msg) => msg,
+                            Err(err) => format!("Failed to install web LSP servers: {}", err),
+                        };
+                        let toast = adw::Toast::new(&text);
+                        toast.set_timeout(5);
+                        toast_overlay.add_toast(toast);
+                    }
+                }
+
+                let rx = lsp_gtk_rx.borrow();
+                while let Ok(response) = rx.try_recv() {
+                    match response {
+                        LspResponse::Diagnostics {
+                            uri,
+                            version,
+                            diagnostics,
+                        } => {
+                            let file_path = uri_to_file_path(&uri);
+                            if let Some(diag_version) = version {
+                                let current_version =
+                                    *doc_versions.borrow().get(&file_path).unwrap_or(&0);
+                                if diag_version < current_version {
+                                    continue;
                                 }
-                                break;
+                            }
+                            let n = tab_view.n_pages();
+                            for i in 0..n {
+                                let page = tab_view.nth_page(i);
+                                let child = page.child();
+                                if child.widget_name().as_str() == file_path {
+                                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                                        if let Some(view) = editor::get_editor_view(&child) {
+                                            crate::lsp_completion::apply_diagnostics(
+                                                &buf,
+                                                &view,
+                                                &diagnostics,
+                                            );
+                                        }
+                                    }
+                                    break;
+                                }
                             }
                         }
-                    }
-                    LspResponse::DefinitionResult {
-                        uri,
-                        line,
-                        character,
-                    } => {
-                        let file_path = uri_to_file_path(&uri);
-                        // Open the file via sidebar callback
-                        if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
-                            cb(&file_path);
+                        LspResponse::DefinitionResult {
+                            request_id,
+                            source_uri,
+                            source_version,
+                            uri,
+                            line,
+                            character,
+                        } => {
+                            let source_path = uri_to_file_path(&source_uri);
+                            let latest = latest_definition_req
+                                .borrow()
+                                .get(&source_path)
+                                .copied()
+                                .unwrap_or(0);
+                            if latest != request_id {
+                                continue;
+                            }
+                            let current_version =
+                                *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                            if current_version != source_version {
+                                continue;
+                            }
+                            if let Some(page) = tab_view.selected_page() {
+                                if page.child().widget_name().as_str() != source_path {
+                                    continue;
+                                }
+                            }
+
+                            let file_path = uri_to_file_path(&uri);
+                            // Open the file via sidebar callback
+                            if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                cb(&file_path);
+                            }
+                            // Navigate to the position
+                            let n = tab_view.n_pages();
+                            for i in 0..n {
+                                let page = tab_view.nth_page(i);
+                                let child = page.child();
+                                if child.widget_name().as_str() == file_path {
+                                    if let Some(buf) = editor::get_editor_buffer(&child) {
+                                        if let Some(iter) =
+                                            buf.iter_at_line_offset(line as i32, character as i32)
+                                        {
+                                            buf.place_cursor(&iter);
+                                            if let Some(view) = editor::get_editor_view(&child) {
+                                                view.scroll_to_iter(
+                                                    &mut iter.clone(),
+                                                    0.1,
+                                                    true,
+                                                    0.0,
+                                                    0.5,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    tab_view.set_selected_page(&page);
+                                    break;
+                                }
+                            }
                         }
-                        // Navigate to the position
-                        let n = tab_view.n_pages();
-                        for i in 0..n {
-                            let page = tab_view.nth_page(i);
-                            let child = page.child();
-                            if child.widget_name().as_str() == file_path {
-                                if let Some(buf) = editor::get_editor_buffer(&child) {
-                                    if let Some(iter) =
-                                        buf.iter_at_line_offset(line as i32, character as i32)
-                                    {
-                                        buf.place_cursor(&iter);
-                                        if let Some(view) = editor::get_editor_view(&child) {
-                                            view.scroll_to_iter(
-                                                &mut iter.clone(),
-                                                0.1,
-                                                true,
-                                                0.0,
-                                                0.5,
+                        LspResponse::ServerInitialized {
+                            client_key,
+                            server_id,
+                        } => {
+                            log::info!(
+                                "LSP server initialized: server_id={}, key={}",
+                                server_id,
+                                client_key
+                            );
+                        }
+                        LspResponse::ServerError {
+                            client_key,
+                            server_id,
+                            message,
+                        } => {
+                            log::warn!(
+                                "LSP server error for {} (key={}): {}",
+                                server_id,
+                                client_key,
+                                message
+                            );
+
+                            let dedupe_key = format!("{}|{}", server_id, message);
+                            if lsp_error_toast_dedupe.borrow_mut().insert(dedupe_key) {
+                                let toast_message = if message.contains("install-lsp-servers") {
+                                    format!(
+                                    "LSP '{}' missing. Open Command Palette and run 'Install Web LSP Servers'.",
+                                    server_id
+                                )
+                                } else {
+                                    format!("LSP '{}' failed to start: {}", server_id, message)
+                                };
+                                let toast = adw::Toast::new(&toast_message);
+                                toast.set_timeout(7);
+                                toast_overlay.add_toast(toast);
+                            }
+                        }
+                        LspResponse::ServerExited {
+                            client_key,
+                            server_id,
+                        } => {
+                            log::info!(
+                                "LSP server exited: server_id={}, key={}",
+                                server_id,
+                                client_key
+                            );
+                        }
+                        LspResponse::CompletionResult {
+                            request_id,
+                            uri,
+                            version,
+                            items,
+                        } => {
+                            let source_path = uri_to_file_path(&uri);
+                            let latest = latest_completion_req
+                                .borrow()
+                                .get(&source_path)
+                                .copied()
+                                .unwrap_or(0);
+                            if latest != request_id {
+                                continue;
+                            }
+                            let current_version =
+                                *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                            if current_version != version {
+                                continue;
+                            }
+                            // Show completion popup on the active editor tab
+                            if let Some(page) = tab_view.selected_page() {
+                                let child = page.child();
+                                if editor::is_editor(&child)
+                                    && child.widget_name().as_str() == source_path
+                                {
+                                    if let Some(view) = editor::get_editor_view(&child) {
+                                        if let Some(buf) = editor::get_editor_buffer(&child) {
+                                            crate::lsp_completion::show_completion_popup(
+                                                &view, &buf, &items,
                                             );
                                         }
                                     }
                                 }
-                                tab_view.set_selected_page(&page);
-                                break;
                             }
                         }
-                    }
-                    LspResponse::ServerInitialized { language_id } => {
-                        log::info!("LSP server initialized for: {}", language_id);
-                    }
-                    LspResponse::ServerError {
-                        language_id,
-                        message,
-                    } => {
-                        log::warn!("LSP server error for {}: {}", language_id, message);
-                    }
-                    LspResponse::ServerExited { language_id } => {
-                        log::info!("LSP server exited for: {}", language_id);
-                    }
-                    LspResponse::CompletionResult { items } => {
-                        // Show completion popup on the active editor tab
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child) {
-                                if let Some(view) = editor::get_editor_view(&child) {
-                                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                                        crate::lsp_completion::show_completion_popup(
-                                            &view, &buf, &items,
-                                        );
-                                    }
-                                }
+                        LspResponse::HoverResult {
+                            request_id,
+                            uri,
+                            version,
+                            contents,
+                        } => {
+                            let source_path = uri_to_file_path(&uri);
+                            let latest = latest_hover_req
+                                .borrow()
+                                .get(&source_path)
+                                .copied()
+                                .unwrap_or(0);
+                            if latest != request_id {
+                                continue;
                             }
-                        }
-                    }
-                    LspResponse::HoverResult { contents } => {
-                        // Show hover popover at the last hover request position
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child) {
-                                if let Some(view) = editor::get_editor_view(&child) {
-                                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                                        let text = crate::lsp_hover::extract_hover_text(&contents);
-                                        let (line, character) = last_hover_pos.get();
-                                        crate::lsp_hover::show_hover_popover(
-                                            &view, &buf, line, character, &text,
-                                        );
+                            let current_version =
+                                *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                            if current_version != version {
+                                continue;
+                            }
+                            // Show hover popover at the last hover request position
+                            if let Some(page) = tab_view.selected_page() {
+                                let child = page.child();
+                                if editor::is_editor(&child)
+                                    && child.widget_name().as_str() == source_path
+                                {
+                                    if let Some(view) = editor::get_editor_view(&child) {
+                                        if let Some(buf) = editor::get_editor_buffer(&child) {
+                                            let text =
+                                                crate::lsp_hover::extract_hover_text(&contents);
+                                            let (line, character) = last_hover_pos.get();
+                                            crate::lsp_hover::show_hover_popover(
+                                                &view, &buf, line, character, &text,
+                                            );
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
+            });
             gtk4::glib::ControlFlow::Continue
         });
     }
@@ -1302,6 +1408,8 @@ pub fn build_window(app: &adw::Application) {
         let window_ref = window.clone();
         let sidebar_state = sidebar_state.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
+        let toast_overlay = toast_overlay.clone();
+        let lsp_install_result_tx = lsp_install_result_tx.clone();
 
         vec![
             Command {
@@ -1438,6 +1546,34 @@ pub fn build_window(app: &adw::Application) {
                     let open_settings = open_settings.clone();
                     move || {
                         open_settings();
+                    }
+                }),
+            },
+            Command {
+                name: "Install Web LSP Servers".to_string(),
+                shortcut: "".to_string(),
+                action: Rc::new({
+                    let toast_overlay = toast_overlay.clone();
+                    let lsp_install_result_tx = lsp_install_result_tx.clone();
+                    move || {
+                        let start_toast = adw::Toast::new(
+                            "Installing web LSP servers (TypeScript, PHP, HTML/CSS, etc.)...",
+                        );
+                        start_toast.set_timeout(3);
+                        toast_overlay.add_toast(start_toast);
+
+                        let tx = lsp_install_result_tx.clone();
+                        std::thread::spawn(move || {
+                            let result = impulse_core::lsp::install_managed_web_lsp_servers().map(
+                                |bin_dir| {
+                                    format!(
+                                        "Installed managed LSP servers to {}",
+                                        bin_dir.display()
+                                    )
+                                },
+                            );
+                            let _ = tx.send(result);
+                        });
                     }
                 }),
             },
@@ -1657,7 +1793,8 @@ pub fn build_window(app: &adw::Application) {
                                 }
                                 // LSP: send didSave
                                 let _ = lsp_tx.send(LspRequest::DidSave {
-                                    uri: format!("file://{}", path),
+                                    uri: file_path_to_uri(std::path::Path::new(&path))
+                                        .unwrap_or_else(|| format!("file://{}", path)),
                                 });
                                 let filename = std::path::Path::new(&path)
                                     .file_name()
@@ -1753,21 +1890,23 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view_ref = tab_view.clone();
         find_entry.connect_search_changed(move |entry| {
-            let text = entry.text().to_string();
-            if let Some(page) = tab_view_ref.selected_page() {
-                let child = page.child();
-                if let Some(term) = find_vte_terminal(&child) {
-                    if text.is_empty() {
-                        term.search_set_regex(None::<&vte4::Regex>, 0);
-                    } else {
-                        let escaped = regex_escape(&text);
-                        if let Ok(regex) = vte4::Regex::for_search(&escaped, 0) {
-                            term.search_set_regex(Some(&regex), 0);
-                            term.search_find_next();
+            run_guarded_ui("terminal-search-changed", || {
+                let text = entry.text().to_string();
+                if let Some(page) = tab_view_ref.selected_page() {
+                    let child = page.child();
+                    if let Some(term) = find_vte_terminal(&child) {
+                        if text.is_empty() {
+                            term.search_set_regex(None::<&vte4::Regex>, 0);
+                        } else {
+                            let escaped = regex_escape(&text);
+                            if let Ok(regex) = vte4::Regex::for_search(&escaped, 0) {
+                                term.search_set_regex(Some(&regex), 0);
+                                term.search_find_next();
+                            }
                         }
                     }
                 }
-            }
+            });
         });
     }
 
@@ -1906,30 +2045,38 @@ pub fn build_window(app: &adw::Application) {
         let editor_search_settings = editor_search_settings.clone();
         let tab_view = tab_view.clone();
         editor_find_entry.connect_search_changed(move |entry| {
-            let text = entry.text().to_string();
-            if text.is_empty() {
-                editor_search_settings.set_search_text(None);
-            } else {
-                editor_search_settings.set_search_text(Some(&text));
-            }
+            run_guarded_ui("editor-search-changed", || {
+                let text = entry.text().to_string();
+                if text.is_empty() {
+                    editor_search_settings.set_search_text(None);
+                } else {
+                    editor_search_settings.set_search_text(Some(&text));
+                }
 
-            if let Some(ctx) = ensure_ctx() {
-                if !text.is_empty() {
-                    if let Some(page) = tab_view.selected_page() {
-                        if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                            let iter = buf.iter_at_mark(&buf.get_insert());
-                            if let Some((start, end, _wrapped)) = ctx.forward(&iter) {
-                                buf.select_range(&start, &end);
-                                // Scroll to the match
-                                if let Some(view) = editor::get_editor_view(&page.child()) {
-                                    view.scroll_to_iter(&mut start.clone(), 0.1, false, 0.0, 0.0);
+                if let Some(ctx) = ensure_ctx() {
+                    if !text.is_empty() {
+                        if let Some(page) = tab_view.selected_page() {
+                            if let Some(buf) = editor::get_editor_buffer(&page.child()) {
+                                let iter = buf.iter_at_mark(&buf.get_insert());
+                                if let Some((start, end, _wrapped)) = ctx.forward(&iter) {
+                                    buf.select_range(&start, &end);
+                                    // Scroll to the match
+                                    if let Some(view) = editor::get_editor_view(&page.child()) {
+                                        view.scroll_to_iter(
+                                            &mut start.clone(),
+                                            0.1,
+                                            false,
+                                            0.0,
+                                            0.0,
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
+                    update_label();
                 }
-                update_label();
-            }
+            });
         });
     }
 
@@ -2138,6 +2285,9 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let doc_versions = lsp_doc_versions.clone();
+        let lsp_request_seq = lsp_request_seq.clone();
+        let latest_definition_req = latest_definition_req.clone();
         add_shortcut(&shortcut_controller, "F12", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -2148,8 +2298,17 @@ pub fn build_window(app: &adw::Application) {
                         let iter = buf.iter_at_mark(&insert_mark);
                         let line = iter.line() as u32;
                         let character = iter.line_offset() as u32;
+                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
+                        let request_id = lsp_request_seq.get();
+                        lsp_request_seq.set(request_id + 1);
+                        latest_definition_req
+                            .borrow_mut()
+                            .insert(path.clone(), request_id);
                         let _ = lsp_tx.send(LspRequest::Definition {
-                            uri: format!("file://{}", path),
+                            request_id,
+                            uri: file_path_to_uri(std::path::Path::new(&path))
+                                .unwrap_or_else(|| format!("file://{}", path)),
+                            version,
                             line,
                             character,
                         });
@@ -2163,6 +2322,9 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let doc_versions = lsp_doc_versions.clone();
+        let lsp_request_seq = lsp_request_seq.clone();
+        let latest_completion_req = latest_completion_req.clone();
         add_shortcut(&shortcut_controller, "<Ctrl>space", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -2171,8 +2333,17 @@ pub fn build_window(app: &adw::Application) {
                     if let Some(buf) = editor::get_editor_buffer(&child) {
                         let insert_mark = buf.get_insert();
                         let iter = buf.iter_at_mark(&insert_mark);
+                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
+                        let request_id = lsp_request_seq.get();
+                        lsp_request_seq.set(request_id + 1);
+                        latest_completion_req
+                            .borrow_mut()
+                            .insert(path.clone(), request_id);
                         let _ = lsp_tx.send(LspRequest::Completion {
-                            uri: format!("file://{}", path),
+                            request_id,
+                            uri: file_path_to_uri(std::path::Path::new(&path))
+                                .unwrap_or_else(|| format!("file://{}", path)),
+                            version,
                             line: iter.line() as u32,
                             character: iter.line_offset() as u32,
                         });
@@ -2186,6 +2357,9 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let doc_versions = lsp_doc_versions.clone();
+        let lsp_request_seq = lsp_request_seq.clone();
+        let latest_hover_req = latest_hover_req.clone();
         let last_hover_pos = last_hover_pos.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>i", move || {
             if let Some(page) = tab_view.selected_page() {
@@ -2198,8 +2372,17 @@ pub fn build_window(app: &adw::Application) {
                         let line = iter.line() as u32;
                         let character = iter.line_offset() as u32;
                         last_hover_pos.set((line, character));
+                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
+                        let request_id = lsp_request_seq.get();
+                        lsp_request_seq.set(request_id + 1);
+                        latest_hover_req
+                            .borrow_mut()
+                            .insert(path.clone(), request_id);
                         let _ = lsp_tx.send(LspRequest::Hover {
-                            uri: format!("file://{}", path),
+                            request_id,
+                            uri: file_path_to_uri(std::path::Path::new(&path))
+                                .unwrap_or_else(|| format!("file://{}", path)),
+                            version,
                             line,
                             character,
                         });
@@ -2289,67 +2472,60 @@ pub fn build_window(app: &adw::Application) {
         let status_bar = status_bar.clone();
         let sidebar_state = sidebar_state.clone();
         tab_view.connect_selected_page_notify(move |tv| {
-            if let Some(page) = tv.selected_page() {
-                let child = page.child();
+            run_guarded_ui("tab-selected-page-notify", || {
+                if let Some(page) = tv.selected_page() {
+                    let child = page.child();
 
-                // Always save outgoing tab's tree state before switching
-                sidebar_state.save_active_tab_state();
+                    // Always save outgoing tab's tree state before switching
+                    sidebar_state.save_active_tab_state();
 
-                if let Some(term) = terminal_container::get_active_terminal(&child) {
-                    term.grab_focus();
-                    status_bar.borrow().hide_editor_info();
-                    // Restore saved tree state or load directory for this tab
-                    if let Some(uri) = term.current_directory_uri() {
-                        let uri_str = uri.to_string();
-                        let path = if let Some(rest) = uri_str.strip_prefix("file://") {
-                            if let Some(slash_idx) = rest.find('/') {
-                                &rest[slash_idx..]
-                            } else {
-                                rest
-                            }
+                    if let Some(term) = terminal_container::get_active_terminal(&child) {
+                        term.grab_focus();
+                        status_bar.borrow().hide_editor_info();
+                        // Restore saved tree state or load directory for this tab
+                        if let Some(uri) = term.current_directory_uri() {
+                            let uri_str = uri.to_string();
+                            let path = uri_to_file_path(&uri_str);
+                            status_bar.borrow().update_cwd(&path);
+                            sidebar_state.switch_to_tab(&child, &path);
                         } else {
-                            &uri_str
-                        };
-                        let path = url_decode(path);
-                        status_bar.borrow().update_cwd(&path);
-                        sidebar_state.switch_to_tab(&child, &path);
+                            // New terminal without CWD yet — just set active tab
+                            sidebar_state.set_active_tab(&child);
+                        }
+                    } else if editor::is_editor(&child) {
+                        // Editor tab: focus the editor and show its parent directory
+                        child.grab_focus();
+                        let file_path = child.widget_name().to_string();
+                        if let Some(parent) = std::path::Path::new(&file_path).parent() {
+                            let dir = parent.to_string_lossy().to_string();
+                            status_bar.borrow().update_cwd(&dir);
+                            sidebar_state.switch_to_tab(&child, &dir);
+                        }
+                        // Show cursor position for editor tabs
+                        if let Some(buf) = editor::get_editor_buffer(&child) {
+                            let insert_mark = buf.get_insert();
+                            let iter = buf.iter_at_mark(&insert_mark);
+                            let line = iter.line();
+                            let col = iter.line_offset();
+                            status_bar.borrow().update_cursor_position(line, col);
+                        }
+                        // Show language and encoding for editor tabs
+                        if let Some(lang) = editor::get_editor_language(&child) {
+                            status_bar.borrow().update_language(&lang);
+                        } else {
+                            status_bar.borrow().update_language("Plain Text");
+                        }
+                        status_bar.borrow().update_encoding("UTF-8");
+                        // Show indent info for editor tabs
+                        if let Some(indent) = editor::get_editor_indent_info(&child) {
+                            status_bar.borrow().update_indent_info(&indent);
+                        }
                     } else {
-                        // New terminal without CWD yet — just set active tab
-                        sidebar_state.set_active_tab(&child);
+                        child.grab_focus();
+                        status_bar.borrow().hide_editor_info();
                     }
-                } else if editor::is_editor(&child) {
-                    // Editor tab: focus the editor and show its parent directory
-                    child.grab_focus();
-                    let file_path = child.widget_name().to_string();
-                    if let Some(parent) = std::path::Path::new(&file_path).parent() {
-                        let dir = parent.to_string_lossy().to_string();
-                        status_bar.borrow().update_cwd(&dir);
-                        sidebar_state.switch_to_tab(&child, &dir);
-                    }
-                    // Show cursor position for editor tabs
-                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                        let insert_mark = buf.get_insert();
-                        let iter = buf.iter_at_mark(&insert_mark);
-                        let line = iter.line();
-                        let col = iter.line_offset();
-                        status_bar.borrow().update_cursor_position(line, col);
-                    }
-                    // Show language and encoding for editor tabs
-                    if let Some(lang) = editor::get_editor_language(&child) {
-                        status_bar.borrow().update_language(&lang);
-                    } else {
-                        status_bar.borrow().update_language("Plain Text");
-                    }
-                    status_bar.borrow().update_encoding("UTF-8");
-                    // Show indent info for editor tabs
-                    if let Some(indent) = editor::get_editor_indent_info(&child) {
-                        status_bar.borrow().update_indent_info(&indent);
-                    }
-                } else {
-                    child.grab_focus();
-                    status_bar.borrow().hide_editor_info();
                 }
-            }
+            });
         });
     }
 
@@ -2363,14 +2539,6 @@ pub fn build_window(app: &adw::Application) {
         tab_view.connect_close_page(move |tv, page| {
             sidebar_state.remove_tab_state(&page.child());
             let child = page.child();
-
-            // LSP: send didClose for editor tabs
-            if editor::is_editor(&child) {
-                let path = child.widget_name().to_string();
-                let _ = lsp_tx.send(LspRequest::DidClose {
-                    uri: format!("file://{}", path),
-                });
-            }
 
             // Check if this is an editor tab with unsaved changes
             if editor::is_editor(&child) {
@@ -2405,6 +2573,7 @@ pub fn build_window(app: &adw::Application) {
                         let tv = tv.clone();
                         let page = page.clone();
                         let child = child.clone();
+                        let lsp_tx = lsp_tx.clone();
                         let create_tab2 = create_tab_on_empty.clone();
                         let create_tab3 = create_tab_on_empty.clone();
                         dialog.connect_response(None, move |_dialog, response| {
@@ -2412,9 +2581,15 @@ pub fn build_window(app: &adw::Application) {
                                 "save" => {
                                     // Save then close
                                     let path = child.widget_name().to_string();
+                                    let uri = file_path_to_uri(std::path::Path::new(&path))
+                                        .unwrap_or_else(|| format!("file://{}", path));
                                     if let Some(text) = editor::get_editor_text(&child) {
-                                        let _ = std::fs::write(&path, &text);
+                                        if std::fs::write(&path, &text).is_ok() {
+                                            let _ = lsp_tx
+                                                .send(LspRequest::DidSave { uri: uri.clone() });
+                                        }
                                     }
+                                    let _ = lsp_tx.send(LspRequest::DidClose { uri });
                                     tv.close_page_finish(&page, true);
                                     let tv2 = tv.clone();
                                     let new_tab = create_tab2.clone();
@@ -2425,6 +2600,10 @@ pub fn build_window(app: &adw::Application) {
                                     });
                                 }
                                 "discard" => {
+                                    let path = child.widget_name().to_string();
+                                    let uri = file_path_to_uri(std::path::Path::new(&path))
+                                        .unwrap_or_else(|| format!("file://{}", path));
+                                    let _ = lsp_tx.send(LspRequest::DidClose { uri });
                                     tv.close_page_finish(&page, true);
                                     let tv2 = tv.clone();
                                     let new_tab = create_tab3.clone();
@@ -2449,6 +2628,13 @@ pub fn build_window(app: &adw::Application) {
             }
 
             // Terminal tab or unmodified editor: close immediately
+            if editor::is_editor(&child) {
+                let path = child.widget_name().to_string();
+                let _ = lsp_tx.send(LspRequest::DidClose {
+                    uri: file_path_to_uri(std::path::Path::new(&path))
+                        .unwrap_or_else(|| format!("file://{}", path)),
+                });
+            }
             tv.close_page_finish(page, true);
             let tv = tv.clone();
             let new_tab = create_tab_on_empty.clone();
@@ -2618,31 +2804,33 @@ fn show_quick_open(window: &adw::ApplicationWindow, sidebar_state: &Rc<sidebar::
     {
         let list = list.clone();
         entry.connect_search_changed(move |entry| {
-            let query = entry.text().to_string();
-            let root = current_path.borrow().clone();
-            if query.is_empty() || root.is_empty() {
-                while let Some(row) = list.row_at_index(0) {
-                    list.remove(&row);
-                }
-                return;
-            }
-            let list = list.clone();
-            gtk4::glib::spawn_future_local(async move {
-                let results = gtk4::gio::spawn_blocking(move || {
-                    impulse_core::search::search_filenames(&root, &query, 30)
-                })
-                .await;
-                while let Some(row) = list.row_at_index(0) {
-                    list.remove(&row);
-                }
-                if let Ok(Ok(results)) = results {
-                    for result in &results {
-                        let label = gtk4::Label::new(Some(&result.path));
-                        label.set_halign(gtk4::Align::Start);
-                        label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
-                        list.append(&label);
+            run_guarded_ui("quick-open-search-changed", || {
+                let query = entry.text().to_string();
+                let root = current_path.borrow().clone();
+                if query.is_empty() || root.is_empty() {
+                    while let Some(row) = list.row_at_index(0) {
+                        list.remove(&row);
                     }
+                    return;
                 }
+                let list = list.clone();
+                gtk4::glib::spawn_future_local(async move {
+                    let results = gtk4::gio::spawn_blocking(move || {
+                        impulse_core::search::search_filenames(&root, &query, 30)
+                    })
+                    .await;
+                    while let Some(row) = list.row_at_index(0) {
+                        list.remove(&row);
+                    }
+                    if let Ok(Ok(results)) = results {
+                        for result in &results {
+                            let label = gtk4::Label::new(Some(&result.path));
+                            label.set_halign(gtk4::Align::Start);
+                            label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+                            list.append(&label);
+                        }
+                    }
+                });
             });
         });
     }
@@ -2699,8 +2887,10 @@ fn show_command_palette(window: &adw::ApplicationWindow, commands: &[Command]) {
         let list = list.clone();
         let commands = commands.clone();
         entry.connect_search_changed(move |entry| {
-            let query = entry.text().to_string().to_lowercase();
-            populate_command_list(&list, &commands, &query);
+            run_guarded_ui("command-palette-search-changed", || {
+                let query = entry.text().to_string().to_lowercase();
+                populate_command_list(&list, &commands, &query);
+            });
         });
     }
 
@@ -2893,38 +3083,108 @@ fn regex_escape(text: &str) -> String {
     escaped
 }
 
-/// Convert a file:// URI to a local file path.
-fn uri_to_file_path(uri: &str) -> String {
-    if let Some(path) = uri.strip_prefix("file://") {
-        url_decode(path)
-    } else {
-        uri.to_string()
+fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "non-string panic payload"
+        };
+        log::error!("UI callback panic in '{}': {}", label, msg);
     }
 }
 
-/// Determine LSP language ID from a file URI based on extension.
-fn language_from_uri(uri: &str) -> String {
-    let path = uri_to_file_path(uri);
-    let ext = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    match ext.as_str() {
-        "rs" => "rust".to_string(),
-        "py" | "pyi" => "python".to_string(),
-        "js" | "jsx" | "mjs" | "cjs" => "javascript".to_string(),
-        "ts" | "tsx" => "typescript".to_string(),
-        "c" | "h" => "c".to_string(),
-        "cpp" | "cxx" | "cc" | "hpp" | "hxx" => "cpp".to_string(),
-        "go" => "go".to_string(),
-        "java" => "java".to_string(),
-        "rb" => "ruby".to_string(),
-        "lua" => "lua".to_string(),
-        "zig" => "zig".to_string(),
-        "php" => "php".to_string(),
-        _ => ext,
+fn completion_text_edit_to_info(
+    edit: lsp_types::CompletionTextEdit,
+) -> crate::lsp_completion::TextEditInfo {
+    match edit {
+        lsp_types::CompletionTextEdit::Edit(edit) => crate::lsp_completion::TextEditInfo {
+            start_line: edit.range.start.line,
+            start_character: edit.range.start.character,
+            end_line: edit.range.end.line,
+            end_character: edit.range.end.character,
+            new_text: edit.new_text,
+        },
+        lsp_types::CompletionTextEdit::InsertAndReplace(edit) => {
+            crate::lsp_completion::TextEditInfo {
+                start_line: edit.replace.start.line,
+                start_character: edit.replace.start.character,
+                end_line: edit.replace.end.line,
+                end_character: edit.replace.end.character,
+                new_text: edit.new_text,
+            }
+        }
     }
+}
+
+fn completion_item_to_info(
+    item: lsp_types::CompletionItem,
+) -> crate::lsp_completion::CompletionInfo {
+    let text_edit = item.text_edit.map(completion_text_edit_to_info);
+    let additional_text_edits = item
+        .additional_text_edits
+        .unwrap_or_default()
+        .into_iter()
+        .map(|edit| crate::lsp_completion::TextEditInfo {
+            start_line: edit.range.start.line,
+            start_character: edit.range.start.character,
+            end_line: edit.range.end.line,
+            end_character: edit.range.end.character,
+            new_text: edit.new_text,
+        })
+        .collect();
+
+    crate::lsp_completion::CompletionInfo {
+        label: item.label,
+        detail: item.detail,
+        insert_text: item.insert_text,
+        insert_text_format: item.insert_text_format,
+        text_edit,
+        additional_text_edits,
+        kind: format!(
+            "{:?}",
+            item.kind.unwrap_or(lsp_types::CompletionItemKind::TEXT)
+        ),
+    }
+}
+
+/// Convert a local path to a file:// URI.
+fn file_path_to_uri(path: &std::path::Path) -> Option<String> {
+    if path.is_dir() {
+        Url::from_directory_path(path).ok().map(|u| u.to_string())
+    } else {
+        Url::from_file_path(path).ok().map(|u| u.to_string())
+    }
+}
+
+/// Convert a file:// URI to a local file path.
+fn uri_to_file_path(uri: &str) -> String {
+    if let Ok(parsed) = Url::parse(uri) {
+        if parsed.scheme() == "file" {
+            if let Ok(path) = parsed.to_file_path() {
+                return path.to_string_lossy().to_string();
+            }
+
+            // Host-form file URIs (e.g. file://hostname/path) may fail
+            // to_file_path() on some platforms; fall back to URI path.
+            let decoded = url_decode(parsed.path());
+            if !decoded.is_empty() {
+                return decoded;
+            }
+        }
+    }
+
+    // Fallback for non-standard file URI strings.
+    if let Some(rest) = uri.strip_prefix("file://") {
+        if let Some(slash_idx) = rest.find('/') {
+            return url_decode(&rest[slash_idx..]);
+        }
+        return url_decode(rest);
+    }
+
+    uri.to_string()
 }
 
 fn url_decode(input: &str) -> String {
@@ -2949,4 +3209,49 @@ fn url_decode(input: &str) -> String {
         }
     }
     result
+}
+
+/// Determine LSP language ID from a file URI based on extension.
+fn language_from_uri(uri: &str) -> String {
+    let path = uri_to_file_path(uri);
+    let path_obj = std::path::Path::new(&path);
+    if let Some(name) = path_obj.file_name().and_then(|n| n.to_str()) {
+        if name.eq_ignore_ascii_case("dockerfile") {
+            return "dockerfile".to_string();
+        }
+    }
+    let ext = path_obj
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "rs" => "rust".to_string(),
+        "py" | "pyi" => "python".to_string(),
+        "js" | "mjs" | "cjs" => "javascript".to_string(),
+        "jsx" => "javascriptreact".to_string(),
+        "ts" => "typescript".to_string(),
+        "tsx" => "typescriptreact".to_string(),
+        "c" | "h" => "c".to_string(),
+        "cpp" | "cxx" | "cc" | "hpp" | "hxx" => "cpp".to_string(),
+        "html" | "htm" => "html".to_string(),
+        "css" => "css".to_string(),
+        "scss" => "scss".to_string(),
+        "less" => "less".to_string(),
+        "json" => "json".to_string(),
+        "jsonc" => "jsonc".to_string(),
+        "yaml" | "yml" => "yaml".to_string(),
+        "vue" => "vue".to_string(),
+        "svelte" => "svelte".to_string(),
+        "graphql" | "gql" => "graphql".to_string(),
+        "sh" | "bash" | "zsh" | "fish" => "shellscript".to_string(),
+        "dockerfile" => "dockerfile".to_string(),
+        "go" => "go".to_string(),
+        "java" => "java".to_string(),
+        "rb" => "ruby".to_string(),
+        "lua" => "lua".to_string(),
+        "zig" => "zig".to_string(),
+        "php" => "php".to_string(),
+        _ => ext,
+    }
 }
