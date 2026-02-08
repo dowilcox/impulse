@@ -10,6 +10,8 @@ pub struct SearchResult {
     pub name: String,
     pub line_number: Option<u32>,
     pub line_content: Option<String>,
+    pub column_start: Option<u32>,
+    pub column_end: Option<u32>,
     pub match_type: String,
 }
 
@@ -53,6 +55,8 @@ pub fn search_filenames(
                 name,
                 line_number: None,
                 line_content: None,
+                column_start: None,
+                column_end: None,
                 match_type: "file".to_string(),
             });
         }
@@ -132,18 +136,20 @@ pub fn search_contents(
                 Err(_) => continue,
             };
 
-            let matches = if case_sensitive {
-                line.contains(&query_match)
+            let haystack = if case_sensitive {
+                line.clone()
             } else {
-                line.to_lowercase().contains(&query_match)
+                line.to_lowercase()
             };
 
-            if matches {
+            if let Some(col) = haystack.find(&query_match) {
                 results.push(SearchResult {
                     path: file_path.clone(),
                     name: file_name.clone(),
                     line_number: Some((line_idx + 1) as u32),
                     line_content: Some(line.chars().take(500).collect()),
+                    column_start: Some(col as u32),
+                    column_end: Some((col + query_match.len()) as u32),
                     match_type: "content".to_string(),
                 });
             }
@@ -179,6 +185,63 @@ pub fn search(
         }
         _ => Err(format!("Unknown search type: {}", search_type)),
     }
+}
+
+/// Replace all occurrences of `search` with `replacement` in a single file.
+/// Returns the number of replacements made.
+pub fn replace_in_file(
+    path: &str,
+    search: &str,
+    replacement: &str,
+    case_sensitive: bool,
+) -> Result<usize, String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+
+    let (new_content, count) = if case_sensitive {
+        let count = content.matches(search).count();
+        (content.replace(search, replacement), count)
+    } else {
+        let mut result = String::with_capacity(content.len());
+        let mut count = 0usize;
+        let search_lower = search.to_lowercase();
+        let mut remaining = content.as_str();
+        while !remaining.is_empty() {
+            let lower = remaining.to_lowercase();
+            if let Some(pos) = lower.find(&search_lower) {
+                result.push_str(&remaining[..pos]);
+                result.push_str(replacement);
+                remaining = &remaining[pos + search.len()..];
+                count += 1;
+            } else {
+                result.push_str(remaining);
+                break;
+            }
+        }
+        (result, count)
+    };
+
+    if count > 0 {
+        std::fs::write(path, new_content)
+            .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+    }
+
+    Ok(count)
+}
+
+/// Replace all occurrences of `search` with `replacement` across multiple files.
+/// Returns the total number of replacements made.
+pub fn replace_in_files(
+    paths: &[String],
+    search: &str,
+    replacement: &str,
+    case_sensitive: bool,
+) -> Result<usize, String> {
+    let mut total = 0;
+    for path in paths {
+        total += replace_in_file(path, search, replacement, case_sensitive)?;
+    }
+    Ok(total)
 }
 
 fn is_likely_binary(path: &Path) -> bool {

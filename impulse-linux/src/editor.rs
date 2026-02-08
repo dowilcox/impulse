@@ -344,8 +344,7 @@ pub fn apply_settings(widget: &gtk4::Widget, settings: &crate::settings::Setting
         // Apply custom style scheme matching the active app theme
         if let Some(buf) = get_editor_buffer(widget) {
             let theme = crate::theme::get_theme(&settings.color_scheme);
-            let scheme_id =
-                crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
+            let scheme_id = crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
             let scheme_manager = sourceview5::StyleSchemeManager::default();
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             let styles_dir = format!("{}/.config/impulse/styles", home);

@@ -762,11 +762,7 @@ impl LspRegistry {
 
     /// Actually start an LSP server. Called only from `get_client` after
     /// winning the startup race.
-    async fn start_server(
-        &self,
-        language_id: &str,
-        file_uri: &str,
-    ) -> Option<Arc<LspClient>> {
+    async fn start_server(&self, language_id: &str, file_uri: &str) -> Option<Arc<LspClient>> {
         let server_config = match self.config.servers.get(language_id) {
             Some(cfg) => cfg,
             None => {

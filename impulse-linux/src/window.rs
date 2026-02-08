@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use crate::editor;
 use crate::lsp_completion::{LspRequest, LspResponse};
+use crate::multi_cursor;
 use crate::sidebar;
 use crate::status_bar;
 use crate::terminal;
@@ -440,6 +441,9 @@ pub fn build_window(app: &adw::Application) {
     let editor_search_ctx: Rc<RefCell<Option<sourceview5::SearchContext>>> =
         Rc::new(RefCell::new(None));
 
+    // Shared multi-cursor state for editor tabs
+    let multi_cursor_state = multi_cursor::new_shared();
+
     // Tab view in the end pane, wrapped with search bars above
     let right_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     right_box.append(&search_revealer);
@@ -468,6 +472,9 @@ pub fn build_window(app: &adw::Application) {
     };
     sidebar_state.load_directory(&initial_dir);
     status_bar.borrow().update_cwd(&initial_dir);
+
+    // Initialize project search root to current directory
+    *sidebar_state.project_search.current_root.borrow_mut() = initial_dir.clone();
 
     // Shared state
     let sidebar_state = Rc::new(sidebar_state);
@@ -741,6 +748,74 @@ pub fn build_window(app: &adw::Application) {
                     view.add_controller(motion);
                 }
 
+                // Multi-cursor key interception on editor views
+                if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
+                    let mc_state = multi_cursor_state.clone();
+                    let mc_buf = buffer.clone();
+                    let key_ctrl = gtk4::EventControllerKey::new();
+                    key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                    key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
+                        let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+                        let has_mc = mc_state.borrow().as_ref().is_some_and(|mc| mc.is_active());
+
+                        // Ctrl+D: add next occurrence
+                        if ctrl && key == gtk4::gdk::Key::d {
+                            if multi_cursor::handle_ctrl_d(&mc_state, &mc_buf) {
+                                return gtk4::glib::Propagation::Stop;
+                            }
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        if !has_mc {
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        // Escape: clear extra cursors
+                        if key == gtk4::gdk::Key::Escape {
+                            multi_cursor::handle_escape(&mc_state);
+                            return gtk4::glib::Propagation::Stop;
+                        }
+
+                        // Backspace
+                        if key == gtk4::gdk::Key::BackSpace {
+                            multi_cursor::handle_backspace(&mc_state);
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        // Delete
+                        if key == gtk4::gdk::Key::Delete {
+                            multi_cursor::handle_delete(&mc_state);
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        // Return/Enter
+                        if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
+                            multi_cursor::handle_insert(&mc_state, "\n");
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        // Tab
+                        if key == gtk4::gdk::Key::Tab {
+                            multi_cursor::handle_insert(&mc_state, "\t");
+                            return gtk4::glib::Propagation::Proceed;
+                        }
+
+                        // Regular character input: replicate to extra cursors
+                        if !ctrl {
+                            if let Some(ch) = key.to_unicode() {
+                                if !ch.is_control() {
+                                    multi_cursor::handle_insert(&mc_state, &ch.to_string());
+                                    return gtk4::glib::Propagation::Proceed;
+                                }
+                            }
+                        }
+
+                        gtk4::glib::Propagation::Proceed
+                    });
+
+                    view.add_controller(key_ctrl);
+                }
+
                 // Preserve sidebar tree state for the new tab
                 tree_states.borrow_mut().insert(
                     editor_widget.clone().upcast::<gtk4::Widget>(),
@@ -753,6 +828,59 @@ pub fn build_window(app: &adw::Application) {
                 tab_view.set_selected_page(&page);
             }
         }));
+    }
+
+    // Wire up project search result activation to open file at line
+    {
+        let sidebar_on_file = sidebar_state.on_file_activated.clone();
+        let tab_view = tab_view.clone();
+        *sidebar_state
+            .project_search
+            .on_result_activated
+            .borrow_mut() = Some(Box::new(move |path: &str, line: u32| {
+            // First, open the file (reuse sidebar's callback)
+            if let Some(cb) = sidebar_on_file.borrow().as_ref() {
+                cb(path);
+            }
+            // Then scroll to the specific line in the editor
+            let n = tab_view.n_pages();
+            for i in 0..n {
+                let page = tab_view.nth_page(i);
+                if page.child().widget_name().as_str() == path {
+                    if let Some(view) = editor::get_editor_view(&page.child()) {
+                        let buf = view.buffer();
+                        let mut iter = buf.iter_at_line((line as i32).saturating_sub(1));
+                        if let Some(ref mut it) = iter {
+                            buf.place_cursor(it);
+                            view.scroll_to_iter(it, 0.1, false, 0.0, 0.0);
+                        }
+                    }
+                    break;
+                }
+            }
+        }));
+    }
+
+    // Wire up Replace All to refresh open editor buffers
+    {
+        let tab_view = tab_view.clone();
+        *sidebar_state.project_search.on_files_replaced.borrow_mut() =
+            Some(Box::new(move |paths: &[String]| {
+                let n = tab_view.n_pages();
+                for i in 0..n {
+                    let page = tab_view.nth_page(i);
+                    let widget_name = page.child().widget_name().to_string();
+                    if paths.iter().any(|p| p == &widget_name) {
+                        if let Some(view) = editor::get_editor_view(&page.child()) {
+                            // Reload file content from disk
+                            if let Ok(content) = std::fs::read_to_string(&widget_name) {
+                                let buf = view.buffer();
+                                buf.set_text(&content);
+                            }
+                        }
+                    }
+                }
+            }));
     }
 
     // Wire up "Open in Terminal" context menu action to cd into directory
@@ -774,10 +902,12 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let status_bar = status_bar.clone();
         let sidebar_state = sidebar_state.clone();
+        let project_search_root = sidebar_state.project_search.current_root.clone();
         Rc::new(move |term: &vte4::Terminal| {
             // Connect CWD change signal (OSC 7)
             {
                 let status_bar = status_bar.clone();
+                let project_search_root = project_search_root.clone();
                 let sidebar_state = sidebar_state.clone();
                 let tab_view = tab_view.clone();
                 term.connect_current_directory_uri_notify(move |terminal| {
@@ -803,6 +933,7 @@ pub fn build_window(app: &adw::Application) {
                         if is_active {
                             status_bar.borrow().update_cwd(&path);
                             sidebar_state.load_directory(&path);
+                            *project_search_root.borrow_mut() = path.to_string();
                         } else {
                             // Background tab CWD changed: invalidate saved tree state
                             let n = tab_view.n_pages();
@@ -1170,8 +1301,6 @@ pub fn build_window(app: &adw::Application) {
         let sidebar_btn = sidebar_btn.clone();
         let window_ref = window.clone();
         let sidebar_state = sidebar_state.clone();
-        let search_revealer = search_revealer.clone();
-        let find_entry = find_entry.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
 
         vec![
@@ -1213,14 +1342,18 @@ pub fn build_window(app: &adw::Application) {
                 }),
             },
             Command {
-                name: "Find in Terminal".to_string(),
+                name: "Find in Project".to_string(),
                 shortcut: "Ctrl+Shift+F".to_string(),
                 action: Rc::new({
-                    let search_revealer = search_revealer.clone();
-                    let find_entry = find_entry.clone();
+                    let sidebar_btn = sidebar_btn.clone();
+                    let sidebar_state = sidebar_state.clone();
                     move || {
-                        search_revealer.set_reveal_child(true);
-                        find_entry.grab_focus();
+                        // Show sidebar and switch to search tab
+                        if !sidebar_btn.is_active() {
+                            sidebar_btn.set_active(true);
+                        }
+                        sidebar_state.search_btn.set_active(true);
+                        sidebar_state.project_search.search_entry.grab_focus();
                     }
                 }),
             },
@@ -1427,16 +1560,17 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // Ctrl+Shift+F: Find in terminal
+    // Ctrl+Shift+F: Project-wide find and replace (open sidebar search tab)
     {
-        let search_revealer = search_revealer.clone();
-        let find_entry = find_entry.clone();
+        let sidebar_btn = sidebar_btn.clone();
+        let sidebar_state = sidebar_state.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>f", move || {
-            let is_visible = search_revealer.reveals_child();
-            search_revealer.set_reveal_child(!is_visible);
-            if !is_visible {
-                find_entry.grab_focus();
+            // Show sidebar and switch to search tab
+            if !sidebar_btn.is_active() {
+                sidebar_btn.set_active(true);
             }
+            sidebar_state.search_btn.set_active(true);
+            sidebar_state.project_search.search_entry.grab_focus();
         });
     }
 

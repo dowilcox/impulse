@@ -158,10 +158,7 @@ fn parse_color(hex: &str) -> gdk::RGBA {
 /// The scheme is installed at `~/.local/share/gtksourceview-5/styles/` so that
 /// GtkSourceView's `StyleSchemeManager` can discover it.
 pub fn install_sourceview_scheme(theme: &ThemeColors, theme_name: &str) -> String {
-    let scheme_id = format!(
-        "impulse-{}",
-        theme_name.to_lowercase().replace(' ', "-")
-    );
+    let scheme_id = format!("impulse-{}", theme_name.to_lowercase().replace(' ', "-"));
     let display_name = format!("Impulse {}", theme_name);
 
     let xml = format!(
@@ -234,14 +231,12 @@ pub fn install_sourceview_scheme(theme: &ThemeColors, theme_name: &str) -> Strin
     );
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let styles_dir =
-        std::path::PathBuf::from(&home).join(".config/impulse/styles");
+    let styles_dir = std::path::PathBuf::from(&home).join(".config/impulse/styles");
     let _ = std::fs::create_dir_all(&styles_dir);
     let _ = std::fs::write(styles_dir.join(format!("{}.xml", scheme_id)), xml);
 
     // Clean up stale scheme file from the old location (if any)
-    let old_dir =
-        std::path::PathBuf::from(&home).join(".local/share/gtksourceview-5/styles");
+    let old_dir = std::path::PathBuf::from(&home).join(".local/share/gtksourceview-5/styles");
     let _ = std::fs::remove_file(old_dir.join(format!("{}.xml", scheme_id)));
 
     scheme_id
@@ -492,6 +487,64 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         scrollbar slider:hover {{
             background-color: {fg_dark};
+        }}
+        /* --- Project search panel --- */
+        .project-search-panel {{
+            background-color: {bg_dark};
+            border-top: 1px solid {bg_highlight};
+        }}
+        .project-search-row {{
+            padding: 4px 8px;
+        }}
+        .project-search-row entry,
+        .project-search-row search {{
+            min-height: 28px;
+        }}
+        .project-search-toggle {{
+            min-height: 24px;
+            min-width: 24px;
+            padding: 2px 8px;
+            font-size: 12px;
+        }}
+        .project-search-count {{
+            font-size: 11px;
+            color: {comment};
+            padding: 2px 8px;
+        }}
+        .project-search-results {{
+            background-color: transparent;
+        }}
+        .project-search-results row:hover {{
+            background-color: {bg_highlight};
+        }}
+        .project-search-results row:selected {{
+            background-color: {bg_highlight};
+        }}
+        .project-search-file-header {{
+            padding: 4px 8px;
+            background-color: {bg_dark};
+        }}
+        .project-search-filename {{
+            color: {cyan};
+            font-size: 12px;
+            font-weight: bold;
+        }}
+        .project-search-match-count {{
+            color: {comment};
+            font-size: 11px;
+        }}
+        .project-search-match {{
+            padding: 2px 8px 2px 16px;
+        }}
+        .project-search-line-num {{
+            color: {comment};
+            font-size: 11px;
+            font-family: monospace;
+        }}
+        .project-search-line-content {{
+            color: {fg};
+            font-size: 12px;
+            font-family: monospace;
         }}
         "#,
         bg_dark = theme.bg_dark,

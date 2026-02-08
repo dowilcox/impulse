@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::project_search;
 use impulse_core::filesystem::FileEntry;
 
 /// A node in the sidebar file tree, representing either a file or directory at a given depth.
@@ -543,19 +544,9 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
     }
     file_tree_list.add_controller(drag_source);
 
-    // Search page
-    let search_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    let search_entry = gtk4::SearchEntry::new();
-    search_entry.add_css_class("search-entry");
-    search_entry.set_placeholder_text(Some("Search files..."));
-    let search_scroll = gtk4::ScrolledWindow::new();
-    search_scroll.set_vexpand(true);
-    let search_list = gtk4::ListBox::new();
-    search_list.set_selection_mode(gtk4::SelectionMode::Single);
-    search_scroll.set_child(Some(&search_list));
-    search_box.append(&search_entry);
-    search_box.append(&search_scroll);
-    stack.add_named(&search_box, Some("search"));
+    // Search page: project-wide find and replace
+    let project_search_state = project_search::build_project_search_panel();
+    stack.add_named(&project_search_state.widget, Some("search"));
 
     // Wire up toggle buttons to switch stack pages
     {
@@ -589,8 +580,8 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
     let state = SidebarState {
         file_tree_list,
         file_tree_scroll: file_tree_scroll.clone(),
-        search_entry,
-        search_list,
+        search_btn: search_btn.clone(),
+        project_search: project_search_state,
         current_path: current_path.clone(),
         on_file_activated: on_file_activated.clone(),
         on_open_terminal: on_open_terminal.clone(),
@@ -716,58 +707,14 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
             });
     }
 
-    // Wire up search
-    {
-        let search_list = state.search_list.clone();
-        let current_path = state.current_path.clone();
-        state.search_entry.connect_search_changed(move |entry| {
-            let query = entry.text().to_string();
-            let root = current_path.borrow().clone();
-            if query.is_empty() || root.is_empty() {
-                clear_list(&search_list);
-                return;
-            }
-            let search_list = search_list.clone();
-            glib::spawn_future_local(async move {
-                let results = gio::spawn_blocking(move || {
-                    impulse_core::search::search(&root, &query, "both", false, 50)
-                })
-                .await;
-                match results {
-                    Ok(Ok(results)) => {
-                        populate_search_results(&search_list, &results);
-                    }
-                    _ => {
-                        clear_list(&search_list);
-                    }
-                }
-            });
-        });
-    }
-
-    // Wire up search result activation to open files
-    {
-        let on_file_activated = on_file_activated.clone();
-        state.search_list.connect_row_activated(move |_list, row| {
-            if let Some(child) = row.child() {
-                let path = child.widget_name().to_string();
-                if !path.is_empty() {
-                    if let Some(cb) = on_file_activated.borrow().as_ref() {
-                        cb(&path);
-                    }
-                }
-            }
-        });
-    }
-
     (sidebar, state)
 }
 
 pub struct SidebarState {
     pub file_tree_list: gtk4::ListBox,
     pub file_tree_scroll: gtk4::ScrolledWindow,
-    pub search_entry: gtk4::SearchEntry,
-    pub search_list: gtk4::ListBox,
+    pub search_btn: gtk4::ToggleButton,
+    pub project_search: project_search::ProjectSearchState,
     pub current_path: Rc<RefCell<String>>,
     pub on_file_activated: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     pub on_open_terminal: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
@@ -983,37 +930,6 @@ fn render_tree(list: &gtk4::ListBox, nodes: &[TreeNode]) {
                 _ => {}
             }
             row.append(&status_label);
-        }
-
-        list.append(&row);
-    }
-}
-
-fn populate_search_results(list: &gtk4::ListBox, results: &[impulse_core::search::SearchResult]) {
-    clear_list(list);
-
-    for result in results {
-        let row = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-        row.add_css_class("search-result");
-        row.set_widget_name(&result.path);
-
-        let path_label = gtk4::Label::new(Some(&result.name));
-        path_label.add_css_class("search-result-path");
-        path_label.set_halign(gtk4::Align::Start);
-        path_label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
-        row.append(&path_label);
-
-        if let Some(ref line) = result.line_content {
-            let line_text = if let Some(num) = result.line_number {
-                format!("{}:{}", num, line.trim())
-            } else {
-                line.trim().to_string()
-            };
-            let line_label = gtk4::Label::new(Some(&line_text));
-            line_label.add_css_class("search-result-line");
-            line_label.set_halign(gtk4::Align::Start);
-            line_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-            row.append(&line_label);
         }
 
         list.append(&row);
