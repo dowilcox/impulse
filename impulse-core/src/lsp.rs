@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -99,16 +99,24 @@ impl LspClient {
         language_id: &str,
         event_tx: mpsc::UnboundedSender<LspEvent>,
     ) -> Result<Self, String> {
+        log::info!(
+            "LSP: starting server '{}' with args {:?} for language '{}', root_uri={}",
+            command,
+            args,
+            language_id,
+            root_uri
+        );
         let mut child = TokioCommand::new(command)
             .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to start LSP server '{}': {}", command, e))?;
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
+        let stderr = child.stderr.take();
 
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
         let pending: PendingRequests = Arc::new(TokioMutex::new(HashMap::new()));
@@ -125,11 +133,39 @@ impl LspClient {
             Self::reader_task(stdout, pending_clone, event_tx_clone, &lang_id).await;
         });
 
+        // Spawn stderr reader to log server errors
+        if let Some(stderr) = stderr {
+            let cmd_name = command.to_string();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                log::warn!("LSP stderr [{}]: {}", cmd_name, trimmed);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+
         // Spawn a task to detect server exit
         let event_tx_exit = event_tx.clone();
         let lang_exit = language_id.to_string();
+        let cmd_for_exit = command.to_string();
         tokio::spawn(async move {
-            let _ = child.wait().await;
+            let status = child.wait().await;
+            log::warn!(
+                "LSP server '{}' exited with status: {:?}",
+                cmd_for_exit,
+                status
+            );
             let _ = event_tx_exit.send(LspEvent::ServerExited {
                 language_id: lang_exit,
             });
@@ -146,6 +182,11 @@ impl LspClient {
 
         // Perform initialization handshake
         client.initialize(root_uri).await?;
+        log::info!(
+            "LSP: server '{}' initialized successfully for '{}'",
+            command,
+            language_id
+        );
 
         Ok(client)
     }
@@ -620,32 +661,112 @@ impl Default for LspConfig {
 /// Manages multiple LSP client instances, one per language.
 pub struct LspRegistry {
     clients: Arc<TokioMutex<HashMap<String, Arc<LspClient>>>>,
+    /// Languages that failed to start, so we don't keep retrying.
+    failed: Arc<TokioMutex<HashSet<String>>>,
+    /// Languages currently being started (prevents concurrent startup race).
+    starting: Arc<TokioMutex<HashSet<String>>>,
     config: LspConfig,
-    root_uri: String,
+    fallback_root_uri: String,
     event_tx: mpsc::UnboundedSender<LspEvent>,
+}
+
+/// Detect the project root by walking up from a file path.
+/// Uses `.git` as the definitive project boundary. Falls back to the
+/// nearest directory containing a build-system marker (Cargo.toml, etc.).
+fn detect_project_root(file_uri: &str) -> Option<String> {
+    let path = file_uri.strip_prefix("file://")?;
+    let mut dir = std::path::Path::new(path).parent()?;
+    let build_markers = [
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
+        "setup.py",
+        "composer.json",
+    ];
+    let mut best = None;
+    loop {
+        if dir.join(".git").exists() {
+            // .git is the definitive project boundary
+            return Some(format!("file://{}", dir.display()));
+        }
+        if best.is_none() {
+            for marker in &build_markers {
+                if dir.join(marker).exists() {
+                    best = Some(format!("file://{}", dir.display()));
+                    break;
+                }
+            }
+        }
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            _ => break,
+        }
+    }
+    best
 }
 
 impl LspRegistry {
     pub fn new(root_uri: String, event_tx: mpsc::UnboundedSender<LspEvent>) -> Self {
         Self {
             clients: Arc::new(TokioMutex::new(HashMap::new())),
+            failed: Arc::new(TokioMutex::new(HashSet::new())),
+            starting: Arc::new(TokioMutex::new(HashSet::new())),
             config: LspConfig::default(),
-            root_uri,
+            fallback_root_uri: root_uri,
             event_tx,
         }
     }
 
     /// Get or start an LSP client for the given language ID.
-    pub async fn get_client(&self, language_id: &str) -> Option<Arc<LspClient>> {
-        // Check if already running.
-        {
-            let clients = self.clients.lock().await;
-            if let Some(client) = clients.get(language_id) {
-                return Some(client.clone());
+    /// The `file_uri` is used to detect the project root for the server.
+    ///
+    /// Uses a `starting` set to prevent multiple concurrent tasks from each
+    /// trying to start a server for the same language. If another task is
+    /// already starting the server, this waits for it to finish.
+    pub async fn get_client(&self, language_id: &str, file_uri: &str) -> Option<Arc<LspClient>> {
+        loop {
+            // Check if already running.
+            {
+                let clients = self.clients.lock().await;
+                if let Some(client) = clients.get(language_id) {
+                    return Some(client.clone());
+                }
             }
+
+            // Don't retry languages that already failed to start.
+            if self.failed.lock().await.contains(language_id) {
+                return None;
+            }
+
+            // Check if another task is already starting this server.
+            {
+                let starting = self.starting.lock().await;
+                if starting.contains(language_id) {
+                    drop(starting);
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+            }
+
+            // Mark as starting (we won the race).
+            self.starting.lock().await.insert(language_id.to_string());
+            break;
         }
 
-        // Try to start a new server.
+        // We are responsible for starting the server.
+        let result = self.start_server(language_id, file_uri).await;
+        self.starting.lock().await.remove(language_id);
+        result
+    }
+
+    /// Actually start an LSP server. Called only from `get_client` after
+    /// winning the startup race.
+    async fn start_server(
+        &self,
+        language_id: &str,
+        file_uri: &str,
+    ) -> Option<Arc<LspClient>> {
         let server_config = match self.config.servers.get(language_id) {
             Some(cfg) => cfg,
             None => {
@@ -654,10 +775,13 @@ impl LspRegistry {
             }
         };
 
+        let root_uri =
+            detect_project_root(file_uri).unwrap_or_else(|| self.fallback_root_uri.clone());
+
         match LspClient::start(
             &server_config.command,
             &server_config.args,
-            &self.root_uri,
+            &root_uri,
             language_id,
             self.event_tx.clone(),
         )
@@ -665,12 +789,15 @@ impl LspRegistry {
         {
             Ok(client) => {
                 let client = Arc::new(client);
-                let mut clients = self.clients.lock().await;
-                clients.insert(language_id.to_string(), client.clone());
+                self.clients
+                    .lock()
+                    .await
+                    .insert(language_id.to_string(), client.clone());
                 Some(client)
             }
             Err(e) => {
                 log::warn!("Failed to start LSP server for '{}': {}", language_id, e);
+                self.failed.lock().await.insert(language_id.to_string());
                 let _ = self.event_tx.send(LspEvent::ServerError {
                     language_id: language_id.to_string(),
                     message: e,
@@ -684,6 +811,11 @@ impl LspRegistry {
     pub async fn remove_client(&self, language_id: &str) {
         let mut clients = self.clients.lock().await;
         clients.remove(language_id);
+    }
+
+    /// Mark a language as failed so we don't keep retrying.
+    pub async fn mark_failed(&self, language_id: &str) {
+        self.failed.lock().await.insert(language_id.to_string());
     }
 
     /// Shutdown all running servers.

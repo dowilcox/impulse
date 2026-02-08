@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk4::glib;
 use gtk4::prelude::*;
 use sourceview5::prelude::*;
@@ -75,21 +78,30 @@ pub fn create_editor(
         buffer.set_language(Some(&language));
     }
 
-    // Use a dark color scheme — try user preference first, then fallbacks
-    let scheme_manager = sourceview5::StyleSchemeManager::default();
-    let mut scheme_set = false;
-    if !settings.editor_color_scheme.is_empty() {
-        if let Some(scheme) = scheme_manager.scheme(&settings.editor_color_scheme) {
-            buffer.set_style_scheme(Some(&scheme));
-            scheme_set = true;
+    // Apply a custom GtkSourceView style scheme that matches our app theme.
+    // This ensures the gutter, current-line highlight, and syntax colors all
+    // match the active color scheme.
+    {
+        let theme = crate::theme::get_theme(&settings.color_scheme);
+        let scheme_id = crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
+        let scheme_manager = sourceview5::StyleSchemeManager::default();
+        // Force the manager to rescan by re-setting the search path with our
+        // custom styles directory prepended. This clears the internal cache so
+        // the freshly-written XML is picked up.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let styles_dir = format!("{}/.config/impulse/styles", home);
+        let mut paths: Vec<String> = scheme_manager
+            .search_path()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        if !paths.contains(&styles_dir) {
+            paths.insert(0, styles_dir);
         }
-    }
-    if !scheme_set {
-        for scheme_name in &["Adwaita-dark", "classic-dark", "oblivion", "cobalt"] {
-            if let Some(scheme) = scheme_manager.scheme(scheme_name) {
-                buffer.set_style_scheme(Some(&scheme));
-                break;
-            }
+        let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        scheme_manager.set_search_path(&path_refs);
+        if let Some(scheme) = scheme_manager.scheme(&scheme_id) {
+            buffer.set_style_scheme(Some(&scheme));
         }
     }
 
@@ -125,6 +137,7 @@ pub fn create_editor(
     view.set_smart_home_end(sourceview5::SmartHomeEndType::Before);
     view.set_indent_on_tab(true);
     view.set_smart_backspace(true);
+    view.set_left_margin(8);
 
     // Show whitespace characters
     let drawer = view.space_drawer();
@@ -176,7 +189,12 @@ pub fn create_editor(
     // Bracket auto-close
     {
         let view_clone = view.clone();
+        let inserting_close = Rc::new(Cell::new(false));
+        let inserting_close_inner = inserting_close.clone();
         buffer.connect_insert_text(move |buf, location, text| {
+            if inserting_close_inner.get() {
+                return;
+            }
             if text.len() != 1 {
                 return;
             }
@@ -197,13 +215,16 @@ pub fn create_editor(
                 }
                 // Insert closing char at the cursor position after the opening char
                 let offset = location.offset();
+                let flag = inserting_close.clone();
                 glib::idle_add_local_once({
                     let buf = buf.clone();
                     let view = view_clone.clone();
                     let close = close_char.to_string();
                     move || {
+                        flag.set(true);
                         let mut iter = buf.iter_at_offset(offset + 1);
                         buf.insert(&mut iter, &close);
+                        flag.set(false);
                         // Move cursor back between the brackets
                         let cursor = buf.iter_at_offset(offset + 1);
                         buf.place_cursor(&cursor);
@@ -320,13 +341,26 @@ pub fn apply_settings(widget: &gtk4::Widget, settings: &crate::settings::Setting
             view.set_wrap_mode(gtk4::WrapMode::None);
         }
 
-        // Apply color scheme to buffer
+        // Apply custom style scheme matching the active app theme
         if let Some(buf) = get_editor_buffer(widget) {
-            if !settings.editor_color_scheme.is_empty() {
-                let scheme_manager = sourceview5::StyleSchemeManager::default();
-                if let Some(scheme) = scheme_manager.scheme(&settings.editor_color_scheme) {
-                    buf.set_style_scheme(Some(&scheme));
-                }
+            let theme = crate::theme::get_theme(&settings.color_scheme);
+            let scheme_id =
+                crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
+            let scheme_manager = sourceview5::StyleSchemeManager::default();
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let styles_dir = format!("{}/.config/impulse/styles", home);
+            let mut paths: Vec<String> = scheme_manager
+                .search_path()
+                .iter()
+                .map(|p| p.to_string())
+                .collect();
+            if !paths.contains(&styles_dir) {
+                paths.insert(0, styles_dir);
+            }
+            let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+            scheme_manager.set_search_path(&path_refs);
+            if let Some(scheme) = scheme_manager.scheme(&scheme_id) {
+                buf.set_style_scheme(Some(&scheme));
             }
         }
     }

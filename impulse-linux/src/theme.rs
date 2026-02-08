@@ -152,6 +152,101 @@ fn parse_color(hex: &str) -> gdk::RGBA {
     gdk::RGBA::parse(hex).unwrap_or(gdk::RGBA::WHITE)
 }
 
+/// Generate a GtkSourceView 5 style scheme XML that matches the given theme,
+/// write it to the user styles directory, and return the scheme ID.
+///
+/// The scheme is installed at `~/.local/share/gtksourceview-5/styles/` so that
+/// GtkSourceView's `StyleSchemeManager` can discover it.
+pub fn install_sourceview_scheme(theme: &ThemeColors, theme_name: &str) -> String {
+    let scheme_id = format!(
+        "impulse-{}",
+        theme_name.to_lowercase().replace(' ', "-")
+    );
+    let display_name = format!("Impulse {}", theme_name);
+
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="{id}" name="{name}" version="1.0">
+  <author>Impulse</author>
+  <description>Auto-generated Impulse editor theme</description>
+
+  <!-- Editor chrome -->
+  <style name="text" foreground="{fg}" background="{bg}"/>
+  <style name="line-numbers" foreground="{comment}" background="{bg_dark}"/>
+  <style name="current-line" background="{bg_highlight}"/>
+  <style name="current-line-number" foreground="{fg}" background="{bg_highlight}"/>
+  <style name="cursor" foreground="{fg}"/>
+  <style name="selection" background="{bg_highlight}"/>
+  <style name="bracket-match" foreground="{cyan}" background="{bg_highlight}" bold="true"/>
+  <style name="right-margin" foreground="{comment}" background="{bg_dark}"/>
+  <style name="draw-spaces" foreground="{comment}"/>
+  <style name="background-pattern" background="{bg_dark}"/>
+
+  <!-- Syntax highlighting -->
+  <style name="def:comment" foreground="{comment}" italic="true"/>
+  <style name="def:shebang" foreground="{comment}" italic="true"/>
+  <style name="def:doc-comment" foreground="{comment}" italic="true"/>
+  <style name="def:doc-comment-element" foreground="{comment}" bold="true"/>
+  <style name="def:string" foreground="{green}"/>
+  <style name="def:special-char" foreground="{orange}"/>
+  <style name="def:character" foreground="{orange}"/>
+  <style name="def:keyword" foreground="{magenta}"/>
+  <style name="def:builtin" foreground="{cyan}"/>
+  <style name="def:type" foreground="{cyan}"/>
+  <style name="def:function" foreground="{blue}"/>
+  <style name="def:constant" foreground="{orange}"/>
+  <style name="def:number" foreground="{yellow}"/>
+  <style name="def:decimal" foreground="{yellow}"/>
+  <style name="def:floating-point" foreground="{yellow}"/>
+  <style name="def:base-n-integer" foreground="{yellow}"/>
+  <style name="def:complex" foreground="{yellow}"/>
+  <style name="def:boolean" foreground="{orange}"/>
+  <style name="def:preprocessor" foreground="{red}"/>
+  <style name="def:identifier" foreground="{fg}"/>
+  <style name="def:operator" foreground="{fg_dark}"/>
+  <style name="def:error" foreground="{red}" underline="true"/>
+  <style name="def:warning" foreground="{yellow}" underline="true"/>
+  <style name="def:note" foreground="{blue}" italic="true"/>
+  <style name="def:net-address" foreground="{blue}" underline="single"/>
+  <style name="def:heading" foreground="{cyan}" bold="true"/>
+  <style name="def:statement" foreground="{magenta}"/>
+  <style name="def:special-constant" foreground="{orange}"/>
+  <style name="def:underlined" underline="single"/>
+  <style name="def:deletion" foreground="{red}" strikethrough="true"/>
+  <style name="def:insertion" foreground="{green}"/>
+
+</style-scheme>"##,
+        id = scheme_id,
+        name = display_name,
+        bg = theme.bg,
+        bg_dark = theme.bg_dark,
+        bg_highlight = theme.bg_highlight,
+        fg = theme.fg,
+        fg_dark = theme.fg_dark,
+        cyan = theme.cyan,
+        blue = theme.blue,
+        green = theme.green,
+        magenta = theme.magenta,
+        red = theme.red,
+        yellow = theme.yellow,
+        orange = theme.orange,
+        comment = theme.comment,
+    );
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let styles_dir =
+        std::path::PathBuf::from(&home).join(".config/impulse/styles");
+    let _ = std::fs::create_dir_all(&styles_dir);
+    let _ = std::fs::write(styles_dir.join(format!("{}.xml", scheme_id)), xml);
+
+    // Clean up stale scheme file from the old location (if any)
+    let old_dir =
+        std::path::PathBuf::from(&home).join(".local/share/gtksourceview-5/styles");
+    let _ = std::fs::remove_file(old_dir.join(format!("{}.xml", scheme_id)));
+
+    scheme_id
+}
+
 /// Generate and apply the application-wide CSS for the given theme.
 ///
 /// Returns the `CssProvider` so callers can hold onto it and later replace it

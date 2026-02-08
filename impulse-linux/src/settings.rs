@@ -38,6 +38,7 @@ pub struct Settings {
     pub open_files: Vec<String>,
 
     // ── Editor ───────────────────────────────────────────────────────────
+    pub auto_save: bool,
     pub font_size: i32,
     pub font_family: String,
     pub tab_width: u32,
@@ -76,6 +77,7 @@ impl Default for Settings {
             open_files: Vec::new(),
 
             // Editor
+            auto_save: false,
             font_size: 11,
             font_family: String::from("monospace"),
             tab_width: 4,

@@ -78,6 +78,7 @@ pub fn build_window(app: &adw::Application) {
 
                 // Task to forward LspEvents to the GTK main loop
                 let gtk_tx_events = gtk_tx.clone();
+                let registry_for_exit = registry.clone();
                 tokio::spawn(async move {
                     while let Some(event) = event_rx.recv().await {
                         let response = match event {
@@ -124,6 +125,8 @@ pub fn build_window(app: &adw::Application) {
                                 message,
                             },
                             impulse_core::lsp::LspEvent::ServerExited { language_id } => {
+                                registry_for_exit.remove_client(&language_id).await;
+                                registry_for_exit.mark_failed(&language_id).await;
                                 LspResponse::ServerExited { language_id }
                             }
                         };
@@ -133,7 +136,10 @@ pub fn build_window(app: &adw::Application) {
                     }
                 });
 
-                // Main request processing loop
+                // Main request processing loop.
+                // Each request is spawned concurrently. The race condition for
+                // simultaneous server starts is handled inside LspRegistry::get_client
+                // via the `starting` set.
                 let gtk_tx_req = gtk_tx;
                 while let Some(request) = lsp_request_rx.recv().await {
                     let registry = registry.clone();
@@ -147,7 +153,7 @@ pub fn build_window(app: &adw::Application) {
                                 text,
                             } => {
                                 if let Some(client) =
-                                    registry.get_client(&language_id).await
+                                    registry.get_client(&language_id, &uri).await
                                 {
                                     let _ = client.did_open(
                                         &uri,
@@ -162,21 +168,26 @@ pub fn build_window(app: &adw::Application) {
                                 version,
                                 text,
                             } => {
-                                // Determine language from URI extension
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     let _ = client.did_change(&uri, version, &text);
                                 }
                             }
                             LspRequest::DidSave { uri } => {
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     let _ = client.did_save(&uri);
                                 }
                             }
                             LspRequest::DidClose { uri } => {
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     let _ = client.did_close(&uri);
                                 }
                             }
@@ -186,7 +197,9 @@ pub fn build_window(app: &adw::Application) {
                                 character,
                             } => {
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     if let Ok(items) =
                                         client.completion(&uri, line, character).await
                                     {
@@ -197,13 +210,19 @@ pub fn build_window(app: &adw::Application) {
                                                     label: item.label,
                                                     detail: item.detail,
                                                     insert_text: item.insert_text,
-                                                    kind: format!("{:?}", item.kind.unwrap_or(lsp_types::CompletionItemKind::TEXT)),
+                                                    kind: format!(
+                                                        "{:?}",
+                                                        item.kind.unwrap_or(
+                                                            lsp_types::CompletionItemKind::TEXT
+                                                        )
+                                                    ),
                                                 }
                                             })
                                             .collect();
-                                        let _ = gtk_tx.send(LspResponse::CompletionResult {
-                                            items: completions,
-                                        });
+                                        let _ =
+                                            gtk_tx.send(LspResponse::CompletionResult {
+                                                items: completions,
+                                            });
                                     }
                                 }
                             }
@@ -213,15 +232,20 @@ pub fn build_window(app: &adw::Application) {
                                 character,
                             } => {
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     if let Ok(Some(hover)) =
                                         client.hover(&uri, line, character).await
                                     {
                                         let content =
-                                            crate::lsp_hover::hover_content_to_string(&hover);
-                                        let _ = gtk_tx.send(LspResponse::HoverResult {
-                                            contents: content,
-                                        });
+                                            crate::lsp_hover::hover_content_to_string(
+                                                &hover,
+                                            );
+                                        let _ =
+                                            gtk_tx.send(LspResponse::HoverResult {
+                                                contents: content,
+                                            });
                                     }
                                 }
                             }
@@ -231,33 +255,36 @@ pub fn build_window(app: &adw::Application) {
                                 character,
                             } => {
                                 let lang = language_from_uri(&uri);
-                                if let Some(client) = registry.get_client(&lang).await {
+                                if let Some(client) =
+                                    registry.get_client(&lang, &uri).await
+                                {
                                     if let Ok(Some(def)) =
                                         client.definition(&uri, line, character).await
                                     {
                                         let location = match def {
-                                            lsp_types::GotoDefinitionResponse::Scalar(loc) => {
-                                                Some(loc)
-                                            }
-                                            lsp_types::GotoDefinitionResponse::Array(locs) => {
-                                                locs.into_iter().next()
-                                            }
-                                            lsp_types::GotoDefinitionResponse::Link(links) => {
-                                                links.into_iter().next().map(|l| {
-                                                    lsp_types::Location {
-                                                        uri: l.target_uri,
-                                                        range: l.target_selection_range,
-                                                    }
-                                                })
-                                            }
+                                            lsp_types::GotoDefinitionResponse::Scalar(
+                                                loc,
+                                            ) => Some(loc),
+                                            lsp_types::GotoDefinitionResponse::Array(
+                                                locs,
+                                            ) => locs.into_iter().next(),
+                                            lsp_types::GotoDefinitionResponse::Link(
+                                                links,
+                                            ) => links.into_iter().next().map(|l| {
+                                                lsp_types::Location {
+                                                    uri: l.target_uri,
+                                                    range: l.target_selection_range,
+                                                }
+                                            }),
                                         };
                                         if let Some(loc) = location {
-                                            let _ =
-                                                gtk_tx.send(LspResponse::DefinitionResult {
+                                            let _ = gtk_tx.send(
+                                                LspResponse::DefinitionResult {
                                                     uri: loc.uri.to_string(),
                                                     line: loc.range.start.line,
                                                     character: loc.range.start.character,
-                                                });
+                                                },
+                                            );
                                         }
                                     }
                                 }
@@ -552,6 +579,7 @@ pub fn build_window(app: &adw::Application) {
                 {
                     let uri = format!("file://{}", path);
                     let language_id = language_from_uri(&uri);
+                    log::info!("LSP didOpen: uri={}, language_id={}", uri, language_id);
                     let start = buffer.start_iter();
                     let end = buffer.end_iter();
                     let text = buffer.text(&start, &end, true).to_string();
@@ -617,6 +645,9 @@ pub fn build_window(app: &adw::Application) {
                     let lsp_tx = lsp_tx.clone();
 
                     buffer.connect_changed(move |buf| {
+                        if !settings.borrow().auto_save {
+                            return;
+                        }
                         // Cancel any pending auto-save
                         if let Some(source_id) = auto_save_source.borrow_mut().take() {
                             source_id.remove();
@@ -2189,11 +2220,12 @@ pub fn build_window(app: &adw::Application) {
     }
 
     // Close tab_view pages: check for unsaved editor changes before closing.
-    // Also close the window when the last tab is closed.
+    // Open a new terminal tab when the last tab is closed.
     {
         let window_ref = window.clone();
         let sidebar_state = sidebar_state.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let create_tab_on_empty = create_tab.clone();
         tab_view.connect_close_page(move |tv, page| {
             sidebar_state.remove_tab_state(&page.child());
             let child = page.child();
@@ -2239,7 +2271,8 @@ pub fn build_window(app: &adw::Application) {
                         let tv = tv.clone();
                         let page = page.clone();
                         let child = child.clone();
-                        let window = window_ref.clone();
+                        let create_tab2 = create_tab_on_empty.clone();
+                        let create_tab3 = create_tab_on_empty.clone();
                         dialog.connect_response(None, move |_dialog, response| {
                             match response {
                                 "save" => {
@@ -2250,20 +2283,20 @@ pub fn build_window(app: &adw::Application) {
                                     }
                                     tv.close_page_finish(&page, true);
                                     let tv2 = tv.clone();
-                                    let window2 = window.clone();
+                                    let new_tab = create_tab2.clone();
                                     gtk4::glib::idle_add_local_once(move || {
                                         if tv2.n_pages() == 0 {
-                                            window2.close();
+                                            new_tab();
                                         }
                                     });
                                 }
                                 "discard" => {
                                     tv.close_page_finish(&page, true);
                                     let tv2 = tv.clone();
-                                    let window2 = window.clone();
+                                    let new_tab = create_tab3.clone();
                                     gtk4::glib::idle_add_local_once(move || {
                                         if tv2.n_pages() == 0 {
-                                            window2.close();
+                                            new_tab();
                                         }
                                     });
                                 }
@@ -2284,10 +2317,10 @@ pub fn build_window(app: &adw::Application) {
             // Terminal tab or unmodified editor: close immediately
             tv.close_page_finish(page, true);
             let tv = tv.clone();
-            let window = window_ref.clone();
+            let new_tab = create_tab_on_empty.clone();
             gtk4::glib::idle_add_local_once(move || {
                 if tv.n_pages() == 0 {
-                    window.close();
+                    new_tab();
                 }
             });
             gtk4::glib::Propagation::Stop

@@ -13,5 +13,5 @@ uuid = { version = "1", features = ["v4"] }
 ignore = "0.4"
 log = "0.4"
 lsp-types = { version = "0.97", features = ["proposed"] }
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "macros", "time"] }
 git2 = "0.20"
