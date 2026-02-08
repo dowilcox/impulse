@@ -646,7 +646,13 @@ impl LspRegistry {
         }
 
         // Try to start a new server.
-        let server_config = self.config.servers.get(language_id)?;
+        let server_config = match self.config.servers.get(language_id) {
+            Some(cfg) => cfg,
+            None => {
+                log::info!("No LSP server configured for language: {}", language_id);
+                return None;
+            }
+        };
 
         match LspClient::start(
             &server_config.command,

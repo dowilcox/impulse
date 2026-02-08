@@ -42,22 +42,22 @@ impl ThemeColors {
 
 /// Cyberpunk — neon accents on deep dark purple (default).
 pub static CYBERPUNK: ThemeColors = ThemeColors {
-    bg: "#332a57",
-    bg_dark: "#271f45",
-    bg_highlight: "#43386b",
-    fg: "#e0ddf0",
-    fg_dark: "#b0aaca",
-    cyan: "#00e5c3",
-    blue: "#05d9e8",
-    green: "#39ff14",
-    magenta: "#ff5ea0",
-    red: "#ff3860",
-    yellow: "#f5d300",
-    orange: "#ff6c11",
-    comment: "#686090",
+    bg: "#2b2444",
+    bg_dark: "#221c3a",
+    bg_highlight: "#3a3260",
+    fg: "#d8d5e8",
+    fg_dark: "#a8a2be",
+    cyan: "#5ecfb8",
+    blue: "#56b8d6",
+    green: "#7ddb6a",
+    magenta: "#d97aaa",
+    red: "#e05577",
+    yellow: "#d4b855",
+    orange: "#d98a4a",
+    comment: "#605888",
     terminal_palette: [
-        "#1e1838", "#ff5ea0", "#39ff14", "#f5d300", "#05d9e8", "#d300c5", "#00e5c3", "#b0aaca",
-        "#686090", "#ff88bb", "#6fff57", "#ffea00", "#40e8ff", "#ff44cc", "#55ffdd", "#e0ddf0",
+        "#1c1735", "#e05577", "#7ddb6a", "#d4b855", "#56b8d6", "#b85aac", "#5ecfb8", "#a8a2be",
+        "#605888", "#e87a95", "#96e484", "#e0c96e", "#6ec8e0", "#cc76c0", "#7adbc8", "#d8d5e8",
     ],
 };
 

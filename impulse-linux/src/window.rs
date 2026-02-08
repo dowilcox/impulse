@@ -551,9 +551,7 @@ pub fn build_window(app: &adw::Application) {
                 // LSP: send didOpen
                 {
                     let uri = format!("file://{}", path);
-                    let language_id = editor::get_editor_language(editor_widget.upcast_ref())
-                        .unwrap_or_default()
-                        .to_lowercase();
+                    let language_id = language_from_uri(&uri);
                     let start = buffer.start_iter();
                     let end = buffer.end_iter();
                     let text = buffer.text(&start, &end, true).to_string();
