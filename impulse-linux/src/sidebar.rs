@@ -595,7 +595,6 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let on_file_activated = on_file_activated.clone();
-        let scroll = file_tree_scroll.clone();
         state
             .file_tree_list
             .connect_row_activated(move |_list, row| {
@@ -603,7 +602,6 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 let tree_nodes_ref = tree_nodes.clone();
                 let list = file_tree_list.clone();
                 let on_file_activated = on_file_activated.clone();
-                let scroll = scroll.clone();
 
                 let node = {
                     let nodes = tree_nodes_ref.borrow();
@@ -614,11 +612,8 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 };
 
                 if node.entry.is_dir {
-                    // Save scroll position before re-rendering
-                    let scroll_pos = scroll.vadjustment().value();
-
                     if node.expanded {
-                        // Collapse: remove all descendant nodes
+                        // Collapse: remove descendant nodes and rows incrementally
                         let mut nodes = tree_nodes_ref.borrow_mut();
                         nodes[index].expanded = false;
                         let depth = node.depth;
@@ -633,32 +628,24 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                         if remove_count > 0 {
                             nodes.drain((index + 1)..(index + 1 + remove_count));
                         }
-                        let nodes_snapshot: Vec<TreeNode> = nodes.clone();
-                        drop(nodes);
-                        render_tree(&list, &nodes_snapshot);
-                        let scroll = scroll.clone();
-                        glib::idle_add_local_once(move || {
-                            scroll.vadjustment().set_value(scroll_pos);
-                        });
+                        // Update the directory row arrow and icon
+                        update_dir_row_expanded(&list, index, nodes[index].expanded);
+                        // Remove child rows from the ListBox
+                        if remove_count > 0 {
+                            remove_rows_at(&list, index + 1, remove_count);
+                        }
                     } else {
-                        // Expand: mark as expanded, render immediately, then load children async
+                        // Expand: mark as expanded, update arrow, then load children async
                         {
                             let mut nodes = tree_nodes_ref.borrow_mut();
                             nodes[index].expanded = true;
-                            let nodes_snapshot: Vec<TreeNode> = nodes.clone();
-                            drop(nodes);
-                            render_tree(&list, &nodes_snapshot);
-                            let scroll = scroll.clone();
-                            glib::idle_add_local_once(move || {
-                                scroll.vadjustment().set_value(scroll_pos);
-                            });
+                            update_dir_row_expanded(&list, index, nodes[index].expanded);
                         }
 
                         let child_depth = node.depth + 1;
                         let path = node.entry.path.clone();
                         let tree_nodes_ref2 = tree_nodes_ref.clone();
                         let list2 = list.clone();
-                        let scroll2 = scroll.clone();
                         glib::spawn_future_local(async move {
                             let path_clone = path.clone();
                             let result = gio::spawn_blocking(move || {
@@ -670,7 +657,6 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                             .await;
 
                             if let Ok(Ok(entries)) = result {
-                                let scroll_pos = scroll2.vadjustment().value();
                                 let mut nodes = tree_nodes_ref2.borrow_mut();
                                 let insert_idx = nodes
                                     .iter()
@@ -685,15 +671,14 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                                             expanded: false,
                                         })
                                         .collect();
+                                    // Insert into data model
+                                    let nodes_to_insert: Vec<TreeNode> = new_nodes.clone();
                                     for (i, child_node) in new_nodes.into_iter().enumerate() {
                                         nodes.insert(insert_idx + i, child_node);
                                     }
-                                    let snapshot: Vec<TreeNode> = nodes.clone();
                                     drop(nodes);
-                                    render_tree(&list2, &snapshot);
-                                    glib::idle_add_local_once(move || {
-                                        scroll2.vadjustment().set_value(scroll_pos);
-                                    });
+                                    // Insert rows into the ListBox at the right position
+                                    insert_rows_at(&list2, insert_idx, &nodes_to_insert);
                                 }
                             }
                         });
@@ -788,15 +773,20 @@ impl SidebarState {
             .map(|s| (s.nodes.clone(), s.current_path.clone(), s.scroll_position));
 
         if let Some((nodes, saved_path, scroll_pos)) = saved {
-            *self.tree_nodes.borrow_mut() = nodes.clone();
-            *self.current_path.borrow_mut() = saved_path;
-            render_tree(&self.file_tree_list, &nodes);
+            if nodes.is_empty() {
+                // Saved state had no tree data; load from disk instead
+                self.load_directory(if saved_path.is_empty() { path } else { &saved_path });
+            } else {
+                *self.tree_nodes.borrow_mut() = nodes.clone();
+                *self.current_path.borrow_mut() = saved_path;
+                render_tree(&self.file_tree_list, &nodes);
 
-            // Restore scroll position after the render
-            let scroll = self.file_tree_scroll.clone();
-            glib::idle_add_local_once(move || {
-                scroll.vadjustment().set_value(scroll_pos);
-            });
+                // Restore scroll position after the render
+                let scroll = self.file_tree_scroll.clone();
+                glib::idle_add_local_once(move || {
+                    scroll.vadjustment().set_value(scroll_pos);
+                });
+            }
         } else {
             self.load_directory(path);
         }
@@ -863,75 +853,132 @@ fn file_icon_name(filename: &str) -> &'static str {
     }
 }
 
+/// Build a single row widget for a tree node.
+fn build_tree_row(node: &TreeNode) -> gtk4::Box {
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    row.add_css_class("file-entry");
+    row.set_widget_name(&node.entry.path);
+    row.set_cursor_from_name(Some("pointer"));
+
+    // Indent based on depth
+    if node.depth > 0 {
+        row.set_margin_start((node.depth as i32) * 16);
+    }
+
+    // Expand/collapse arrow for directories, spacer for files
+    if node.entry.is_dir {
+        let arrow = if node.expanded {
+            gtk4::Image::from_icon_name("pan-down-symbolic")
+        } else {
+            gtk4::Image::from_icon_name("pan-end-symbolic")
+        };
+        arrow.set_pixel_size(12);
+        row.append(&arrow);
+    } else {
+        let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        spacer.set_size_request(12, -1);
+        row.append(&spacer);
+    }
+
+    // File/folder icon
+    let icon_name = if node.entry.is_dir {
+        if node.expanded {
+            "folder-open-symbolic"
+        } else {
+            "folder-symbolic"
+        }
+    } else {
+        file_icon_name(&node.entry.name)
+    };
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(16);
+    row.append(&icon);
+
+    // Name label
+    let label = gtk4::Label::new(Some(&node.entry.name));
+    label.set_halign(gtk4::Align::Start);
+    label.set_hexpand(true);
+    label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    if node.entry.is_dir {
+        label.add_css_class("file-entry-dir");
+    } else {
+        label.add_css_class("file-entry-file");
+    }
+    row.append(&label);
+
+    // Git status indicator
+    if let Some(ref status) = node.entry.git_status {
+        let status_label = gtk4::Label::new(Some(status));
+        match status.as_str() {
+            "M" => status_label.add_css_class("git-modified"),
+            "A" => status_label.add_css_class("git-added"),
+            "?" => status_label.add_css_class("git-untracked"),
+            _ => {}
+        }
+        row.append(&status_label);
+    }
+
+    row
+}
+
+/// Update the arrow and icon on an existing directory row in-place (no remove/insert).
+fn update_dir_row_expanded(list: &gtk4::ListBox, index: usize, expanded: bool) {
+    let row = match list.row_at_index(index as i32) {
+        Some(r) => r,
+        None => return,
+    };
+    let content_box = match row.child().and_then(|c| c.downcast::<gtk4::Box>().ok()) {
+        Some(b) => b,
+        None => return,
+    };
+    // First child is the arrow Image
+    if let Some(arrow) = content_box
+        .first_child()
+        .and_then(|c| c.downcast::<gtk4::Image>().ok())
+    {
+        arrow.set_icon_name(Some(if expanded {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        }));
+        // Second child (sibling) is the folder icon
+        if let Some(icon) = arrow
+            .next_sibling()
+            .and_then(|c| c.downcast::<gtk4::Image>().ok())
+        {
+            icon.set_icon_name(Some(if expanded {
+                "folder-open-symbolic"
+            } else {
+                "folder-symbolic"
+            }));
+        }
+    }
+}
+
+/// Insert rows into the ListBox at the given position without clearing.
+fn insert_rows_at(list: &gtk4::ListBox, position: usize, nodes: &[TreeNode]) {
+    for (i, node) in nodes.iter().enumerate() {
+        let row = build_tree_row(node);
+        list.insert(&row, (position + i) as i32);
+    }
+}
+
+/// Remove `count` rows starting at `position` from the ListBox.
+fn remove_rows_at(list: &gtk4::ListBox, position: usize, count: usize) {
+    // Remove from bottom to top to keep indices stable
+    for _ in 0..count {
+        if let Some(row) = list.row_at_index(position as i32) {
+            list.remove(&row);
+        }
+    }
+}
+
 /// Render the tree node list into the ListBox.
 /// Each row is indented based on depth, directories show expand/collapse arrows.
 fn render_tree(list: &gtk4::ListBox, nodes: &[TreeNode]) {
     clear_list(list);
-
     for node in nodes {
-        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-        row.add_css_class("file-entry");
-        row.set_widget_name(&node.entry.path);
-        row.set_cursor_from_name(Some("pointer"));
-
-        // Indent based on depth
-        if node.depth > 0 {
-            row.set_margin_start((node.depth as i32) * 16);
-        }
-
-        // Expand/collapse arrow for directories, spacer for files
-        if node.entry.is_dir {
-            let arrow = if node.expanded {
-                gtk4::Image::from_icon_name("pan-down-symbolic")
-            } else {
-                gtk4::Image::from_icon_name("pan-end-symbolic")
-            };
-            arrow.set_pixel_size(12);
-            row.append(&arrow);
-        } else {
-            let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-            spacer.set_size_request(12, -1);
-            row.append(&spacer);
-        }
-
-        // File/folder icon
-        let icon_name = if node.entry.is_dir {
-            if node.expanded {
-                "folder-open-symbolic"
-            } else {
-                "folder-symbolic"
-            }
-        } else {
-            file_icon_name(&node.entry.name)
-        };
-        let icon = gtk4::Image::from_icon_name(icon_name);
-        icon.set_pixel_size(16);
-        row.append(&icon);
-
-        // Name label
-        let label = gtk4::Label::new(Some(&node.entry.name));
-        label.set_halign(gtk4::Align::Start);
-        label.set_hexpand(true);
-        label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
-        if node.entry.is_dir {
-            label.add_css_class("file-entry-dir");
-        } else {
-            label.add_css_class("file-entry-file");
-        }
-        row.append(&label);
-
-        // Git status indicator
-        if let Some(ref status) = node.entry.git_status {
-            let status_label = gtk4::Label::new(Some(status));
-            match status.as_str() {
-                "M" => status_label.add_css_class("git-modified"),
-                "A" => status_label.add_css_class("git-added"),
-                "?" => status_label.add_css_class("git-untracked"),
-                _ => {}
-            }
-            row.append(&status_label);
-        }
-
+        let row = build_tree_row(node);
         list.append(&row);
     }
 }

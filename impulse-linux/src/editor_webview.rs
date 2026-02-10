@@ -50,6 +50,7 @@ impl MonacoEditorHandle {
             .evaluate_javascript(&script, None, None, None::<&gtk4::gio::Cancellable>, |_| {});
     }
 
+    #[allow(dead_code)]
     pub fn open_file(&self, file_path: &str, content: &str, language: &str) {
         *self.file_path.borrow_mut() = file_path.to_string();
         *self.cached_content.borrow_mut() = content.to_string();
@@ -224,6 +225,10 @@ where
         .vexpand(true)
         .build();
 
+    // Set the WebView background to match the theme so no black flashes during scroll/load
+    let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+    webview.set_background_color(&bg_rgba);
+
     // Configure WebView settings
     if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         wk_settings.set_enable_javascript(true);
@@ -323,7 +328,7 @@ where
 
 fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
     EditorOptions {
-        font_size: Some(settings.font_size as u32),
+        font_size: Some((settings.font_size as u32).max(14)),
         font_family: Some(if settings.font_family.is_empty() {
             "monospace".to_string()
         } else {

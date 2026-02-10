@@ -682,28 +682,6 @@ pub fn build_window(app: &adw::Application) {
         }));
     }
 
-    // Wire up Replace All to refresh open editor buffers
-    {
-        let tab_view = tab_view.clone();
-        *sidebar_state.project_search.on_files_replaced.borrow_mut() =
-            Some(Box::new(move |paths: &[String]| {
-                let n = tab_view.n_pages();
-                for i in 0..n {
-                    let page = tab_view.nth_page(i);
-                    let widget_name = page.child().widget_name().to_string();
-                    if paths.iter().any(|p| p == &widget_name) {
-                        // Reload file content from disk via the Monaco handle
-                        if let Some(handle) = editor::get_handle_for_widget(&page.child()) {
-                            if let Ok(content) = std::fs::read_to_string(&widget_name) {
-                                let language = handle.language.borrow().clone();
-                                handle.open_file(&widget_name, &content, &language);
-                            }
-                        }
-                    }
-                }
-            }));
-    }
-
     // Wire up "Open in Terminal" context menu action to cd into directory
     {
         let tab_view = tab_view.clone();

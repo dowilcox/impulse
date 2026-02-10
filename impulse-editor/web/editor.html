@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1b26; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
   #container { width: 100%; height: 100%; }
   #loading {
     display: flex; align-items: center; justify-content: center;
@@ -50,6 +50,18 @@ require.config({
   paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs" }
 });
 
+// Configure web workers for language services via data URL proxy
+window.MonacoEnvironment = {
+  getWorker: function (moduleId, label) {
+    var workerUrl = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/base/worker/workerMain.js";
+    var blob = new Blob(
+      ["self.MonacoEnvironment={baseUrl:'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/'};importScripts('" + workerUrl + "');"],
+      { type: "application/javascript" }
+    );
+    return new Worker(URL.createObjectURL(blob));
+  },
+};
+
 require(["vs/editor/editor.main"], function () {
   document.getElementById("loading").style.display = "none";
   document.getElementById("container").style.display = "block";
@@ -71,7 +83,8 @@ require(["vs/editor/editor.main"], function () {
     mouseWheelScrollSensitivity: 1,
     cursorBlinking: "smooth",
     cursorSmoothCaretAnimation: "on",
-    padding: { top: 8 },
+    stickyScroll: { enabled: false },
+    padding: { top: 4 },
     suggest: {
       showIcons: true,
       showStatusBar: true,
@@ -83,7 +96,7 @@ require(["vs/editor/editor.main"], function () {
     foldingStrategy: "auto",
     showFoldingControls: "mouseover",
     lineNumbers: "on",
-    glyphMargin: true,
+    glyphMargin: false,
     wordWrap: "off",
     tabSize: 4,
     insertSpaces: true,
