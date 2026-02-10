@@ -78,7 +78,7 @@ impl Default for Settings {
 
             // Editor
             auto_save: false,
-            font_size: 11,
+            font_size: 14,
             font_family: String::from("monospace"),
             tab_width: 4,
             use_spaces: true,

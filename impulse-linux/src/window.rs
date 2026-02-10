@@ -1006,19 +1006,28 @@ pub fn build_window(app: &adw::Application) {
                             }
 
                             let file_path = uri_to_file_path(&uri);
-                            // Open the file via sidebar callback
-                            if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
-                                cb(&file_path);
-                            }
-                            // Navigate to the position (Monaco uses 1-based lines/columns)
-                            let n = tab_view.n_pages();
-                            for i in 0..n {
-                                let page = tab_view.nth_page(i);
-                                let child = page.child();
-                                if child.widget_name().as_str() == file_path {
+                            let is_same_file = file_path == source_path;
+
+                            if is_same_file {
+                                // Same-file navigation: just move the cursor
+                                if let Some(page) = tab_view.selected_page() {
+                                    let child = page.child();
                                     editor::go_to_position(&child, line + 1, character + 1);
-                                    tab_view.set_selected_page(&page);
-                                    break;
+                                }
+                            } else {
+                                // Cross-file navigation: open the target file, then jump
+                                if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                    cb(&file_path);
+                                }
+                                let n = tab_view.n_pages();
+                                for i in 0..n {
+                                    let page = tab_view.nth_page(i);
+                                    let child = page.child();
+                                    if child.widget_name().as_str() == file_path {
+                                        editor::go_to_position(&child, line + 1, character + 1);
+                                        tab_view.set_selected_page(&page);
+                                        break;
+                                    }
                                 }
                             }
                         }

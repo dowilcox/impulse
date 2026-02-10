@@ -336,7 +336,7 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
         } else {
             "off".to_string()
         }),
-        minimap_enabled: Some(true),
+        minimap_enabled: Some(false),
         line_numbers: Some(if settings.show_line_numbers {
             "on".to_string()
         } else {
