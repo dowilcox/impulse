@@ -40,7 +40,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
     stack.set_vexpand(true);
 
     // Custom toggle button row instead of StackSwitcher
-    let switcher_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    let switcher_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
     switcher_box.add_css_class("sidebar-switcher");
     switcher_box.set_homogeneous(true);
 
@@ -595,22 +595,26 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
     {
         let stack = stack.clone();
         let search_btn_ref = search_btn.clone();
+        let toolbar_box = toolbar_box.clone();
         files_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
                 stack.set_visible_child_name("files");
                 btn.add_css_class("sidebar-tab-active");
                 search_btn_ref.remove_css_class("sidebar-tab-active");
+                toolbar_box.set_visible(true);
             }
         });
     }
     {
         let stack = stack.clone();
         let files_btn_ref = files_btn.clone();
+        let toolbar_box = toolbar_box.clone();
         search_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
                 stack.set_visible_child_name("search");
                 btn.add_css_class("sidebar-tab-active");
                 files_btn_ref.remove_css_class("sidebar-tab-active");
+                toolbar_box.set_visible(false);
             }
         });
     }

@@ -165,7 +165,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border-right: 1px solid {bg_highlight};
         }}
         .sidebar-switcher {{
-            padding: 4px 6px;
+            padding: 6px 8px;
             background-color: {bg_dark};
         }}
         .sidebar-tab {{
@@ -186,6 +186,11 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .sidebar-tab-active {{
             color: {cyan};
             background-color: {bg_highlight};
+        }}
+        .sidebar-toolbar-btn {{
+            min-width: 24px;
+            min-height: 24px;
+            padding: 2px;
         }}
         .file-tree {{
             background-color: transparent;
