@@ -76,6 +76,9 @@ pub struct Settings {
     pub editor_line_height: u32,
     pub editor_auto_closing_brackets: String,
 
+    // ── Sidebar ────────────────────────────────────────────────────────
+    pub sidebar_show_hidden: bool,
+
     // ── Appearance ───────────────────────────────────────────────────────
     pub color_scheme: String,
 
@@ -133,6 +136,9 @@ impl Default for Settings {
             // Editor (additional)
             editor_line_height: 0,
             editor_auto_closing_brackets: String::from("languageDefined"),
+
+            // Sidebar
+            sidebar_show_hidden: false,
 
             // Appearance
             color_scheme: String::from("cyberpunk"),

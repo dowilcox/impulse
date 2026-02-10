@@ -1,10 +1,16 @@
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
+use libadwaita as adw;
+use libadwaita::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
+use std::sync::mpsc as std_mpsc;
+use std::time::Duration;
 
 use crate::project_search;
+use crate::settings;
 use impulse_core::filesystem::FileEntry;
 
 /// A node in the sidebar file tree, representing either a file or directory at a given depth.
@@ -23,7 +29,7 @@ pub struct TabTreeState {
 }
 
 /// Build the sidebar widget containing file tree and search panel.
-pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
+pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, SidebarState) {
     let sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     sidebar.add_css_class("sidebar");
     sidebar.set_width_request(250);
@@ -58,6 +64,40 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
 
     switcher_box.append(&files_btn);
     switcher_box.append(&search_btn);
+
+    // Toolbar row with action buttons
+    let toolbar_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
+    toolbar_box.add_css_class("sidebar-toolbar");
+    toolbar_box.set_halign(gtk4::Align::End);
+    toolbar_box.set_margin_end(4);
+    toolbar_box.set_margin_top(2);
+    toolbar_box.set_margin_bottom(2);
+
+    let show_hidden = Rc::new(RefCell::new(settings.borrow().sidebar_show_hidden));
+
+    let hidden_btn = gtk4::ToggleButton::new();
+    hidden_btn.set_icon_name("view-reveal-symbolic");
+    hidden_btn.set_tooltip_text(Some("Toggle Hidden Files"));
+    hidden_btn.set_active(settings.borrow().sidebar_show_hidden);
+    hidden_btn.set_cursor_from_name(Some("pointer"));
+    hidden_btn.add_css_class("flat");
+    hidden_btn.add_css_class("sidebar-toolbar-btn");
+
+    let refresh_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    refresh_btn.set_tooltip_text(Some("Refresh File Tree"));
+    refresh_btn.set_cursor_from_name(Some("pointer"));
+    refresh_btn.add_css_class("flat");
+    refresh_btn.add_css_class("sidebar-toolbar-btn");
+
+    let collapse_btn = gtk4::Button::from_icon_name("view-list-symbolic");
+    collapse_btn.set_tooltip_text(Some("Collapse All"));
+    collapse_btn.set_cursor_from_name(Some("pointer"));
+    collapse_btn.add_css_class("flat");
+    collapse_btn.add_css_class("sidebar-toolbar-btn");
+
+    toolbar_box.append(&hidden_btn);
+    toolbar_box.append(&refresh_btn);
+    toolbar_box.append(&collapse_btn);
 
     // File tree page
     let file_tree_scroll = gtk4::ScrolledWindow::new();
@@ -239,7 +279,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
     }
     action_group.add_action(&rename_action);
 
-    // "delete" action - delete file or directory
+    // "delete" action - delete file or directory with confirmation
     let delete_action = gio::SimpleAction::new("delete", None);
     {
         let clicked_path = clicked_path.clone();
@@ -251,23 +291,70 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 return;
             }
 
+            let filename = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("item")
+                .to_string();
             let is_dir = std::path::Path::new(&path).is_dir();
-            let result = if is_dir {
-                std::fs::remove_dir_all(&path)
-            } else {
-                std::fs::remove_file(&path)
-            };
 
-            match result {
-                Ok(()) => {
-                    let mut nodes = tree_nodes.borrow_mut();
-                    nodes.retain(|n| n.entry.path != path);
-                    let snapshot: Vec<_> = nodes.clone();
-                    drop(nodes);
-                    render_tree(&file_tree_list, &snapshot);
+            let dialog = adw::AlertDialog::builder()
+                .heading("Delete File")
+                .body(format!(
+                    "Are you sure you want to delete \"{}\"?{}",
+                    filename,
+                    if is_dir {
+                        " This will delete the directory and all its contents."
+                    } else {
+                        ""
+                    }
+                ))
+                .build();
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("delete", "Delete");
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_close_response("cancel");
+
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list_for_response = file_tree_list.clone();
+            dialog.connect_response(None, move |_dialog, response| {
+                if response != "delete" {
+                    return;
                 }
-                Err(e) => {
-                    log::error!("Failed to delete {}: {}", path, e);
+
+                let result = if is_dir {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
+
+                match result {
+                    Ok(()) => {
+                        let mut nodes = tree_nodes.borrow_mut();
+                        // Remove the node and any descendants (for directories)
+                        if let Some(idx) = nodes.iter().position(|n| n.entry.path == path) {
+                            let depth = nodes[idx].depth;
+                            let mut end = idx + 1;
+                            while end < nodes.len() && nodes[end].depth > depth {
+                                end += 1;
+                            }
+                            nodes.drain(idx..end);
+                        }
+                        let snapshot: Vec<_> = nodes.clone();
+                        drop(nodes);
+                        render_tree(&file_tree_list_for_response, &snapshot);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to delete {}: {}", path, e);
+                    }
+                }
+            });
+
+            // Present on the nearest window
+            if let Some(root) = file_tree_list.root() {
+                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
+                    dialog.present(Some(window));
                 }
             }
         });
@@ -280,6 +367,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         let clicked_path = clicked_path.clone();
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
+        let current_path = current_path.clone();
         new_file_action.connect_activate(move |_, _| {
             let dir_path = clicked_path.borrow().clone();
             if dir_path.is_empty() {
@@ -309,6 +397,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
+            let current_path = current_path.clone();
             {
                 let dialog = dialog.clone();
                 let dir_path = dir_path.clone();
@@ -319,39 +408,15 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                         if let Err(e) = std::fs::write(&new_path, "") {
                             log::error!("Failed to create file: {}", e);
                         } else {
-                            let mut nodes = tree_nodes.borrow_mut();
-                            if let Some(parent_idx) =
-                                nodes.iter().position(|n| n.entry.path == dir_path)
-                            {
-                                let parent_depth = nodes[parent_idx].depth;
-                                if nodes[parent_idx].expanded {
-                                    let mut insert_idx = parent_idx + 1;
-                                    while insert_idx < nodes.len()
-                                        && nodes[insert_idx].depth > parent_depth
-                                    {
-                                        insert_idx += 1;
-                                    }
-                                    nodes.insert(
-                                        insert_idx,
-                                        TreeNode {
-                                            entry: impulse_core::filesystem::FileEntry {
-                                                name: name.clone(),
-                                                path: new_path.to_string_lossy().to_string(),
-                                                is_dir: false,
-                                                is_symlink: false,
-                                                size: 0,
-                                                modified: 0,
-                                                git_status: None,
-                                            },
-                                            depth: parent_depth + 1,
-                                            expanded: false,
-                                        },
-                                    );
-                                }
-                            }
-                            let snapshot: Vec<_> = nodes.clone();
-                            drop(nodes);
-                            render_tree(&file_tree_list, &snapshot);
+                            insert_new_entry_into_tree(
+                                &tree_nodes,
+                                &file_tree_list,
+                                &current_path,
+                                &dir_path,
+                                &name,
+                                &new_path.to_string_lossy(),
+                                false,
+                            );
                         }
                     }
                     dialog.close();
@@ -383,6 +448,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         let clicked_path = clicked_path.clone();
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
+        let current_path = current_path.clone();
         new_folder_action.connect_activate(move |_, _| {
             let dir_path = clicked_path.borrow().clone();
             if dir_path.is_empty() {
@@ -412,6 +478,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
+            let current_path = current_path.clone();
             {
                 let dialog = dialog.clone();
                 let dir_path = dir_path.clone();
@@ -422,39 +489,15 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                         if let Err(e) = std::fs::create_dir(&new_path) {
                             log::error!("Failed to create folder: {}", e);
                         } else {
-                            let mut nodes = tree_nodes.borrow_mut();
-                            if let Some(parent_idx) =
-                                nodes.iter().position(|n| n.entry.path == dir_path)
-                            {
-                                let parent_depth = nodes[parent_idx].depth;
-                                if nodes[parent_idx].expanded {
-                                    let mut insert_idx = parent_idx + 1;
-                                    while insert_idx < nodes.len()
-                                        && nodes[insert_idx].depth > parent_depth
-                                    {
-                                        insert_idx += 1;
-                                    }
-                                    nodes.insert(
-                                        insert_idx,
-                                        TreeNode {
-                                            entry: impulse_core::filesystem::FileEntry {
-                                                name: name.clone(),
-                                                path: new_path.to_string_lossy().to_string(),
-                                                is_dir: true,
-                                                is_symlink: false,
-                                                size: 0,
-                                                modified: 0,
-                                                git_status: None,
-                                            },
-                                            depth: parent_depth + 1,
-                                            expanded: false,
-                                        },
-                                    );
-                                }
-                            }
-                            let snapshot: Vec<_> = nodes.clone();
-                            drop(nodes);
-                            render_tree(&file_tree_list, &snapshot);
+                            insert_new_entry_into_tree(
+                                &tree_nodes,
+                                &file_tree_list,
+                                &current_path,
+                                &dir_path,
+                                &name,
+                                &new_path.to_string_lossy(),
+                                true,
+                            );
                         }
                     }
                     dialog.close();
@@ -573,6 +616,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
     }
 
     sidebar.append(&switcher_box);
+    sidebar.append(&toolbar_box);
     sidebar.append(&stack);
 
     let on_file_activated: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
@@ -588,13 +632,62 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
         tree_nodes: tree_nodes.clone(),
         tab_tree_states: Rc::new(RefCell::new(HashMap::new())),
         active_tab: Rc::new(RefCell::new(None)),
+        show_hidden: show_hidden.clone(),
+        #[allow(clippy::arc_with_non_send_sync)]
+        _watcher: Rc::new(RefCell::new(None)),
     };
+
+    // Wire up toolbar buttons
+    {
+        let state_tree_nodes = state.tree_nodes.clone();
+        let state_current_path = state.current_path.clone();
+        let state_file_tree_list = state.file_tree_list.clone();
+        let state_file_tree_scroll = state.file_tree_scroll.clone();
+        let state_show_hidden = state.show_hidden.clone();
+        refresh_btn.connect_clicked(move |_| {
+            refresh_tree(
+                &state_tree_nodes,
+                &state_file_tree_list,
+                &state_file_tree_scroll,
+                &state_current_path,
+                *state_show_hidden.borrow(),
+            );
+        });
+    }
+    {
+        let state_tree_nodes = state.tree_nodes.clone();
+        let state_file_tree_list = state.file_tree_list.clone();
+        collapse_btn.connect_clicked(move |_| {
+            collapse_all(&state_tree_nodes, &state_file_tree_list);
+        });
+    }
+    {
+        let state_tree_nodes = state.tree_nodes.clone();
+        let state_current_path = state.current_path.clone();
+        let state_file_tree_list = state.file_tree_list.clone();
+        let state_file_tree_scroll = state.file_tree_scroll.clone();
+        let show_hidden = show_hidden.clone();
+        let settings = settings.clone();
+        hidden_btn.connect_toggled(move |btn| {
+            let active = btn.is_active();
+            *show_hidden.borrow_mut() = active;
+            settings.borrow_mut().sidebar_show_hidden = active;
+            refresh_tree(
+                &state_tree_nodes,
+                &state_file_tree_list,
+                &state_file_tree_scroll,
+                &state_current_path,
+                active,
+            );
+        });
+    }
 
     // Wire up file tree row activation for tree expand/collapse and file opening
     {
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let on_file_activated = on_file_activated.clone();
+        let show_hidden = state.show_hidden.clone();
         state
             .file_tree_list
             .connect_row_activated(move |_list, row| {
@@ -602,6 +695,7 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                 let tree_nodes_ref = tree_nodes.clone();
                 let list = file_tree_list.clone();
                 let on_file_activated = on_file_activated.clone();
+                let show_hidden = show_hidden.clone();
 
                 let node = {
                     let nodes = tree_nodes_ref.borrow();
@@ -646,12 +740,13 @@ pub fn build_sidebar() -> (gtk4::Box, SidebarState) {
                         let path = node.entry.path.clone();
                         let tree_nodes_ref2 = tree_nodes_ref.clone();
                         let list2 = list.clone();
+                        let show_hidden_val = *show_hidden.borrow();
                         glib::spawn_future_local(async move {
                             let path_clone = path.clone();
                             let result = gio::spawn_blocking(move || {
                                 impulse_core::filesystem::read_directory_with_git_status(
                                     &path_clone,
-                                    false,
+                                    show_hidden_val,
                                 )
                             })
                             .await;
@@ -706,6 +801,9 @@ pub struct SidebarState {
     pub tree_nodes: Rc<RefCell<Vec<TreeNode>>>,
     pub tab_tree_states: Rc<RefCell<HashMap<gtk4::Widget, TabTreeState>>>,
     pub active_tab: Rc<RefCell<Option<gtk4::Widget>>>,
+    pub show_hidden: Rc<RefCell<bool>>,
+    /// Keeps the filesystem watcher alive. Dropping this stops watching.
+    _watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
 }
 
 impl SidebarState {
@@ -715,11 +813,15 @@ impl SidebarState {
         let list = self.file_tree_list.clone();
         let path = path.to_string();
         let tree_nodes = self.tree_nodes.clone();
+        let show_hidden = *self.show_hidden.borrow();
+
+        // Set up filesystem watcher for this directory
+        self.setup_watcher(&path);
 
         glib::spawn_future_local(async move {
             let path_clone = path.clone();
             let result = gio::spawn_blocking(move || {
-                impulse_core::filesystem::read_directory_with_git_status(&path_clone, false)
+                impulse_core::filesystem::read_directory_with_git_status(&path_clone, show_hidden)
             })
             .await;
 
@@ -742,6 +844,66 @@ impl SidebarState {
                 }
             }
         });
+    }
+
+    /// Set up a filesystem watcher for the given directory.
+    /// Events are debounced and forwarded to the GTK main loop to trigger tree refresh.
+    fn setup_watcher(&self, path: &str) {
+        use notify::{RecursiveMode, Watcher};
+
+        let (tx, rx) = std_mpsc::channel::<()>();
+
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    match event.kind {
+                        notify::EventKind::Create(_)
+                        | notify::EventKind::Remove(_)
+                        | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                            let _ = tx.send(());
+                        }
+                        _ => {}
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::warn!("Failed to create filesystem watcher: {}", e);
+                    return;
+                }
+            };
+
+        if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
+            log::warn!("Failed to watch directory {}: {}", path, e);
+            return;
+        }
+
+        // Poll for filesystem events every 500ms (debounced)
+        let tree_nodes = self.tree_nodes.clone();
+        let file_tree_list = self.file_tree_list.clone();
+        let file_tree_scroll = self.file_tree_scroll.clone();
+        let current_path = self.current_path.clone();
+        let show_hidden = self.show_hidden.clone();
+
+        glib::timeout_add_local(Duration::from_millis(500), move || {
+            // Drain all pending events
+            let mut has_event = false;
+            while rx.try_recv().is_ok() {
+                has_event = true;
+            }
+            if has_event {
+                refresh_tree(
+                    &tree_nodes,
+                    &file_tree_list,
+                    &file_tree_scroll,
+                    &current_path,
+                    *show_hidden.borrow(),
+                );
+            }
+            glib::ControlFlow::Continue
+        });
+
+        *self._watcher.borrow_mut() = Some(watcher);
     }
 
     /// Save the current tree state for the active tab.
@@ -805,6 +967,190 @@ impl SidebarState {
     pub fn set_active_tab(&self, tab_child: &gtk4::Widget) {
         *self.active_tab.borrow_mut() = Some(tab_child.clone());
     }
+}
+
+/// Insert a newly created file or folder into the tree at the correct position.
+/// Handles both subdirectory insertion (when parent node is found and expanded)
+/// and root-level insertion (when dir_path equals the sidebar's root directory).
+fn insert_new_entry_into_tree(
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    file_tree_list: &gtk4::ListBox,
+    current_path: &Rc<RefCell<String>>,
+    dir_path: &str,
+    name: &str,
+    full_path: &str,
+    is_dir: bool,
+) {
+    let new_entry = FileEntry {
+        name: name.to_string(),
+        path: full_path.to_string(),
+        is_dir,
+        is_symlink: false,
+        size: 0,
+        modified: 0,
+        git_status: None,
+    };
+
+    let mut nodes = tree_nodes.borrow_mut();
+
+    // Try to find the parent directory node in the tree
+    if let Some(parent_idx) = nodes.iter().position(|n| n.entry.path == dir_path) {
+        let parent_depth = nodes[parent_idx].depth;
+        if nodes[parent_idx].expanded {
+            // Find the correct sorted insertion point among siblings
+            let insert_idx =
+                find_sorted_insert_position(&nodes, parent_idx + 1, parent_depth + 1, is_dir, name);
+            nodes.insert(
+                insert_idx,
+                TreeNode {
+                    entry: new_entry,
+                    depth: parent_depth + 1,
+                    expanded: false,
+                },
+            );
+        }
+    } else if dir_path == *current_path.borrow() {
+        // Root-level insertion: dir_path is the sidebar root, which has no node.
+        // Insert at the correct sorted position among depth-0 nodes.
+        let insert_idx = find_sorted_insert_position(&nodes, 0, 0, is_dir, name);
+        nodes.insert(
+            insert_idx,
+            TreeNode {
+                entry: new_entry,
+                depth: 0,
+                expanded: false,
+            },
+        );
+    }
+
+    let snapshot: Vec<_> = nodes.clone();
+    drop(nodes);
+    render_tree(file_tree_list, &snapshot);
+}
+
+/// Find the correct sorted insertion position for a new entry among siblings
+/// at the given depth, starting from `start_idx`. Directories sort before files,
+/// and entries are sorted alphabetically within each group.
+fn find_sorted_insert_position(
+    nodes: &[TreeNode],
+    start_idx: usize,
+    target_depth: usize,
+    is_dir: bool,
+    name: &str,
+) -> usize {
+    let name_lower = name.to_lowercase();
+    let mut idx = start_idx;
+
+    while idx < nodes.len() && nodes[idx].depth >= target_depth {
+        if nodes[idx].depth == target_depth {
+            // Compare: directories before files, then alphabetical
+            let sibling = &nodes[idx];
+            let should_insert = match (is_dir, sibling.entry.is_dir) {
+                (true, false) => true,  // new dir goes before existing file
+                (false, true) => false, // new file goes after existing dir
+                _ => name_lower < sibling.entry.name.to_lowercase(),
+            };
+            if should_insert {
+                return idx;
+            }
+        }
+        idx += 1;
+    }
+    idx
+}
+
+/// Refresh the tree while preserving expansion state and scroll position.
+fn refresh_tree(
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    file_tree_list: &gtk4::ListBox,
+    file_tree_scroll: &gtk4::ScrolledWindow,
+    current_path: &Rc<RefCell<String>>,
+    show_hidden: bool,
+) {
+    let path = current_path.borrow().clone();
+    if path.is_empty() {
+        return;
+    }
+
+    // Collect currently expanded directory paths
+    let expanded_paths: Vec<String> = tree_nodes
+        .borrow()
+        .iter()
+        .filter(|n| n.entry.is_dir && n.expanded)
+        .map(|n| n.entry.path.clone())
+        .collect();
+
+    let scroll_pos = file_tree_scroll.vadjustment().value();
+    let tree_nodes = tree_nodes.clone();
+    let file_tree_list = file_tree_list.clone();
+    let file_tree_scroll = file_tree_scroll.clone();
+
+    glib::spawn_future_local(async move {
+        let path_clone = path.clone();
+        let result = gio::spawn_blocking(move || {
+            impulse_core::filesystem::read_directory_with_git_status(&path_clone, show_hidden)
+        })
+        .await;
+
+        if let Ok(Ok(entries)) = result {
+            let mut nodes: Vec<TreeNode> = entries
+                .into_iter()
+                .map(|e| TreeNode {
+                    entry: e,
+                    depth: 0,
+                    expanded: false,
+                })
+                .collect();
+
+            // Re-expand previously expanded directories (breadth-first)
+            let mut i = 0;
+            while i < nodes.len() {
+                if nodes[i].entry.is_dir && expanded_paths.contains(&nodes[i].entry.path) {
+                    nodes[i].expanded = true;
+                    let child_depth = nodes[i].depth + 1;
+                    let dir_path = nodes[i].entry.path.clone();
+                    if let Ok(children) = impulse_core::filesystem::read_directory_with_git_status(
+                        &dir_path,
+                        show_hidden,
+                    ) {
+                        let child_nodes: Vec<TreeNode> = children
+                            .into_iter()
+                            .map(|e| TreeNode {
+                                entry: e,
+                                depth: child_depth,
+                                expanded: false,
+                            })
+                            .collect();
+                        for (j, child) in child_nodes.into_iter().enumerate() {
+                            nodes.insert(i + 1 + j, child);
+                        }
+                    }
+                }
+                i += 1;
+            }
+
+            *tree_nodes.borrow_mut() = nodes.clone();
+            render_tree(&file_tree_list, &nodes);
+
+            // Restore scroll position
+            glib::idle_add_local_once(move || {
+                file_tree_scroll.vadjustment().set_value(scroll_pos);
+            });
+        }
+    });
+}
+
+/// Collapse all expanded directories back to root-level only.
+fn collapse_all(tree_nodes: &Rc<RefCell<Vec<TreeNode>>>, file_tree_list: &gtk4::ListBox) {
+    let mut nodes = tree_nodes.borrow_mut();
+    // Keep only depth-0 nodes and mark them as collapsed
+    nodes.retain(|n| n.depth == 0);
+    for node in nodes.iter_mut() {
+        node.expanded = false;
+    }
+    let snapshot: Vec<_> = nodes.clone();
+    drop(nodes);
+    render_tree(file_tree_list, &snapshot);
 }
 
 /// Map a filename/extension to an appropriate GTK symbolic icon name.

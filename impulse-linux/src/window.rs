@@ -37,7 +37,8 @@ pub fn build_window(app: &adw::Application) {
     let font_size: Rc<Cell<i32>> = Rc::new(Cell::new(settings.borrow().font_size));
 
     // Shared copy-on-select flag checked by terminal selection-changed signal handlers
-    let copy_on_select_flag: Rc<Cell<bool>> = Rc::new(Cell::new(settings.borrow().terminal_copy_on_select));
+    let copy_on_select_flag: Rc<Cell<bool>> =
+        Rc::new(Cell::new(settings.borrow().terminal_copy_on_select));
 
     // --- LSP Bridge: GTK <-> Tokio ---
     // Channel for sending requests from GTK to the LSP tokio runtime
@@ -368,7 +369,7 @@ pub fn build_window(app: &adw::Application) {
     paned.set_shrink_end_child(false);
 
     // Sidebar
-    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar();
+    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings);
     sidebar_widget.set_visible(settings.borrow().sidebar_visible);
     paned.set_start_child(Some(&sidebar_widget));
 
@@ -785,7 +786,8 @@ pub fn build_window(app: &adw::Application) {
         let copy_on_select_flag = copy_on_select_flag.clone();
         move || {
             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
-            let term = terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
+            let term =
+                terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
             setup_terminal_signals(&term);
             terminal::spawn_shell(&term);
 
@@ -1133,6 +1135,29 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
+    // Capture-phase key handler for Ctrl+Shift+V paste (must run before VTE's
+    // internal handler which swallows the event on Wayland).
+    {
+        let tab_view = tab_view.clone();
+        let paste_key_ctrl = gtk4::EventControllerKey::new();
+        paste_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        paste_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
+            let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+            let shift = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
+            let is_v = key == gtk4::gdk::Key::v || key == gtk4::gdk::Key::V;
+            if ctrl && shift && is_v {
+                if let Some(page) = tab_view.selected_page() {
+                    if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                        terminal::paste_from_clipboard(&term);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                }
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+        window.add_controller(paste_key_ctrl);
+    }
+
     // --- Keyboard shortcuts ---
     let shortcut_controller = gtk4::ShortcutController::new();
     shortcut_controller.set_scope(gtk4::ShortcutScope::Global);
@@ -1459,17 +1484,8 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // Ctrl+Shift+V: Paste clipboard
-    {
-        let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>v", move || {
-            if let Some(page) = tab_view.selected_page() {
-                if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
-                    term.paste_clipboard();
-                }
-            }
-        });
-    }
+    // Ctrl+Shift+V paste is handled by the capture-phase EventControllerKey
+    // on the window (see above), which runs before VTE's internal handler.
 
     // Ctrl+Equal / Ctrl+plus: Increase font size
     {
