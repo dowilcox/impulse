@@ -46,8 +46,13 @@ impl MonacoEditorHandle {
         // Escape for embedding in JS string literal
         let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
         let script = format!("impulseReceiveCommand('{}')", escaped);
-        self.webview
-            .evaluate_javascript(&script, None, None, None::<&gtk4::gio::Cancellable>, |_| {});
+        self.webview.evaluate_javascript(
+            &script,
+            None,
+            None,
+            None::<&gtk4::gio::Cancellable>,
+            |_| {},
+        );
     }
 
     #[allow(dead_code)]
@@ -176,11 +181,8 @@ impl MonacoEditorHandle {
 
     pub fn set_theme(&self, theme: &ThemeColors) {
         let definition = theme_to_monaco(theme);
-        self.send_command(&EditorCommand::SetTheme {
-            theme: definition,
-        });
+        self.send_command(&EditorCommand::SetTheme { theme: definition });
     }
-
 }
 
 /// Create a Monaco editor widget inside a WebView.
@@ -226,7 +228,8 @@ where
         .build();
 
     // Set the WebView background to match the theme so no black flashes during scroll/load
-    let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+    let bg_rgba =
+        gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
     webview.set_background_color(&bg_rgba);
 
     // Configure WebView settings
@@ -314,8 +317,22 @@ where
         on_event(&handle_for_signal, event);
     });
 
-    // Load the Monaco HTML
-    webview.load_html(impulse_editor::assets::EDITOR_HTML, Some("file:///"));
+    // Extract Monaco assets and load editor from local filesystem
+    match impulse_editor::assets::ensure_monaco_extracted() {
+        Ok(monaco_dir) => {
+            let uri = format!("file://{}/editor.html", monaco_dir.display());
+            webview.load_uri(&uri);
+        }
+        Err(e) => {
+            log::error!("Failed to extract Monaco assets: {}", e);
+            let error_html = format!(
+                "<html><body style='background:#1a1b26;color:#a9b1d6;font-family:monospace;padding:2em'>\
+                 <h3>Editor failed to load</h3><p>{}</p></body></html>",
+                e
+            );
+            webview.load_html(&error_html, None);
+        }
+    }
 
     container.append(&webview);
 

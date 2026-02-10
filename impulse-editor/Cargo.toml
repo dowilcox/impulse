@@ -6,5 +6,7 @@ description = "Shared Monaco editor protocol and assets for Impulse IDE"
 license = "GPL-3.0-only"
 
 [dependencies]
+include_dir = "0.7"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

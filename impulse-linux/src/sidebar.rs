@@ -775,7 +775,11 @@ impl SidebarState {
         if let Some((nodes, saved_path, scroll_pos)) = saved {
             if nodes.is_empty() {
                 // Saved state had no tree data; load from disk instead
-                self.load_directory(if saved_path.is_empty() { path } else { &saved_path });
+                self.load_directory(if saved_path.is_empty() {
+                    path
+                } else {
+                    &saved_path
+                });
             } else {
                 *self.tree_nodes.borrow_mut() = nodes.clone();
                 *self.current_path.borrow_mut() = saved_path;

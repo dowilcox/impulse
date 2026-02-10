@@ -994,7 +994,8 @@ pub fn build_window(app: &adw::Application) {
                                 }
                             } else {
                                 // Cross-file navigation: open the target file, then jump
-                                if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref()
+                                {
                                     cb(&file_path);
                                 }
                                 let n = tab_view.n_pages();
@@ -1115,8 +1116,7 @@ pub fn build_window(app: &adw::Application) {
                                     && child.widget_name().as_str() == source_path
                                 {
                                     if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                        let text =
-                                            crate::lsp_hover::extract_hover_text(&contents);
+                                        let text = crate::lsp_hover::extract_hover_text(&contents);
                                         handle.resolve_hover(request_id, &text);
                                     }
                                 }
@@ -1911,87 +1911,84 @@ pub fn build_window(app: &adw::Application) {
             // Check if this is an editor tab with unsaved changes
             if editor::is_editor(&child) {
                 if editor::is_modified(&child) {
-                        // Extract filename for the dialog message
-                        let filename = std::path::Path::new(&child.widget_name().to_string())
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("File")
-                            .to_string();
+                    // Extract filename for the dialog message
+                    let filename = std::path::Path::new(&child.widget_name().to_string())
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("File")
+                        .to_string();
 
-                        // Show confirmation dialog
-                        let dialog = adw::AlertDialog::builder()
-                            .heading("Unsaved Changes")
-                            .body(format!(
-                                "\"{}\" has unsaved changes. Close anyway?",
-                                filename
-                            ))
-                            .build();
-                        dialog.add_response("cancel", "Cancel");
-                        dialog.add_response("discard", "Discard");
-                        dialog.add_response("save", "Save & Close");
-                        dialog.set_response_appearance(
-                            "discard",
-                            adw::ResponseAppearance::Destructive,
-                        );
-                        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
-                        dialog.set_default_response(Some("save"));
-                        dialog.set_close_response("cancel");
+                    // Show confirmation dialog
+                    let dialog = adw::AlertDialog::builder()
+                        .heading("Unsaved Changes")
+                        .body(format!(
+                            "\"{}\" has unsaved changes. Close anyway?",
+                            filename
+                        ))
+                        .build();
+                    dialog.add_response("cancel", "Cancel");
+                    dialog.add_response("discard", "Discard");
+                    dialog.add_response("save", "Save & Close");
+                    dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+                    dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+                    dialog.set_default_response(Some("save"));
+                    dialog.set_close_response("cancel");
 
-                        let tv = tv.clone();
-                        let page = page.clone();
-                        let child = child.clone();
-                        let lsp_tx = lsp_tx.clone();
-                        let create_tab2 = create_tab_on_empty.clone();
-                        let create_tab3 = create_tab_on_empty.clone();
-                        dialog.connect_response(None, move |_dialog, response| {
-                            match response {
-                                "save" => {
-                                    // Save then close
-                                    let path = child.widget_name().to_string();
-                                    let uri = file_path_to_uri(std::path::Path::new(&path))
-                                        .unwrap_or_else(|| format!("file://{}", path));
-                                    if let Some(text) = editor::get_editor_text(&child) {
-                                        if std::fs::write(&path, &text).is_ok() {
-                                            let _ = lsp_tx
-                                                .send(LspRequest::DidSave { uri: uri.clone() });
-                                        }
+                    let tv = tv.clone();
+                    let page = page.clone();
+                    let child = child.clone();
+                    let lsp_tx = lsp_tx.clone();
+                    let create_tab2 = create_tab_on_empty.clone();
+                    let create_tab3 = create_tab_on_empty.clone();
+                    dialog.connect_response(None, move |_dialog, response| {
+                        match response {
+                            "save" => {
+                                // Save then close
+                                let path = child.widget_name().to_string();
+                                let uri = file_path_to_uri(std::path::Path::new(&path))
+                                    .unwrap_or_else(|| format!("file://{}", path));
+                                if let Some(text) = editor::get_editor_text(&child) {
+                                    if std::fs::write(&path, &text).is_ok() {
+                                        let _ =
+                                            lsp_tx.send(LspRequest::DidSave { uri: uri.clone() });
                                     }
-                                    editor::unregister_handle(&path);
-                                    let _ = lsp_tx.send(LspRequest::DidClose { uri });
-                                    tv.close_page_finish(&page, true);
-                                    let tv2 = tv.clone();
-                                    let new_tab = create_tab2.clone();
-                                    gtk4::glib::idle_add_local_once(move || {
-                                        if tv2.n_pages() == 0 {
-                                            new_tab();
-                                        }
-                                    });
                                 }
-                                "discard" => {
-                                    let path = child.widget_name().to_string();
-                                    editor::unregister_handle(&path);
-                                    let uri = file_path_to_uri(std::path::Path::new(&path))
-                                        .unwrap_or_else(|| format!("file://{}", path));
-                                    let _ = lsp_tx.send(LspRequest::DidClose { uri });
-                                    tv.close_page_finish(&page, true);
-                                    let tv2 = tv.clone();
-                                    let new_tab = create_tab3.clone();
-                                    gtk4::glib::idle_add_local_once(move || {
-                                        if tv2.n_pages() == 0 {
-                                            new_tab();
-                                        }
-                                    });
-                                }
-                                _ => {
-                                    // Cancel - don't close
-                                    tv.close_page_finish(&page, false);
-                                }
+                                editor::unregister_handle(&path);
+                                let _ = lsp_tx.send(LspRequest::DidClose { uri });
+                                tv.close_page_finish(&page, true);
+                                let tv2 = tv.clone();
+                                let new_tab = create_tab2.clone();
+                                gtk4::glib::idle_add_local_once(move || {
+                                    if tv2.n_pages() == 0 {
+                                        new_tab();
+                                    }
+                                });
                             }
-                        });
+                            "discard" => {
+                                let path = child.widget_name().to_string();
+                                editor::unregister_handle(&path);
+                                let uri = file_path_to_uri(std::path::Path::new(&path))
+                                    .unwrap_or_else(|| format!("file://{}", path));
+                                let _ = lsp_tx.send(LspRequest::DidClose { uri });
+                                tv.close_page_finish(&page, true);
+                                let tv2 = tv.clone();
+                                let new_tab = create_tab3.clone();
+                                gtk4::glib::idle_add_local_once(move || {
+                                    if tv2.n_pages() == 0 {
+                                        new_tab();
+                                    }
+                                });
+                            }
+                            _ => {
+                                // Cancel - don't close
+                                tv.close_page_finish(&page, false);
+                            }
+                        }
+                    });
 
-                        dialog.present(Some(&window_ref));
+                    dialog.present(Some(&window_ref));
 
-                        return gtk4::glib::Propagation::Stop;
+                    return gtk4::glib::Propagation::Stop;
                 }
             }
 

@@ -189,11 +189,7 @@ pub fn is_binary_file(path: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn guess_language(file_path: &str) -> String {
-    let ext = file_path
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
     match ext.as_str() {
         "rs" => "rust",
         "py" | "pyi" => "python",
