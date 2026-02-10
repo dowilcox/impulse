@@ -273,19 +273,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {comment};
             font-size: 11px;
         }}
-        /* --- Completion popup --- */
-        .completion-list row {{
-            padding: 2px 4px;
-        }}
-        .completion-kind {{
-            color: {cyan};
-            font-size: 10px;
-            font-weight: bold;
-        }}
-        .completion-detail {{
-            color: {comment};
-            font-size: 11px;
-        }}
         /* --- Terminal --- */
         vte-terminal {{
             padding: 8px 12px;
@@ -370,23 +357,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {comment};
             font-size: 11px;
             margin: 0 4px;
-        }}
-        /* --- Editor (GtkSourceView) --- */
-        textview.view text {{
-            background-color: {bg};
-            color: {fg};
-        }}
-        textview.view {{
-            font-family: monospace;
-            font-size: 11pt;
-            padding: 8px 12px;
-        }}
-        textview.view .line-numbers {{
-            background-color: {bg_dark};
-            color: {comment};
-        }}
-        textview.view .current-line-number {{
-            color: {fg};
         }}
         /* --- Scrollbars --- */
         scrollbar slider {{

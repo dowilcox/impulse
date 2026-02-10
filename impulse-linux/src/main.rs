@@ -1,8 +1,6 @@
 mod editor;
 mod editor_webview;
-#[allow(dead_code)]
 mod lsp_completion;
-#[allow(dead_code)]
 mod lsp_hover;
 mod project_search;
 mod settings;

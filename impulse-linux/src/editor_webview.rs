@@ -328,7 +328,7 @@ where
 
 fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
     EditorOptions {
-        font_size: Some((settings.font_size as u32).max(14)),
+        font_size: Some((settings.font_size as u32).max(8)),
         font_family: Some(if settings.font_family.is_empty() {
             "monospace".to_string()
         } else {
@@ -348,6 +348,16 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
             "off".to_string()
         }),
         render_whitespace: Some("selection".to_string()),
+        render_line_highlight: Some(if settings.highlight_current_line {
+            "all".to_string()
+        } else {
+            "none".to_string()
+        }),
+        rulers: Some(if settings.show_right_margin {
+            vec![settings.right_margin_position]
+        } else {
+            vec![]
+        }),
     }
 }
 

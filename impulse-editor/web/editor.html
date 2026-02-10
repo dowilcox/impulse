@@ -9,7 +9,7 @@
   #container { width: 100%; height: 100%; }
   #loading {
     display: flex; align-items: center; justify-content: center;
-    width: 100%; height: 100%; color: #565f89; font-family: monospace; font-size: 14px;
+    width: 100%; height: 100%; color: inherit; opacity: 0.4; font-family: monospace; font-size: 14px;
   }
 </style>
 </head>
@@ -298,6 +298,8 @@ function handleUpdateSettings(cmd) {
   if (opts.minimap_enabled != null) update.minimap = { enabled: opts.minimap_enabled };
   if (opts.line_numbers != null) update.lineNumbers = opts.line_numbers;
   if (opts.render_whitespace != null) update.renderWhitespace = opts.render_whitespace;
+  if (opts.render_line_highlight != null) update.renderLineHighlight = opts.render_line_highlight;
+  if (opts.rulers != null) update.rulers = opts.rulers;
   editor.updateOptions(update);
 
   // Also update model options if tab settings changed

@@ -48,7 +48,6 @@ pub struct Settings {
     pub right_margin_position: u32,
     pub word_wrap: bool,
     pub highlight_current_line: bool,
-    pub editor_color_scheme: String,
 
     // ── Terminal ─────────────────────────────────────────────────────────
     pub terminal_scrollback: i64,
@@ -87,7 +86,6 @@ impl Default for Settings {
             right_margin_position: 120,
             word_wrap: false,
             highlight_current_line: true,
-            editor_color_scheme: String::from("Adwaita-dark"),
 
             // Terminal
             terminal_scrollback: 10000,

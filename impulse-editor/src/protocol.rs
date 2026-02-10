@@ -97,6 +97,10 @@ pub struct EditorOptions {
     pub line_numbers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub render_whitespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render_line_highlight: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rulers: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

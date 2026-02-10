@@ -200,46 +200,25 @@ pub fn show_settings_window(
     display_group.add(&margin_pos_row);
     editor_page.add(&display_group);
 
-    // -- Color Scheme group --
-    let scheme_group = adw::PreferencesGroup::new();
-    scheme_group.set_title("Color Scheme");
+    // -- Behavior group --
+    let behavior_group = adw::PreferencesGroup::new();
+    behavior_group.set_title("Behavior");
 
-    let scheme_manager = sourceview5::StyleSchemeManager::default();
-    let scheme_ids: Vec<String> = scheme_manager
-        .scheme_ids()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let scheme_strings: Vec<&str> = scheme_ids.iter().map(|s| s.as_str()).collect();
-    let scheme_model = gtk4::StringList::new(&scheme_strings);
-
-    let current_scheme = settings.borrow().editor_color_scheme.clone();
-    let scheme_index = scheme_ids
-        .iter()
-        .position(|id| id == &current_scheme)
-        .unwrap_or(0) as u32;
-
-    let scheme_row = adw::ComboRow::new();
-    scheme_row.set_title("Editor Color Scheme");
-    scheme_row.set_model(Some(&scheme_model));
-    scheme_row.set_selected(scheme_index);
+    let auto_save_row = adw::SwitchRow::new();
+    auto_save_row.set_title("Auto Save");
+    auto_save_row.set_active(settings.borrow().auto_save);
     {
         let settings = Rc::clone(settings);
         let on_changed = Rc::clone(&on_changed);
-        let scheme_ids = scheme_ids.clone();
-        scheme_row.connect_selected_notify(move |row| {
-            let idx = row.selected() as usize;
-            if let Some(id) = scheme_ids.get(idx) {
-                let mut s = settings.borrow_mut();
-                s.editor_color_scheme = id.clone();
-                settings::save(&s);
-                on_changed(&s);
-            }
+        auto_save_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.auto_save = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
         });
     }
-    scheme_group.add(&scheme_row);
-    editor_page.add(&scheme_group);
+    behavior_group.add(&auto_save_row);
+    editor_page.add(&behavior_group);
 
     preferences_window.add(&editor_page);
 
