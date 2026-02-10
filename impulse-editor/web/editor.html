@@ -301,6 +301,15 @@ function handleUpdateSettings(cmd) {
   if (opts.render_whitespace != null) update.renderWhitespace = opts.render_whitespace;
   if (opts.render_line_highlight != null) update.renderLineHighlight = opts.render_line_highlight;
   if (opts.rulers != null) update.rulers = opts.rulers;
+  if (opts.sticky_scroll != null) update.stickyScroll = { enabled: opts.sticky_scroll };
+  if (opts.bracket_pair_colorization != null) update.bracketPairColorization = { enabled: opts.bracket_pair_colorization };
+  if (opts.indent_guides != null) update.guides = { indentation: opts.indent_guides };
+  if (opts.font_ligatures != null) update.fontLigatures = opts.font_ligatures;
+  if (opts.folding != null) update.folding = opts.folding;
+  if (opts.scroll_beyond_last_line != null) update.scrollBeyondLastLine = opts.scroll_beyond_last_line;
+  if (opts.smooth_scrolling != null) update.smoothScrolling = opts.smooth_scrolling;
+  if (opts.cursor_style != null) update.cursorStyle = opts.cursor_style;
+  if (opts.cursor_blinking != null) update.cursorBlinking = opts.cursor_blinking;
   editor.updateOptions(update);
 
   // Also update model options if tab settings changed

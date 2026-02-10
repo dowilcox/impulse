@@ -101,6 +101,24 @@ pub struct EditorOptions {
     pub render_line_highlight: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rulers: Option<Vec<u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sticky_scroll: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bracket_pair_colorization: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_guides: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_ligatures: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folding: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scroll_beyond_last_line: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smooth_scrolling: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_blinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

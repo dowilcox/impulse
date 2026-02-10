@@ -358,13 +358,13 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
         } else {
             "off".to_string()
         }),
-        minimap_enabled: Some(false),
+        minimap_enabled: Some(settings.minimap_enabled),
         line_numbers: Some(if settings.show_line_numbers {
             "on".to_string()
         } else {
             "off".to_string()
         }),
-        render_whitespace: Some("selection".to_string()),
+        render_whitespace: Some(settings.render_whitespace.clone()),
         render_line_highlight: Some(if settings.highlight_current_line {
             "all".to_string()
         } else {
@@ -375,6 +375,15 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
         } else {
             vec![]
         }),
+        sticky_scroll: Some(settings.sticky_scroll),
+        bracket_pair_colorization: Some(settings.bracket_pair_colorization),
+        indent_guides: Some(settings.indent_guides),
+        font_ligatures: Some(settings.font_ligatures),
+        folding: Some(settings.folding),
+        scroll_beyond_last_line: Some(settings.scroll_beyond_last_line),
+        smooth_scrolling: Some(settings.smooth_scrolling),
+        cursor_style: Some(settings.editor_cursor_style.clone()),
+        cursor_blinking: Some(settings.editor_cursor_blinking.clone()),
     }
 }
 

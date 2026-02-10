@@ -198,7 +198,221 @@ pub fn show_settings_window(
         });
     }
     display_group.add(&margin_pos_row);
+
+    let minimap_row = adw::SwitchRow::new();
+    minimap_row.set_title("Minimap");
+    minimap_row.set_active(settings.borrow().minimap_enabled);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        minimap_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.minimap_enabled = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&minimap_row);
+
+    let sticky_scroll_row = adw::SwitchRow::new();
+    sticky_scroll_row.set_title("Sticky Scroll");
+    sticky_scroll_row.set_active(settings.borrow().sticky_scroll);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        sticky_scroll_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.sticky_scroll = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&sticky_scroll_row);
+
+    let bracket_color_row = adw::SwitchRow::new();
+    bracket_color_row.set_title("Bracket Pair Colorization");
+    bracket_color_row.set_active(settings.borrow().bracket_pair_colorization);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        bracket_color_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.bracket_pair_colorization = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&bracket_color_row);
+
+    let indent_guides_row = adw::SwitchRow::new();
+    indent_guides_row.set_title("Indentation Guides");
+    indent_guides_row.set_active(settings.borrow().indent_guides);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        indent_guides_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.indent_guides = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&indent_guides_row);
+
+    let font_ligatures_row = adw::SwitchRow::new();
+    font_ligatures_row.set_title("Font Ligatures");
+    font_ligatures_row.set_active(settings.borrow().font_ligatures);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        font_ligatures_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.font_ligatures = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&font_ligatures_row);
+
+    let folding_row = adw::SwitchRow::new();
+    folding_row.set_title("Code Folding");
+    folding_row.set_active(settings.borrow().folding);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        folding_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.folding = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&folding_row);
+
+    let scroll_beyond_row = adw::SwitchRow::new();
+    scroll_beyond_row.set_title("Scroll Beyond Last Line");
+    scroll_beyond_row.set_active(settings.borrow().scroll_beyond_last_line);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        scroll_beyond_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.scroll_beyond_last_line = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&scroll_beyond_row);
+
+    let smooth_scrolling_row = adw::SwitchRow::new();
+    smooth_scrolling_row.set_title("Smooth Scrolling");
+    smooth_scrolling_row.set_active(settings.borrow().smooth_scrolling);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        smooth_scrolling_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.smooth_scrolling = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&smooth_scrolling_row);
+
+    let whitespace_labels = ["None", "Boundary", "Selection", "Trailing", "All"];
+    let whitespace_values = ["none", "boundary", "selection", "trailing", "all"];
+    let whitespace_model = gtk4::StringList::new(&whitespace_labels);
+
+    let current_whitespace = settings.borrow().render_whitespace.clone();
+    let whitespace_index = whitespace_values
+        .iter()
+        .position(|v| *v == current_whitespace)
+        .unwrap_or(2) as u32;
+
+    let whitespace_row = adw::ComboRow::new();
+    whitespace_row.set_title("Render Whitespace");
+    whitespace_row.set_model(Some(&whitespace_model));
+    whitespace_row.set_selected(whitespace_index);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        whitespace_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(&val) = whitespace_values.get(idx) {
+                let mut s = settings.borrow_mut();
+                s.render_whitespace = val.to_string();
+                settings::save(&s);
+                on_changed(&s);
+            }
+        });
+    }
+    display_group.add(&whitespace_row);
+
     editor_page.add(&display_group);
+
+    // -- Cursor group --
+    let cursor_group = adw::PreferencesGroup::new();
+    cursor_group.set_title("Cursor");
+
+    let cursor_style_labels = ["Line", "Block", "Underline", "Line Thin", "Block Outline", "Underline Thin"];
+    let cursor_style_values = ["line", "block", "underline", "line-thin", "block-outline", "underline-thin"];
+    let cursor_style_model = gtk4::StringList::new(&cursor_style_labels);
+
+    let current_cursor_style = settings.borrow().editor_cursor_style.clone();
+    let cursor_style_index = cursor_style_values
+        .iter()
+        .position(|v| *v == current_cursor_style)
+        .unwrap_or(0) as u32;
+
+    let cursor_style_row = adw::ComboRow::new();
+    cursor_style_row.set_title("Cursor Style");
+    cursor_style_row.set_model(Some(&cursor_style_model));
+    cursor_style_row.set_selected(cursor_style_index);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        cursor_style_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(&val) = cursor_style_values.get(idx) {
+                let mut s = settings.borrow_mut();
+                s.editor_cursor_style = val.to_string();
+                settings::save(&s);
+                on_changed(&s);
+            }
+        });
+    }
+    cursor_group.add(&cursor_style_row);
+
+    let cursor_blink_labels = ["Blink", "Smooth", "Phase", "Expand", "Solid"];
+    let cursor_blink_values = ["blink", "smooth", "phase", "expand", "solid"];
+    let cursor_blink_model = gtk4::StringList::new(&cursor_blink_labels);
+
+    let current_cursor_blink = settings.borrow().editor_cursor_blinking.clone();
+    let cursor_blink_index = cursor_blink_values
+        .iter()
+        .position(|v| *v == current_cursor_blink)
+        .unwrap_or(1) as u32;
+
+    let editor_cursor_blink_row = adw::ComboRow::new();
+    editor_cursor_blink_row.set_title("Cursor Blinking");
+    editor_cursor_blink_row.set_model(Some(&cursor_blink_model));
+    editor_cursor_blink_row.set_selected(cursor_blink_index);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        editor_cursor_blink_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(&val) = cursor_blink_values.get(idx) {
+                let mut s = settings.borrow_mut();
+                s.editor_cursor_blinking = val.to_string();
+                settings::save(&s);
+                on_changed(&s);
+            }
+        });
+    }
+    cursor_group.add(&editor_cursor_blink_row);
+
+    editor_page.add(&cursor_group);
 
     // -- Behavior group --
     let behavior_group = adw::PreferencesGroup::new();
