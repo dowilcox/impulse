@@ -1,307 +1,73 @@
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use gtk4::glib;
 use gtk4::prelude::*;
-use sourceview5::prelude::*;
 
-/// Detect indentation style from file content.
-/// Returns (use_spaces, indent_width).
-fn detect_indentation(content: &str) -> (bool, u32) {
-    let mut space_lines = 0;
-    let mut tab_lines = 0;
-    let mut indent_widths = std::collections::HashMap::new();
+use crate::editor_webview::{self, MonacoEditorHandle};
+use crate::settings::Settings;
+use crate::theme::ThemeColors;
+use impulse_editor::protocol::EditorEvent;
 
-    for line in content.lines().take(100) {
-        // Sample first 100 lines
-        if line.starts_with('\t') {
-            tab_lines += 1;
-        } else if line.starts_with(' ') {
-            space_lines += 1;
-            // Count leading spaces
-            let spaces = line.len() - line.trim_start_matches(' ').len();
-            if spaces >= 2 {
-                // Record possible indent widths
-                for width in &[2u32, 4, 8] {
-                    if spaces % (*width as usize) == 0 {
-                        *indent_widths.entry(*width).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    let use_spaces = space_lines >= tab_lines;
-    let indent_width = if use_spaces {
-        // Pick the most common indent width
-        indent_widths
-            .into_iter()
-            .max_by_key(|&(_, count)| count)
-            .map(|(width, _)| width)
-            .unwrap_or(4)
-    } else {
-        4 // tab width display
-    };
-
-    (use_spaces, indent_width)
+// Global handle map keyed by file path.
+// All Monaco editor handles are stored here so that any code path
+// can look up the handle for a given file.
+thread_local! {
+    static HANDLES: RefCell<HashMap<String, Rc<MonacoEditorHandle>>> = RefCell::new(HashMap::new());
 }
 
-/// Create an editor widget for the given file path.
-/// Returns the top-level widget (a Box containing a scrolled SourceView) and the
-/// underlying sourceview5::Buffer so the caller can connect modification signals.
-pub fn create_editor(
+pub fn register_handle(file_path: &str, handle: Rc<MonacoEditorHandle>) {
+    HANDLES.with(|h| h.borrow_mut().insert(file_path.to_string(), handle));
+}
+
+pub fn unregister_handle(file_path: &str) {
+    HANDLES.with(|h| h.borrow_mut().remove(file_path));
+}
+
+pub fn get_handle(file_path: &str) -> Option<Rc<MonacoEditorHandle>> {
+    HANDLES.with(|h| h.borrow().get(file_path).cloned())
+}
+
+pub fn get_handle_for_widget(widget: &gtk4::Widget) -> Option<Rc<MonacoEditorHandle>> {
+    if !is_editor(widget) {
+        return None;
+    }
+    let name = widget.widget_name();
+    get_handle(name.as_str())
+}
+
+/// Create a Monaco editor for the given file.
+///
+/// The `on_event` callback receives editor events (content changes,
+/// cursor moves, save requests, LSP requests, etc.).
+pub fn create_editor<F>(
     file_path: &str,
-    settings: &crate::settings::Settings,
-) -> (gtk4::Box, sourceview5::Buffer) {
-    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    container.set_hexpand(true);
-    container.set_vexpand(true);
+    settings: &Settings,
+    theme: &ThemeColors,
+    on_event: F,
+) -> (gtk4::Box, Rc<MonacoEditorHandle>)
+where
+    F: Fn(&MonacoEditorHandle, EditorEvent) + 'static,
+{
+    let contents = std::fs::read_to_string(file_path).unwrap_or_default();
+    let language = guess_language(file_path);
 
-    // Store the file path on the widget for identification
-    container.set_widget_name(file_path);
+    let (container, handle) = editor_webview::create_monaco_editor(
+        file_path, &contents, &language, settings, theme, on_event,
+    );
 
-    let scroll = gtk4::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_hexpand(true);
+    register_handle(file_path, handle.clone());
 
-    let buffer = sourceview5::Buffer::new(None);
-
-    // Load file contents
-    let contents = std::fs::read_to_string(file_path).ok();
-    if let Some(ref text) = contents {
-        buffer.set_text(text);
-    }
-
-    // Set up syntax highlighting based on file extension
-    let lang_manager = sourceview5::LanguageManager::default();
-    if let Some(language) = lang_manager.guess_language(Some(file_path), None) {
-        buffer.set_language(Some(&language));
-    }
-
-    // Apply a custom GtkSourceView style scheme that matches our app theme.
-    // This ensures the gutter, current-line highlight, and syntax colors all
-    // match the active color scheme.
-    {
-        let theme = crate::theme::get_theme(&settings.color_scheme);
-        let scheme_id = crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
-        let scheme_manager = sourceview5::StyleSchemeManager::default();
-        // Force the manager to rescan by re-setting the search path with our
-        // custom styles directory prepended. This clears the internal cache so
-        // the freshly-written XML is picked up.
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let styles_dir = format!("{}/.config/impulse/styles", home);
-        let mut paths: Vec<String> = scheme_manager
-            .search_path()
-            .iter()
-            .map(|p| p.to_string())
-            .collect();
-        if !paths.contains(&styles_dir) {
-            paths.insert(0, styles_dir);
-        }
-        let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        scheme_manager.set_search_path(&path_refs);
-        if let Some(scheme) = scheme_manager.scheme(&scheme_id) {
-            buffer.set_style_scheme(Some(&scheme));
-        }
-    }
-
-    buffer.set_highlight_syntax(true);
-    buffer.set_highlight_matching_brackets(true);
-
-    // Mark buffer as unmodified after loading file contents
-    buffer.set_modified(false);
-
-    let view = sourceview5::View::with_buffer(&buffer);
-    view.set_show_line_numbers(settings.show_line_numbers);
-    view.set_highlight_current_line(settings.highlight_current_line);
-    // Detect and apply indentation style from file content, falling back to settings
-    if let Some(ref text) = contents {
-        let (use_spaces, indent_width) = detect_indentation(text);
-        view.set_insert_spaces_instead_of_tabs(use_spaces);
-        view.set_tab_width(indent_width);
-        view.set_indent_width(indent_width as i32);
-    } else {
-        view.set_tab_width(settings.tab_width);
-        view.set_insert_spaces_instead_of_tabs(settings.use_spaces);
-        view.set_indent_width(settings.tab_width as i32);
-    }
-    view.set_auto_indent(true);
-    view.set_monospace(true);
-    view.set_show_right_margin(settings.show_right_margin);
-    view.set_right_margin_position(settings.right_margin_position);
-    if settings.word_wrap {
-        view.set_wrap_mode(gtk4::WrapMode::Word);
-    } else {
-        view.set_wrap_mode(gtk4::WrapMode::None);
-    }
-    view.set_smart_home_end(sourceview5::SmartHomeEndType::Before);
-    view.set_indent_on_tab(true);
-    view.set_smart_backspace(true);
-    view.set_left_margin(8);
-
-    // Show whitespace characters
-    let drawer = view.space_drawer();
-    drawer.set_enable_matrix(true);
-    // Show leading and trailing spaces/tabs
-    let matrix = sourceview5::SpaceTypeFlags::SPACE | sourceview5::SpaceTypeFlags::TAB;
-    drawer.set_types_for_locations(sourceview5::SpaceLocationFlags::LEADING, matrix);
-    drawer.set_types_for_locations(sourceview5::SpaceLocationFlags::TRAILING, matrix);
-
-    // Set up line mark categories for future LSP diagnostics
-    view.set_show_line_marks(true);
-
-    let error_attrs = sourceview5::MarkAttributes::new();
-    error_attrs.set_icon_name("dialog-error-symbolic");
-    view.set_mark_attributes("error", &error_attrs, 100);
-
-    let warning_attrs = sourceview5::MarkAttributes::new();
-    warning_attrs.set_icon_name("dialog-warning-symbolic");
-    view.set_mark_attributes("warning", &warning_attrs, 90);
-
-    let info_attrs = sourceview5::MarkAttributes::new();
-    info_attrs.set_icon_name("dialog-information-symbolic");
-    view.set_mark_attributes("info", &info_attrs, 80);
-
-    // Git diff gutter indicators
-    let added_attrs = sourceview5::MarkAttributes::new();
-    added_attrs.set_background(&gtk4::gdk::RGBA::new(0.62, 0.81, 0.42, 0.15));
-    view.set_mark_attributes("git-added", &added_attrs, 50);
-
-    let modified_attrs = sourceview5::MarkAttributes::new();
-    modified_attrs.set_background(&gtk4::gdk::RGBA::new(0.88, 0.69, 0.41, 0.15));
-    view.set_mark_attributes("git-modified", &modified_attrs, 40);
-
-    // Apply git diff marks to the buffer
-    if let Ok(diff) = impulse_core::git::get_file_diff(file_path) {
-        for (&line_num, &status) in &diff.changed_lines {
-            let category = match status {
-                impulse_core::git::DiffLineStatus::Added => "git-added",
-                impulse_core::git::DiffLineStatus::Modified => "git-modified",
-                impulse_core::git::DiffLineStatus::Unchanged => continue,
-            };
-            let iter = buffer.iter_at_line((line_num as i32) - 1);
-            if let Some(iter) = iter {
-                buffer.create_source_mark(None, category, &iter);
-            }
-        }
-    }
-
-    // Bracket auto-close
-    {
-        let view_clone = view.clone();
-        let inserting_close = Rc::new(Cell::new(false));
-        let inserting_close_inner = inserting_close.clone();
-        buffer.connect_insert_text(move |buf, location, text| {
-            if inserting_close_inner.get() {
-                return;
-            }
-            if text.len() != 1 {
-                return;
-            }
-            let closing = match text {
-                "(" => Some(")"),
-                "[" => Some("]"),
-                "{" => Some("}"),
-                "\"" => Some("\""),
-                "'" => Some("'"),
-                "`" => Some("`"),
-                _ => None,
-            };
-            if let Some(close_char) = closing {
-                // Check if next char is already the closing char (to avoid doubling)
-                let next_iter = *location;
-                if next_iter.char() == close_char.chars().next().unwrap() {
-                    return;
-                }
-                // Insert closing char at the cursor position after the opening char
-                let offset = location.offset();
-                let flag = inserting_close.clone();
-                glib::idle_add_local_once({
-                    let buf = buf.clone();
-                    let view = view_clone.clone();
-                    let close = close_char.to_string();
-                    move || {
-                        flag.set(true);
-                        let mut iter = buf.iter_at_offset(offset + 1);
-                        buf.insert(&mut iter, &close);
-                        flag.set(false);
-                        // Move cursor back between the brackets
-                        let cursor = buf.iter_at_offset(offset + 1);
-                        buf.place_cursor(&cursor);
-                        view.scroll_mark_onscreen(&buf.get_insert());
-                    }
-                });
-            }
-        });
-    }
-
-    scroll.set_child(Some(&view));
-
-    container.append(&scroll);
-
-    (container, buffer)
+    (container, handle)
 }
 
-/// Walk the widget tree to find the sourceview5::Buffer within an editor container.
-/// Used by the save handler to reset the modified flag after saving.
-pub fn get_editor_buffer(widget: &gtk4::Widget) -> Option<sourceview5::Buffer> {
-    if let Some(view) = widget.downcast_ref::<sourceview5::View>() {
-        return view.buffer().downcast::<sourceview5::Buffer>().ok();
-    }
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        if let Some(buf) = get_editor_buffer(&c) {
-            return Some(buf);
-        }
-        child = c.next_sibling();
-    }
-    None
-}
-
-/// Retrieve the text content from an editor widget tree by walking children
-/// to find a sourceview5::View and extracting its buffer text.
+/// Retrieve the cached text content from a Monaco editor widget.
 pub fn get_editor_text(widget: &gtk4::Widget) -> Option<String> {
-    if let Some(view) = widget.downcast_ref::<sourceview5::View>() {
-        let buffer = view.buffer();
-        let start = buffer.start_iter();
-        let end = buffer.end_iter();
-        return Some(buffer.text(&start, &end, true).to_string());
-    }
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        if let Some(text) = get_editor_text(&c) {
-            return Some(text);
-        }
-        child = c.next_sibling();
-    }
-    None
+    let handle = get_handle_for_widget(widget)?;
+    Some(handle.get_content())
 }
 
-/// Walk the widget tree to find the sourceview5::View within an editor container.
-/// Used by the editor search bar to access the view for cursor positioning.
-pub fn get_editor_view(widget: &gtk4::Widget) -> Option<sourceview5::View> {
-    if let Some(view) = widget.downcast_ref::<sourceview5::View>() {
-        return Some(view.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        if let Some(view) = get_editor_view(&c) {
-            return Some(view);
-        }
-        child = c.next_sibling();
-    }
-    None
-}
-
-/// Get the language name from an editor widget's buffer.
-pub fn get_editor_language(widget: &gtk4::Widget) -> Option<String> {
-    let buf = get_editor_buffer(widget)?;
-    let lang = buf.language()?;
-    Some(lang.name().to_string())
-}
-
-/// Check if a widget is an editor container (as opposed to a terminal container).
-/// Editor containers are Box widgets with a file path stored in widget_name.
+/// Check if a widget is an editor container.
 pub fn is_editor(widget: &gtk4::Widget) -> bool {
     if let Some(bx) = widget.downcast_ref::<gtk4::Box>() {
         let name = bx.widget_name();
@@ -312,60 +78,63 @@ pub fn is_editor(widget: &gtk4::Widget) -> bool {
     }
 }
 
-/// Get indentation info for display in the status bar.
-/// Returns a string like "Spaces: 4" or "Tab Size: 4".
-pub fn get_editor_indent_info(widget: &gtk4::Widget) -> Option<String> {
-    if let Some(view) = get_editor_view(widget) {
-        let spaces = view.is_insert_spaces_instead_of_tabs();
-        let width = view.tab_width();
-        if spaces {
-            Some(format!("Spaces: {}", width))
-        } else {
-            Some(format!("Tab Size: {}", width))
-        }
-    } else {
+/// Check whether the editor has unsaved changes.
+pub fn is_modified(widget: &gtk4::Widget) -> bool {
+    get_handle_for_widget(widget)
+        .map(|h| h.is_modified.get())
+        .unwrap_or(false)
+}
+
+/// Mark the editor as unmodified (after saving).
+pub fn set_unmodified(widget: &gtk4::Widget) {
+    if let Some(h) = get_handle_for_widget(widget) {
+        h.is_modified.set(false);
+    }
+}
+
+/// Get the language name for status bar display.
+pub fn get_editor_language(widget: &gtk4::Widget) -> Option<String> {
+    let handle = get_handle_for_widget(widget)?;
+    let lang = handle.language.borrow().clone();
+    if lang.is_empty() || lang == "plaintext" {
         None
+    } else {
+        Some(lang)
     }
 }
 
-/// Apply settings changes to an existing editor view and buffer.
-pub fn apply_settings(widget: &gtk4::Widget, settings: &crate::settings::Settings) {
-    if let Some(view) = get_editor_view(widget) {
-        view.set_show_line_numbers(settings.show_line_numbers);
-        view.set_highlight_current_line(settings.highlight_current_line);
-        view.set_show_right_margin(settings.show_right_margin);
-        view.set_right_margin_position(settings.right_margin_position);
-        if settings.word_wrap {
-            view.set_wrap_mode(gtk4::WrapMode::Word);
-        } else {
-            view.set_wrap_mode(gtk4::WrapMode::None);
-        }
+/// Get indentation info for status bar display.
+pub fn get_editor_indent_info(widget: &gtk4::Widget) -> Option<String> {
+    let handle = get_handle_for_widget(widget)?;
+    let info = handle.indent_info.borrow().clone();
+    Some(info)
+}
 
-        // Apply custom style scheme matching the active app theme
-        if let Some(buf) = get_editor_buffer(widget) {
-            let theme = crate::theme::get_theme(&settings.color_scheme);
-            let scheme_id = crate::theme::install_sourceview_scheme(theme, &settings.color_scheme);
-            let scheme_manager = sourceview5::StyleSchemeManager::default();
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            let styles_dir = format!("{}/.config/impulse/styles", home);
-            let mut paths: Vec<String> = scheme_manager
-                .search_path()
-                .iter()
-                .map(|p| p.to_string())
-                .collect();
-            if !paths.contains(&styles_dir) {
-                paths.insert(0, styles_dir);
-            }
-            let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-            scheme_manager.set_search_path(&path_refs);
-            if let Some(scheme) = scheme_manager.scheme(&scheme_id) {
-                buf.set_style_scheme(Some(&scheme));
-            }
-        }
+/// Apply settings changes to an existing Monaco editor.
+pub fn apply_settings(widget: &gtk4::Widget, settings: &Settings) {
+    if let Some(handle) = get_handle_for_widget(widget) {
+        handle.apply_settings(settings);
     }
 }
 
-/// Check if a file path refers to an image based on its extension.
+/// Apply theme changes to an existing Monaco editor.
+pub fn apply_theme(widget: &gtk4::Widget, theme: &ThemeColors) {
+    if let Some(handle) = get_handle_for_widget(widget) {
+        handle.set_theme(theme);
+    }
+}
+
+/// Navigate to a specific position in the editor.
+pub fn go_to_position(widget: &gtk4::Widget, line: u32, column: u32) {
+    if let Some(handle) = get_handle_for_widget(widget) {
+        handle.go_to_position(line, column);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File type utilities (unchanged from original)
+// ---------------------------------------------------------------------------
+
 pub fn is_image_file(path: &str) -> bool {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     matches!(
@@ -374,8 +143,6 @@ pub fn is_image_file(path: &str) -> bool {
     )
 }
 
-/// Create an image preview widget for the given file path.
-/// Returns a Box containing a scrollable picture view.
 pub fn create_image_preview(file_path: &str) -> gtk4::Box {
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     container.set_hexpand(true);
@@ -390,7 +157,6 @@ pub fn create_image_preview(file_path: &str) -> gtk4::Box {
     let picture = gtk4::Picture::for_filename(file_path);
     picture.set_can_shrink(true);
     picture.set_content_fit(gtk4::ContentFit::Contain);
-    // Add some margin around the image
     picture.set_margin_start(20);
     picture.set_margin_end(20);
     picture.set_margin_top(20);
@@ -402,16 +168,12 @@ pub fn create_image_preview(file_path: &str) -> gtk4::Box {
     container
 }
 
-/// Check if a file appears to be binary (contains null bytes) or is too large to edit.
 pub fn is_binary_file(path: &str) -> bool {
-    // Check file size first
     if let Ok(metadata) = std::fs::metadata(path) {
         if metadata.len() > 10 * 1024 * 1024 {
             return true;
         }
     }
-
-    // Check first 8KB for null bytes (binary indicator)
     if let Ok(mut file) = std::fs::File::open(path) {
         use std::io::Read;
         let mut buf = [0u8; 8192];
@@ -420,4 +182,81 @@ pub fn is_binary_file(path: &str) -> bool {
         }
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// Language detection
+// ---------------------------------------------------------------------------
+
+fn guess_language(file_path: &str) -> String {
+    let ext = file_path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "rs" => "rust",
+        "py" | "pyi" => "python",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "jsx" => "javascriptreact",
+        "tsx" => "typescriptreact",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "json" | "jsonc" => "json",
+        "xml" | "svg" | "xsl" | "xslt" => "xml",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "md" | "markdown" => "markdown",
+        "sh" | "bash" | "zsh" => "shell",
+        "fish" => "shell",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => "cpp",
+        "java" => "java",
+        "go" => "go",
+        "rb" => "ruby",
+        "php" => "php",
+        "lua" => "lua",
+        "sql" => "sql",
+        "r" | "R" => "r",
+        "swift" => "swift",
+        "kt" | "kts" => "kotlin",
+        "cs" => "csharp",
+        "fs" | "fsx" => "fsharp",
+        "ex" | "exs" => "elixir",
+        "erl" | "hrl" => "erlang",
+        "hs" => "haskell",
+        "ml" | "mli" => "ocaml",
+        "pl" | "pm" => "perl",
+        "dart" => "dart",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "dockerfile" | "Dockerfile" => "dockerfile",
+        "makefile" | "Makefile" => "makefile",
+        "graphql" | "gql" => "graphql",
+        "tf" | "tfvars" => "terraform",
+        "proto" => "protobuf",
+        "ini" | "cfg" | "conf" => "ini",
+        "bat" | "cmd" => "bat",
+        "ps1" | "psm1" => "powershell",
+        _ => {
+            // Check filename without extension
+            let filename = file_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(file_path)
+                .to_lowercase();
+            match filename.as_str() {
+                "dockerfile" => "dockerfile",
+                "makefile" | "gnumakefile" => "makefile",
+                "cmakelists.txt" => "cmake",
+                ".gitignore" | ".dockerignore" => "ignore",
+                ".env" | ".env.local" | ".env.example" => "dotenv",
+                _ => "plaintext",
+            }
+        }
+    }
+    .to_string()
 }

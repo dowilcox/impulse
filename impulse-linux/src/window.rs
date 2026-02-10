@@ -2,7 +2,6 @@ use gtk4::gio;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use sourceview5::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
@@ -12,7 +11,6 @@ use url::Url;
 
 use crate::editor;
 use crate::lsp_completion::{LspRequest, LspResponse};
-use crate::multi_cursor;
 use crate::sidebar;
 use crate::status_bar;
 use crate::terminal;
@@ -48,9 +46,6 @@ pub fn build_window(app: &adw::Application) {
     // A glib timeout polls the receiver periodically.
     let (lsp_gtk_tx, lsp_gtk_rx) = std::sync::mpsc::channel::<LspResponse>();
     let lsp_gtk_rx = Rc::new(RefCell::new(lsp_gtk_rx));
-
-    // Track the last hover request position so the popover appears at the hovered symbol
-    let last_hover_pos: Rc<Cell<(u32, u32)>> = Rc::new(Cell::new((0, 0)));
 
     // Spawn the tokio runtime in a background thread
     {
@@ -399,64 +394,11 @@ pub fn build_window(app: &adw::Application) {
     search_bar_box.append(&find_close_btn);
     search_revealer.set_child(Some(&search_bar_box));
 
-    // Editor search/replace bar (hidden by default)
-    let editor_search_revealer = gtk4::Revealer::new();
-    editor_search_revealer.set_reveal_child(false);
-    editor_search_revealer.set_transition_type(gtk4::RevealerTransitionType::SlideDown);
+    // Editor search/replace is handled by Monaco's built-in Ctrl+F/Ctrl+H.
 
-    let editor_search_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-    editor_search_box.add_css_class("terminal-search-bar");
-
-    // Find row
-    let editor_find_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    let editor_find_entry = gtk4::SearchEntry::new();
-    editor_find_entry.set_placeholder_text(Some("Find..."));
-    editor_find_entry.set_hexpand(true);
-    let editor_find_prev = gtk4::Button::from_icon_name("go-up-symbolic");
-    editor_find_prev.set_tooltip_text(Some("Previous Match"));
-    let editor_find_next = gtk4::Button::from_icon_name("go-down-symbolic");
-    editor_find_next.set_tooltip_text(Some("Next Match"));
-    let editor_match_label = gtk4::Label::new(Some(""));
-    editor_match_label.add_css_class("dim-label");
-    let editor_find_close = gtk4::Button::from_icon_name("window-close-symbolic");
-    editor_find_close.set_tooltip_text(Some("Close"));
-    editor_find_row.append(&editor_find_entry);
-    editor_find_row.append(&editor_match_label);
-    editor_find_row.append(&editor_find_prev);
-    editor_find_row.append(&editor_find_next);
-    editor_find_row.append(&editor_find_close);
-
-    // Replace row (can be toggled with Ctrl+H)
-    let editor_replace_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    editor_replace_row.set_visible(false);
-    let editor_replace_entry = gtk4::Entry::new();
-    editor_replace_entry.set_placeholder_text(Some("Replace..."));
-    editor_replace_entry.set_hexpand(true);
-    let replace_btn = gtk4::Button::with_label("Replace");
-    replace_btn.set_tooltip_text(Some("Replace current match"));
-    let replace_all_btn = gtk4::Button::with_label("All");
-    replace_all_btn.set_tooltip_text(Some("Replace all matches"));
-    editor_replace_row.append(&editor_replace_entry);
-    editor_replace_row.append(&replace_btn);
-    editor_replace_row.append(&replace_all_btn);
-
-    editor_search_box.append(&editor_find_row);
-    editor_search_box.append(&editor_replace_row);
-    editor_search_revealer.set_child(Some(&editor_search_box));
-
-    // Shared editor search state
-    let editor_search_settings = sourceview5::SearchSettings::new();
-    editor_search_settings.set_wrap_around(true);
-    let editor_search_ctx: Rc<RefCell<Option<sourceview5::SearchContext>>> =
-        Rc::new(RefCell::new(None));
-
-    // Shared multi-cursor state for editor tabs
-    let multi_cursor_state = multi_cursor::new_shared();
-
-    // Tab view in the end pane, wrapped with search bars above
+    // Tab view in the end pane, wrapped with terminal search bar above
     let right_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     right_box.append(&search_revealer);
-    right_box.append(&editor_search_revealer);
     right_box.append(&tab_view);
     tab_view.set_vexpand(true);
     paned.set_end_child(Some(&right_box));
@@ -499,6 +441,10 @@ pub fn build_window(app: &adw::Application) {
         let tree_nodes = sidebar_state.tree_nodes.clone();
         let tree_current_path = sidebar_state.current_path.clone();
         let tree_scroll = sidebar_state.file_tree_scroll.clone();
+        let lsp_request_seq = lsp_request_seq.clone();
+        let latest_completion_req = latest_completion_req.clone();
+        let latest_hover_req = latest_hover_req.clone();
+        let latest_definition_req = latest_definition_req.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
                 // Check if the file is already open in a tab
@@ -534,47 +480,72 @@ pub fn build_window(app: &adw::Application) {
                     tab_view.set_selected_page(&page);
                 } else if !editor::is_binary_file(path) {
                     // Open file in new editor tab
-                    let (editor_widget, buffer) = editor::create_editor(path, &settings.borrow());
-                    let page = tab_view.append(&editor_widget);
-                    page.set_title(&filename);
-
-                    // Track unsaved changes
-                    {
-                        let page = page.clone();
-                        let filename = filename.clone();
-                        buffer.connect_modified_changed(move |buf| {
-                            if buf.is_modified() {
-                                page.set_title(&format!("\u{25CF} {}", filename));
-                            // ● dot prefix
-                            } else {
-                                page.set_title(&filename);
-                            }
-                        });
-                    }
-
-                    // Live cursor position updates + git blame
-                    {
-                        let status_bar = status_bar.clone();
-                        let tab_view = tab_view.clone();
-                        let editor_widget_name = editor_widget.widget_name().to_string();
-                        let file_path_for_blame = path.to_string();
-                        let last_blame_line: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
-                        buffer.connect_notify_local(Some("cursor-position"), move |buf, _| {
-                            if let Some(page) = tab_view.selected_page() {
-                                if page.child().widget_name().as_str() == editor_widget_name {
-                                    let insert_mark = buf.get_insert();
-                                    let iter = buf.iter_at_mark(&insert_mark);
-                                    let line = iter.line();
-                                    let col = iter.line_offset();
-                                    status_bar.borrow().update_cursor_position(line, col);
-
-                                    // Update blame only when line changes
-                                    if line != last_blame_line.get() {
-                                        last_blame_line.set(line);
-                                        match impulse_core::git::get_line_blame(
-                                            &file_path_for_blame,
-                                            (line + 1) as u32,
-                                        ) {
+                    let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+                    let (editor_widget, _handle) = editor::create_editor(
+                        path,
+                        &settings.borrow(),
+                        theme,
+                        {
+                            let lsp_tx = lsp_tx.clone();
+                            let doc_versions = doc_versions.clone();
+                            let status_bar = status_bar.clone();
+                            let tab_view = tab_view.clone();
+                            let settings = settings.clone();
+                            let lsp_request_seq = lsp_request_seq.clone();
+                            let latest_completion_req = latest_completion_req.clone();
+                            let latest_hover_req = latest_hover_req.clone();
+                            let latest_definition_req = latest_definition_req.clone();
+                            let path = path.to_string();
+                            move |handle, event| {
+                                match event {
+                                    impulse_editor::protocol::EditorEvent::Ready => {
+                                        // Send LSP didOpen
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let language_id = language_from_uri(&uri);
+                                        let content = handle.get_content();
+                                        let mut versions = doc_versions.borrow_mut();
+                                        let version = versions.entry(path.clone()).or_insert(0);
+                                        *version += 1;
+                                        let _ = lsp_tx.send(LspRequest::DidOpen {
+                                            uri,
+                                            language_id,
+                                            version: *version,
+                                            text: content,
+                                        });
+                                    }
+                                    impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
+                                        // Mark tab title with unsaved indicator
+                                        let n = tab_view.n_pages();
+                                        for i in 0..n {
+                                            let page = tab_view.nth_page(i);
+                                            if page.child().widget_name().as_str() == path {
+                                                let filename = std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or(&path);
+                                                if handle.is_modified.get() {
+                                                    page.set_title(&format!("\u{25CF} {}", filename));
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        // Send LSP didChange
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let mut versions = doc_versions.borrow_mut();
+                                        let version = versions.entry(path.clone()).or_insert(0);
+                                        *version += 1;
+                                        let _ = lsp_tx.send(LspRequest::DidChange {
+                                            uri,
+                                            version: *version,
+                                            text: content,
+                                        });
+                                    }
+                                    impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
+                                        status_bar.borrow().update_cursor_position(line as i32 - 1, column as i32 - 1);
+                                        // Git blame
+                                        match impulse_core::git::get_line_blame(&path, line) {
                                             Ok(blame) => {
                                                 let text = format!(
                                                     "{} \u{2022} {} \u{2022} {}",
@@ -587,210 +558,88 @@ pub fn build_window(app: &adw::Application) {
                                             }
                                         }
                                     }
-                                }
-                            }
-                        });
-                    }
-
-                    // LSP: send didOpen
-                    {
-                        let uri = file_path_to_uri(std::path::Path::new(path))
-                            .unwrap_or_else(|| format!("file://{}", path));
-                        let language_id = language_from_uri(&uri);
-                        log::info!("LSP didOpen: uri={}, language_id={}", uri, language_id);
-                        let start = buffer.start_iter();
-                        let end = buffer.end_iter();
-                        let text = buffer.text(&start, &end, true).to_string();
-                        let mut versions = doc_versions.borrow_mut();
-                        let version = versions.entry(path.to_string()).or_insert(0);
-                        *version += 1;
-                        let _ = lsp_tx.send(LspRequest::DidOpen {
-                            uri,
-                            language_id,
-                            version: *version,
-                            text,
-                        });
-                    }
-
-                    // LSP: send didChange on buffer modifications (debounced with auto-save)
-                    {
-                        let lsp_tx = lsp_tx.clone();
-                        let doc_versions = doc_versions.clone();
-                        let path_for_lsp = path.to_string();
-                        let lsp_change_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
-                            Rc::new(RefCell::new(None));
-                        buffer.connect_changed({
-                            let buf = buffer.clone();
-                            move |_| {
-                                // Cancel pending LSP change notification
-                                let previous_source = { lsp_change_source.borrow_mut().take() };
-                                if let Some(source_id) = previous_source {
-                                    source_id.remove();
-                                }
-                                let lsp_tx = lsp_tx.clone();
-                                let doc_versions = doc_versions.clone();
-                                let path = path_for_lsp.clone();
-                                let buf = buf.clone();
-                                let lsp_inner = lsp_change_source.clone();
-                                let source_id = gtk4::glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(500),
-                                    move || {
-                                        let start = buf.start_iter();
-                                        let end = buf.end_iter();
-                                        let text = buf.text(&start, &end, true).to_string();
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let mut versions = doc_versions.borrow_mut();
-                                        let version = versions.entry(path.clone()).or_insert(0);
-                                        *version += 1;
-                                        let _ = lsp_tx.send(LspRequest::DidChange {
-                                            uri,
-                                            version: *version,
-                                            text,
-                                        });
-                                        *lsp_inner.borrow_mut() = None;
-                                    },
-                                );
-                                *lsp_change_source.borrow_mut() = Some(source_id);
-                            }
-                        });
-                    }
-
-                    // Auto-save after 2 seconds of inactivity
-                    {
-                        let path = path.to_string();
-                        let auto_save_source: Rc<RefCell<Option<gtk4::glib::SourceId>>> =
-                            Rc::new(RefCell::new(None));
-                        let settings = settings.clone();
-                        let lsp_tx = lsp_tx.clone();
-
-                        buffer.connect_changed(move |buf| {
-                            if !settings.borrow().auto_save {
-                                return;
-                            }
-                            // Cancel any pending auto-save
-                            let previous_source = { auto_save_source.borrow_mut().take() };
-                            if let Some(source_id) = previous_source {
-                                source_id.remove();
-                            }
-
-                            // Only auto-save if modified
-                            if !buf.is_modified() {
-                                return;
-                            }
-
-                            let buf = buf.clone();
-                            let path = path.clone();
-                            let auto_save_inner = auto_save_source.clone();
-                            let settings = settings.clone();
-                            let lsp_tx = lsp_tx.clone();
-
-                            let source_id = gtk4::glib::timeout_add_local_once(
-                                std::time::Duration::from_secs(2),
-                                move || {
-                                    if buf.is_modified() {
-                                        let start = buf.start_iter();
-                                        let end = buf.end_iter();
-                                        let text = buf.text(&start, &end, true);
-                                        if let Err(e) = std::fs::write(&path, text.as_str()) {
-                                            log::error!("Auto-save failed for {}: {}", path, e);
+                                    impulse_editor::protocol::EditorEvent::SaveRequested => {
+                                        let content = handle.get_content();
+                                        if let Err(e) = std::fs::write(&path, &content) {
+                                            log::error!("Failed to save {}: {}", path, e);
                                         } else {
-                                            buf.set_modified(false);
-                                            log::info!("Auto-saved: {}", path);
-                                            // LSP: send didSave
-                                            let _ = lsp_tx.send(LspRequest::DidSave {
-                                                uri: file_path_to_uri(std::path::Path::new(&path))
-                                                    .unwrap_or_else(|| format!("file://{}", path)),
-                                            });
+                                            handle.is_modified.set(false);
+                                            // Revert tab title
+                                            let n = tab_view.n_pages();
+                                            for i in 0..n {
+                                                let page = tab_view.nth_page(i);
+                                                if page.child().widget_name().as_str() == path {
+                                                    let filename = std::path::Path::new(&path)
+                                                        .file_name()
+                                                        .and_then(|n| n.to_str())
+                                                        .unwrap_or(&path);
+                                                    page.set_title(filename);
+                                                    break;
+                                                }
+                                            }
+                                            let uri = file_path_to_uri(std::path::Path::new(&path))
+                                                .unwrap_or_else(|| format!("file://{}", path));
+                                            let _ = lsp_tx.send(LspRequest::DidSave { uri });
                                             // Run commands on save in a background thread
-                                            let commands =
-                                                settings.borrow().commands_on_save.clone();
+                                            let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
                                             std::thread::spawn(move || {
                                                 run_commands_on_save(&save_path, &commands);
                                             });
                                         }
                                     }
-                                    // Clear the source ID
-                                    *auto_save_inner.borrow_mut() = None;
-                                },
-                            );
-
-                            *auto_save_source.borrow_mut() = Some(source_id);
-                        });
-                    }
-
-                    // Automatic hover-on-mouse-move is temporarily disabled for stability.
-                    // Manual hover remains available with Ctrl+Shift+I.
-
-                    // Multi-cursor key interception on editor views
-                    if let Some(view) = editor::get_editor_view(editor_widget.upcast_ref()) {
-                        let mc_state = multi_cursor_state.clone();
-                        let mc_buf = buffer.clone();
-                        let key_ctrl = gtk4::EventControllerKey::new();
-                        key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
-                        key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
-                            let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
-                            let has_mc =
-                                mc_state.borrow().as_ref().is_some_and(|mc| mc.is_active());
-
-                            // Ctrl+D: add next occurrence
-                            if ctrl && key == gtk4::gdk::Key::d {
-                                if multi_cursor::handle_ctrl_d(&mc_state, &mc_buf) {
-                                    return gtk4::glib::Propagation::Stop;
-                                }
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            if !has_mc {
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            // Escape: clear extra cursors
-                            if key == gtk4::gdk::Key::Escape {
-                                multi_cursor::handle_escape(&mc_state);
-                                return gtk4::glib::Propagation::Stop;
-                            }
-
-                            // Backspace
-                            if key == gtk4::gdk::Key::BackSpace {
-                                multi_cursor::handle_backspace(&mc_state);
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            // Delete
-                            if key == gtk4::gdk::Key::Delete {
-                                multi_cursor::handle_delete(&mc_state);
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            // Return/Enter
-                            if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
-                                multi_cursor::handle_insert(&mc_state, "\n");
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            // Tab
-                            if key == gtk4::gdk::Key::Tab {
-                                multi_cursor::handle_insert(&mc_state, "\t");
-                                return gtk4::glib::Propagation::Proceed;
-                            }
-
-                            // Regular character input: replicate to extra cursors
-                            if !ctrl {
-                                if let Some(ch) = key.to_unicode() {
-                                    if !ch.is_control() {
-                                        multi_cursor::handle_insert(&mc_state, &ch.to_string());
-                                        return gtk4::glib::Propagation::Proceed;
+                                    impulse_editor::protocol::EditorEvent::CompletionRequested { request_id: _, line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_completion_req.borrow_mut().insert(path.clone(), seq);
+                                        let _ = lsp_tx.send(LspRequest::Completion {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        });
                                     }
+                                    impulse_editor::protocol::EditorEvent::HoverRequested { request_id: _, line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_hover_req.borrow_mut().insert(path.clone(), seq);
+                                        let _ = lsp_tx.send(LspRequest::Hover {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        });
+                                    }
+                                    impulse_editor::protocol::EditorEvent::DefinitionRequested { line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_definition_req.borrow_mut().insert(path.clone(), seq);
+                                        let _ = lsp_tx.send(LspRequest::Definition {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        });
+                                    }
+                                    _ => {}
                                 }
                             }
-
-                            gtk4::glib::Propagation::Proceed
-                        });
-
-                        view.add_controller(key_ctrl);
-                    }
+                        },
+                    );
+                    let page = tab_view.append(&editor_widget);
+                    page.set_title(&filename);
 
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
@@ -825,14 +674,7 @@ pub fn build_window(app: &adw::Application) {
                 for i in 0..n {
                     let page = tab_view.nth_page(i);
                     if page.child().widget_name().as_str() == path {
-                        if let Some(view) = editor::get_editor_view(&page.child()) {
-                            let buf = view.buffer();
-                            let mut iter = buf.iter_at_line((line as i32).saturating_sub(1));
-                            if let Some(ref mut it) = iter {
-                                buf.place_cursor(it);
-                                view.scroll_to_iter(it, 0.1, false, 0.0, 0.0);
-                            }
-                        }
+                        editor::go_to_position(&page.child(), line, 1);
                         break;
                     }
                 }
@@ -850,11 +692,11 @@ pub fn build_window(app: &adw::Application) {
                     let page = tab_view.nth_page(i);
                     let widget_name = page.child().widget_name().to_string();
                     if paths.iter().any(|p| p == &widget_name) {
-                        if let Some(view) = editor::get_editor_view(&page.child()) {
-                            // Reload file content from disk
+                        // Reload file content from disk via the Monaco handle
+                        if let Some(handle) = editor::get_handle_for_widget(&page.child()) {
                             if let Ok(content) = std::fs::read_to_string(&widget_name) {
-                                let buf = view.buffer();
-                                buf.set_text(&content);
+                                let language = handle.language.borrow().clone();
+                                handle.open_file(&widget_name, &content, &language);
                             }
                         }
                     }
@@ -1085,7 +927,6 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let sidebar_state = sidebar_state.clone();
         let lsp_gtk_rx = lsp_gtk_rx.clone();
-        let last_hover_pos = last_hover_pos.clone();
         let doc_versions = lsp_doc_versions.clone();
         let latest_completion_req = latest_completion_req.clone();
         let latest_hover_req = latest_hover_req.clone();
@@ -1129,14 +970,8 @@ pub fn build_window(app: &adw::Application) {
                                 let page = tab_view.nth_page(i);
                                 let child = page.child();
                                 if child.widget_name().as_str() == file_path {
-                                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                                        if let Some(view) = editor::get_editor_view(&child) {
-                                            crate::lsp_completion::apply_diagnostics(
-                                                &buf,
-                                                &view,
-                                                &diagnostics,
-                                            );
-                                        }
+                                    if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                        handle.apply_diagnostics(&diagnostics);
                                     }
                                     break;
                                 }
@@ -1175,28 +1010,13 @@ pub fn build_window(app: &adw::Application) {
                             if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
                                 cb(&file_path);
                             }
-                            // Navigate to the position
+                            // Navigate to the position (Monaco uses 1-based lines/columns)
                             let n = tab_view.n_pages();
                             for i in 0..n {
                                 let page = tab_view.nth_page(i);
                                 let child = page.child();
                                 if child.widget_name().as_str() == file_path {
-                                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                                        if let Some(iter) =
-                                            buf.iter_at_line_offset(line as i32, character as i32)
-                                        {
-                                            buf.place_cursor(&iter);
-                                            if let Some(view) = editor::get_editor_view(&child) {
-                                                view.scroll_to_iter(
-                                                    &mut iter.clone(),
-                                                    0.1,
-                                                    true,
-                                                    0.0,
-                                                    0.5,
-                                                );
-                                            }
-                                        }
-                                    }
+                                    editor::go_to_position(&child, line + 1, character + 1);
                                     tab_view.set_selected_page(&page);
                                     break;
                                 }
@@ -1269,18 +1089,14 @@ pub fn build_window(app: &adw::Application) {
                             if current_version != version {
                                 continue;
                             }
-                            // Show completion popup on the active editor tab
+                            // Resolve completion into the Monaco editor
                             if let Some(page) = tab_view.selected_page() {
                                 let child = page.child();
                                 if editor::is_editor(&child)
                                     && child.widget_name().as_str() == source_path
                                 {
-                                    if let Some(view) = editor::get_editor_view(&child) {
-                                        if let Some(buf) = editor::get_editor_buffer(&child) {
-                                            crate::lsp_completion::show_completion_popup(
-                                                &view, &buf, &items,
-                                            );
-                                        }
+                                    if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                        handle.resolve_completions(request_id, &items);
                                     }
                                 }
                             }
@@ -1305,21 +1121,16 @@ pub fn build_window(app: &adw::Application) {
                             if current_version != version {
                                 continue;
                             }
-                            // Show hover popover at the last hover request position
+                            // Resolve hover into the Monaco editor
                             if let Some(page) = tab_view.selected_page() {
                                 let child = page.child();
                                 if editor::is_editor(&child)
                                     && child.widget_name().as_str() == source_path
                                 {
-                                    if let Some(view) = editor::get_editor_view(&child) {
-                                        if let Some(buf) = editor::get_editor_buffer(&child) {
-                                            let text =
-                                                crate::lsp_hover::extract_hover_text(&contents);
-                                            let (line, character) = last_hover_pos.get();
-                                            crate::lsp_hover::show_hover_popover(
-                                                &view, &buf, line, character, &text,
-                                            );
-                                        }
+                                    if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                        let text =
+                                            crate::lsp_hover::extract_hover_text(&contents);
+                                        handle.resolve_hover(request_id, &text);
                                     }
                                 }
                             }
@@ -1386,6 +1197,7 @@ pub fn build_window(app: &adw::Application) {
                         crate::terminal::apply_settings(&term, s, new_theme);
                     } else if crate::editor::is_editor(&child) {
                         crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
+                        crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
                     }
                 }
             });
@@ -1710,75 +1522,35 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // Ctrl+F: Context-aware find (terminal search for terminals, editor search for editors)
+    // Ctrl+F: Toggle terminal search bar (Monaco handles Ctrl+F for editor tabs)
     {
         let tab_view = tab_view.clone();
         let search_revealer = search_revealer.clone();
         let find_entry = find_entry.clone();
-        let editor_search_revealer = editor_search_revealer.clone();
-        let editor_find_entry = editor_find_entry.clone();
-        let editor_replace_row = editor_replace_row.clone();
         add_shortcut(&shortcut_controller, "<Ctrl>f", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
-                if editor::is_editor(&child) {
-                    // Editor tab: show editor search bar (hide replace row for Ctrl+F)
-                    let is_visible = editor_search_revealer.reveals_child();
-                    editor_search_revealer.set_reveal_child(!is_visible);
-                    if !is_visible {
-                        editor_replace_row.set_visible(false);
-                        editor_find_entry.grab_focus();
-                    }
-                    // Hide terminal search if open
-                    search_revealer.set_reveal_child(false);
-                } else {
-                    // Terminal tab: same as Ctrl+Shift+F
+                if !editor::is_editor(&child) {
+                    // Terminal tab: toggle terminal search bar
                     let is_visible = search_revealer.reveals_child();
                     search_revealer.set_reveal_child(!is_visible);
                     if !is_visible {
                         find_entry.grab_focus();
                     }
-                    // Hide editor search if open
-                    editor_search_revealer.set_reveal_child(false);
                 }
+                // Editor tabs: Ctrl+F is handled by Monaco's built-in search
             }
         });
     }
 
-    // Ctrl+H: Find and replace in editor tabs
-    {
-        let tab_view = tab_view.clone();
-        let editor_search_revealer = editor_search_revealer.clone();
-        let editor_find_entry = editor_find_entry.clone();
-        let editor_replace_row = editor_replace_row.clone();
-        let search_revealer = search_revealer.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>h", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    let is_visible =
-                        editor_search_revealer.reveals_child() && editor_replace_row.is_visible();
-                    if is_visible {
-                        // Already open with replace visible: close it
-                        editor_search_revealer.set_reveal_child(false);
-                    } else {
-                        // Show search bar with replace row
-                        editor_replace_row.set_visible(true);
-                        editor_search_revealer.set_reveal_child(true);
-                        editor_find_entry.grab_focus();
-                    }
-                    // Hide terminal search if open
-                    search_revealer.set_reveal_child(false);
-                }
-            }
-        });
-    }
+    // Ctrl+H: Monaco handles find-and-replace for editor tabs natively
 
     // Ctrl+S: Save current editor tab
     {
         let tab_view = tab_view.clone();
         let toast_overlay = toast_overlay.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let settings = settings.clone();
         add_shortcut(&shortcut_controller, "<Ctrl>s", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1787,22 +1559,27 @@ pub fn build_window(app: &adw::Application) {
                     if let Some(text) = editor::get_editor_text(&child) {
                         match std::fs::write(&path, &text) {
                             Ok(()) => {
-                                // Reset modified flag so tab title reverts
-                                if let Some(buf) = editor::get_editor_buffer(&child) {
-                                    buf.set_modified(false);
-                                }
+                                editor::set_unmodified(&child);
+                                // Revert tab title
+                                let filename = std::path::Path::new(&path)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(&path);
+                                page.set_title(filename);
                                 // LSP: send didSave
                                 let _ = lsp_tx.send(LspRequest::DidSave {
                                     uri: file_path_to_uri(std::path::Path::new(&path))
                                         .unwrap_or_else(|| format!("file://{}", path)),
                                 });
-                                let filename = std::path::Path::new(&path)
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or(&path);
                                 let toast = adw::Toast::new(&format!("Saved {}", filename));
                                 toast.set_timeout(2);
                                 toast_overlay.add_toast(toast);
+                                // Run commands on save in a background thread
+                                let commands = settings.borrow().commands_on_save.clone();
+                                let save_path = path.clone();
+                                std::thread::spawn(move || {
+                                    run_commands_on_save(&save_path, &commands);
+                                });
                             }
                             Err(e) => {
                                 let toast = adw::Toast::new(&format!("Error saving: {}", e));
@@ -1970,295 +1747,13 @@ pub fn build_window(app: &adw::Application) {
         find_entry.add_controller(key_controller);
     }
 
-    // --- Editor search bar wiring ---
-
-    // Helper: ensure search context exists for the active editor buffer
-    let ensure_editor_search_ctx = {
-        let editor_search_ctx = editor_search_ctx.clone();
-        let editor_search_settings = editor_search_settings.clone();
-        let tab_view = tab_view.clone();
-        move || -> Option<sourceview5::SearchContext> {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if let Some(buf) = editor::get_editor_buffer(&child) {
-                    let mut ctx_ref = editor_search_ctx.borrow_mut();
-                    // Re-create context if buffer changed
-                    let needs_new = ctx_ref
-                        .as_ref()
-                        .map(|ctx| ctx.buffer() != buf)
-                        .unwrap_or(true);
-                    if needs_new {
-                        let ctx =
-                            sourceview5::SearchContext::new(&buf, Some(&editor_search_settings));
-                        ctx.set_highlight(true);
-                        *ctx_ref = Some(ctx);
-                    }
-                    return ctx_ref.clone();
-                }
-            }
-            None
-        }
-    };
-
-    // Helper: update match count label
-    let update_match_label = {
-        let editor_match_label = editor_match_label.clone();
-        let editor_search_ctx = editor_search_ctx.clone();
-        let tab_view = tab_view.clone();
-        move || {
-            let ctx_ref = editor_search_ctx.borrow();
-            if let Some(ctx) = ctx_ref.as_ref() {
-                let total = ctx.occurrences_count();
-                if total < 0 {
-                    // Still counting
-                    editor_match_label.set_text("...");
-                } else if total == 0 {
-                    editor_match_label.set_text("No results");
-                } else {
-                    // Try to get current position from selection
-                    if let Some(page) = tab_view.selected_page() {
-                        if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                            let (sel_start, sel_end) =
-                                buf.selection_bounds().unwrap_or_else(|| {
-                                    let iter = buf.iter_at_mark(&buf.get_insert());
-                                    (iter, iter)
-                                });
-                            let pos = ctx.occurrence_position(&sel_start, &sel_end);
-                            if pos > 0 {
-                                editor_match_label.set_text(&format!("{} of {}", pos, total));
-                            } else {
-                                editor_match_label.set_text(&format!("{} matches", total));
-                            }
-                        }
-                    }
-                }
-            } else {
-                editor_match_label.set_text("");
-            }
-        }
-    };
-
-    // Search entry text changed -> update search text and find first match
+    // Hide terminal search bar when switching to an editor tab
     {
-        let ensure_ctx = ensure_editor_search_ctx.clone();
-        let update_label = update_match_label.clone();
-        let editor_search_settings = editor_search_settings.clone();
-        let tab_view = tab_view.clone();
-        editor_find_entry.connect_search_changed(move |entry| {
-            run_guarded_ui("editor-search-changed", || {
-                let text = entry.text().to_string();
-                if text.is_empty() {
-                    editor_search_settings.set_search_text(None);
-                } else {
-                    editor_search_settings.set_search_text(Some(&text));
-                }
-
-                if let Some(ctx) = ensure_ctx() {
-                    if !text.is_empty() {
-                        if let Some(page) = tab_view.selected_page() {
-                            if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                                let iter = buf.iter_at_mark(&buf.get_insert());
-                                if let Some((start, end, _wrapped)) = ctx.forward(&iter) {
-                                    buf.select_range(&start, &end);
-                                    // Scroll to the match
-                                    if let Some(view) = editor::get_editor_view(&page.child()) {
-                                        view.scroll_to_iter(
-                                            &mut start.clone(),
-                                            0.1,
-                                            false,
-                                            0.0,
-                                            0.0,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    update_label();
-                }
-            });
-        });
-    }
-
-    // Find next button
-    {
-        let ensure_ctx = ensure_editor_search_ctx.clone();
-        let update_label = update_match_label.clone();
-        let tab_view = tab_view.clone();
-        editor_find_next.connect_clicked(move |_| {
-            if let Some(ctx) = ensure_ctx() {
-                if let Some(page) = tab_view.selected_page() {
-                    if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                        // Start searching from end of current selection
-                        let iter = if let Some((_start, end)) = buf.selection_bounds() {
-                            end
-                        } else {
-                            buf.iter_at_mark(&buf.get_insert())
-                        };
-                        if let Some((start, end, _wrapped)) = ctx.forward(&iter) {
-                            buf.select_range(&start, &end);
-                            if let Some(view) = editor::get_editor_view(&page.child()) {
-                                view.scroll_to_iter(&mut start.clone(), 0.1, false, 0.0, 0.0);
-                            }
-                        }
-                        update_label();
-                    }
-                }
-            }
-        });
-    }
-
-    // Find previous button
-    {
-        let ensure_ctx = ensure_editor_search_ctx.clone();
-        let update_label = update_match_label.clone();
-        let tab_view = tab_view.clone();
-        editor_find_prev.connect_clicked(move |_| {
-            if let Some(ctx) = ensure_ctx() {
-                if let Some(page) = tab_view.selected_page() {
-                    if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                        // Start searching from start of current selection
-                        let iter = if let Some((start, _end)) = buf.selection_bounds() {
-                            start
-                        } else {
-                            buf.iter_at_mark(&buf.get_insert())
-                        };
-                        if let Some((start, end, _wrapped)) = ctx.backward(&iter) {
-                            buf.select_range(&start, &end);
-                            if let Some(view) = editor::get_editor_view(&page.child()) {
-                                view.scroll_to_iter(&mut start.clone(), 0.1, false, 0.0, 0.0);
-                            }
-                        }
-                        update_label();
-                    }
-                }
-            }
-        });
-    }
-
-    // Replace button
-    {
-        let ensure_ctx = ensure_editor_search_ctx.clone();
-        let update_label = update_match_label.clone();
-        let editor_replace_entry = editor_replace_entry.clone();
-        let tab_view = tab_view.clone();
-        replace_btn.connect_clicked(move |_| {
-            if let Some(ctx) = ensure_ctx() {
-                let replace_text = editor_replace_entry.text().to_string();
-                if let Some(page) = tab_view.selected_page() {
-                    if let Some(buf) = editor::get_editor_buffer(&page.child()) {
-                        if let Some((mut sel_start, mut sel_end)) = buf.selection_bounds() {
-                            // Replace current match
-                            let _ = ctx.replace(&mut sel_start, &mut sel_end, &replace_text);
-                            // Move to next match
-                            let iter = buf.iter_at_mark(&buf.get_insert());
-                            if let Some((start, end, _wrapped)) = ctx.forward(&iter) {
-                                buf.select_range(&start, &end);
-                                if let Some(view) = editor::get_editor_view(&page.child()) {
-                                    view.scroll_to_iter(&mut start.clone(), 0.1, false, 0.0, 0.0);
-                                }
-                            }
-                        }
-                        update_label();
-                    }
-                }
-            }
-        });
-    }
-
-    // Replace all button
-    {
-        let ensure_ctx = ensure_editor_search_ctx.clone();
-        let update_label = update_match_label.clone();
-        let editor_replace_entry = editor_replace_entry.clone();
-        replace_all_btn.connect_clicked(move |_| {
-            if let Some(ctx) = ensure_ctx() {
-                let replace_text = editor_replace_entry.text().to_string();
-                let _ = ctx.replace_all(&replace_text);
-                update_label();
-            }
-        });
-    }
-
-    // Editor search close button
-    {
-        let editor_search_revealer = editor_search_revealer.clone();
-        let editor_search_ctx = editor_search_ctx.clone();
-        let editor_search_settings = editor_search_settings.clone();
-        let tab_view = tab_view.clone();
-        editor_find_close.connect_clicked(move |_| {
-            editor_search_revealer.set_reveal_child(false);
-            editor_search_settings.set_search_text(None);
-            *editor_search_ctx.borrow_mut() = None;
-            // Return focus to editor
-            if let Some(page) = tab_view.selected_page() {
-                page.child().grab_focus();
-            }
-        });
-    }
-
-    // Escape in editor find entry closes the bar
-    {
-        let editor_search_revealer_ref = editor_search_revealer.clone();
-        let editor_search_ctx = editor_search_ctx.clone();
-        let editor_search_settings = editor_search_settings.clone();
-        let tab_view_ref = tab_view.clone();
-        let key_controller = gtk4::EventControllerKey::new();
-        key_controller.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk4::gdk::Key::Escape {
-                editor_search_revealer_ref.set_reveal_child(false);
-                editor_search_settings.set_search_text(None);
-                *editor_search_ctx.borrow_mut() = None;
-                if let Some(page) = tab_view_ref.selected_page() {
-                    page.child().grab_focus();
-                }
-                return gtk4::glib::Propagation::Stop;
-            }
-            gtk4::glib::Propagation::Proceed
-        });
-        editor_find_entry.add_controller(key_controller);
-    }
-
-    // Escape in editor replace entry closes the bar
-    {
-        let editor_search_revealer_ref = editor_search_revealer.clone();
-        let editor_search_ctx = editor_search_ctx.clone();
-        let editor_search_settings = editor_search_settings.clone();
-        let tab_view_ref = tab_view.clone();
-        let key_controller = gtk4::EventControllerKey::new();
-        key_controller.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk4::gdk::Key::Escape {
-                editor_search_revealer_ref.set_reveal_child(false);
-                editor_search_settings.set_search_text(None);
-                *editor_search_ctx.borrow_mut() = None;
-                if let Some(page) = tab_view_ref.selected_page() {
-                    page.child().grab_focus();
-                }
-                return gtk4::glib::Propagation::Stop;
-            }
-            gtk4::glib::Propagation::Proceed
-        });
-        editor_replace_entry.add_controller(key_controller);
-    }
-
-    // Hide editor search bar when switching to a terminal tab
-    {
-        let editor_search_revealer = editor_search_revealer.clone();
         let search_revealer = search_revealer.clone();
-        let editor_search_ctx = editor_search_ctx.clone();
-        let editor_search_settings = editor_search_settings.clone();
         tab_view.connect_selected_page_notify(move |tv| {
             if let Some(page) = tv.selected_page() {
                 let child = page.child();
-                if !editor::is_editor(&child) {
-                    // Switching to a non-editor tab: hide editor search
-                    if editor_search_revealer.reveals_child() {
-                        editor_search_revealer.set_reveal_child(false);
-                        editor_search_settings.set_search_text(None);
-                        *editor_search_ctx.borrow_mut() = None;
-                    }
-                } else {
-                    // Switching to an editor tab: hide terminal search
+                if editor::is_editor(&child) {
                     if search_revealer.reveals_child() {
                         search_revealer.set_reveal_child(false);
                     }
@@ -2281,116 +1776,9 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // F12: Go to definition (LSP)
-    {
-        let tab_view = tab_view.clone();
-        let lsp_tx = lsp_request_tx.clone();
-        let doc_versions = lsp_doc_versions.clone();
-        let lsp_request_seq = lsp_request_seq.clone();
-        let latest_definition_req = latest_definition_req.clone();
-        add_shortcut(&shortcut_controller, "F12", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    let path = child.widget_name().to_string();
-                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                        let insert_mark = buf.get_insert();
-                        let iter = buf.iter_at_mark(&insert_mark);
-                        let line = iter.line() as u32;
-                        let character = iter.line_offset() as u32;
-                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
-                        let request_id = lsp_request_seq.get();
-                        lsp_request_seq.set(request_id + 1);
-                        latest_definition_req
-                            .borrow_mut()
-                            .insert(path.clone(), request_id);
-                        let _ = lsp_tx.send(LspRequest::Definition {
-                            request_id,
-                            uri: file_path_to_uri(std::path::Path::new(&path))
-                                .unwrap_or_else(|| format!("file://{}", path)),
-                            version,
-                            line,
-                            character,
-                        });
-                    }
-                }
-            }
-        });
-    }
-
-    // Ctrl+Space: Trigger LSP completion
-    {
-        let tab_view = tab_view.clone();
-        let lsp_tx = lsp_request_tx.clone();
-        let doc_versions = lsp_doc_versions.clone();
-        let lsp_request_seq = lsp_request_seq.clone();
-        let latest_completion_req = latest_completion_req.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>space", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    let path = child.widget_name().to_string();
-                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                        let insert_mark = buf.get_insert();
-                        let iter = buf.iter_at_mark(&insert_mark);
-                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
-                        let request_id = lsp_request_seq.get();
-                        lsp_request_seq.set(request_id + 1);
-                        latest_completion_req
-                            .borrow_mut()
-                            .insert(path.clone(), request_id);
-                        let _ = lsp_tx.send(LspRequest::Completion {
-                            request_id,
-                            uri: file_path_to_uri(std::path::Path::new(&path))
-                                .unwrap_or_else(|| format!("file://{}", path)),
-                            version,
-                            line: iter.line() as u32,
-                            character: iter.line_offset() as u32,
-                        });
-                    }
-                }
-            }
-        });
-    }
-
-    // Ctrl+Shift+I: Show LSP hover info
-    {
-        let tab_view = tab_view.clone();
-        let lsp_tx = lsp_request_tx.clone();
-        let doc_versions = lsp_doc_versions.clone();
-        let lsp_request_seq = lsp_request_seq.clone();
-        let latest_hover_req = latest_hover_req.clone();
-        let last_hover_pos = last_hover_pos.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>i", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    let path = child.widget_name().to_string();
-                    if let Some(buf) = editor::get_editor_buffer(&child) {
-                        let insert_mark = buf.get_insert();
-                        let iter = buf.iter_at_mark(&insert_mark);
-                        let line = iter.line() as u32;
-                        let character = iter.line_offset() as u32;
-                        last_hover_pos.set((line, character));
-                        let version = *doc_versions.borrow().get(&path).unwrap_or(&0);
-                        let request_id = lsp_request_seq.get();
-                        lsp_request_seq.set(request_id + 1);
-                        latest_hover_req
-                            .borrow_mut()
-                            .insert(path.clone(), request_id);
-                        let _ = lsp_tx.send(LspRequest::Hover {
-                            request_id,
-                            uri: file_path_to_uri(std::path::Path::new(&path))
-                                .unwrap_or_else(|| format!("file://{}", path)),
-                            version,
-                            line,
-                            character,
-                        });
-                    }
-                }
-            }
-        });
-    }
+    // F12, Ctrl+Space, Ctrl+Shift+I: These are now handled by Monaco's
+    // built-in providers, which fire EditorEvent callbacks (DefinitionRequested,
+    // CompletionRequested, HoverRequested) handled in the create_editor event callback.
 
     // Ctrl+Shift+N: New window
     {
@@ -2501,14 +1889,7 @@ pub fn build_window(app: &adw::Application) {
                             status_bar.borrow().update_cwd(&dir);
                             sidebar_state.switch_to_tab(&child, &dir);
                         }
-                        // Show cursor position for editor tabs
-                        if let Some(buf) = editor::get_editor_buffer(&child) {
-                            let insert_mark = buf.get_insert();
-                            let iter = buf.iter_at_mark(&insert_mark);
-                            let line = iter.line();
-                            let col = iter.line_offset();
-                            status_bar.borrow().update_cursor_position(line, col);
-                        }
+                        // Cursor position is updated via CursorMoved events from Monaco
                         // Show language and encoding for editor tabs
                         if let Some(lang) = editor::get_editor_language(&child) {
                             status_bar.borrow().update_language(&lang);
@@ -2542,8 +1923,7 @@ pub fn build_window(app: &adw::Application) {
 
             // Check if this is an editor tab with unsaved changes
             if editor::is_editor(&child) {
-                if let Some(buf) = editor::get_editor_buffer(&child) {
-                    if buf.is_modified() {
+                if editor::is_modified(&child) {
                         // Extract filename for the dialog message
                         let filename = std::path::Path::new(&child.widget_name().to_string())
                             .file_name()
@@ -2589,6 +1969,7 @@ pub fn build_window(app: &adw::Application) {
                                                 .send(LspRequest::DidSave { uri: uri.clone() });
                                         }
                                     }
+                                    editor::unregister_handle(&path);
                                     let _ = lsp_tx.send(LspRequest::DidClose { uri });
                                     tv.close_page_finish(&page, true);
                                     let tv2 = tv.clone();
@@ -2601,6 +1982,7 @@ pub fn build_window(app: &adw::Application) {
                                 }
                                 "discard" => {
                                     let path = child.widget_name().to_string();
+                                    editor::unregister_handle(&path);
                                     let uri = file_path_to_uri(std::path::Path::new(&path))
                                         .unwrap_or_else(|| format!("file://{}", path));
                                     let _ = lsp_tx.send(LspRequest::DidClose { uri });
@@ -2623,13 +2005,13 @@ pub fn build_window(app: &adw::Application) {
                         dialog.present(Some(&window_ref));
 
                         return gtk4::glib::Propagation::Stop;
-                    }
                 }
             }
 
             // Terminal tab or unmodified editor: close immediately
             if editor::is_editor(&child) {
                 let path = child.widget_name().to_string();
+                editor::unregister_handle(&path);
                 let _ = lsp_tx.send(LspRequest::DidClose {
                     uri: file_path_to_uri(std::path::Path::new(&path))
                         .unwrap_or_else(|| format!("file://{}", path)),
@@ -3010,8 +2392,9 @@ fn show_go_to_line_dialog(window: &adw::ApplicationWindow, editor_widget: &gtk4:
     dialog.set_child(Some(&hbox));
 
     // Get total line count for placeholder
-    if let Some(buf) = editor::get_editor_buffer(editor_widget) {
-        let total = buf.line_count();
+    if let Some(handle) = editor::get_handle_for_widget(editor_widget) {
+        let content = handle.get_content();
+        let total = content.lines().count();
         entry.set_placeholder_text(Some(&format!("1-{}", total)));
     }
 
@@ -3021,17 +2404,9 @@ fn show_go_to_line_dialog(window: &adw::ApplicationWindow, editor_widget: &gtk4:
         let dialog = dialog.clone();
         entry.connect_activate(move |entry| {
             let text = entry.text().to_string();
-            if let Ok(line_num) = text.trim().parse::<i32>() {
-                let line = (line_num - 1).max(0); // 1-indexed to 0-indexed
-                if let Some(buf) = editor::get_editor_buffer(&editor_widget) {
-                    if let Some(iter) = buf.iter_at_line(line) {
-                        buf.place_cursor(&iter);
-                        // Scroll to the line
-                        if let Some(view) = editor::get_editor_view(&editor_widget) {
-                            view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.0, 0.5);
-                        }
-                    }
-                }
+            if let Ok(line_num) = text.trim().parse::<u32>() {
+                let line = line_num.max(1); // Monaco uses 1-based lines
+                editor::go_to_position(&editor_widget, line, 1);
             }
             dialog.close();
         });

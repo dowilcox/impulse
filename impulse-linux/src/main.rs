@@ -1,9 +1,9 @@
 mod editor;
+mod editor_webview;
 #[allow(dead_code)]
 mod lsp_completion;
 #[allow(dead_code)]
 mod lsp_hover;
-mod multi_cursor;
 mod project_search;
 mod settings;
 mod settings_page;

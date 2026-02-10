@@ -20,6 +20,7 @@ fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
 }
 
 /// State for the project-wide search panel, used to wire callbacks from window.rs.
+#[allow(dead_code)]
 pub struct ProjectSearchState {
     pub widget: gtk4::Box,
     pub search_entry: gtk4::SearchEntry,
