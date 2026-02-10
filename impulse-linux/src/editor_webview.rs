@@ -384,6 +384,12 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
         smooth_scrolling: Some(settings.smooth_scrolling),
         cursor_style: Some(settings.editor_cursor_style.clone()),
         cursor_blinking: Some(settings.editor_cursor_blinking.clone()),
+        line_height: if settings.editor_line_height > 0 {
+            Some(settings.editor_line_height)
+        } else {
+            None
+        },
+        auto_closing_brackets: Some(settings.editor_auto_closing_brackets.clone()),
     }
 }
 

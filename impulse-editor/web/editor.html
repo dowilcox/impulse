@@ -310,6 +310,8 @@ function handleUpdateSettings(cmd) {
   if (opts.smooth_scrolling != null) update.smoothScrolling = opts.smooth_scrolling;
   if (opts.cursor_style != null) update.cursorStyle = opts.cursor_style;
   if (opts.cursor_blinking != null) update.cursorBlinking = opts.cursor_blinking;
+  if (opts.line_height != null) update.lineHeight = opts.line_height;
+  if (opts.auto_closing_brackets != null) update.autoClosingBrackets = opts.auto_closing_brackets;
   editor.updateOptions(update);
 
   // Also update model options if tab settings changed

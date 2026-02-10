@@ -348,6 +348,29 @@ pub fn show_settings_window(
     }
     display_group.add(&whitespace_row);
 
+    let line_height_adj = gtk4::Adjustment::new(
+        settings.borrow().editor_line_height as f64,
+        0.0,
+        100.0,
+        1.0,
+        10.0,
+        0.0,
+    );
+    let line_height_row = adw::SpinRow::new(Some(&line_height_adj), 1.0, 0);
+    line_height_row.set_title("Line Height");
+    line_height_row.set_subtitle("0 = auto");
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        line_height_row.connect_value_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.editor_line_height = row.value() as u32;
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    display_group.add(&line_height_row);
+
     editor_page.add(&display_group);
 
     // -- Cursor group --
@@ -432,6 +455,36 @@ pub fn show_settings_window(
         });
     }
     behavior_group.add(&auto_save_row);
+
+    let auto_close_labels = ["Always", "Language Defined", "Before Whitespace", "Never"];
+    let auto_close_values = ["always", "languageDefined", "beforeWhitespace", "never"];
+    let auto_close_model = gtk4::StringList::new(&auto_close_labels);
+
+    let current_auto_close = settings.borrow().editor_auto_closing_brackets.clone();
+    let auto_close_index = auto_close_values
+        .iter()
+        .position(|v| *v == current_auto_close)
+        .unwrap_or(1) as u32;
+
+    let auto_close_row = adw::ComboRow::new();
+    auto_close_row.set_title("Auto-Close Brackets");
+    auto_close_row.set_model(Some(&auto_close_model));
+    auto_close_row.set_selected(auto_close_index);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        auto_close_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(&val) = auto_close_values.get(idx) {
+                let mut s = settings.borrow_mut();
+                s.editor_auto_closing_brackets = val.to_string();
+                settings::save(&s);
+                on_changed(&s);
+            }
+        });
+    }
+    behavior_group.add(&auto_close_row);
+
     editor_page.add(&behavior_group);
 
     preferences_window.add(&editor_page);
@@ -441,12 +494,12 @@ pub fn show_settings_window(
     terminal_page.set_title("Terminal");
     terminal_page.set_icon_name(Some("utilities-terminal-symbolic"));
 
-    // -- Appearance group --
-    let term_appearance_group = adw::PreferencesGroup::new();
-    term_appearance_group.set_title("Appearance");
+    // -- Font group --
+    let term_font_group = adw::PreferencesGroup::new();
+    term_font_group.set_title("Font");
 
     let term_font_row = adw::EntryRow::new();
-    term_font_row.set_title("Font Family Override");
+    term_font_row.set_title("Font Family");
     term_font_row.set_text(&settings.borrow().terminal_font_family);
     {
         let settings = Rc::clone(settings);
@@ -458,7 +511,34 @@ pub fn show_settings_window(
             on_changed(&s);
         });
     }
-    term_appearance_group.add(&term_font_row);
+    term_font_group.add(&term_font_row);
+
+    let term_font_size_adj = gtk4::Adjustment::new(
+        settings.borrow().terminal_font_size as f64,
+        6.0,
+        72.0,
+        1.0,
+        10.0,
+        0.0,
+    );
+    let term_font_size_row = adw::SpinRow::new(Some(&term_font_size_adj), 1.0, 0);
+    term_font_size_row.set_title("Font Size");
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        term_font_size_row.connect_value_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_font_size = row.value() as i32;
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_font_group.add(&term_font_size_row);
+    terminal_page.add(&term_font_group);
+
+    // -- Appearance group --
+    let term_appearance_group = adw::PreferencesGroup::new();
+    term_appearance_group.set_title("Appearance");
 
     let cursor_shape_labels = ["Block", "IBeam", "Underline"];
     let cursor_shape_values = ["block", "ibeam", "underline"];
@@ -519,6 +599,75 @@ pub fn show_settings_window(
     }
     term_appearance_group.add(&bell_row);
     terminal_page.add(&term_appearance_group);
+
+    // -- Behavior group --
+    let term_behavior_group = adw::PreferencesGroup::new();
+    term_behavior_group.set_title("Behavior");
+
+    let copy_on_select_row = adw::SwitchRow::new();
+    copy_on_select_row.set_title("Copy on Select");
+    copy_on_select_row.set_subtitle("Copy selected text to clipboard automatically");
+    copy_on_select_row.set_active(settings.borrow().terminal_copy_on_select);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        copy_on_select_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_copy_on_select = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&copy_on_select_row);
+
+    let scroll_on_output_row = adw::SwitchRow::new();
+    scroll_on_output_row.set_title("Scroll on Output");
+    scroll_on_output_row.set_subtitle("Auto-scroll when new output appears");
+    scroll_on_output_row.set_active(settings.borrow().terminal_scroll_on_output);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        scroll_on_output_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_scroll_on_output = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&scroll_on_output_row);
+
+    let allow_hyperlink_row = adw::SwitchRow::new();
+    allow_hyperlink_row.set_title("Clickable Links");
+    allow_hyperlink_row.set_subtitle("Make URLs in terminal output clickable");
+    allow_hyperlink_row.set_active(settings.borrow().terminal_allow_hyperlink);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        allow_hyperlink_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_allow_hyperlink = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&allow_hyperlink_row);
+
+    let bold_is_bright_row = adw::SwitchRow::new();
+    bold_is_bright_row.set_title("Bold is Bright");
+    bold_is_bright_row.set_subtitle("Map bold text to bright color variants");
+    bold_is_bright_row.set_active(settings.borrow().terminal_bold_is_bright);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        bold_is_bright_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_bold_is_bright = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&bold_is_bright_row);
+    terminal_page.add(&term_behavior_group);
 
     // -- Scrollback group --
     let scrollback_group = adw::PreferencesGroup::new();

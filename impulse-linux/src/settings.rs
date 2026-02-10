@@ -66,6 +66,15 @@ pub struct Settings {
     pub terminal_cursor_blink: bool,
     pub terminal_bell: bool,
     pub terminal_font_family: String,
+    pub terminal_font_size: i32,
+    pub terminal_copy_on_select: bool,
+    pub terminal_scroll_on_output: bool,
+    pub terminal_allow_hyperlink: bool,
+    pub terminal_bold_is_bright: bool,
+
+    // ── Editor (additional) ──────────────────────────────────────────────
+    pub editor_line_height: u32,
+    pub editor_auto_closing_brackets: String,
 
     // ── Appearance ───────────────────────────────────────────────────────
     pub color_scheme: String,
@@ -114,7 +123,16 @@ impl Default for Settings {
             terminal_cursor_shape: String::from("block"),
             terminal_cursor_blink: true,
             terminal_bell: false,
-            terminal_font_family: String::new(),
+            terminal_font_family: String::from("monospace"),
+            terminal_font_size: 14,
+            terminal_copy_on_select: true,
+            terminal_scroll_on_output: false,
+            terminal_allow_hyperlink: true,
+            terminal_bold_is_bright: false,
+
+            // Editor (additional)
+            editor_line_height: 0,
+            editor_auto_closing_brackets: String::from("languageDefined"),
 
             // Appearance
             color_scheme: String::from("cyberpunk"),

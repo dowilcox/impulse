@@ -119,6 +119,10 @@ pub struct EditorOptions {
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_closing_brackets: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

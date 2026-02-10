@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk4::glib;
 use gtk4::prelude::*;
 use std::path::PathBuf;
@@ -9,6 +12,7 @@ use crate::theme::ThemeColors;
 pub fn create_terminal(
     settings: &crate::settings::Settings,
     theme: &ThemeColors,
+    copy_on_select_flag: Rc<Cell<bool>>,
 ) -> vte4::Terminal {
     let terminal = vte4::Terminal::new();
 
@@ -23,10 +27,10 @@ pub fn create_terminal(
     let font_family = if !settings.terminal_font_family.is_empty() {
         &settings.terminal_font_family
     } else {
-        &settings.font_family
+        "monospace"
     };
     let mut font_desc = gtk4::pango::FontDescription::from_string(font_family);
-    font_desc.set_size(settings.font_size * 1024);
+    font_desc.set_size(settings.terminal_font_size * 1024);
     terminal.set_font_desc(Some(&font_desc));
     let cursor_blink = if settings.terminal_cursor_blink {
         vte4::CursorBlinkMode::On
@@ -41,11 +45,23 @@ pub fn create_terminal(
     };
     terminal.set_cursor_shape(cursor_shape);
     terminal.set_scrollback_lines(settings.terminal_scrollback);
-    terminal.set_scroll_on_output(false);
+    terminal.set_scroll_on_output(settings.terminal_scroll_on_output);
     terminal.set_scroll_on_keystroke(true);
     terminal.set_mouse_autohide(true);
-    terminal.set_allow_hyperlink(true);
+    terminal.set_allow_hyperlink(settings.terminal_allow_hyperlink);
+    terminal.set_bold_is_bright(settings.terminal_bold_is_bright);
     terminal.set_audible_bell(settings.terminal_bell);
+
+    // Copy-on-select: always connect the signal, check the flag inside
+    copy_on_select_flag.set(settings.terminal_copy_on_select);
+    {
+        let flag = copy_on_select_flag;
+        terminal.connect_selection_changed(move |term| {
+            if flag.get() && term.has_selection() {
+                term.copy_clipboard_format(vte4::Format::Text);
+            }
+        });
+    }
 
     // Size
     terminal.set_size(120, 30);
@@ -76,6 +92,7 @@ pub fn apply_settings(
     terminal: &vte4::Terminal,
     settings: &crate::settings::Settings,
     theme: &ThemeColors,
+    copy_on_select_flag: &Cell<bool>,
 ) {
     let palette = theme.terminal_palette_rgba();
     let palette_refs: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
@@ -88,10 +105,10 @@ pub fn apply_settings(
     let font_family = if !settings.terminal_font_family.is_empty() {
         &settings.terminal_font_family
     } else {
-        &settings.font_family
+        "monospace"
     };
     let mut font_desc = gtk4::pango::FontDescription::from_string(font_family);
-    font_desc.set_size(settings.font_size * 1024);
+    font_desc.set_size(settings.terminal_font_size * 1024);
     terminal.set_font_desc(Some(&font_desc));
 
     terminal.set_cursor_blink_mode(if settings.terminal_cursor_blink {
@@ -105,7 +122,13 @@ pub fn apply_settings(
         _ => vte4::CursorShape::Block,
     });
     terminal.set_scrollback_lines(settings.terminal_scrollback);
+    terminal.set_scroll_on_output(settings.terminal_scroll_on_output);
+    terminal.set_allow_hyperlink(settings.terminal_allow_hyperlink);
+    terminal.set_bold_is_bright(settings.terminal_bold_is_bright);
     terminal.set_audible_bell(settings.terminal_bell);
+
+    // Update the copy-on-select flag (checked inside the already-connected signal)
+    copy_on_select_flag.set(settings.terminal_copy_on_select);
 }
 
 /// Spawn the user's shell inside a VTE terminal with Impulse integration scripts.

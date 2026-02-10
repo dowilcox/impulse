@@ -36,6 +36,9 @@ pub fn build_window(app: &adw::Application) {
     // Shared font size state (user-facing size in points, e.g. 11)
     let font_size: Rc<Cell<i32>> = Rc::new(Cell::new(settings.borrow().font_size));
 
+    // Shared copy-on-select flag checked by terminal selection-changed signal handlers
+    let copy_on_select_flag: Rc<Cell<bool>> = Rc::new(Cell::new(settings.borrow().terminal_copy_on_select));
+
     // --- LSP Bridge: GTK <-> Tokio ---
     // Channel for sending requests from GTK to the LSP tokio runtime
     let (lsp_request_tx, mut lsp_request_rx) = tokio::sync::mpsc::unbounded_channel::<LspRequest>();
@@ -779,9 +782,10 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
+        let copy_on_select_flag = copy_on_select_flag.clone();
         move || {
             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
-            let term = terminal::create_terminal(&settings.borrow(), theme);
+            let term = terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
             setup_terminal_signals(&term);
             terminal::spawn_shell(&term);
 
@@ -1165,9 +1169,11 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let tab_view = tab_view.clone();
         let css_provider = css_provider.clone();
+        let copy_on_select_flag = copy_on_select_flag.clone();
         Rc::new(move || {
             let tab_view = tab_view.clone();
             let css_provider = css_provider.clone();
+            let copy_on_select_flag = copy_on_select_flag.clone();
             crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
                 // Swap theme CSS
                 let new_theme = crate::theme::get_theme(&s.color_scheme);
@@ -1181,7 +1187,7 @@ pub fn build_window(app: &adw::Application) {
                     let page = tab_view.nth_page(i);
                     let child = page.child();
                     if let Some(term) = crate::terminal_container::get_active_terminal(&child) {
-                        crate::terminal::apply_settings(&term, s, new_theme);
+                        crate::terminal::apply_settings(&term, s, new_theme, &copy_on_select_flag);
                     } else if crate::editor::is_editor(&child) {
                         crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
                         crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
@@ -1293,6 +1299,7 @@ pub fn build_window(app: &adw::Application) {
                     let tab_view = tab_view.clone();
                     let setup_terminal_signals = setup_terminal_signals.clone();
                     let settings = settings.clone();
+                    let copy_on_select_flag = copy_on_select_flag.clone();
                     move || {
                         if let Some(page) = tab_view.selected_page() {
                             let child = page.child();
@@ -1307,6 +1314,7 @@ pub fn build_window(app: &adw::Application) {
                                 },
                                 &s,
                                 theme,
+                                copy_on_select_flag.clone(),
                             );
                         }
                     }
@@ -1319,6 +1327,7 @@ pub fn build_window(app: &adw::Application) {
                     let tab_view = tab_view.clone();
                     let setup_terminal_signals = setup_terminal_signals.clone();
                     let settings = settings.clone();
+                    let copy_on_select_flag = copy_on_select_flag.clone();
                     move || {
                         if let Some(page) = tab_view.selected_page() {
                             let child = page.child();
@@ -1333,6 +1342,7 @@ pub fn build_window(app: &adw::Application) {
                                 },
                                 &s,
                                 theme,
+                                copy_on_select_flag.clone(),
                             );
                         }
                     }
@@ -1585,6 +1595,7 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
+        let copy_on_select_flag = copy_on_select_flag.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>e", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1599,6 +1610,7 @@ pub fn build_window(app: &adw::Application) {
                     },
                     &s,
                     theme,
+                    copy_on_select_flag.clone(),
                 );
             }
         });
@@ -1609,6 +1621,7 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
+        let copy_on_select_flag = copy_on_select_flag.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>o", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1623,6 +1636,7 @@ pub fn build_window(app: &adw::Application) {
                     },
                     &s,
                     theme,
+                    copy_on_select_flag.clone(),
                 );
             }
         });

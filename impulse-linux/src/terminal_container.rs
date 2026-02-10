@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk4::prelude::*;
 
 use crate::terminal;
@@ -32,6 +35,7 @@ pub fn split_terminal(
     setup_terminal: &dyn Fn(&vte4::Terminal),
     settings: &crate::settings::Settings,
     theme: &crate::theme::ThemeColors,
+    copy_on_select_flag: Rc<Cell<bool>>,
 ) -> Option<vte4::Terminal> {
     // Find the focused terminal; fall back to the first terminal in the tree.
     let focused = find_focused_terminal(container).or_else(|| find_first_terminal(container))?;
@@ -42,7 +46,7 @@ pub fn split_terminal(
     let parent_box = parent_widget.downcast_ref::<gtk4::Box>()?;
 
     // Create a new terminal and let the caller set up its signals.
-    let new_term = terminal::create_terminal(settings, theme);
+    let new_term = terminal::create_terminal(settings, theme, copy_on_select_flag);
     setup_terminal(&new_term);
     terminal::spawn_shell(&new_term);
 
