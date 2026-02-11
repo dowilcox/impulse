@@ -134,6 +134,23 @@ fn chrono_like_now() -> String {
     }
 }
 
+const APP_ICON_SVG: &[u8] = include_bytes!("../../assets/impulse-logo.svg");
+
+/// Install the app icon into the user's icon theme directory so GTK can find it.
+fn install_app_icon() {
+    let icon_dir = match std::env::var("HOME").ok() {
+        Some(home) => PathBuf::from(home).join(".local/share/icons/hicolor/scalable/apps"),
+        None => return,
+    };
+    let icon_path = icon_dir.join("dev.impulse.Impulse.svg");
+    if icon_path.exists() {
+        return;
+    }
+    if std::fs::create_dir_all(&icon_dir).is_ok() {
+        let _ = std::fs::write(&icon_path, APP_ICON_SVG);
+    }
+}
+
 fn main() {
     env_logger::init();
     install_panic_hook();
@@ -153,6 +170,10 @@ fn main() {
     app.connect_startup(|_app| {
         let style_manager = adw::StyleManager::default();
         style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+
+        // Install application icon into user icon theme and set as default
+        install_app_icon();
+        gtk4::Window::set_default_icon_name("dev.impulse.Impulse");
     });
 
     app.connect_activate(move |app| {
