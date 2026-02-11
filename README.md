@@ -120,6 +120,26 @@ Impulse is a Rust workspace. Platform-agnostic logic lives in shared crates, wit
 
 Dependency direction is strictly one-way: frontends depend on `impulse-core` and `impulse-editor`, never the reverse.
 
+## Releasing
+
+The release script tags a version, builds a release binary, and produces distribution packages:
+
+```bash
+./scripts/release.sh 0.1.0           # tag + build + package locally
+./scripts/release.sh 0.1.0 --push    # also push tag and create GitHub release
+```
+
+This produces the following in `dist/`:
+
+| Format | Target |
+|--------|--------|
+| `.deb` | Debian, Ubuntu |
+| `.rpm` | Fedora, RHEL, openSUSE |
+| `.pkg.tar.zst` | Arch, CachyOS, Manjaro (requires `makepkg`) |
+| `SHA256SUMS` | Checksums for all packages |
+
+The script automatically bumps the version in all `Cargo.toml` files, creates an annotated git tag, and installs `cargo-deb` / `cargo-generate-rpm` if needed.
+
 ## License
 
 [GPLv3](LICENSE)
