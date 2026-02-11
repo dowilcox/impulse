@@ -105,7 +105,7 @@ DIST_FILES+=("$DEB_NAME")
 
 echo "Building .rpm package..."
 cargo generate-rpm -p impulse-linux
-RPM_PATH=$(find target/generate-rpm -name '*.rpm' -type f | head -1)
+RPM_PATH=$(find target/generate-rpm -name "*.rpm" -type f -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)
 cp "$RPM_PATH" "$DIST_DIR/"
 RPM_NAME=$(basename "$RPM_PATH")
 DIST_FILES+=("$RPM_NAME")
