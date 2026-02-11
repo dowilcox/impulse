@@ -9,8 +9,10 @@ use std::rc::Rc;
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
+use crate::file_icons::IconCache;
 use crate::project_search;
 use crate::settings;
+use crate::theme::ThemeColors;
 use impulse_core::filesystem::FileEntry;
 
 /// A node in the sidebar file tree, representing either a file or directory at a given depth.
@@ -29,10 +31,15 @@ pub struct TabTreeState {
 }
 
 /// Build the sidebar widget containing file tree and search panel.
-pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, SidebarState) {
+pub fn build_sidebar(
+    settings: &Rc<RefCell<settings::Settings>>,
+    theme: &ThemeColors,
+) -> (gtk4::Box, SidebarState) {
     let sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     sidebar.add_css_class("sidebar");
     sidebar.set_width_request(250);
+
+    let icon_cache: Rc<RefCell<IconCache>> = Rc::new(RefCell::new(IconCache::new(theme)));
 
     // Stack for File Tree / Search
     let stack = gtk4::Stack::new();
@@ -189,6 +196,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let clicked_path = clicked_path.clone();
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
+        let icon_cache = icon_cache.clone();
         rename_action.connect_activate(move |_, _| {
             let path = clicked_path.borrow().clone();
             if path.is_empty() {
@@ -235,6 +243,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
+            let icon_cache = icon_cache.clone();
             {
                 let dialog = dialog.clone();
                 let parent = parent.clone();
@@ -252,7 +261,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                             }
                             let snapshot: Vec<_> = nodes.clone();
                             drop(nodes);
-                            render_tree(&file_tree_list, &snapshot);
+                            render_tree(&file_tree_list, &snapshot, &icon_cache.borrow());
                         }
                     }
                     dialog.close();
@@ -285,6 +294,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let clicked_path = clicked_path.clone();
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
+        let icon_cache = icon_cache.clone();
         delete_action.connect_activate(move |_, _| {
             let path = clicked_path.borrow().clone();
             if path.is_empty() {
@@ -318,6 +328,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list_for_response = file_tree_list.clone();
+            let icon_cache = icon_cache.clone();
             dialog.connect_response(None, move |_dialog, response| {
                 if response != "delete" {
                     return;
@@ -343,7 +354,11 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                         }
                         let snapshot: Vec<_> = nodes.clone();
                         drop(nodes);
-                        render_tree(&file_tree_list_for_response, &snapshot);
+                        render_tree(
+                            &file_tree_list_for_response,
+                            &snapshot,
+                            &icon_cache.borrow(),
+                        );
                     }
                     Err(e) => {
                         log::error!("Failed to delete {}: {}", path, e);
@@ -368,6 +383,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
         let current_path = current_path.clone();
+        let icon_cache = icon_cache.clone();
         new_file_action.connect_activate(move |_, _| {
             let dir_path = clicked_path.borrow().clone();
             if dir_path.is_empty() {
@@ -398,6 +414,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
             let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
             {
                 let dialog = dialog.clone();
                 let dir_path = dir_path.clone();
@@ -416,6 +433,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                                 &name,
                                 &new_path.to_string_lossy(),
                                 false,
+                                &icon_cache.borrow(),
                             );
                         }
                     }
@@ -449,6 +467,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
         let current_path = current_path.clone();
+        let icon_cache = icon_cache.clone();
         new_folder_action.connect_activate(move |_, _| {
             let dir_path = clicked_path.borrow().clone();
             if dir_path.is_empty() {
@@ -479,6 +498,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
             let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
             {
                 let dialog = dialog.clone();
                 let dir_path = dir_path.clone();
@@ -497,6 +517,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                                 &name,
                                 &new_path.to_string_lossy(),
                                 true,
+                                &icon_cache.borrow(),
                             );
                         }
                     }
@@ -637,6 +658,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         tab_tree_states: Rc::new(RefCell::new(HashMap::new())),
         active_tab: Rc::new(RefCell::new(None)),
         show_hidden: show_hidden.clone(),
+        icon_cache: icon_cache.clone(),
         #[allow(clippy::arc_with_non_send_sync)]
         _watcher: Rc::new(RefCell::new(None)),
         _watcher_timer: Rc::new(RefCell::new(None)),
@@ -649,6 +671,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let state_file_tree_list = state.file_tree_list.clone();
         let state_file_tree_scroll = state.file_tree_scroll.clone();
         let state_show_hidden = state.show_hidden.clone();
+        let icon_cache = icon_cache.clone();
         refresh_btn.connect_clicked(move |_| {
             refresh_tree(
                 &state_tree_nodes,
@@ -656,14 +679,20 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                 &state_file_tree_scroll,
                 &state_current_path,
                 *state_show_hidden.borrow(),
+                icon_cache.clone(),
             );
         });
     }
     {
         let state_tree_nodes = state.tree_nodes.clone();
         let state_file_tree_list = state.file_tree_list.clone();
+        let icon_cache = icon_cache.clone();
         collapse_btn.connect_clicked(move |_| {
-            collapse_all(&state_tree_nodes, &state_file_tree_list);
+            collapse_all(
+                &state_tree_nodes,
+                &state_file_tree_list,
+                &icon_cache.borrow(),
+            );
         });
     }
     {
@@ -673,6 +702,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let state_file_tree_scroll = state.file_tree_scroll.clone();
         let show_hidden = show_hidden.clone();
         let settings = settings.clone();
+        let icon_cache = icon_cache.clone();
         hidden_btn.connect_toggled(move |btn| {
             let active = btn.is_active();
             *show_hidden.borrow_mut() = active;
@@ -683,6 +713,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                 &state_file_tree_scroll,
                 &state_current_path,
                 active,
+                icon_cache.clone(),
             );
         });
     }
@@ -693,6 +724,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         let file_tree_list = state.file_tree_list.clone();
         let on_file_activated = on_file_activated.clone();
         let show_hidden = state.show_hidden.clone();
+        let icon_cache = icon_cache.clone();
         state
             .file_tree_list
             .connect_row_activated(move |_list, row| {
@@ -701,6 +733,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                 let list = file_tree_list.clone();
                 let on_file_activated = on_file_activated.clone();
                 let show_hidden = show_hidden.clone();
+                let icon_cache = icon_cache.clone();
 
                 let node = {
                     let nodes = tree_nodes_ref.borrow();
@@ -711,6 +744,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                 };
 
                 if node.entry.is_dir {
+                    let cache = icon_cache.borrow();
                     if node.expanded {
                         // Collapse: remove descendant nodes and rows incrementally
                         let mut nodes = tree_nodes_ref.borrow_mut();
@@ -728,7 +762,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                             nodes.drain((index + 1)..(index + 1 + remove_count));
                         }
                         // Update the directory row arrow and icon
-                        update_dir_row_expanded(&list, index, nodes[index].expanded);
+                        update_dir_row_expanded(&list, index, nodes[index].expanded, &cache);
                         // Remove child rows from the ListBox
                         if remove_count > 0 {
                             remove_rows_at(&list, index + 1, remove_count);
@@ -738,7 +772,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                         {
                             let mut nodes = tree_nodes_ref.borrow_mut();
                             nodes[index].expanded = true;
-                            update_dir_row_expanded(&list, index, nodes[index].expanded);
+                            update_dir_row_expanded(&list, index, nodes[index].expanded, &cache);
                         }
 
                         let child_depth = node.depth + 1;
@@ -746,6 +780,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                         let tree_nodes_ref2 = tree_nodes_ref.clone();
                         let list2 = list.clone();
                         let show_hidden_val = *show_hidden.borrow();
+                        let icon_cache2 = icon_cache.clone();
                         glib::spawn_future_local(async move {
                             let path_clone = path.clone();
                             let result = gio::spawn_blocking(move || {
@@ -778,7 +813,12 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
                                     }
                                     drop(nodes);
                                     // Insert rows into the ListBox at the right position
-                                    insert_rows_at(&list2, insert_idx, &nodes_to_insert);
+                                    insert_rows_at(
+                                        &list2,
+                                        insert_idx,
+                                        &nodes_to_insert,
+                                        &icon_cache2.borrow(),
+                                    );
                                 }
                             }
                         });
@@ -807,6 +847,7 @@ pub struct SidebarState {
     pub tab_tree_states: Rc<RefCell<HashMap<gtk4::Widget, TabTreeState>>>,
     pub active_tab: Rc<RefCell<Option<gtk4::Widget>>>,
     pub show_hidden: Rc<RefCell<bool>>,
+    pub icon_cache: Rc<RefCell<IconCache>>,
     /// Keeps the filesystem watcher alive. Dropping this stops watching.
     _watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Source ID for the watcher's polling timer, so we can cancel it on re-watch.
@@ -821,6 +862,7 @@ impl SidebarState {
         let path = path.to_string();
         let tree_nodes = self.tree_nodes.clone();
         let show_hidden = *self.show_hidden.borrow();
+        let icon_cache = self.icon_cache.clone();
 
         // Set up filesystem watcher for this directory
         self.setup_watcher(&path);
@@ -843,7 +885,7 @@ impl SidebarState {
                         })
                         .collect();
                     *tree_nodes.borrow_mut() = nodes.clone();
-                    render_tree(&list, &nodes);
+                    render_tree(&list, &nodes, &icon_cache.borrow());
                 }
                 _ => {
                     tree_nodes.borrow_mut().clear();
@@ -899,6 +941,7 @@ impl SidebarState {
         let file_tree_scroll = self.file_tree_scroll.clone();
         let current_path = self.current_path.clone();
         let show_hidden = self.show_hidden.clone();
+        let icon_cache = self.icon_cache.clone();
 
         let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
             // Drain all pending events
@@ -913,6 +956,7 @@ impl SidebarState {
                     &file_tree_scroll,
                     &current_path,
                     *show_hidden.borrow(),
+                    icon_cache.clone(),
                 );
             }
             glib::ControlFlow::Continue
@@ -961,7 +1005,7 @@ impl SidebarState {
             } else {
                 *self.tree_nodes.borrow_mut() = nodes.clone();
                 *self.current_path.borrow_mut() = saved_path;
-                render_tree(&self.file_tree_list, &nodes);
+                render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());
 
                 // Restore scroll position after the render
                 let scroll = self.file_tree_scroll.clone();
@@ -983,6 +1027,13 @@ impl SidebarState {
     pub fn set_active_tab(&self, tab_child: &gtk4::Widget) {
         *self.active_tab.borrow_mut() = Some(tab_child.clone());
     }
+
+    /// Rebuild the icon cache for a new theme and re-render the tree.
+    pub fn update_theme(&self, theme: &ThemeColors) {
+        self.icon_cache.borrow_mut().rebuild(theme);
+        let nodes = self.tree_nodes.borrow().clone();
+        render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());
+    }
 }
 
 /// Insert a newly created file or folder into the tree at the correct position.
@@ -996,6 +1047,7 @@ fn insert_new_entry_into_tree(
     name: &str,
     full_path: &str,
     is_dir: bool,
+    icon_cache: &IconCache,
 ) {
     let new_entry = FileEntry {
         name: name.to_string(),
@@ -1041,7 +1093,7 @@ fn insert_new_entry_into_tree(
 
     let snapshot: Vec<_> = nodes.clone();
     drop(nodes);
-    render_tree(file_tree_list, &snapshot);
+    render_tree(file_tree_list, &snapshot, icon_cache);
 }
 
 /// Find the correct sorted insertion position for a new entry among siblings
@@ -1082,6 +1134,7 @@ fn refresh_tree(
     file_tree_scroll: &gtk4::ScrolledWindow,
     current_path: &Rc<RefCell<String>>,
     show_hidden: bool,
+    icon_cache: Rc<RefCell<IconCache>>,
 ) {
     let path = current_path.borrow().clone();
     if path.is_empty() {
@@ -1146,7 +1199,7 @@ fn refresh_tree(
             }
 
             *tree_nodes.borrow_mut() = nodes.clone();
-            render_tree(&file_tree_list, &nodes);
+            render_tree(&file_tree_list, &nodes, &icon_cache.borrow());
 
             // Restore scroll position
             glib::idle_add_local_once(move || {
@@ -1157,7 +1210,11 @@ fn refresh_tree(
 }
 
 /// Collapse all expanded directories back to root-level only.
-fn collapse_all(tree_nodes: &Rc<RefCell<Vec<TreeNode>>>, file_tree_list: &gtk4::ListBox) {
+fn collapse_all(
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    file_tree_list: &gtk4::ListBox,
+    icon_cache: &IconCache,
+) {
     let mut nodes = tree_nodes.borrow_mut();
     // Keep only depth-0 nodes and mark them as collapsed
     nodes.retain(|n| n.depth == 0);
@@ -1166,7 +1223,7 @@ fn collapse_all(tree_nodes: &Rc<RefCell<Vec<TreeNode>>>, file_tree_list: &gtk4::
     }
     let snapshot: Vec<_> = nodes.clone();
     drop(nodes);
-    render_tree(file_tree_list, &snapshot);
+    render_tree(file_tree_list, &snapshot, icon_cache);
 }
 
 /// Map a filename/extension to an appropriate GTK symbolic icon name.
@@ -1220,7 +1277,7 @@ fn file_icon_name(filename: &str) -> &'static str {
 }
 
 /// Build a single row widget for a tree node.
-fn build_tree_row(node: &TreeNode) -> gtk4::Box {
+fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
     let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
     row.add_css_class("file-entry");
     row.set_widget_name(&node.entry.path);
@@ -1246,17 +1303,22 @@ fn build_tree_row(node: &TreeNode) -> gtk4::Box {
         row.append(&spacer);
     }
 
-    // File/folder icon
-    let icon_name = if node.entry.is_dir {
-        if node.expanded {
-            "folder-open-symbolic"
+    // File/folder icon — use themed texture if available, fall back to GTK symbolic icons
+    let icon =
+        if let Some(texture) = icon_cache.get(&node.entry.name, node.entry.is_dir, node.expanded) {
+            gtk4::Image::from_paintable(Some(texture))
         } else {
-            "folder-symbolic"
-        }
-    } else {
-        file_icon_name(&node.entry.name)
-    };
-    let icon = gtk4::Image::from_icon_name(icon_name);
+            let icon_name = if node.entry.is_dir {
+                if node.expanded {
+                    "folder-open-symbolic"
+                } else {
+                    "folder-symbolic"
+                }
+            } else {
+                file_icon_name(&node.entry.name)
+            };
+            gtk4::Image::from_icon_name(icon_name)
+        };
     icon.set_pixel_size(16);
     row.append(&icon);
 
@@ -1288,7 +1350,12 @@ fn build_tree_row(node: &TreeNode) -> gtk4::Box {
 }
 
 /// Update the arrow and icon on an existing directory row in-place (no remove/insert).
-fn update_dir_row_expanded(list: &gtk4::ListBox, index: usize, expanded: bool) {
+fn update_dir_row_expanded(
+    list: &gtk4::ListBox,
+    index: usize,
+    expanded: bool,
+    icon_cache: &IconCache,
+) {
     let row = match list.row_at_index(index as i32) {
         Some(r) => r,
         None => return,
@@ -1312,19 +1379,28 @@ fn update_dir_row_expanded(list: &gtk4::ListBox, index: usize, expanded: bool) {
             .next_sibling()
             .and_then(|c| c.downcast::<gtk4::Image>().ok())
         {
-            icon.set_icon_name(Some(if expanded {
-                "folder-open-symbolic"
+            if let Some(texture) = icon_cache.get("", true, expanded) {
+                icon.set_paintable(Some(texture));
             } else {
-                "folder-symbolic"
-            }));
+                icon.set_icon_name(Some(if expanded {
+                    "folder-open-symbolic"
+                } else {
+                    "folder-symbolic"
+                }));
+            }
         }
     }
 }
 
 /// Insert rows into the ListBox at the given position without clearing.
-fn insert_rows_at(list: &gtk4::ListBox, position: usize, nodes: &[TreeNode]) {
+fn insert_rows_at(
+    list: &gtk4::ListBox,
+    position: usize,
+    nodes: &[TreeNode],
+    icon_cache: &IconCache,
+) {
     for (i, node) in nodes.iter().enumerate() {
-        let row = build_tree_row(node);
+        let row = build_tree_row(node, icon_cache);
         list.insert(&row, (position + i) as i32);
     }
 }
@@ -1341,10 +1417,10 @@ fn remove_rows_at(list: &gtk4::ListBox, position: usize, count: usize) {
 
 /// Render the tree node list into the ListBox.
 /// Each row is indented based on depth, directories show expand/collapse arrows.
-fn render_tree(list: &gtk4::ListBox, nodes: &[TreeNode]) {
+fn render_tree(list: &gtk4::ListBox, nodes: &[TreeNode], icon_cache: &IconCache) {
     clear_list(list);
     for node in nodes {
-        let row = build_tree_row(node);
+        let row = build_tree_row(node, icon_cache);
         list.append(&row);
     }
 }

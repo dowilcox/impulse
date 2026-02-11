@@ -372,7 +372,8 @@ pub fn build_window(app: &adw::Application) {
     paned.set_shrink_end_child(false);
 
     // Sidebar
-    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings);
+    let initial_theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings, initial_theme);
     sidebar_widget.set_visible(settings.borrow().sidebar_visible);
     paned.set_start_child(Some(&sidebar_widget));
 
@@ -1163,13 +1164,21 @@ pub fn build_window(app: &adw::Application) {
                 }
 
                 // Ctrl+W: close tab (VTE eats this as "delete word backward")
-                if ctrl && !shift && (key == gtk4::gdk::Key::w || key == gtk4::gdk::Key::W) && is_terminal {
+                if ctrl
+                    && !shift
+                    && (key == gtk4::gdk::Key::w || key == gtk4::gdk::Key::W)
+                    && is_terminal
+                {
                     tab_view.close_page(&page);
                     return gtk4::glib::Propagation::Stop;
                 }
 
                 // Ctrl+T: new tab (VTE eats this as "transpose chars")
-                if ctrl && !shift && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T) && is_terminal {
+                if ctrl
+                    && !shift
+                    && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T)
+                    && is_terminal
+                {
                     create_tab_capture();
                     return gtk4::glib::Propagation::Stop;
                 }
@@ -1217,11 +1226,13 @@ pub fn build_window(app: &adw::Application) {
         let css_provider = css_provider.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
         let font_size = font_size.clone();
+        let sidebar_state = sidebar_state.clone();
         Rc::new(move || {
             let tab_view = tab_view.clone();
             let css_provider = css_provider.clone();
             let copy_on_select_flag = copy_on_select_flag.clone();
             let font_size = font_size.clone();
+            let sidebar_state = sidebar_state.clone();
             crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
                 // Keep the font_size Cell in sync so the close handler
                 // doesn't overwrite the user's settings-page changes.
@@ -1232,6 +1243,9 @@ pub fn build_window(app: &adw::Application) {
                 gtk4::style_context_remove_provider_for_display(&display, &*css_provider.borrow());
                 let new_provider = crate::theme::load_css(new_theme);
                 *css_provider.borrow_mut() = new_provider;
+
+                // Update sidebar file icons for the new theme
+                sidebar_state.update_theme(new_theme);
 
                 // Apply to all open tabs
                 for i in 0..tab_view.n_pages() {

@@ -720,7 +720,14 @@ pub fn show_settings_window(
     let theme_group = adw::PreferencesGroup::new();
     theme_group.set_title("Theme");
 
-    let theme_labels = ["Kanagawa", "Rosé Pine", "Nord", "Gruvbox", "Tokyo Night", "Catppuccin Mocha"];
+    let theme_labels = [
+        "Kanagawa",
+        "Rosé Pine",
+        "Nord",
+        "Gruvbox",
+        "Tokyo Night",
+        "Catppuccin Mocha",
+    ];
     let available_themes = theme::get_available_themes();
     let theme_model = gtk4::StringList::new(&theme_labels);
 
