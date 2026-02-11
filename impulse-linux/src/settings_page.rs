@@ -377,8 +377,22 @@ pub fn show_settings_window(
     let cursor_group = adw::PreferencesGroup::new();
     cursor_group.set_title("Cursor");
 
-    let cursor_style_labels = ["Line", "Block", "Underline", "Line Thin", "Block Outline", "Underline Thin"];
-    let cursor_style_values = ["line", "block", "underline", "line-thin", "block-outline", "underline-thin"];
+    let cursor_style_labels = [
+        "Line",
+        "Block",
+        "Underline",
+        "Line Thin",
+        "Block Outline",
+        "Underline Thin",
+    ];
+    let cursor_style_values = [
+        "line",
+        "block",
+        "underline",
+        "line-thin",
+        "block-outline",
+        "underline-thin",
+    ];
     let cursor_style_model = gtk4::StringList::new(&cursor_style_labels);
 
     let current_cursor_style = settings.borrow().editor_cursor_style.clone();

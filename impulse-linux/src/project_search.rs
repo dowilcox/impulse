@@ -227,10 +227,12 @@ fn populate_project_results(list: &gtk4::ListBox, results: &[SearchResult]) {
     }
 
     for (file_path, file_name, matches) in &grouped {
-        // File header row
+        // File header row — clicking opens the file at line 1
         let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         header.add_css_class("project-search-file-header");
-        // Don't set widget_name to a path since this is a header, not clickable to open
+        header.set_widget_name(file_path);
+        header.set_tooltip_text(Some("1"));
+        header.set_cursor_from_name(Some("pointer"));
 
         let icon = gtk4::Image::from_icon_name("text-x-generic-symbolic");
         icon.set_pixel_size(14);
@@ -247,11 +249,7 @@ fn populate_project_results(list: &gtk4::ListBox, results: &[SearchResult]) {
         count_label.add_css_class("project-search-match-count");
         header.append(&count_label);
 
-        let header_row = gtk4::ListBoxRow::new();
-        header_row.set_selectable(false);
-        header_row.set_activatable(false);
-        header_row.set_child(Some(&header));
-        list.append(&header_row);
+        list.append(&header);
 
         // Match rows
         for m in matches {

@@ -1195,11 +1195,16 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let css_provider = css_provider.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
+        let font_size = font_size.clone();
         Rc::new(move || {
             let tab_view = tab_view.clone();
             let css_provider = css_provider.clone();
             let copy_on_select_flag = copy_on_select_flag.clone();
+            let font_size = font_size.clone();
             crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
+                // Keep the font_size Cell in sync so the close handler
+                // doesn't overwrite the user's settings-page changes.
+                font_size.set(s.font_size);
                 // Swap theme CSS
                 let new_theme = crate::theme::get_theme(&s.color_scheme);
                 let display = gtk4::gdk::Display::default().expect("No display");
