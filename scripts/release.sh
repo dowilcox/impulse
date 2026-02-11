@@ -74,10 +74,11 @@ fi
 
 if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
     echo "Setting version to ${VERSION}..."
-    sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" impulse-core/Cargo.toml
-    sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" impulse-editor/Cargo.toml
-    sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" impulse-linux/Cargo.toml
-    sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" impulse-ffi/Cargo.toml
+    # BSD sed (macOS) requires -i '' and doesn't support 0,/pat/ addressing.
+    # Use a portable approach: replace only the first ^version line in each file.
+    for toml in impulse-core/Cargo.toml impulse-editor/Cargo.toml impulse-linux/Cargo.toml impulse-ffi/Cargo.toml; do
+        awk -v ver="$VERSION" '!done && /^version = "/ { sub(/^version = ".*"/, "version = \"" ver "\""); done=1 } 1' "$toml" > "$toml.tmp" && mv "$toml.tmp" "$toml"
+    done
 
     # Update lockfile
     cargo check -p impulse-core --quiet 2>/dev/null || true
