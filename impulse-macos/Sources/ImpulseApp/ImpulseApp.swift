@@ -13,6 +13,41 @@ import AppKit
 @main
 struct ImpulseApp {
     static func main() {
+        let args = CommandLine.arguments
+
+        // Handle CLI-only LSP management flags before launching the GUI.
+        if args.contains("--install-lsp-servers") {
+            let result = ImpulseCore.lspInstall()
+            switch result {
+            case .success(let message):
+                print(message)
+                exit(0)
+            case .failure(let error):
+                fputs("Error: \(error)\n", stderr)
+                exit(1)
+            }
+        }
+
+        if args.contains("--check-lsp-servers") {
+            let servers = ImpulseCore.lspCheckStatus()
+            if servers.isEmpty {
+                print("No managed LSP servers found.")
+            } else {
+                for server in servers {
+                    let name = server["name"] as? String ?? "unknown"
+                    let installed = server["installed"] as? Bool ?? false
+                    let version = server["version"] as? String
+                    let status = installed ? "installed" : "not installed"
+                    if let ver = version {
+                        print("\(name): \(status) (v\(ver))")
+                    } else {
+                        print("\(name): \(status)")
+                    }
+                }
+            }
+            exit(0)
+        }
+
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 

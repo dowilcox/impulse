@@ -184,6 +184,66 @@ final class SettingsWindowController: NSWindowController {
         blinkPopup.selectItem(withTitle: settings.editorCursorBlinking)
         grid.addRow(with: [makeLabel("Cursor Blinking:"), blinkPopup])
 
+        // Auto-closing brackets
+        let autoClosePopup = NSPopUpButton(title: "", target: self, action: #selector(autoClosingBracketsChanged(_:)))
+        autoClosePopup.addItems(withTitles: ["always", "languageDefined", "beforeWhitespace", "never"])
+        autoClosePopup.selectItem(withTitle: settings.editorAutoClosingBrackets)
+        grid.addRow(with: [makeLabel("Auto-Close Brackets:"), autoClosePopup])
+
+        // Show right margin
+        let rightMarginCheck = NSButton(checkboxWithTitle: "Show right margin",
+                                         target: self, action: #selector(showRightMarginChanged(_:)))
+        rightMarginCheck.state = settings.showRightMargin ? .on : .off
+        grid.addRow(with: [makeLabel(""), rightMarginCheck])
+
+        // Right margin column
+        let marginStepper = NSStepper()
+        marginStepper.minValue = 1
+        marginStepper.maxValue = 500
+        marginStepper.integerValue = settings.rightMarginPosition
+        marginStepper.target = self
+        marginStepper.action = #selector(rightMarginPositionStepperChanged(_:))
+        let marginField = NSTextField(string: "\(settings.rightMarginPosition)")
+        marginField.isEditable = false
+        marginField.tag = 101
+        let marginRow = NSStackView(views: [marginField, marginStepper])
+        marginRow.orientation = .horizontal
+        marginRow.spacing = 4
+        grid.addRow(with: [makeLabel("Right Margin Column:"), marginRow])
+
+        // Scroll beyond last line
+        let scrollBeyondCheck = NSButton(checkboxWithTitle: "Scroll beyond last line",
+                                          target: self, action: #selector(scrollBeyondLastLineChanged(_:)))
+        scrollBeyondCheck.state = settings.scrollBeyondLastLine ? .on : .off
+        grid.addRow(with: [makeLabel(""), scrollBeyondCheck])
+
+        // Smooth scrolling
+        let smoothScrollCheck = NSButton(checkboxWithTitle: "Smooth scrolling",
+                                          target: self, action: #selector(smoothScrollingChanged(_:)))
+        smoothScrollCheck.state = settings.smoothScrolling ? .on : .off
+        grid.addRow(with: [makeLabel(""), smoothScrollCheck])
+
+        // Code folding
+        let foldingCheck = NSButton(checkboxWithTitle: "Code folding",
+                                     target: self, action: #selector(foldingChanged(_:)))
+        foldingCheck.state = settings.folding ? .on : .off
+        grid.addRow(with: [makeLabel(""), foldingCheck])
+
+        // Editor line height
+        let lineHeightStepper = NSStepper()
+        lineHeightStepper.minValue = 0
+        lineHeightStepper.maxValue = 50
+        lineHeightStepper.integerValue = settings.editorLineHeight
+        lineHeightStepper.target = self
+        lineHeightStepper.action = #selector(lineHeightStepperChanged(_:))
+        let lineHeightField = NSTextField(string: settings.editorLineHeight > 0 ? "\(settings.editorLineHeight)" : "Default")
+        lineHeightField.isEditable = false
+        lineHeightField.tag = 102
+        let lineHeightRow = NSStackView(views: [lineHeightField, lineHeightStepper])
+        lineHeightRow.orientation = .horizontal
+        lineHeightRow.spacing = 4
+        grid.addRow(with: [makeLabel("Line Height:"), lineHeightRow])
+
         let scrollView = NSScrollView()
         scrollView.documentView = grid
         scrollView.hasVerticalScroller = true
@@ -441,7 +501,14 @@ final class SettingsWindowController: NSWindowController {
         let item = NSTabViewItem(identifier: "automation")
         item.label = "Automation"
 
+        let outerScroll = NSScrollView()
+        outerScroll.hasVerticalScroller = true
+        outerScroll.drawsBackground = false
+
         let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        // -- Commands on Save Section --
 
         let headerLabel = NSTextField(labelWithString: "Commands on Save")
         headerLabel.font = NSFont.boldSystemFont(ofSize: 13)
@@ -456,10 +523,10 @@ final class SettingsWindowController: NSWindowController {
         container.addSubview(descLabel)
 
         // Table view for commands
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
+        let cmdScrollView = NSScrollView()
+        cmdScrollView.translatesAutoresizingMaskIntoConstraints = false
+        cmdScrollView.hasVerticalScroller = true
+        cmdScrollView.borderType = .bezelBorder
 
         let tableView = NSTableView()
         tableView.tag = 400
@@ -488,21 +555,82 @@ final class SettingsWindowController: NSWindowController {
 
         tableView.delegate = self
         tableView.dataSource = self
-        scrollView.documentView = tableView
+        cmdScrollView.documentView = tableView
 
-        container.addSubview(scrollView)
+        container.addSubview(cmdScrollView)
 
-        // Add/Remove buttons
-        let addButton = NSButton(title: "Add", target: self, action: #selector(addCommandOnSave(_:)))
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        let removeButton = NSButton(title: "Remove", target: self, action: #selector(removeCommandOnSave(_:)))
-        removeButton.translatesAutoresizingMaskIntoConstraints = false
-        removeButton.tag = 401
+        // Add/Remove buttons for commands
+        let addCmdButton = NSButton(title: "Add", target: self, action: #selector(addCommandOnSave(_:)))
+        addCmdButton.translatesAutoresizingMaskIntoConstraints = false
+        let removeCmdButton = NSButton(title: "Remove", target: self, action: #selector(removeCommandOnSave(_:)))
+        removeCmdButton.translatesAutoresizingMaskIntoConstraints = false
+        removeCmdButton.tag = 401
 
-        container.addSubview(addButton)
-        container.addSubview(removeButton)
+        container.addSubview(addCmdButton)
+        container.addSubview(removeCmdButton)
+
+        // -- File Type Overrides Section --
+
+        let ftoHeader = NSTextField(labelWithString: "File Type Overrides")
+        ftoHeader.font = NSFont.boldSystemFont(ofSize: 13)
+        ftoHeader.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ftoHeader)
+
+        let ftoDesc = NSTextField(wrappingLabelWithString:
+            "Per-file-type overrides for tab width, spaces vs tabs, and format-on-save.")
+        ftoDesc.font = NSFont.systemFont(ofSize: 11)
+        ftoDesc.textColor = .secondaryLabelColor
+        ftoDesc.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ftoDesc)
+
+        let ftoScrollView = NSScrollView()
+        ftoScrollView.translatesAutoresizingMaskIntoConstraints = false
+        ftoScrollView.hasVerticalScroller = true
+        ftoScrollView.borderType = .bezelBorder
+
+        let ftoTable = NSTableView()
+        ftoTable.tag = 600
+        ftoTable.headerView = NSTableHeaderView()
+        ftoTable.usesAlternatingRowBackgrounds = true
+        ftoTable.doubleAction = #selector(fileTypeOverrideDoubleClicked(_:))
+        ftoTable.target = self
+
+        let ftoPatternCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fto_pattern"))
+        ftoPatternCol.title = "Pattern"
+        ftoPatternCol.width = 100
+        ftoTable.addTableColumn(ftoPatternCol)
+
+        let ftoTabCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fto_tab_width"))
+        ftoTabCol.title = "Tab Width"
+        ftoTabCol.width = 70
+        ftoTable.addTableColumn(ftoTabCol)
+
+        let ftoSpacesCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fto_use_spaces"))
+        ftoSpacesCol.title = "Spaces"
+        ftoSpacesCol.width = 60
+        ftoTable.addTableColumn(ftoSpacesCol)
+
+        let ftoFmtCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fto_formatter"))
+        ftoFmtCol.title = "Formatter"
+        ftoFmtCol.width = 150
+        ftoTable.addTableColumn(ftoFmtCol)
+
+        ftoTable.delegate = self
+        ftoTable.dataSource = self
+        ftoScrollView.documentView = ftoTable
+
+        container.addSubview(ftoScrollView)
+
+        let addFtoButton = NSButton(title: "Add", target: self, action: #selector(addFileTypeOverride(_:)))
+        addFtoButton.translatesAutoresizingMaskIntoConstraints = false
+        let removeFtoButton = NSButton(title: "Remove", target: self, action: #selector(removeFileTypeOverride(_:)))
+        removeFtoButton.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(addFtoButton)
+        container.addSubview(removeFtoButton)
 
         NSLayoutConstraint.activate([
+            // Commands on Save
             headerLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
             headerLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
 
@@ -510,19 +638,43 @@ final class SettingsWindowController: NSWindowController {
             descLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             descLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
 
-            scrollView.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 12),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            scrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -8),
+            cmdScrollView.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 12),
+            cmdScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            cmdScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            cmdScrollView.heightAnchor.constraint(equalToConstant: 120),
 
-            addButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            addButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            addCmdButton.topAnchor.constraint(equalTo: cmdScrollView.bottomAnchor, constant: 8),
+            addCmdButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
 
-            removeButton.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: 8),
-            removeButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            removeCmdButton.topAnchor.constraint(equalTo: cmdScrollView.bottomAnchor, constant: 8),
+            removeCmdButton.leadingAnchor.constraint(equalTo: addCmdButton.trailingAnchor, constant: 8),
+
+            // File Type Overrides
+            ftoHeader.topAnchor.constraint(equalTo: addCmdButton.bottomAnchor, constant: 24),
+            ftoHeader.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+
+            ftoDesc.topAnchor.constraint(equalTo: ftoHeader.bottomAnchor, constant: 4),
+            ftoDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            ftoDesc.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+
+            ftoScrollView.topAnchor.constraint(equalTo: ftoDesc.bottomAnchor, constant: 12),
+            ftoScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            ftoScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            ftoScrollView.heightAnchor.constraint(equalToConstant: 120),
+
+            addFtoButton.topAnchor.constraint(equalTo: ftoScrollView.bottomAnchor, constant: 8),
+            addFtoButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+
+            removeFtoButton.topAnchor.constraint(equalTo: ftoScrollView.bottomAnchor, constant: 8),
+            removeFtoButton.leadingAnchor.constraint(equalTo: addFtoButton.trailingAnchor, constant: 8),
+
+            removeFtoButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
         ])
 
-        item.view = container
+        outerScroll.documentView = container
+        item.view = outerScroll
         return item
     }
 
@@ -701,6 +853,47 @@ final class SettingsWindowController: NSWindowController {
         persistSettings()
     }
 
+    @objc private func autoClosingBracketsChanged(_ sender: NSPopUpButton) {
+        settings.editorAutoClosingBrackets = sender.titleOfSelectedItem ?? "languageDefined"
+        persistSettings()
+    }
+
+    @objc private func showRightMarginChanged(_ sender: NSButton) {
+        settings.showRightMargin = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func rightMarginPositionStepperChanged(_ sender: NSStepper) {
+        settings.rightMarginPosition = sender.integerValue
+        if let label = sender.superview?.subviews.compactMap({ $0 as? NSTextField }).first(where: { $0.tag == 101 }) {
+            label.stringValue = "\(settings.rightMarginPosition)"
+        }
+        persistSettings()
+    }
+
+    @objc private func scrollBeyondLastLineChanged(_ sender: NSButton) {
+        settings.scrollBeyondLastLine = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func smoothScrollingChanged(_ sender: NSButton) {
+        settings.smoothScrolling = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func foldingChanged(_ sender: NSButton) {
+        settings.folding = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func lineHeightStepperChanged(_ sender: NSStepper) {
+        settings.editorLineHeight = sender.integerValue
+        if let label = sender.superview?.subviews.compactMap({ $0 as? NSTextField }).first(where: { $0.tag == 102 }) {
+            label.stringValue = settings.editorLineHeight > 0 ? "\(settings.editorLineHeight)" : "Default"
+        }
+        persistSettings()
+    }
+
     // MARK: - Terminal Actions
 
     @objc private func termFontFamilyChanged(_ sender: NSTextField) {
@@ -811,6 +1004,99 @@ final class SettingsWindowController: NSWindowController {
         findTableView(withTag: 400)?.reloadData()
     }
 
+    // MARK: - File Type Override Actions
+
+    @objc private func addFileTypeOverride(_ sender: Any?) {
+        settings.fileTypeOverrides.append(FileTypeOverride(pattern: "*.ext"))
+        persistSettings()
+        findTableView(withTag: 600)?.reloadData()
+    }
+
+    @objc private func removeFileTypeOverride(_ sender: Any?) {
+        guard let tableView = findTableView(withTag: 600) else { return }
+        let row = tableView.selectedRow
+        guard row >= 0 && row < settings.fileTypeOverrides.count else { return }
+        settings.fileTypeOverrides.remove(at: row)
+        persistSettings()
+        tableView.reloadData()
+    }
+
+    @objc private func fileTypeOverrideDoubleClicked(_ sender: NSTableView) {
+        let row = sender.clickedRow
+        guard row >= 0 && row < settings.fileTypeOverrides.count else { return }
+        let override_ = settings.fileTypeOverrides[row]
+
+        let alert = NSAlert()
+        alert.messageText = "Edit File Type Override"
+        alert.informativeText = "Configure per-file-type settings."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let grid = NSGridView(numberOfColumns: 2, rows: 0)
+        grid.rowSpacing = 6
+        grid.columnSpacing = 8
+        grid.column(at: 0).xPlacement = .trailing
+
+        let patternField = NSTextField(string: override_.pattern)
+        grid.addRow(with: [makeLabel("Pattern:"), patternField])
+
+        let tabWidthField = NSTextField(string: override_.tabWidth.map { "\($0)" } ?? "")
+        tabWidthField.placeholderString = "Default"
+        grid.addRow(with: [makeLabel("Tab Width:"), tabWidthField])
+
+        let spacesPopup = NSPopUpButton()
+        spacesPopup.addItems(withTitles: ["Default", "Spaces", "Tabs"])
+        if let useSpaces = override_.useSpaces {
+            spacesPopup.selectItem(withTitle: useSpaces ? "Spaces" : "Tabs")
+        } else {
+            spacesPopup.selectItem(withTitle: "Default")
+        }
+        grid.addRow(with: [makeLabel("Indentation:"), spacesPopup])
+
+        let fmtCommandField = NSTextField(string: override_.formatOnSave?.command ?? "")
+        fmtCommandField.placeholderString = "e.g. rustfmt"
+        grid.addRow(with: [makeLabel("Format Command:"), fmtCommandField])
+
+        let fmtArgsField = NSTextField(string: (override_.formatOnSave?.args ?? []).joined(separator: " "))
+        fmtArgsField.placeholderString = "e.g. --edition 2021"
+        grid.addRow(with: [makeLabel("Format Args:"), fmtArgsField])
+
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+        alert.accessoryView = grid
+        alert.window.initialFirstResponder = patternField
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        let pattern = patternField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty else { return }
+
+        let tabWidth = Int(tabWidthField.stringValue)
+        let useSpaces: Bool? = {
+            switch spacesPopup.titleOfSelectedItem {
+            case "Spaces": return true
+            case "Tabs":   return false
+            default:       return nil
+            }
+        }()
+
+        let fmtCmd = fmtCommandField.stringValue.trimmingCharacters(in: .whitespaces)
+        let fmtArgs = fmtArgsField.stringValue
+            .split(separator: " ")
+            .map(String.init)
+        let formatOnSave: FormatOnSave? = fmtCmd.isEmpty ? nil : FormatOnSave(command: fmtCmd, args: fmtArgs)
+
+        settings.fileTypeOverrides[row] = FileTypeOverride(
+            pattern: pattern,
+            tabWidth: tabWidth,
+            useSpaces: useSpaces,
+            formatOnSave: formatOnSave
+        )
+        persistSettings()
+        sender.reloadData()
+    }
+
     // MARK: - Keybinding Actions
 
     @objc private func keybindingDoubleClicked(_ sender: NSTableView) {
@@ -879,6 +1165,7 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         switch tableView.tag {
         case 400: return settings.commandsOnSave.count
         case 500: return Keybindings.builtins.count
+        case 600: return settings.fileTypeOverrides.count
         default:  return 0
         }
     }
@@ -925,6 +1212,19 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 } else {
                     cell.textColor = .labelColor
                 }
+            default: break
+            }
+
+        case 600:
+            guard row < settings.fileTypeOverrides.count else { break }
+            let fto = settings.fileTypeOverrides[row]
+            switch identifier.rawValue {
+            case "fto_pattern":    cell.stringValue = fto.pattern
+            case "fto_tab_width":  cell.stringValue = fto.tabWidth.map { "\($0)" } ?? "-"
+            case "fto_use_spaces":
+                if let s = fto.useSpaces { cell.stringValue = s ? "Yes" : "No" }
+                else { cell.stringValue = "-" }
+            case "fto_formatter":  cell.stringValue = fto.formatOnSave?.command ?? "-"
             default: break
             }
 

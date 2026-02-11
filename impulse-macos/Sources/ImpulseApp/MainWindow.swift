@@ -1298,6 +1298,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func windowWillClose(_ notification: Notification) {
         stopLspPolling()
+
+        // Persist sidebar state back to AppDelegate settings.
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.settings.sidebarVisible = sidebarVisible
+            delegate.settings.sidebarWidth = Int(sidebarTargetWidth)
+        }
+
         (NSApp.delegate as? AppDelegate)?.windowControllerDidClose(self)
     }
 }
