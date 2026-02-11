@@ -25,6 +25,7 @@ lsp-types = { version = "0.97", features = ["proposed"] }
 url = "2"
 webkit6 = "0.5"
 resvg = "0.45"
+dirs = "6"
 
 [package.metadata.deb]
 maintainer = "Impulse Contributors"

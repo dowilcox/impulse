@@ -7,24 +7,14 @@ pub const MONACO_VERSION: &str = "0.52.2";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
 
-fn data_home_dir() -> Option<PathBuf> {
-    if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
-        if !xdg_data_home.is_empty() {
-            return Some(PathBuf::from(xdg_data_home));
-        }
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".local").join("share"))
-}
-
 /// Ensure Monaco editor files are extracted to the local data directory.
 ///
 /// Returns the path to the extraction directory
-/// (e.g. `~/.local/share/impulse/monaco/0.52.2/`).
+/// (e.g. `~/.local/share/impulse/monaco/0.52.2/` on Linux,
+/// `~/Library/Application Support/impulse/monaco/0.52.2/` on macOS).
 pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
     let data_dir =
-        data_home_dir().ok_or_else(|| "Cannot determine data home directory".to_string())?;
+        dirs::data_dir().ok_or_else(|| "Cannot determine data home directory".to_string())?;
 
     let monaco_dir = data_dir.join("impulse").join("monaco").join(MONACO_VERSION);
     let marker = monaco_dir.join(".complete");

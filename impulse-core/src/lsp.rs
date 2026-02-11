@@ -122,20 +122,8 @@ fn workspace_folder_name(root_uri: &str) -> String {
         .unwrap_or_else(|| "workspace".to_string())
 }
 
-fn data_home_dir() -> Option<PathBuf> {
-    if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
-        if !xdg_data_home.is_empty() {
-            return Some(PathBuf::from(xdg_data_home));
-        }
-    }
-
-    std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".local").join("share"))
-}
-
 pub fn managed_lsp_root_dir() -> Option<PathBuf> {
-    data_home_dir().map(|dir| dir.join("impulse").join("lsp"))
+    dirs::data_dir().map(|dir| dir.join("impulse").join("lsp"))
 }
 
 pub fn managed_lsp_bin_dir() -> Option<PathBuf> {

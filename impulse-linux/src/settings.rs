@@ -209,8 +209,8 @@ pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
 }
 
 fn settings_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let impulse_dir = PathBuf::from(home).join(".config").join("impulse");
+    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let impulse_dir = config_dir.join("impulse");
     let _ = std::fs::create_dir_all(&impulse_dir);
     impulse_dir.join("settings.json")
 }
