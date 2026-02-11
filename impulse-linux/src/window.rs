@@ -1139,27 +1139,43 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // Capture-phase key handler for Ctrl+Shift+V paste (must run before VTE's
-    // internal handler which swallows the event on Wayland).
+    // Capture-phase key handler for keys that VTE would swallow before the
+    // shortcut controller (Global scope = bubble phase) can see them.
     {
         let tab_view = tab_view.clone();
-        let paste_key_ctrl = gtk4::EventControllerKey::new();
-        paste_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
-        paste_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
+        let capture_key_ctrl = gtk4::EventControllerKey::new();
+        capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        capture_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
             let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
             let shift = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
-            let is_v = key == gtk4::gdk::Key::v || key == gtk4::gdk::Key::V;
-            if ctrl && shift && is_v {
-                if let Some(page) = tab_view.selected_page() {
-                    if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                let is_terminal = terminal_container::get_active_terminal(&child).is_some();
+
+                // Ctrl+Shift+V: paste into terminal
+                if ctrl && shift && (key == gtk4::gdk::Key::v || key == gtk4::gdk::Key::V) {
+                    if let Some(term) = terminal_container::get_active_terminal(&child) {
                         terminal::paste_from_clipboard(&term);
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
+
+                // Ctrl+W: close tab (VTE eats this as "delete word backward")
+                if ctrl && !shift && (key == gtk4::gdk::Key::w || key == gtk4::gdk::Key::W) && is_terminal {
+                    tab_view.close_page(&page);
+                    return gtk4::glib::Propagation::Stop;
+                }
+
+                // Ctrl+T: new tab (VTE eats this as "transpose chars")
+                if ctrl && !shift && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T) && is_terminal {
+                    // Let the shortcut controller handle it by proceeding
+                    // (Ctrl+T may or may not be eaten by VTE, but intercept just in case)
+                }
             }
             gtk4::glib::Propagation::Proceed
         });
-        window.add_controller(paste_key_ctrl);
+        window.add_controller(capture_key_ctrl);
     }
 
     // --- Keyboard shortcuts ---

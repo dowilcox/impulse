@@ -225,21 +225,7 @@ pub fn apply_settings(
 }
 
 /// Spawn the user's shell inside a VTE terminal using pre-cached spawn parameters.
-/// Defers spawning until the terminal widget is realized, ensuring the PTY is
-/// fully connected before the shell starts (fixes fish DA1 query timeout).
 pub fn spawn_shell(terminal: &vte4::Terminal, cache: &Rc<ShellSpawnCache>) {
-    if terminal.is_realized() {
-        do_spawn(terminal, cache);
-    } else {
-        let term = terminal.clone();
-        let cache = Rc::clone(cache);
-        terminal.connect_realize(move |_| {
-            do_spawn(&term, &cache);
-        });
-    }
-}
-
-fn do_spawn(terminal: &vte4::Terminal, cache: &ShellSpawnCache) {
     let argv_refs: Vec<&str> = cache.argv.iter().map(|s| s.as_str()).collect();
     let envv_refs: Vec<&str> = cache.envv.iter().map(|s| s.as_str()).collect();
 

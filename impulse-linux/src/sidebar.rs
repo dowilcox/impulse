@@ -639,6 +639,7 @@ pub fn build_sidebar(settings: &Rc<RefCell<settings::Settings>>) -> (gtk4::Box, 
         show_hidden: show_hidden.clone(),
         #[allow(clippy::arc_with_non_send_sync)]
         _watcher: Rc::new(RefCell::new(None)),
+        _watcher_timer: Rc::new(RefCell::new(None)),
     };
 
     // Wire up toolbar buttons
@@ -808,6 +809,8 @@ pub struct SidebarState {
     pub show_hidden: Rc<RefCell<bool>>,
     /// Keeps the filesystem watcher alive. Dropping this stops watching.
     _watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
+    /// Source ID for the watcher's polling timer, so we can cancel it on re-watch.
+    _watcher_timer: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 impl SidebarState {
@@ -855,6 +858,11 @@ impl SidebarState {
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
+        // Cancel previous watcher timer to avoid leaked polling loops
+        if let Some(id) = self._watcher_timer.borrow_mut().take() {
+            id.remove();
+        }
+
         let (tx, rx) = std_mpsc::channel::<()>();
 
         let mut watcher =
@@ -877,7 +885,10 @@ impl SidebarState {
                 }
             };
 
-        if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
+        // Only watch the top-level directory (not recursively). Recursive mode
+        // sets up inotify watches on every subdirectory, which blocks the main
+        // thread for seconds on large trees like $HOME.
+        if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::NonRecursive) {
             log::warn!("Failed to watch directory {}: {}", path, e);
             return;
         }
@@ -889,7 +900,7 @@ impl SidebarState {
         let current_path = self.current_path.clone();
         let show_hidden = self.show_hidden.clone();
 
-        glib::timeout_add_local(Duration::from_millis(500), move || {
+        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
             // Drain all pending events
             let mut has_event = false;
             while rx.try_recv().is_ok() {
@@ -908,6 +919,7 @@ impl SidebarState {
         });
 
         *self._watcher.borrow_mut() = Some(watcher);
+        *self._watcher_timer.borrow_mut() = Some(timer_id);
     }
 
     /// Save the current tree state for the active tab.
