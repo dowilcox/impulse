@@ -598,11 +598,26 @@ pub fn build_window(app: &adw::Application) {
                                             send_diff_decorations(handle, &path);
                                             // Refresh sidebar to update git status badges
                                             sidebar_state.refresh();
-                                            // Run commands on save in a background thread
+                                            // Run format-on-save + commands in a background thread
+                                            let overrides = settings.borrow().file_type_overrides.clone();
                                             let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
                                             std::thread::spawn(move || {
+                                                let formatted = run_format_on_save(&save_path, &overrides);
                                                 run_commands_on_save(&save_path, &commands);
+                                                if formatted {
+                                                    let reload_path = save_path.clone();
+                                                    gtk4::glib::MainContext::default().invoke(move || {
+                                                        if let Some(handle) = crate::editor::get_handle(&reload_path) {
+                                                            if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
+                                                                let lang = handle.language.borrow().clone();
+                                                                handle.suppress_next_modify.set(true);
+                                                                handle.open_file(&reload_path, &new_content, &lang);
+                                                                send_diff_decorations(&handle, &reload_path);
+                                                            }
+                                                        }
+                                                    });
+                                                }
                                             });
                                         }
                                     }
@@ -1663,11 +1678,26 @@ pub fn build_window(app: &adw::Application) {
                                 let toast = adw::Toast::new(&format!("Saved {}", filename));
                                 toast.set_timeout(2);
                                 toast_overlay.add_toast(toast);
-                                // Run commands on save in a background thread
+                                // Run format-on-save + commands in a background thread
+                                let overrides = settings.borrow().file_type_overrides.clone();
                                 let commands = settings.borrow().commands_on_save.clone();
                                 let save_path = path.clone();
                                 std::thread::spawn(move || {
+                                    let formatted = run_format_on_save(&save_path, &overrides);
                                     run_commands_on_save(&save_path, &commands);
+                                    if formatted {
+                                        let reload_path = save_path.clone();
+                                        gtk4::glib::MainContext::default().invoke(move || {
+                                            if let Some(handle) = crate::editor::get_handle(&reload_path) {
+                                                if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
+                                                    let lang = handle.language.borrow().clone();
+                                                    handle.suppress_next_modify.set(true);
+                                                    handle.open_file(&reload_path, &new_content, &lang);
+                                                    send_diff_decorations(&handle, &reload_path);
+                                                }
+                                            }
+                                        });
+                                    }
                                 });
                             }
                             Err(e) => {
@@ -2213,7 +2243,7 @@ pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle,
 
 fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave]) {
     for cmd in commands {
-        if matches_file_pattern(path, &cmd.file_pattern) {
+        if crate::settings::matches_file_pattern(path, &cmd.file_pattern) {
             let mut command = std::process::Command::new(&cmd.command);
             command.args(&cmd.args);
             command.arg(path);
@@ -2236,18 +2266,40 @@ fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave])
     }
 }
 
-fn matches_file_pattern(path: &str, pattern: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if let Some(ext_pattern) = pattern.strip_prefix("*.") {
-        if let Some(ext) = std::path::Path::new(path).extension() {
-            return ext.to_string_lossy().eq_ignore_ascii_case(ext_pattern);
+/// Run a format-on-save command for the given file, if one matches.
+/// Returns `true` if a formatter was run successfully.
+fn run_format_on_save(
+    path: &str,
+    overrides: &[crate::settings::FileTypeOverride],
+) -> bool {
+    for ovr in overrides {
+        if let Some(ref fmt) = ovr.format_on_save {
+            if crate::settings::matches_file_pattern(path, &ovr.pattern) {
+                let mut command = std::process::Command::new(&fmt.command);
+                command.args(&fmt.args);
+                command.arg(path);
+                match command.output() {
+                    Ok(output) => {
+                        if output.status.success() {
+                            log::info!("Formatter '{}' succeeded for {}", fmt.command, path);
+                            return true;
+                        } else {
+                            log::warn!(
+                                "Formatter '{}' failed for {}: {}",
+                                fmt.command,
+                                path,
+                                String::from_utf8_lossy(&output.stderr)
+                            );
+                        }
+                    }
+                    Err(e) => log::warn!("Failed to run formatter '{}': {}", fmt.command, e),
+                }
+                // Only match the first applicable override
+                return false;
+            }
         }
-        return false;
     }
-    // Exact match
-    path.ends_with(pattern)
+    false
 }
 
 fn parse_keybinding_to_accel(key: &str) -> String {

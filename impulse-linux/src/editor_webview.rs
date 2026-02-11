@@ -216,8 +216,19 @@ where
     container.set_vexpand(true);
     container.set_widget_name(file_path);
 
-    // Detect indentation from content
-    let (use_spaces, indent_width) = detect_indentation(content);
+    // Detect indentation from content, then apply per-file-type overrides
+    let (mut use_spaces, mut indent_width) = detect_indentation(content);
+    for ovr in &settings.file_type_overrides {
+        if crate::settings::matches_file_pattern(file_path, &ovr.pattern) {
+            if let Some(tw) = ovr.tab_width {
+                indent_width = tw;
+            }
+            if let Some(us) = ovr.use_spaces {
+                use_spaces = us;
+            }
+            break;
+        }
+    }
     let indent_info = if use_spaces {
         format!("Spaces: {}", indent_width)
     } else {

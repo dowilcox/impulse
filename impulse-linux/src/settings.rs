@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// A formatter command that runs on save before the editor reloads the file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatOnSave {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Per-file-type overrides for editor settings (tab width, spaces, formatter).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileTypeOverride {
+    pub pattern: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_spaces: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format_on_save: Option<FormatOnSave>,
+}
+
 /// A command that runs automatically when a file matching the pattern is saved.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandOnSave {
@@ -85,6 +105,9 @@ pub struct Settings {
     // ── Custom commands ──────────────────────────────────────────────────
     pub commands_on_save: Vec<CommandOnSave>,
     pub custom_keybindings: Vec<CustomKeybinding>,
+
+    // ── Per-file-type overrides ───────────────────────────────────────────
+    pub file_type_overrides: Vec<FileTypeOverride>,
 }
 
 impl Default for Settings {
@@ -146,8 +169,33 @@ impl Default for Settings {
             // Custom commands
             commands_on_save: Vec::new(),
             custom_keybindings: Vec::new(),
+
+            // Per-file-type overrides
+            file_type_overrides: Vec::new(),
         }
     }
+}
+
+/// Check whether a file path matches a glob-like pattern.
+///
+/// Supports `"*"` (match all), `"*.ext"` (extension match), and exact
+/// filename suffix matching.
+pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(ext_pattern) = pattern.strip_prefix("*.") {
+        if let Some(ext) = std::path::Path::new(path).extension() {
+            return ext.to_string_lossy().eq_ignore_ascii_case(ext_pattern);
+        }
+        return false;
+    }
+    // Exact filename match (e.g. "Makefile")
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    filename == pattern || path.ends_with(pattern)
 }
 
 fn settings_path() -> PathBuf {
