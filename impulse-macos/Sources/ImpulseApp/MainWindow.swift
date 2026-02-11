@@ -38,11 +38,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Segmented control in the sidebar header to switch between files and search.
     private let sidebarModeControl: NSSegmentedControl
 
+    /// Button to collapse all expanded directories in the file tree.
+    private let collapseAllButton: NSButton = {
+        let btn = NSButton(image: NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right",
+                                           accessibilityDescription: "Collapse All")
+                            ?? NSImage(named: NSImage.refreshTemplateName)!,
+                           target: nil, action: nil)
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.toolTip = "Collapse All"
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
     /// Manages the tab bar and tab content lifecycle.
     let tabManager: TabManager
 
     /// The status bar at the bottom of the content area.
     private let statusBar = StatusBar()
+
+    /// Terminal search bar (hidden by default, toggled with Cmd+F on terminal tabs).
+    private let termSearchBar = NSView()
+    private let termSearchField = NSSearchField()
+    private var termSearchBarVisible = false
+    private var termSearchHeightConstraint: NSLayoutConstraint?
 
     /// The command palette, lazily created on first use.
     private lazy var commandPalette: CommandPaletteWindow = {
@@ -128,6 +148,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         sidebarModeControl.action = #selector(sidebarModeChanged(_:))
         sidebarModeControl.selectedSegment = 0
 
+        collapseAllButton.target = self
+        collapseAllButton.action = #selector(collapseAllAction(_:))
+
         setupToolbar()
         setupLayout()
         setupNotificationObservers()
@@ -180,13 +203,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         searchPanel.isHidden = true
 
         sidebarContainer.addSubview(sidebarModeControl)
+        sidebarContainer.addSubview(collapseAllButton)
         sidebarContainer.addSubview(fileTreeView)
         sidebarContainer.addSubview(searchPanel)
 
         NSLayoutConstraint.activate([
             sidebarModeControl.topAnchor.constraint(equalTo: sidebarContainer.topAnchor, constant: 8),
             sidebarModeControl.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor, constant: 8),
-            sidebarModeControl.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -8),
+
+            collapseAllButton.centerYAnchor.constraint(equalTo: sidebarModeControl.centerYAnchor),
+            collapseAllButton.leadingAnchor.constraint(greaterThanOrEqualTo: sidebarModeControl.trailingAnchor, constant: 4),
+            collapseAllButton.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -8),
+            collapseAllButton.widthAnchor.constraint(equalToConstant: 24),
 
             fileTreeView.topAnchor.constraint(equalTo: sidebarModeControl.bottomAnchor, constant: 6),
             fileTreeView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
@@ -199,8 +227,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             searchPanel.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
         ])
 
-        // Content area: tab content + status bar stacked vertically
+        // Content area: terminal search bar + tab content + status bar
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        // Terminal search bar (hidden by default)
+        setupTerminalSearchBar()
+        contentContainer.addSubview(termSearchBar)
 
         let tabContentView = tabManager.contentView
         tabContentView.translatesAutoresizingMaskIntoConstraints = false
@@ -210,8 +242,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         contentContainer.addSubview(tabContentView)
         contentContainer.addSubview(statusBar)
 
+        let searchHeight = termSearchBar.heightAnchor.constraint(equalToConstant: 0)
+        termSearchHeightConstraint = searchHeight
+
         NSLayoutConstraint.activate([
-            tabContentView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            termSearchBar.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            termSearchBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            termSearchBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            searchHeight,
+
+            tabContentView.topAnchor.constraint(equalTo: termSearchBar.bottomAnchor),
             tabContentView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             tabContentView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             tabContentView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -338,6 +378,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         tabManager.addTerminalTab()
     }
 
+    @objc private func collapseAllAction(_ sender: Any?) {
+        fileTreeView.collapseAll()
+    }
+
     @objc private func sidebarModeChanged(_ sender: NSSegmentedControl) {
         let showSearch = sender.selectedSegment == 1
         fileTreeView.isHidden = showSearch
@@ -365,6 +409,131 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 self.sidebarContainer.isHidden = true
             }
         })
+    }
+
+    // MARK: - Terminal Search Bar
+
+    private func setupTerminalSearchBar() {
+        termSearchBar.translatesAutoresizingMaskIntoConstraints = false
+        termSearchBar.wantsLayer = true
+        termSearchBar.isHidden = true
+
+        termSearchField.translatesAutoresizingMaskIntoConstraints = false
+        termSearchField.placeholderString = "Find in terminal..."
+        termSearchField.sendsSearchStringImmediately = true
+        termSearchField.target = self
+        termSearchField.action = #selector(termSearchFieldChanged(_:))
+        termSearchField.font = NSFont.systemFont(ofSize: 13)
+
+        let prevButton = NSButton(title: "\u{25C0}", target: self, action: #selector(termSearchPrev(_:)))
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+        prevButton.bezelStyle = .texturedRounded
+        prevButton.toolTip = "Previous Match"
+        prevButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+
+        let nextButton = NSButton(title: "\u{25B6}", target: self, action: #selector(termSearchNext(_:)))
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.bezelStyle = .texturedRounded
+        nextButton.toolTip = "Next Match"
+        nextButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+
+        let closeButton = NSButton(title: "\u{2715}", target: self, action: #selector(termSearchClose(_:)))
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.bezelStyle = .texturedRounded
+        closeButton.toolTip = "Close"
+        closeButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+
+        termSearchBar.addSubview(termSearchField)
+        termSearchBar.addSubview(prevButton)
+        termSearchBar.addSubview(nextButton)
+        termSearchBar.addSubview(closeButton)
+
+        NSLayoutConstraint.activate([
+            termSearchField.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor, constant: 8),
+            termSearchField.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+
+            prevButton.leadingAnchor.constraint(equalTo: termSearchField.trailingAnchor, constant: 4),
+            prevButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+
+            nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 2),
+            nextButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+
+            closeButton.leadingAnchor.constraint(equalTo: nextButton.trailingAnchor, constant: 8),
+            closeButton.trailingAnchor.constraint(lessThanOrEqualTo: termSearchBar.trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+        ])
+    }
+
+    /// Toggles the terminal search bar visibility.
+    func toggleTerminalSearch() {
+        // Only allow terminal search on terminal tabs.
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .terminal = tabManager.tabs[tabManager.selectedIndex] else { return }
+
+        termSearchBarVisible.toggle()
+        if termSearchBarVisible {
+            termSearchBar.isHidden = false
+            termSearchHeightConstraint?.constant = 32
+            window?.makeFirstResponder(termSearchField)
+        } else {
+            hideTerminalSearch()
+        }
+    }
+
+    /// Hides the terminal search bar and clears the search state.
+    private func hideTerminalSearch() {
+        termSearchBarVisible = false
+        termSearchBar.isHidden = true
+        termSearchHeightConstraint?.constant = 0
+        termSearchField.stringValue = ""
+
+        // Clear search on the active terminal and return focus.
+        if tabManager.selectedIndex >= 0,
+           tabManager.selectedIndex < tabManager.tabs.count,
+           case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+           let terminal = container.activeTerminal {
+            terminal.terminalView.getTerminal().search.reset()
+            terminal.focus()
+        }
+    }
+
+    @objc private func termSearchFieldChanged(_ sender: NSSearchField) {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+              let terminal = container.activeTerminal else { return }
+
+        let query = sender.stringValue
+        if query.isEmpty {
+            terminal.terminalView.getTerminal().search.reset()
+        } else {
+            terminal.terminalView.getTerminal().search.findNext(term: query)
+        }
+    }
+
+    @objc private func termSearchNext(_ sender: Any?) {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+              let terminal = container.activeTerminal else { return }
+        let query = termSearchField.stringValue
+        guard !query.isEmpty else { return }
+        terminal.terminalView.getTerminal().search.findNext(term: query)
+    }
+
+    @objc private func termSearchPrev(_ sender: Any?) {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+              let terminal = container.activeTerminal else { return }
+        let query = termSearchField.stringValue
+        guard !query.isEmpty else { return }
+        terminal.terminalView.getTerminal().search.findPrevious(term: query)
+    }
+
+    @objc private func termSearchClose(_ sender: Any?) {
+        hideTerminalSearch()
     }
 
     /// Updates the status bar with information from the currently active tab.
@@ -411,6 +580,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // Content background
         contentContainer.layer?.backgroundColor = newTheme.bg.cgColor
 
+        // Terminal search bar
+        termSearchBar.layer?.backgroundColor = newTheme.bgDark.cgColor
+
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
     }
@@ -448,7 +620,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             self.tabManager.closeTab(index: index)
         }
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
-            self?.updateStatusBar()
+            guard let self else { return }
+            self.updateStatusBar()
+            // Hide terminal search bar when switching to an editor tab.
+            if self.termSearchBarVisible,
+               self.tabManager.selectedIndex >= 0,
+               self.tabManager.selectedIndex < self.tabManager.tabs.count,
+               case .editor = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                self.hideTerminalSearch()
+            }
         }
         nc.addObserver(forName: .impulseOpenFile, object: nil, queue: .main) { [weak self] notification in
             guard let self, self.window?.isKeyWindow == true else { return }
@@ -515,20 +695,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             }
         }
 
-        // Find in editor — trigger Monaco's built-in find widget via JS
+        // Find — editor: Monaco find widget; terminal: search bar toggle
         nc.addObserver(forName: .impulseFind, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.window?.isKeyWindow == true else { return }
             guard self.tabManager.selectedIndex >= 0,
                   self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
-            if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+            switch self.tabManager.tabs[self.tabManager.selectedIndex] {
+            case .editor(let editor):
                 editor.webView.evaluateJavaScript(
                     "editor.getAction('actions.find').run()",
                     completionHandler: nil
                 )
+            case .terminal:
+                self.toggleTerminalSearch()
             }
         }
 
-        // Editor cursor position tracking for status bar
+        // Editor cursor position tracking for status bar + blame
         nc.addObserver(forName: .editorCursorMoved, object: nil, queue: .main) { [weak self] notification in
             guard let self else { return }
             guard let line = notification.userInfo?["line"] as? UInt32,
@@ -541,15 +724,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             let filePath = editor.filePath ?? ""
             let dir = (filePath as NSString).deletingLastPathComponent
             let branch = dir.isEmpty ? nil : self.gitBranch(forDirectory: dir)
+            let displayLine = Int(line) + 1
             self.statusBar.updateForEditor(
                 filePath: filePath,
                 gitBranch: branch,
-                cursorLine: Int(line) + 1,
+                cursorLine: displayLine,
                 cursorCol: Int(col) + 1,
                 language: editor.language,
                 tabWidth: self.settings.tabWidth,
                 useSpaces: self.settings.useSpaces
             )
+            // Fetch blame asynchronously for the current line.
+            self.fetchBlame(filePath: filePath, line: UInt32(displayLine))
         }
 
         // Terminal title changed — update tab segment labels
@@ -1211,6 +1397,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func invalidateGitBranchCache() {
         cachedGitBranchDir = ""
         cachedGitBranch = nil
+    }
+
+    // MARK: - Git Blame
+
+    /// Fetches blame info for a line asynchronously and updates the status bar.
+    private func fetchBlame(filePath: String, line: UInt32) {
+        guard !filePath.isEmpty else {
+            statusBar.clearBlame()
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            let blame = ImpulseCore.gitBlame(filePath: filePath, line: line)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let blame = blame,
+                   let author = blame["author"],
+                   let date = blame["date"],
+                   let summary = blame["summary"] {
+                    self.statusBar.updateBlame("\(author) \u{2022} \(date) \u{2022} \(summary)")
+                } else {
+                    self.statusBar.clearBlame()
+                }
+            }
+        }
     }
 
     // MARK: - Git Diff Decorations

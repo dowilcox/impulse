@@ -36,4 +36,9 @@ void impulse_lsp_registry_free(LspRegistryHandle *handle);
 char *impulse_lsp_check_status(void);
 char *impulse_lsp_install(void);
 
+// Git
+char *impulse_git_branch(const char *path);
+char *impulse_git_diff_markers(const char *file_path);
+char *impulse_git_blame(const char *file_path, uint32_t line);
+
 #endif

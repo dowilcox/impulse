@@ -118,6 +118,24 @@ final class FileTreeView: NSView {
         reloadVisibleRows()
     }
 
+    /// Collapse all expanded directories back to root-level only.
+    func collapseAll() {
+        for node in rootNodes {
+            collapseRecursively(node)
+        }
+    }
+
+    private func collapseRecursively(_ node: FileTreeNode) {
+        if node.isDirectory && node.isExpanded {
+            if let children = node.children {
+                for child in children {
+                    collapseRecursively(child)
+                }
+            }
+            outlineView.collapseItem(node)
+        }
+    }
+
     /// Toggle whether hidden (dot) files are shown, then rebuild the tree.
     func toggleHiddenFiles() {
         showHidden.toggle()

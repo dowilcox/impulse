@@ -28,7 +28,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     // MARK: Private Properties
 
-    private let terminalView: LocalProcessTerminalView
+    let terminalView: LocalProcessTerminalView
 
     // MARK: Initializer
 

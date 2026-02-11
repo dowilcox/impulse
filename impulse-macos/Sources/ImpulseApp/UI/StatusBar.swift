@@ -16,6 +16,7 @@ final class StatusBar: NSView {
     private let cwdLabel = NSTextField(labelWithString: "")
     private let gitBranchLabel = NSTextField(labelWithString: "")
     private let shellNameLabel = NSTextField(labelWithString: "")
+    private let blameLabel = NSTextField(labelWithString: "")
     private let cursorPositionLabel = NSTextField(labelWithString: "")
     private let languageLabel = NSTextField(labelWithString: "")
     private let encodingLabel = NSTextField(labelWithString: "UTF-8")
@@ -48,7 +49,7 @@ final class StatusBar: NSView {
 
         // Configure all labels
         let allLabels = [cwdLabel, gitBranchLabel, shellNameLabel,
-                         cursorPositionLabel, languageLabel,
+                         blameLabel, cursorPositionLabel, languageLabel,
                          encodingLabel, indentInfoLabel]
         for label in allLabels {
             label.font = NSFont.systemFont(ofSize: 12)
@@ -73,6 +74,12 @@ final class StatusBar: NSView {
         // Shell name label (visible for terminal tabs only)
         shellNameLabel.isHidden = true
 
+        // Blame label (hidden by default, shown in editor context)
+        blameLabel.isHidden = true
+        blameLabel.lineBreakMode = .byTruncatingTail
+        blameLabel.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        blameLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+
         // Editor-specific labels (hidden by default)
         cursorPositionLabel.isHidden = true
         languageLabel.isHidden = true
@@ -87,6 +94,7 @@ final class StatusBar: NSView {
             shellNameLabel,
             gitBranchLabel,
             cwdLabel,
+            blameLabel,
             indentInfoLabel,
             encodingLabel,
             languageLabel,
@@ -144,6 +152,7 @@ final class StatusBar: NSView {
         languageLabel.isHidden = true
         encodingLabel.isHidden = true
         indentInfoLabel.isHidden = true
+        blameLabel.isHidden = true
     }
 
     /// Updates the status bar for an editor tab context.
@@ -181,6 +190,17 @@ final class StatusBar: NSView {
         indentInfoLabel.isHidden = false
     }
 
+    /// Updates the blame label with the given info string.
+    func updateBlame(_ info: String) {
+        blameLabel.stringValue = info
+        blameLabel.isHidden = false
+    }
+
+    /// Hides the blame label.
+    func clearBlame() {
+        blameLabel.isHidden = true
+    }
+
     // MARK: - Theme
 
     /// Applies the given theme colors to the status bar and all labels.
@@ -195,6 +215,7 @@ final class StatusBar: NSView {
         languageLabel.textColor = theme.blue
         encodingLabel.textColor = theme.fgDark
         indentInfoLabel.textColor = theme.fgDark
+        blameLabel.textColor = theme.fgDark
     }
 
     // MARK: - Helpers

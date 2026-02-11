@@ -150,6 +150,20 @@ final class ImpulseCore {
         return consumeCString(impulse_git_branch(path))
     }
 
+    /// Returns git blame info for a specific 1-based line in a file.
+    ///
+    /// - Parameters:
+    ///   - filePath: The absolute path to the file.
+    ///   - line: The 1-based line number.
+    /// - Returns: A dictionary with `author`, `date`, `commitHash`, and
+    ///   `summary` keys, or `nil` if blame info is unavailable.
+    static func gitBlame(filePath: String, line: UInt32) -> [String: String]? {
+        guard let json = consumeCString(impulse_git_blame(filePath, line)) else { return nil }
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
+        return dict
+    }
+
     /// Returns diff markers for the file at `path` as a `DiffDecoration` array.
     ///
     /// Each element contains a 1-based line number and a status string

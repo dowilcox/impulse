@@ -512,6 +512,35 @@ pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
     }
 }
 
+/// Returns git blame info for a specific line in a file.
+///
+/// Returns a JSON object with `author`, `date`, `commitHash`, and `summary`
+/// fields, or null on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_blame(
+    file_path: *const c_char,
+    line: u32,
+) -> *mut c_char {
+    let file_path = match to_rust_str(file_path) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+
+    match impulse_core::git::get_line_blame(&file_path, line) {
+        Ok(info) => {
+            let json = serde_json::json!({
+                "author": info.author,
+                "date": info.date,
+                "commitHash": info.commit_hash,
+                "summary": info.summary,
+            });
+            to_c_string(&json.to_string())
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Computes diff markers for the given file path (comparing working copy to HEAD).
 ///
 /// Returns a JSON array of objects with `"line"` (1-based u32) and `"status"`
