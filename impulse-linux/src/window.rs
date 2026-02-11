@@ -1164,21 +1164,75 @@ pub fn build_window(app: &adw::Application) {
         });
     }
 
-    // Capture-phase key handler for keys that VTE would swallow before the
-    // shortcut controller (Global scope = bubble phase) can see them.
+    // Capture-phase key handler so shortcuts work even when VTE, WebView, or
+    // the sidebar has focus (those widgets consume keys before the bubble-phase
+    // ShortcutController can see them).
     {
         let tab_view = tab_view.clone();
         let create_tab_capture = create_tab.clone();
+
+        // Build parsed accels + callbacks for custom keybindings so they work
+        // even when VTE or WebView has focus (those widgets consume key events
+        // before the bubble-phase ShortcutController sees them).
+        struct CustomKbAction {
+            parsed: keybindings::ParsedAccel,
+            action: Rc<dyn Fn()>,
+        }
+        let mut custom_kb_actions: Vec<CustomKbAction> = Vec::new();
+        {
+            let custom_keybindings = settings.borrow().custom_keybindings.clone();
+            for kb in custom_keybindings {
+                let accel = keybindings::parse_keybinding_to_accel(&kb.key);
+                if accel.is_empty() {
+                    continue;
+                }
+                if let Some(parsed) = keybindings::parse_accel(&accel) {
+                    let command = kb.command.clone();
+                    let args = kb.args.clone();
+                    let kb_name = kb.name.clone();
+                    let tab_view = tab_view.clone();
+                    let setup_terminal_signals = setup_terminal_signals.clone();
+                    let settings = settings.clone();
+                    let copy_on_select_flag = copy_on_select_flag.clone();
+                    custom_kb_actions.push(CustomKbAction {
+                        parsed,
+                        action: Rc::new(move || {
+                            let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+                            let term = terminal::create_terminal(
+                                &settings.borrow(),
+                                theme,
+                                copy_on_select_flag.clone(),
+                            );
+                            setup_terminal_signals(&term);
+                            terminal::spawn_command(&term, &command, &args);
+                            let container = terminal_container::TerminalContainer::new(&term);
+                            let page = tab_view.append(&container.widget);
+                            page.set_title(&kb_name);
+                            tab_view.set_selected_page(&page);
+                            term.grab_focus();
+                        }),
+                    });
+                }
+            }
+        }
+
         let capture_key_ctrl = gtk4::EventControllerKey::new();
         capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         capture_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
             let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
             let shift = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
 
+            // Check custom keybindings first (always, regardless of focus)
+            for ckb in &custom_kb_actions {
+                if keybindings::matches_key(&ckb.parsed, key, modifiers) {
+                    (ckb.action)();
+                    return gtk4::glib::Propagation::Stop;
+                }
+            }
+
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
                 let is_terminal = terminal_container::get_active_terminal(&child).is_some();
-
                 // Ctrl+Shift+V: paste into terminal
                 if ctrl && shift && (key == gtk4::gdk::Key::v || key == gtk4::gdk::Key::V) {
                     if let Some(term) = terminal_container::get_active_terminal(&child) {
@@ -1228,6 +1282,7 @@ pub fn build_window(app: &adw::Application) {
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
+
             }
             gtk4::glib::Propagation::Proceed
         });
@@ -2061,37 +2116,25 @@ pub fn build_window(app: &adw::Application) {
             let args = kb.args.clone();
             let kb_name = kb.name.clone();
             let tab_view = tab_view.clone();
+            let setup_terminal_signals = setup_terminal_signals.clone();
+            let settings = settings.clone();
+            let copy_on_select_flag = copy_on_select_flag.clone();
             add_shortcut(&shortcut_controller, &accel, move || {
-                // Get current file path from active editor if available
-                let file_path = tab_view.selected_page().and_then(|page| {
-                    let child = page.child();
-                    if editor::is_editor(&child) {
-                        Some(child.widget_name().to_string())
-                    } else {
-                        None
-                    }
-                });
+                // Open a new terminal tab running the command
+                let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+                let term = terminal::create_terminal(
+                    &settings.borrow(),
+                    theme,
+                    copy_on_select_flag.clone(),
+                );
+                setup_terminal_signals(&term);
+                terminal::spawn_command(&term, &command, &args);
 
-                let mut cmd = std::process::Command::new(&command);
-                cmd.args(&args);
-                if let Some(ref fp) = file_path {
-                    cmd.env("IMPULSE_FILE", fp);
-                }
-                let command_name = kb_name.clone();
-                std::thread::spawn(move || match cmd.output() {
-                    Ok(output) => {
-                        if !output.status.success() {
-                            log::warn!(
-                                "Custom command '{}' failed: {}",
-                                command_name,
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to run custom command '{}': {}", command_name, e)
-                    }
-                });
+                let container = terminal_container::TerminalContainer::new(&term);
+                let page = tab_view.append(&container.widget);
+                page.set_title(&kb_name);
+                tab_view.set_selected_page(&page);
+                term.grab_focus();
             });
         }
     }

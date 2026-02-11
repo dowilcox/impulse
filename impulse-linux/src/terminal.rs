@@ -245,6 +245,37 @@ pub fn spawn_shell(terminal: &vte4::Terminal, cache: &Rc<ShellSpawnCache>) {
     );
 }
 
+/// Spawn a command (with arguments) in a VTE terminal instead of the default shell.
+pub fn spawn_command(terminal: &vte4::Terminal, command: &str, args: &[String]) {
+    let mut argv: Vec<&str> = vec![command];
+    for arg in args {
+        argv.push(arg.as_str());
+    }
+
+    // Inherit current environment
+    let envv: Vec<String> = std::env::vars()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
+    let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
+
+    let working_dir = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+
+    terminal.spawn_async(
+        vte4::PtyFlags::DEFAULT,
+        Some(&working_dir),
+        &argv,
+        &envv_refs,
+        gtk4::glib::SpawnFlags::DEFAULT,
+        || {},
+        -1,
+        gtk4::gio::Cancellable::NONE,
+        move |result| match result {
+            Ok(pid) => log::info!("Command spawned with PID: {:?}", pid),
+            Err(e) => log::error!("Failed to spawn command: {}", e),
+        },
+    );
+}
+
 /// Build argv and environment variables for spawning the shell with integration.
 fn build_spawn_params(
     shell_path: &str,

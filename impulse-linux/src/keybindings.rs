@@ -231,3 +231,75 @@ pub fn parse_keybinding_to_accel(key: &str) -> String {
 pub fn categories() -> &'static [&'static str] {
     &["Tabs", "Terminal", "Editor", "Navigation", "Font", "App"]
 }
+
+/// Parsed representation of a keybinding for efficient matching in event handlers.
+pub struct ParsedAccel {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub super_: bool,
+    /// The lowercase key name (e.g. "g", "tab", "f11")
+    pub key_lower: String,
+}
+
+/// Parse a GTK accel string like `"<Ctrl><Shift>g"` into a `ParsedAccel`
+/// for matching against `EventControllerKey` events.
+pub fn parse_accel(accel: &str) -> Option<ParsedAccel> {
+    let mut ctrl = false;
+    let mut shift = false;
+    let mut alt = false;
+    let mut super_ = false;
+    let mut remaining = accel;
+
+    while remaining.starts_with('<') {
+        if let Some(end) = remaining.find('>') {
+            let modifier = &remaining[1..end];
+            match modifier.to_lowercase().as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "shift" => shift = true,
+                "alt" => alt = true,
+                "super" => super_ = true,
+                _ => {}
+            }
+            remaining = &remaining[end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    if remaining.is_empty() {
+        return None;
+    }
+
+    Some(ParsedAccel {
+        ctrl,
+        shift,
+        alt,
+        super_,
+        key_lower: remaining.to_lowercase(),
+    })
+}
+
+/// Check if a pressed key + modifiers matches a `ParsedAccel`.
+pub fn matches_key(
+    parsed: &ParsedAccel,
+    key: gtk4::gdk::Key,
+    modifiers: gtk4::gdk::ModifierType,
+) -> bool {
+    let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+    let shift = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
+    let alt = modifiers.contains(gtk4::gdk::ModifierType::ALT_MASK);
+    let super_ = modifiers.contains(gtk4::gdk::ModifierType::SUPER_MASK);
+
+    if ctrl != parsed.ctrl || shift != parsed.shift || alt != parsed.alt || super_ != parsed.super_
+    {
+        return false;
+    }
+
+    // Get the key name and compare case-insensitively
+    let key_name = key
+        .name()
+        .map(|n| n.to_string().to_lowercase())
+        .unwrap_or_default();
+    key_name == parsed.key_lower
+}
