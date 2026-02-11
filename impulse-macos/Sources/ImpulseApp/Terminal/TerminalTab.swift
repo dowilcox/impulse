@@ -43,11 +43,54 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         terminalView.processDelegate = self
         addSubview(terminalView)
         setupConstraints()
+        setupDragAndDrop()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    // MARK: Drag & Drop
+
+    private func setupDragAndDrop() {
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+                                                       options: [.urlReadingFileURLsOnly: true]) else {
+            return []
+        }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL] else {
+            return false
+        }
+
+        // Build a space-separated, shell-escaped list of file paths.
+        let paths = urls.map { shellEscape($0.path) }.joined(separator: " ")
+        guard !paths.isEmpty else { return false }
+
+        // Send the escaped paths directly to the terminal.
+        let bytes = Array(paths.utf8)
+        terminalView.send(bytes[...])
+        return true
+    }
+
+    /// Shell-escapes a file path for safe pasting into a terminal.
+    private func shellEscape(_ path: String) -> String {
+        // If the path contains no special characters, return as-is.
+        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-"))
+        if path.unicodeScalars.allSatisfy({ safeChars.contains($0) }) {
+            return path
+        }
+        // Otherwise, wrap in single quotes with internal single quotes escaped.
+        let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+        return "'\(escaped)'"
     }
 
     // MARK: Auto Layout

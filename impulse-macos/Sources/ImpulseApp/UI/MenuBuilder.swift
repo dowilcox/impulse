@@ -177,6 +177,12 @@ enum MenuBuilder {
         findItem.keyEquivalentModifierMask = [.command]
         menu.addItem(findItem)
 
+        let goToLineItem = NSMenuItem(title: "Go to Line...",
+                                      action: #selector(MenuActions.menuGoToLine(_:)),
+                                      keyEquivalent: "g")
+        goToLineItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(goToLineItem)
+
         return item
     }
 
@@ -206,6 +212,26 @@ enum MenuBuilder {
                                            keyEquivalent: "F")
         findInProjectItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(findInProjectItem)
+
+        menu.addItem(.separator())
+
+        let fontIncreaseItem = NSMenuItem(title: "Increase Font Size",
+                                          action: #selector(MenuActions.menuFontIncrease(_:)),
+                                          keyEquivalent: "=")
+        fontIncreaseItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(fontIncreaseItem)
+
+        let fontDecreaseItem = NSMenuItem(title: "Decrease Font Size",
+                                          action: #selector(MenuActions.menuFontDecrease(_:)),
+                                          keyEquivalent: "-")
+        fontDecreaseItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(fontDecreaseItem)
+
+        let fontResetItem = NSMenuItem(title: "Reset Font Size",
+                                       action: #selector(MenuActions.menuFontReset(_:)),
+                                       keyEquivalent: "0")
+        fontResetItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(fontResetItem)
 
         menu.addItem(.separator())
 
@@ -260,6 +286,32 @@ enum MenuBuilder {
         menu.addItem(withTitle: "Bring All to Front",
                      action: #selector(NSApplication.arrangeInFront(_:)),
                      keyEquivalent: "")
+
+        menu.addItem(.separator())
+
+        let nextTabItem = NSMenuItem(title: "Show Next Tab",
+                                     action: #selector(MenuActions.menuNextTab(_:)),
+                                     keyEquivalent: "\t")
+        nextTabItem.keyEquivalentModifierMask = [.control]
+        menu.addItem(nextTabItem)
+
+        let prevTabItem = NSMenuItem(title: "Show Previous Tab",
+                                     action: #selector(MenuActions.menuPrevTab(_:)),
+                                     keyEquivalent: "\u{0019}") // backtab
+        prevTabItem.keyEquivalentModifierMask = [.control, .shift]
+        menu.addItem(prevTabItem)
+
+        menu.addItem(.separator())
+
+        // Cmd+1 through Cmd+9 for direct tab selection
+        for i in 1...9 {
+            let tabItem = NSMenuItem(title: "Tab \(i)",
+                                     action: #selector(MenuActions.menuSelectTab(_:)),
+                                     keyEquivalent: "\(i)")
+            tabItem.keyEquivalentModifierMask = [.command]
+            tabItem.tag = i - 1 // 0-based index
+            menu.addItem(tabItem)
+        }
 
         NSApp.windowsMenu = menu
 
@@ -342,5 +394,38 @@ final class MenuActions: NSObject {
 
     @objc static func menuSplitVertical(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseSplitVertical, object: nil)
+    }
+
+    @objc static func menuGoToLine(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseGoToLine, object: nil)
+    }
+
+    @objc static func menuFontIncrease(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseFontIncrease, object: nil)
+    }
+
+    @objc static func menuFontDecrease(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseFontDecrease, object: nil)
+    }
+
+    @objc static func menuFontReset(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseFontReset, object: nil)
+    }
+
+    @objc static func menuNextTab(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseNextTab, object: nil)
+    }
+
+    @objc static func menuPrevTab(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulsePrevTab, object: nil)
+    }
+
+    @objc static func menuSelectTab(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem else { return }
+        NotificationCenter.default.post(
+            name: .impulseSelectTab,
+            object: nil,
+            userInfo: ["index": menuItem.tag]
+        )
     }
 }

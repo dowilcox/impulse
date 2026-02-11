@@ -21,7 +21,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - State
 
-    private let settings: Settings
+    private var settings: Settings
     private let core: ImpulseCore
     private(set) var theme: Theme
 
@@ -619,6 +619,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             self.handleHoverRequest(editor: editor, requestId: requestId, line: line, character: character)
         }
 
+        // Go to line
+        nc.addObserver(forName: .impulseGoToLine, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            self.showGoToLineDialog()
+        }
+
+        // Font size
+        nc.addObserver(forName: .impulseFontIncrease, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            self.changeFontSize(delta: 1)
+        }
+        nc.addObserver(forName: .impulseFontDecrease, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            self.changeFontSize(delta: -1)
+        }
+        nc.addObserver(forName: .impulseFontReset, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            self.resetFontSize()
+        }
+
+        // Tab cycling
+        nc.addObserver(forName: .impulseNextTab, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            let count = self.tabManager.tabs.count
+            guard count > 1 else { return }
+            let next = (self.tabManager.selectedIndex + 1) % count
+            self.tabManager.selectTab(index: next)
+        }
+        nc.addObserver(forName: .impulsePrevTab, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            let count = self.tabManager.tabs.count
+            guard count > 1 else { return }
+            let prev = (self.tabManager.selectedIndex - 1 + count) % count
+            self.tabManager.selectTab(index: prev)
+        }
+        nc.addObserver(forName: .impulseSelectTab, object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            guard let index = notification.userInfo?["index"] as? Int else { return }
+            if index >= 0, index < self.tabManager.tabs.count {
+                self.tabManager.selectTab(index: index)
+            }
+        }
+
         // LSP: go-to-definition requested
         nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
             guard let self,
@@ -1062,6 +1105,92 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
            let terminal = container.activeTerminal {
             // Set the working directory and run the command
             terminal.sendCommand(fullCommand)
+        }
+    }
+
+    // MARK: - Go to Line
+
+    /// Shows a dialog asking for a line number and navigates the active editor to it.
+    private func showGoToLineDialog() {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex] else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Go to Line"
+        alert.informativeText = "Enter a line number:"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        input.placeholderString = "Line number"
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        let text = input.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let lineNumber = UInt32(text), lineNumber > 0 else { return }
+        editor.goToPosition(line: lineNumber, column: 1)
+        editor.focus()
+    }
+
+    // MARK: - Font Size
+
+    /// Changes both editor and terminal font sizes by the given delta.
+    private func changeFontSize(delta: Int) {
+        let newEditorSize = max(6, min(72, settings.fontSize + delta))
+        let newTerminalSize = max(6, min(72, settings.terminalFontSize + delta))
+
+        settings.fontSize = newEditorSize
+        settings.terminalFontSize = newTerminalSize
+        syncSettingsToAppDelegate()
+        applyFontSizeToAllTabs()
+    }
+
+    /// Resets font sizes to defaults (14 for both editor and terminal).
+    private func resetFontSize() {
+        settings.fontSize = 14
+        settings.terminalFontSize = 14
+        syncSettingsToAppDelegate()
+        applyFontSizeToAllTabs()
+    }
+
+    /// Copies the current window's settings back to the AppDelegate so they
+    /// persist across quit/relaunch.
+    private func syncSettingsToAppDelegate() {
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.settings.fontSize = settings.fontSize
+            delegate.settings.terminalFontSize = settings.terminalFontSize
+        }
+    }
+
+    /// Applies the current font size settings to all open tabs.
+    private func applyFontSizeToAllTabs() {
+        // Build EditorOptions with updated font size from our local settings,
+        // since TabManager's settings copy may not reflect the change yet.
+        let editorOptions = EditorOptions(
+            fontSize: UInt32(settings.fontSize),
+            fontFamily: settings.fontFamily
+        )
+        let termSettings = TerminalSettings(
+            terminalFontSize: settings.terminalFontSize,
+            terminalFontFamily: settings.terminalFontFamily,
+            terminalCursorShape: settings.terminalCursorShape,
+            terminalCursorBlink: settings.terminalCursorBlink,
+            terminalScrollback: settings.terminalScrollback,
+            lastDirectory: settings.lastDirectory
+        )
+
+        for tab in tabManager.tabs {
+            switch tab {
+            case .editor(let editor):
+                editor.applySettings(editorOptions)
+            case .terminal(let container):
+                container.applySettings(settings: termSettings)
+            }
         }
     }
 
