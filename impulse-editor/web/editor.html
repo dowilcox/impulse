@@ -11,6 +11,25 @@
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; color: inherit; opacity: 0.4; font-family: monospace; font-size: 14px;
   }
+  /* Default diff gutter colors (overridden by theme) */
+  .diff-gutter-added {
+    background: #9ece6a;
+    width: 3px !important;
+    margin-left: 3px;
+  }
+  .diff-gutter-modified {
+    background: #e0af68;
+    width: 3px !important;
+    margin-left: 3px;
+  }
+  .diff-gutter-deleted {
+    background: #f7768e;
+    width: 3px !important;
+    margin-left: 3px;
+    height: 3px !important;
+    position: relative;
+    top: 50%;
+  }
 </style>
 </head>
 <body>
@@ -42,6 +61,7 @@ const pendingCompletions = new Map();
 const pendingHovers = new Map();
 let contentChangeTimer = null;
 let contentVersion = 0;
+let currentDiffDecorations = [];
 
 // ---------------------------------------------------------------------------
 // Monaco initialization
@@ -243,6 +263,9 @@ window.impulseReceiveCommand = function (jsonString) {
     case "SetReadOnly":
       editor.updateOptions({ readOnly: cmd.read_only });
       break;
+    case "ApplyDiffDecorations":
+      handleApplyDiffDecorations(cmd);
+      break;
     default:
       console.warn("Unknown command:", cmd.type);
   }
@@ -286,6 +309,7 @@ function handleSetTheme(cmd) {
     colors: theme.colors || {},
   });
   monaco.editor.setTheme("impulse-theme");
+  if (theme.colors) updateDiffGutterColors(theme.colors);
 }
 
 function handleUpdateSettings(cmd) {
@@ -403,6 +427,45 @@ function handleGoToPosition(cmd) {
   editor.setPosition({ lineNumber: line, column: column });
   editor.revealPositionInCenter({ lineNumber: line, column: column });
   editor.focus();
+}
+
+function handleApplyDiffDecorations(cmd) {
+  const decorations = (cmd.decorations || []).map(function (d) {
+    var className;
+    switch (d.status) {
+      case "added":    className = "diff-gutter-added"; break;
+      case "modified": className = "diff-gutter-modified"; break;
+      case "deleted":  className = "diff-gutter-deleted"; break;
+      default:         className = "diff-gutter-added";
+    }
+    return {
+      range: new monaco.Range(d.line, 1, d.line, 1),
+      options: {
+        isWholeLine: true,
+        linesDecorationsClassName: className,
+      },
+    };
+  });
+  currentDiffDecorations = editor.deltaDecorations(currentDiffDecorations, decorations);
+}
+
+function updateDiffGutterColors(colors) {
+  var addedColor = colors["impulse.diffAddedColor"];
+  var modifiedColor = colors["impulse.diffModifiedColor"];
+  var deletedColor = colors["impulse.diffDeletedColor"];
+  if (!addedColor && !modifiedColor && !deletedColor) return;
+
+  var styleId = "impulse-diff-gutter-style";
+  var existing = document.getElementById(styleId);
+  if (existing) existing.remove();
+
+  var style = document.createElement("style");
+  style.id = styleId;
+  style.textContent =
+    ".diff-gutter-added { background: " + (addedColor || "#9ece6a") + "; }" +
+    ".diff-gutter-modified { background: " + (modifiedColor || "#e0af68") + "; }" +
+    ".diff-gutter-deleted { background: " + (deletedColor || "#f7768e") + "; }";
+  document.head.appendChild(style);
 }
 </script>
 </body>

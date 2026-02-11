@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Status of a line relative to HEAD.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DiffLineStatus {
     Added,
     Modified,
@@ -13,6 +14,8 @@ pub enum DiffLineStatus {
 pub struct FileDiff {
     /// Map of 1-based line numbers to their diff status. Only changed lines are included.
     pub changed_lines: std::collections::HashMap<u32, DiffLineStatus>,
+    /// 1-based line numbers where pure-deletion hunks anchor (the line after the deletion).
+    pub deleted_lines: Vec<u32>,
 }
 
 /// Blame information for a single line.
@@ -36,6 +39,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
             // No HEAD (empty repo) -- all lines are added
             return Ok(FileDiff {
                 changed_lines: std::collections::HashMap::new(),
+                deleted_lines: Vec::new(),
             });
         }
     };
@@ -82,25 +86,33 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     .map_err(|e| format!("Diff iteration failed: {}", e))?;
 
     // Second pass: re-classify lines in hunks with both additions and deletions as Modified.
+    // Also detect pure-deletion hunks (removed lines with no additions).
     // We track hunk transitions via the hunk header in the line callback to avoid
     // multiple mutable borrow issues with separate hunk_cb + line_cb closures.
     let mut hunk_added: Vec<u32> = Vec::new();
     let mut hunk_removed_count: u32 = 0;
     let mut last_hunk_header: Option<(u32, u32, u32, u32)> = None;
+    let mut deleted_lines: Vec<u32> = Vec::new();
 
-    let classify_hunk =
-        |added: &mut Vec<u32>,
-         removed: &mut u32,
-         lines: &mut std::collections::HashMap<u32, DiffLineStatus>| {
-            if !added.is_empty() && *removed > 0 {
-                let modify_count = added.len().min(*removed as usize);
-                for &lineno in added.iter().take(modify_count) {
-                    lines.insert(lineno, DiffLineStatus::Modified);
-                }
+    let classify_hunk = |added: &mut Vec<u32>,
+                         removed: &mut u32,
+                         lines: &mut std::collections::HashMap<u32, DiffLineStatus>,
+                         deleted: &mut Vec<u32>,
+                         hunk_header: &Option<(u32, u32, u32, u32)>| {
+        if !added.is_empty() && *removed > 0 {
+            let modify_count = added.len().min(*removed as usize);
+            for &lineno in added.iter().take(modify_count) {
+                lines.insert(lineno, DiffLineStatus::Modified);
             }
-            added.clear();
-            *removed = 0;
-        };
+        } else if added.is_empty() && *removed > 0 {
+            // Pure deletion hunk — anchor at the new-file line where the deletion occurred
+            if let Some((_, _, new_start, _)) = hunk_header {
+                deleted.push(*new_start);
+            }
+        }
+        added.clear();
+        *removed = 0;
+    };
 
     diff.foreach(
         &mut |_, _| true,
@@ -112,7 +124,13 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
                 hunk.map(|h| (h.old_start(), h.old_lines(), h.new_start(), h.new_lines()));
             if current_hunk != last_hunk_header {
                 // New hunk - classify previous hunk's collected lines
-                classify_hunk(&mut hunk_added, &mut hunk_removed_count, &mut changed_lines);
+                classify_hunk(
+                    &mut hunk_added,
+                    &mut hunk_removed_count,
+                    &mut changed_lines,
+                    &mut deleted_lines,
+                    &last_hunk_header,
+                );
                 last_hunk_header = current_hunk;
             }
 
@@ -133,9 +151,18 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     .map_err(|e| format!("Hunk analysis failed: {}", e))?;
 
     // Classify final hunk
-    classify_hunk(&mut hunk_added, &mut hunk_removed_count, &mut changed_lines);
+    classify_hunk(
+        &mut hunk_added,
+        &mut hunk_removed_count,
+        &mut changed_lines,
+        &mut deleted_lines,
+        &last_hunk_header,
+    );
 
-    Ok(FileDiff { changed_lines })
+    Ok(FileDiff {
+        changed_lines,
+        deleted_lines,
+    })
 }
 
 /// Get blame information for a specific line in a file.

@@ -37,6 +37,9 @@ pub enum EditorCommand {
     SetReadOnly {
         read_only: bool,
     },
+    ApplyDiffDecorations {
+        decorations: Vec<DiffDecoration>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +177,18 @@ pub struct MonacoTextEdit {
 }
 
 // ---------------------------------------------------------------------------
+// Diff decorations
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffDecoration {
+    /// 1-based line number
+    pub line: u32,
+    /// "added", "modified", or "deleted"
+    pub status: String,
+}
+
+// ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
 
@@ -226,6 +241,12 @@ pub struct MonacoThemeColors {
     pub scrollbar_slider_background: String,
     #[serde(rename = "scrollbarSlider.hoverBackground")]
     pub scrollbar_slider_hover_background: String,
+    #[serde(rename = "impulse.diffAddedColor")]
+    pub diff_added_color: String,
+    #[serde(rename = "impulse.diffModifiedColor")]
+    pub diff_modified_color: String,
+    #[serde(rename = "impulse.diffDeletedColor")]
+    pub diff_deleted_color: String,
 }
 
 // ---------------------------------------------------------------------------

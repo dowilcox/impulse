@@ -1332,15 +1332,30 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
     } else {
         label.add_css_class("file-entry-file");
     }
+    // Tint filename by git status
+    if let Some(ref status) = node.entry.git_status {
+        match status.as_str() {
+            "M" => label.add_css_class("file-entry-git-modified"),
+            "A" => label.add_css_class("file-entry-git-added"),
+            "?" => label.add_css_class("file-entry-git-untracked"),
+            "D" => label.add_css_class("file-entry-git-deleted"),
+            "R" => label.add_css_class("file-entry-git-renamed"),
+            "C" => label.add_css_class("file-entry-git-conflict"),
+            _ => {}
+        }
+    }
     row.append(&label);
 
-    // Git status indicator
+    // Git status indicator badge
     if let Some(ref status) = node.entry.git_status {
         let status_label = gtk4::Label::new(Some(status));
         match status.as_str() {
             "M" => status_label.add_css_class("git-modified"),
             "A" => status_label.add_css_class("git-added"),
             "?" => status_label.add_css_class("git-untracked"),
+            "D" => status_label.add_css_class("git-deleted"),
+            "R" => status_label.add_css_class("git-renamed"),
+            "C" => status_label.add_css_class("git-conflict"),
             _ => {}
         }
         row.append(&status_label);

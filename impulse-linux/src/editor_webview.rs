@@ -6,9 +6,9 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use impulse_editor::protocol::{
-    self, EditorCommand, EditorEvent, EditorOptions, MonacoCompletionItem, MonacoDiagnostic,
-    MonacoHoverContent, MonacoRange, MonacoTextEdit, MonacoThemeColors, MonacoThemeDefinition,
-    MonacoTokenRule,
+    self, DiffDecoration, EditorCommand, EditorEvent, EditorOptions, MonacoCompletionItem,
+    MonacoDiagnostic, MonacoHoverContent, MonacoRange, MonacoTextEdit, MonacoThemeColors,
+    MonacoThemeDefinition, MonacoTokenRule,
 };
 
 use crate::lsp_completion::{CompletionInfo, DiagnosticInfo, DiagnosticSeverity};
@@ -182,6 +182,10 @@ impl MonacoEditorHandle {
     pub fn set_theme(&self, theme: &ThemeColors) {
         let definition = theme_to_monaco(theme);
         self.send_command(&EditorCommand::SetTheme { theme: definition });
+    }
+
+    pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
+        self.send_command(&EditorCommand::ApplyDiffDecorations { decorations });
     }
 }
 
@@ -498,6 +502,9 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
             minimap_background: format!("#{}", strip(theme.bg_dark)),
             scrollbar_slider_background: format!("#{}40", strip(theme.comment)),
             scrollbar_slider_hover_background: format!("#{}60", strip(theme.comment)),
+            diff_added_color: format!("#{}", strip(theme.green)),
+            diff_modified_color: format!("#{}", strip(theme.yellow)),
+            diff_deleted_color: format!("#{}", strip(theme.red)),
         },
     }
 }

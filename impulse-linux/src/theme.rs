@@ -271,6 +271,33 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .git-untracked {{
             color: {comment};
         }}
+        .git-deleted {{
+            color: {red};
+        }}
+        .git-renamed {{
+            color: {blue};
+        }}
+        .git-conflict {{
+            color: {orange};
+        }}
+        .file-entry-git-modified {{
+            color: {yellow};
+        }}
+        .file-entry-git-added {{
+            color: {green};
+        }}
+        .file-entry-git-untracked {{
+            color: {comment};
+        }}
+        .file-entry-git-deleted {{
+            color: {red};
+        }}
+        .file-entry-git-renamed {{
+            color: {blue};
+        }}
+        .file-entry-git-conflict {{
+            color: {orange};
+        }}
         /* --- Search --- */
         .search-entry {{
             margin: 6px 8px;
@@ -493,6 +520,8 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         magenta = theme.magenta,
         green = theme.green,
         yellow = theme.yellow,
+        red = theme.red,
+        orange = theme.orange,
         comment = theme.comment,
     );
 

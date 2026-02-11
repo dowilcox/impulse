@@ -521,6 +521,8 @@ pub fn build_window(app: &adw::Application) {
                                             version: *version,
                                             text: content,
                                         });
+                                        // Send initial diff decorations
+                                        send_diff_decorations(handle, &path);
                                     }
                                     impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
                                         // Mark tab title with unsaved indicator
@@ -588,6 +590,8 @@ pub fn build_window(app: &adw::Application) {
                                             let uri = file_path_to_uri(std::path::Path::new(&path))
                                                 .unwrap_or_else(|| format!("file://{}", path));
                                             let _ = lsp_tx.send(LspRequest::DidSave { uri });
+                                            // Refresh diff decorations after save
+                                            send_diff_decorations(handle, &path);
                                             // Run commands on save in a background thread
                                             let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
@@ -2146,6 +2150,37 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32) {
             term.set_font_desc(Some(&font_desc));
         }
     }
+}
+
+fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
+    let decorations = match impulse_core::git::get_file_diff(file_path) {
+        Ok(diff) => {
+            let mut decos: Vec<impulse_editor::protocol::DiffDecoration> = diff
+                .changed_lines
+                .iter()
+                .filter_map(|(&line, status)| {
+                    let status_str = match status {
+                        impulse_core::git::DiffLineStatus::Added => "added",
+                        impulse_core::git::DiffLineStatus::Modified => "modified",
+                        impulse_core::git::DiffLineStatus::Unchanged => return None,
+                    };
+                    Some(impulse_editor::protocol::DiffDecoration {
+                        line,
+                        status: status_str.to_string(),
+                    })
+                })
+                .collect();
+            for &line in &diff.deleted_lines {
+                decos.push(impulse_editor::protocol::DiffDecoration {
+                    line,
+                    status: "deleted".to_string(),
+                });
+            }
+            decos
+        }
+        Err(_) => vec![],
+    };
+    handle.apply_diff_decorations(decorations);
 }
 
 fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave]) {
