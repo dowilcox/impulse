@@ -63,7 +63,35 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 
 ## Installation
 
-> Impulse is in active development. Packaged releases are not yet available.
+Download the latest package for your distro from [GitHub Releases](https://github.com/your-username/impulse/releases).
+
+<details>
+<summary><strong>Arch / CachyOS / Manjaro</strong></summary>
+
+```bash
+sudo pacman -U impulse-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+</details>
+
+<details>
+<summary><strong>Debian / Ubuntu</strong></summary>
+
+```bash
+sudo dpkg -i impulse_0.1.0-1_amd64.deb
+sudo apt install -f   # install any missing dependencies
+```
+
+</details>
+
+<details>
+<summary><strong>Fedora / RHEL / openSUSE</strong></summary>
+
+```bash
+sudo rpm -i impulse-0.1.0-1.x86_64.rpm
+```
+
+</details>
 
 ### Building from Source
 
