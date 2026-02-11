@@ -26,6 +26,15 @@ struct SearchResult: Codable {
     }
 }
 
+// MARK: - Error Type
+
+/// Simple error wrapper so we can use `Result<String, ImpulseError>` (Swift
+/// requires the failure type to conform to `Error`).
+struct ImpulseError: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
+
 // MARK: - ImpulseCore FFI Bridge
 
 /// Swift wrapper around the C FFI functions from impulse-ffi.
@@ -65,14 +74,14 @@ final class ImpulseCore {
     /// Ensures Monaco editor files are extracted to the platform cache
     /// directory. Returns the extraction directory path on success, or a
     /// descriptive error string on failure.
-    static func ensureMonacoExtracted() -> Result<String, String> {
+    static func ensureMonacoExtracted() -> Result<String, ImpulseError> {
         guard let raw = impulse_ensure_monaco_extracted() else {
-            return .failure("impulse_ensure_monaco_extracted returned null")
+            return .failure(ImpulseError(message: "impulse_ensure_monaco_extracted returned null"))
         }
         let str = String(cString: raw)
         impulse_free_string(raw)
         if str.hasPrefix("ERROR:") {
-            return .failure(String(str.dropFirst(6)))
+            return .failure(ImpulseError(message: String(str.dropFirst(6))))
         }
         return .success(str)
     }
@@ -189,7 +198,7 @@ final class ImpulseCore {
     /// - Parameter rootUri: The workspace root as a `file://` URI.
     /// - Returns: An opaque pointer to the registry handle, or `nil` on failure.
     static func createLspRegistry(rootUri: String) -> OpaquePointer? {
-        return OpaquePointer(impulse_lsp_registry_new(rootUri))
+        return impulse_lsp_registry_new(rootUri)
     }
 
     /// Ensures LSP servers are running for the given language and file.
@@ -200,9 +209,7 @@ final class ImpulseCore {
     ///   - fileUri: The file URI (e.g. `"file:///path/to/file.ts"`).
     /// - Returns: The number of clients started/found, or `-1` on error.
     static func lspEnsureServers(handle: OpaquePointer, languageId: String, fileUri: String) -> Int32 {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        return impulse_lsp_ensure_servers(typed, languageId, fileUri)
+        return impulse_lsp_ensure_servers(handle, languageId, fileUri)
     }
 
     /// Sends a synchronous LSP request and returns the JSON response.
@@ -215,9 +222,7 @@ final class ImpulseCore {
     ///   - params: JSON-encoded parameters, or `nil` for no params.
     /// - Returns: A JSON string with the result.
     static func lspRequest(handle: OpaquePointer, languageId: String, fileUri: String, method: String, params: String?) -> String {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        let result = impulse_lsp_request(typed, languageId, fileUri, method, params)
+        let result = impulse_lsp_request(handle, languageId, fileUri, method, params)
         return consumeCString(result) ?? "{\"error\":\"null response\"}"
     }
 
@@ -231,9 +236,7 @@ final class ImpulseCore {
     ///   - params: JSON-encoded parameters, or `nil` for no params.
     /// - Returns: `true` on success, `false` on error.
     static func lspNotify(handle: OpaquePointer, languageId: String, fileUri: String, method: String, params: String?) -> Bool {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        return impulse_lsp_notify(typed, languageId, fileUri, method, params) == 0
+        return impulse_lsp_notify(handle, languageId, fileUri, method, params) == 0
     }
 
     /// Polls for the next asynchronous LSP event (diagnostics, lifecycle).
@@ -242,23 +245,17 @@ final class ImpulseCore {
     /// - Returns: A JSON string describing the event, or `nil` if no events
     ///   are pending.
     static func lspPollEvent(handle: OpaquePointer) -> String? {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        return consumeCString(impulse_lsp_poll_event(typed))
+        return consumeCString(impulse_lsp_poll_event(handle))
     }
 
     /// Shuts down all LSP servers managed by the given registry.
     static func lspShutdownAll(handle: OpaquePointer) {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        impulse_lsp_shutdown_all(typed)
+        impulse_lsp_shutdown_all(handle)
     }
 
     /// Frees an LSP registry handle. This also shuts down all servers.
     static func lspRegistryFree(handle: OpaquePointer) {
-        let raw = UnsafeMutableRawPointer(handle)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        impulse_lsp_registry_free(typed)
+        impulse_lsp_registry_free(handle)
     }
 
     // MARK: - Instance LSP Management
@@ -267,7 +264,7 @@ final class ImpulseCore {
     /// Shuts down any previously active registry first.
     func initializeLsp(rootUri: String) {
         shutdownLsp()
-        lspRegistry = ImpulseCore.createLspRegistry(rootUri: rootUri)
+        lspRegistry = impulse_lsp_registry_new(rootUri)
     }
 
     /// Ensures LSP servers are running for the given language and file
@@ -275,35 +272,34 @@ final class ImpulseCore {
     @discardableResult
     func lspEnsureServers(languageId: String, fileUri: String) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
-        return ImpulseCore.lspEnsureServers(handle: reg, languageId: languageId, fileUri: fileUri)
+        return impulse_lsp_ensure_servers(reg, languageId, fileUri)
     }
 
     /// Sends a synchronous LSP request using the instance registry.
     func lspRequest(languageId: String, fileUri: String, method: String, paramsJson: String) -> String? {
         guard let reg = lspRegistry else { return nil }
-        return ImpulseCore.lspRequest(handle: reg, languageId: languageId, fileUri: fileUri, method: method, params: paramsJson)
+        let result = impulse_lsp_request(reg, languageId, fileUri, method, paramsJson)
+        return Self.consumeCString(result) ?? "{\"error\":\"null response\"}"
     }
 
     /// Sends an LSP notification using the instance registry.
     @discardableResult
     func lspNotify(languageId: String, fileUri: String, method: String, paramsJson: String) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
-        let raw = UnsafeMutableRawPointer(reg)
-        let typed = raw.assumingMemoryBound(to: LspRegistryHandle.self)
-        return impulse_lsp_notify(typed, languageId, fileUri, method, paramsJson)
+        return impulse_lsp_notify(reg, languageId, fileUri, method, paramsJson)
     }
 
     /// Polls for the next asynchronous LSP event using the instance registry.
     func lspPollEvent() -> String? {
         guard let reg = lspRegistry else { return nil }
-        return ImpulseCore.lspPollEvent(handle: reg)
+        return Self.consumeCString(impulse_lsp_poll_event(reg))
     }
 
     /// Shuts down all running LSP servers and releases the instance registry.
     func shutdownLsp() {
         guard let reg = lspRegistry else { return }
-        ImpulseCore.lspShutdownAll(handle: reg)
-        ImpulseCore.lspRegistryFree(handle: reg)
+        impulse_lsp_shutdown_all(reg)
+        impulse_lsp_registry_free(reg)
         lspRegistry = nil
     }
 
@@ -377,14 +373,14 @@ final class ImpulseCore {
 
     /// Installs managed web LSP servers. Returns the installation root path
     /// on success, or a descriptive error on failure.
-    static func lspInstall() -> Result<String, String> {
+    static func lspInstall() -> Result<String, ImpulseError> {
         guard let raw = impulse_lsp_install() else {
-            return .failure("impulse_lsp_install returned null")
+            return .failure(ImpulseError(message: "impulse_lsp_install returned null"))
         }
         let str = String(cString: raw)
         impulse_free_string(raw)
         if str.hasPrefix("ERROR:") {
-            return .failure(String(str.dropFirst(6)))
+            return .failure(ImpulseError(message: String(str.dropFirst(6))))
         }
         return .success(str)
     }

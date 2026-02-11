@@ -379,7 +379,7 @@ final class SettingsWindowController: NSWindowController {
         previewBox.borderWidth = 1
         previewBox.borderColor = .separatorColor
         previewBox.translatesAutoresizingMaskIntoConstraints = false
-        previewBox.tag = 300
+        previewBox.identifier = NSUserInterfaceItemIdentifier("colorPreviewBox")
 
         let theme = ThemeManager.theme(forName: settings.colorScheme)
         previewBox.fillColor = theme.bg
@@ -531,7 +531,7 @@ final class SettingsWindowController: NSWindowController {
         let tableView = NSTableView()
         tableView.tag = 400
         tableView.headerView = NSTableHeaderView()
-        tableView.usesAlternatingRowBackgrounds = true
+        tableView.usesAlternatingRowBackgroundColors = true
 
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameCol.title = "Name"
@@ -591,7 +591,7 @@ final class SettingsWindowController: NSWindowController {
         let ftoTable = NSTableView()
         ftoTable.tag = 600
         ftoTable.headerView = NSTableHeaderView()
-        ftoTable.usesAlternatingRowBackgrounds = true
+        ftoTable.usesAlternatingRowBackgroundColors = true
         ftoTable.doubleAction = #selector(fileTypeOverrideDoubleClicked(_:))
         ftoTable.target = self
 
@@ -701,7 +701,7 @@ final class SettingsWindowController: NSWindowController {
         let tableView = NSTableView()
         tableView.tag = 500
         tableView.headerView = NSTableHeaderView()
-        tableView.usesAlternatingRowBackgrounds = true
+        tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(keybindingDoubleClicked(_:))
         tableView.target = self
 
@@ -958,9 +958,8 @@ final class SettingsWindowController: NSWindowController {
 
         // Update the preview box
         let theme = ThemeManager.theme(forName: name)
-        if let previewBox = sender.superview?.subviews
-            .compactMap({ $0 as? NSBox })
-            .first(where: { $0.tag == 300 }) {
+        let boxes = (sender.superview?.subviews ?? []).compactMap { $0 as? NSBox }
+        if let previewBox = boxes.first(where: { $0.identifier?.rawValue == "colorPreviewBox" }) {
             previewBox.fillColor = theme.bg
             previewBox.contentView = buildColorPreview(theme: theme)
         }

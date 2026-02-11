@@ -77,7 +77,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
         // Send the escaped paths directly to the terminal.
         let bytes = Array(paths.utf8)
-        terminalView.send(bytes[...])
+        terminalView.send(data: bytes[...])
         return true
     }
 
@@ -199,7 +199,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Send a text string (e.g. a shell command + newline) to the terminal's PTY.
     func sendCommand(_ text: String) {
         let bytes = Array(text.utf8) + [0x0A]  // Append newline (Enter)
-        terminalView.send(bytes[...])
+        terminalView.send(data: bytes[...])
     }
 
     /// Make this terminal the first responder.
@@ -228,12 +228,12 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         )
     }
 
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         // Size changes are handled internally by SwiftTerm's PTY bridging.
         // No additional action needed.
     }
 
-    func setTerminalTitle(source: TerminalView, title: String) {
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         tabTitle = title
         NotificationCenter.default.post(
             name: .terminalTitleChanged,

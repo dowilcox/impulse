@@ -124,7 +124,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func loadEditor() {
         switch ImpulseCore.ensureMonacoExtracted() {
         case .failure(let error):
-            os_log(.error, log: Self.log, "Failed to extract Monaco: %{public}@", error)
+            os_log(.error, log: Self.log, "Failed to extract Monaco: %{public}@", error.message)
             return
         case .success(let pathString):
             let monacoDir = URL(fileURLWithPath: pathString, isDirectory: true)

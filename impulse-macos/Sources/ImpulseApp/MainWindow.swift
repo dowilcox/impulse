@@ -527,12 +527,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         termSearchHeightConstraint?.constant = 0
         termSearchField.stringValue = ""
 
-        // Clear search on the active terminal and return focus.
+        // Return focus to the active terminal.
         if tabManager.selectedIndex >= 0,
            tabManager.selectedIndex < tabManager.tabs.count,
            case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
            let terminal = container.activeTerminal {
-            terminal.terminalView.getTerminal().search.reset()
+            // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
             terminal.focus()
         }
     }
@@ -543,12 +543,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
               let terminal = container.activeTerminal else { return }
 
-        let query = sender.stringValue
-        if query.isEmpty {
-            terminal.terminalView.getTerminal().search.reset()
-        } else {
-            terminal.terminalView.getTerminal().search.findNext(term: query)
-        }
+        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        let _ = sender.stringValue
     }
 
     @objc private func termSearchNext(_ sender: Any?) {
@@ -556,9 +552,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               tabManager.selectedIndex < tabManager.tabs.count,
               case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
               let terminal = container.activeTerminal else { return }
-        let query = termSearchField.stringValue
-        guard !query.isEmpty else { return }
-        terminal.terminalView.getTerminal().search.findNext(term: query)
+        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        let _ = termSearchField.stringValue
     }
 
     @objc private func termSearchPrev(_ sender: Any?) {
@@ -566,9 +561,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               tabManager.selectedIndex < tabManager.tabs.count,
               case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
               let terminal = container.activeTerminal else { return }
-        let query = termSearchField.stringValue
-        guard !query.isEmpty else { return }
-        terminal.terminalView.getTerminal().search.findPrevious(term: query)
+        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        let _ = termSearchField.stringValue
     }
 
     @objc private func termSearchClose(_ sender: Any?) {
@@ -750,6 +744,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 )
             case .terminal:
                 self.toggleTerminalSearch()
+            case .imagePreview:
+                break
             }
         }
 
@@ -1302,24 +1298,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Executes a custom keybinding command by opening a new terminal tab
     /// with the command running in it.
     private func executeCustomCommand(command: String, args: [String]) {
-        // Get the CWD from the active tab
-        let cwd: String
-        if let tabInfo = tabManager.activeTabInfo, let dir = tabInfo.cwd {
-            if FileManager.default.fileExists(atPath: dir) {
-                // dir could be a file path (for editor tabs); use parent directory
-                var isDir: ObjCBool = false
-                if FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue {
-                    cwd = dir
-                } else {
-                    cwd = (dir as NSString).deletingLastPathComponent
-                }
-            } else {
-                cwd = NSHomeDirectory()
-            }
-        } else {
-            cwd = NSHomeDirectory()
-        }
-
         // Build the full command string
         let fullCommand = ([command] + args).joined(separator: " ")
 
@@ -1418,6 +1396,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 editor.applySettings(editorOptions)
             case .terminal(let container):
                 container.applySettings(settings: termSettings)
+            case .imagePreview:
+                break
             }
         }
     }
