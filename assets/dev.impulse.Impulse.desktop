@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Impulse
+Comment=Terminal-first development environment
+Exec=impulse
+Icon=dev.impulse.Impulse
+Terminal=false
+Type=Application
+Categories=Development;IDE;TerminalEmulator;
+Keywords=terminal;editor;code;development;
+StartupWMClass=dev.impulse.Impulse

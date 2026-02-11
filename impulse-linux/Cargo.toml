@@ -25,3 +25,28 @@ lsp-types = { version = "0.97", features = ["proposed"] }
 url = "2"
 webkit6 = "0.5"
 resvg = "0.45"
+
+[package.metadata.deb]
+maintainer = "Impulse Contributors"
+section = "devel"
+priority = "optional"
+depends = "libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5), libvte-2.91-gtk4-0, libgtksourceview-5-0, libwebkitgtk-6.0-4"
+assets = [
+    ["target/release/impulse", "usr/bin/", "755"],
+    ["../assets/dev.impulse.Impulse.desktop", "usr/share/applications/", "644"],
+    ["../assets/impulse-logo.svg", "usr/share/icons/hicolor/scalable/apps/dev.impulse.Impulse.svg", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/impulse", dest = "/usr/bin/impulse", mode = "755" },
+    { source = "../assets/dev.impulse.Impulse.desktop", dest = "/usr/share/applications/dev.impulse.Impulse.desktop", mode = "644" },
+    { source = "../assets/impulse-logo.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dev.impulse.Impulse.svg", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+gtk4 = ">= 4.14"
+libadwaita = ">= 1.5"
+vte4 = "*"
+gtksourceview5 = "*"
+webkitgtk6.0 = "*"
