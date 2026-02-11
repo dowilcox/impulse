@@ -36,6 +36,7 @@ pub fn split_terminal(
     settings: &crate::settings::Settings,
     theme: &crate::theme::ThemeColors,
     copy_on_select_flag: Rc<Cell<bool>>,
+    shell_cache: &Rc<terminal::ShellSpawnCache>,
 ) -> Option<vte4::Terminal> {
     // Find the focused terminal; fall back to the first terminal in the tree.
     let focused = find_focused_terminal(container).or_else(|| find_first_terminal(container))?;
@@ -48,7 +49,7 @@ pub fn split_terminal(
     // Create a new terminal and let the caller set up its signals.
     let new_term = terminal::create_terminal(settings, theme, copy_on_select_flag);
     setup_terminal(&new_term);
-    terminal::spawn_shell(&new_term);
+    terminal::spawn_shell(&new_term, shell_cache);
 
     // Build a Paned to hold the original and new terminal.
     let paned = gtk4::Paned::new(orientation);

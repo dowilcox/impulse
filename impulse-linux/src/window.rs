@@ -40,6 +40,9 @@ pub fn build_window(app: &adw::Application) {
     let copy_on_select_flag: Rc<Cell<bool>> =
         Rc::new(Cell::new(settings.borrow().terminal_copy_on_select));
 
+    // Pre-compute shell spawn parameters once (shell path, env vars, temp files)
+    let shell_cache = Rc::new(terminal::ShellSpawnCache::new());
+
     // --- LSP Bridge: GTK <-> Tokio ---
     // Channel for sending requests from GTK to the LSP tokio runtime
     let (lsp_request_tx, mut lsp_request_rx) = tokio::sync::mpsc::unbounded_channel::<LspRequest>();
@@ -784,16 +787,17 @@ pub fn build_window(app: &adw::Application) {
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
+        let shell_cache = shell_cache.clone();
         move || {
             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
             let term =
                 terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
             setup_terminal_signals(&term);
-            terminal::spawn_shell(&term);
+            terminal::spawn_shell(&term, &shell_cache);
 
             let container = terminal_container::TerminalContainer::new(&term);
             let page = tab_view.append(&container.widget);
-            page.set_title(&impulse_core::shell::get_default_shell_name());
+            page.set_title(shell_cache.shell_name());
             tab_view.set_selected_page(&page);
             term.grab_focus();
         }
@@ -1330,6 +1334,7 @@ pub fn build_window(app: &adw::Application) {
                     let setup_terminal_signals = setup_terminal_signals.clone();
                     let settings = settings.clone();
                     let copy_on_select_flag = copy_on_select_flag.clone();
+                    let shell_cache = shell_cache.clone();
                     move || {
                         if let Some(page) = tab_view.selected_page() {
                             let child = page.child();
@@ -1345,6 +1350,7 @@ pub fn build_window(app: &adw::Application) {
                                 &s,
                                 theme,
                                 copy_on_select_flag.clone(),
+                                &shell_cache,
                             );
                         }
                     }
@@ -1358,6 +1364,7 @@ pub fn build_window(app: &adw::Application) {
                     let setup_terminal_signals = setup_terminal_signals.clone();
                     let settings = settings.clone();
                     let copy_on_select_flag = copy_on_select_flag.clone();
+                    let shell_cache = shell_cache.clone();
                     move || {
                         if let Some(page) = tab_view.selected_page() {
                             let child = page.child();
@@ -1373,6 +1380,7 @@ pub fn build_window(app: &adw::Application) {
                                 &s,
                                 theme,
                                 copy_on_select_flag.clone(),
+                                &shell_cache,
                             );
                         }
                     }
@@ -1617,6 +1625,7 @@ pub fn build_window(app: &adw::Application) {
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
+        let shell_cache = shell_cache.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>e", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1632,6 +1641,7 @@ pub fn build_window(app: &adw::Application) {
                     &s,
                     theme,
                     copy_on_select_flag.clone(),
+                    &shell_cache,
                 );
             }
         });
@@ -1643,6 +1653,7 @@ pub fn build_window(app: &adw::Application) {
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
+        let shell_cache = shell_cache.clone();
         add_shortcut(&shortcut_controller, "<Ctrl><Shift>o", move || {
             if let Some(page) = tab_view.selected_page() {
                 let child = page.child();
@@ -1658,6 +1669,7 @@ pub fn build_window(app: &adw::Application) {
                     &s,
                     theme,
                     copy_on_select_flag.clone(),
+                    &shell_cache,
                 );
             }
         });

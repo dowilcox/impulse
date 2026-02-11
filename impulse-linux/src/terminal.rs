@@ -8,6 +8,56 @@ use vte4::prelude::*;
 
 use crate::theme::ThemeColors;
 
+/// Cached shell spawn parameters, computed once and reused for every new tab.
+pub struct ShellSpawnCache {
+    shell_name: String,
+    argv: Vec<String>,
+    envv: Vec<String>,
+    working_dir: String,
+    /// Temp files that must outlive all terminal sessions.
+    _temp_files: Vec<PathBuf>,
+}
+
+impl ShellSpawnCache {
+    /// Build the cache once at startup.
+    pub fn new() -> Self {
+        let shell_path = impulse_core::shell::get_default_shell_path();
+        let shell_type = impulse_core::shell::detect_shell_type(&shell_path);
+
+        let shell_name = std::path::Path::new(&shell_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("shell")
+            .to_string();
+
+        let working_dir =
+            impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string());
+
+        // Build integration temp files (bash/zsh rc wrappers)
+        let temp_files = match impulse_core::shell::build_shell_command(&shell_path, &shell_type) {
+            Ok((_cmd, files)) => files,
+            Err(e) => {
+                log::error!("Failed to build shell command: {}", e);
+                Vec::new()
+            }
+        };
+
+        let (argv, envv) = build_spawn_params(&shell_path, &shell_type, &temp_files);
+
+        ShellSpawnCache {
+            shell_name,
+            argv,
+            envv,
+            working_dir,
+            _temp_files: temp_files,
+        }
+    }
+
+    pub fn shell_name(&self) -> &str {
+        &self.shell_name
+    }
+}
+
 /// Create a new VTE terminal widget configured with Impulse shell integration.
 pub fn create_terminal(
     settings: &crate::settings::Settings,
@@ -174,66 +224,43 @@ pub fn apply_settings(
     copy_on_select_flag.set(settings.terminal_copy_on_select);
 }
 
-/// Spawn the user's shell inside a VTE terminal with Impulse integration scripts.
+/// Spawn the user's shell inside a VTE terminal using pre-cached spawn parameters.
 /// Defers spawning until the terminal widget is realized, ensuring the PTY is
 /// fully connected before the shell starts (fixes fish DA1 query timeout).
-pub fn spawn_shell(terminal: &vte4::Terminal) {
+pub fn spawn_shell(terminal: &vte4::Terminal, cache: &Rc<ShellSpawnCache>) {
     if terminal.is_realized() {
-        do_spawn_shell(terminal);
+        do_spawn(terminal, cache);
     } else {
         let term = terminal.clone();
+        let cache = Rc::clone(cache);
         terminal.connect_realize(move |_| {
-            do_spawn_shell(&term);
+            do_spawn(&term, &cache);
         });
     }
 }
 
-fn do_spawn_shell(terminal: &vte4::Terminal) {
-    let shell_path = impulse_core::shell::get_default_shell_path();
-    let shell_type = impulse_core::shell::detect_shell_type(&shell_path);
-
-    // Build the shell command with integration scripts
-    let (_cmd, _temp_files) =
-        match impulse_core::shell::build_shell_command(&shell_path, &shell_type) {
-            Ok(result) => result,
-            Err(e) => {
-                log::error!("Failed to build shell command: {}", e);
-                spawn_shell_fallback(terminal, &shell_path);
-                return;
-            }
-        };
-
-    let (argv, envv) = extract_spawn_params(&shell_path, &shell_type, &_temp_files);
-
-    let working_dir = impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string());
-
-    let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-    let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
+fn do_spawn(terminal: &vte4::Terminal, cache: &ShellSpawnCache) {
+    let argv_refs: Vec<&str> = cache.argv.iter().map(|s| s.as_str()).collect();
+    let envv_refs: Vec<&str> = cache.envv.iter().map(|s| s.as_str()).collect();
 
     terminal.spawn_async(
         vte4::PtyFlags::DEFAULT,
-        Some(&working_dir),
+        Some(&cache.working_dir),
         &argv_refs,
         &envv_refs,
         gtk4::glib::SpawnFlags::DEFAULT,
-        || {}, // child_setup (no-op)
-        -1,    // timeout
+        || {},
+        -1,
         gtk4::gio::Cancellable::NONE,
-        |result| {
-            // callback
-            match result {
-                Ok(pid) => log::info!("Shell spawned with PID: {:?}", pid),
-                Err(e) => log::error!("Failed to spawn shell: {}", e),
-            }
+        |result| match result {
+            Ok(pid) => log::info!("Shell spawned with PID: {:?}", pid),
+            Err(e) => log::error!("Failed to spawn shell: {}", e),
         },
     );
-
-    // Leak temp files so they persist for the lifetime of the terminal session.
-    std::mem::forget(_temp_files);
 }
 
-/// Extract argv and environment variables for spawning the shell with integration.
-fn extract_spawn_params(
+/// Build argv and environment variables for spawning the shell with integration.
+fn build_spawn_params(
     shell_path: &str,
     shell_type: &impulse_core::shell::ShellType,
     temp_files: &[PathBuf],
@@ -305,24 +332,4 @@ pub fn paste_from_clipboard(terminal: &vte4::Terminal) {
             term.paste_text(&text);
         }
     });
-}
-
-fn spawn_shell_fallback(terminal: &vte4::Terminal, shell_path: &str) {
-    let working_dir = impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string());
-
-    terminal.spawn_async(
-        vte4::PtyFlags::DEFAULT,
-        Some(&working_dir),
-        &[shell_path],
-        &[] as &[&str],
-        gtk4::glib::SpawnFlags::DEFAULT,
-        || {},
-        -1,
-        gtk4::gio::Cancellable::NONE,
-        |result| {
-            if let Err(e) = result {
-                log::error!("Failed to spawn fallback shell: {}", e);
-            }
-        },
-    );
 }
