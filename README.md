@@ -60,14 +60,22 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 
 ## Platform Support
 
-| Platform | Status |
-|----------|--------|
-| Linux    | Available (GTK4 / libadwaita) |
-| macOS    | In development |
+| Platform | Status | UI Framework |
+|----------|--------|--------------|
+| Linux    | Available | GTK4 / libadwaita |
+| macOS    | Available | AppKit / SwiftUI |
 
 ## Installation
 
-Download the latest package for your distro from [GitHub Releases](https://github.com/your-username/impulse/releases).
+Download the latest package for your platform from [GitHub Releases](https://github.com/your-username/impulse/releases).
+
+### macOS
+
+Download `Impulse-X.Y.Z.dmg`, open it, and drag **Impulse.app** to your **Applications** folder.
+
+Requires macOS 13 (Ventura) or later.
+
+### Linux
 
 <details>
 <summary><strong>Arch / CachyOS / Manjaro</strong></summary>
@@ -100,6 +108,34 @@ sudo rpm -i impulse-0.1.0-1.x86_64.rpm
 ### Building from Source
 
 Impulse requires [Rust](https://rustup.rs/) and platform-specific system libraries.
+
+<details>
+<summary><strong>macOS</strong></summary>
+
+Requires Xcode command line tools:
+
+```bash
+xcode-select --install
+```
+
+Clone and build using the macOS build script:
+
+```bash
+git clone https://github.com/your-username/impulse.git
+cd impulse
+./impulse-macos/build.sh           # produces dist/Impulse.app
+./impulse-macos/build.sh --dmg     # also creates dist/Impulse-X.Y.Z.dmg
+```
+
+The build script handles all steps automatically: building the Rust FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle.
+
+To run the built app:
+
+```bash
+open dist/Impulse.app
+```
+
+</details>
 
 <details>
 <summary><strong>Linux (Arch / CachyOS)</strong></summary>
@@ -147,30 +183,46 @@ Impulse is a Rust workspace. Platform-agnostic logic lives in shared crates, wit
 |-------|------|
 | `impulse-core` | Platform-agnostic backend: PTY management, shell integration, filesystem, search, git, LSP |
 | `impulse-editor` | Monaco editor assets and WebView communication protocol |
+| `impulse-ffi` | C-compatible FFI static library wrapping `impulse-core` and `impulse-editor` for non-Rust frontends |
 | `impulse-linux` | Linux frontend (GTK4 / libadwaita) |
-| `impulse-macos` | macOS frontend (in development) |
+| `impulse-macos` | macOS frontend (AppKit / SwiftUI, linked via `impulse-ffi`) |
 
 Dependency direction is strictly one-way: frontends depend on `impulse-core` and `impulse-editor`, never the reverse.
 
 ## Releasing
 
-The release script tags a version, builds a release binary, and produces distribution packages:
+The release script tags a version, builds platform-appropriate packages, and optionally creates a GitHub release. Since Linux and macOS can't cross-compile each other's packages, a full release runs on both platforms:
 
 ```bash
-./scripts/release.sh 0.1.0           # tag + build + package locally
-./scripts/release.sh 0.1.0 --push    # also push tag and create GitHub release
+# 1. On Linux — tag, build, and package Linux artifacts
+./scripts/release.sh 0.3.0
+
+# 2. On macOS — build macOS .app and .dmg (no tagging, tag already exists)
+./scripts/release.sh 0.3.0 --macos-only
+
+# 3. On either — push tag and upload all dist/ artifacts to GitHub
+./scripts/release.sh 0.3.0 --push
 ```
 
-This produces the following in `dist/`:
+If you only need one platform, you can combine steps:
 
-| Format | Target |
-|--------|--------|
-| `.deb` | Debian, Ubuntu |
-| `.rpm` | Fedora, RHEL, openSUSE |
-| `.pkg.tar.zst` | Arch, CachyOS, Manjaro (requires `makepkg`) |
-| `SHA256SUMS` | Checksums for all packages |
+```bash
+./scripts/release.sh 0.3.0 --push             # Linux tag + build + push (on Linux)
+./scripts/release.sh 0.3.0 --linux-only        # Linux build only (skip tagging)
+./scripts/release.sh 0.3.0 --macos-only --push # macOS build + upload to existing release
+```
 
-The script automatically bumps the version in all `Cargo.toml` files, creates an annotated git tag, and installs `cargo-deb` / `cargo-generate-rpm` if needed.
+The `dist/` directory will contain:
+
+| Format | Platform | Target |
+|--------|----------|--------|
+| `.deb` | Linux | Debian, Ubuntu |
+| `.rpm` | Linux | Fedora, RHEL, openSUSE |
+| `.pkg.tar.zst` | Linux | Arch, CachyOS, Manjaro (requires `makepkg`) |
+| `.dmg` | macOS | macOS 13+ |
+| `SHA256SUMS` | Both | Checksums for all packages |
+
+The script automatically bumps the version in all `Cargo.toml` files, creates an annotated git tag, and installs `cargo-deb` / `cargo-generate-rpm` if needed on Linux.
 
 ## License
 
