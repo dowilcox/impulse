@@ -5,8 +5,381 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::settings::{self, Settings};
+use crate::settings::{self, CommandOnSave, FileTypeOverride, FormatOnSave, Settings};
 use crate::theme;
+
+fn override_summary(o: &FileTypeOverride) -> String {
+    let mut parts = Vec::new();
+    if let Some(tw) = o.tab_width {
+        parts.push(format!("Tab: {tw}"));
+    }
+    if let Some(spaces) = o.use_spaces {
+        parts.push(if spaces { "Spaces" } else { "Tabs" }.to_string());
+    }
+    if let Some(ref fmt) = o.format_on_save {
+        parts.push(format!("Format: {}", fmt.command));
+    }
+    if parts.is_empty() {
+        "No overrides set".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn command_summary(c: &CommandOnSave) -> String {
+    if c.command.is_empty() {
+        c.file_pattern.clone()
+    } else {
+        format!("{} on {}", c.command, c.file_pattern)
+    }
+}
+
+fn rebuild_overrides_group(
+    group: &adw::PreferencesGroup,
+    tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
+    settings: &Rc<RefCell<Settings>>,
+    on_changed: &Rc<dyn Fn(&Settings)>,
+) {
+    for row in tracked.borrow().iter() {
+        group.remove(row);
+    }
+    tracked.borrow_mut().clear();
+
+    let count = settings.borrow().file_type_overrides.len();
+    for i in 0..count {
+        let (pattern, tab_width_val, use_spaces_val, fmt_cmd, fmt_args, summary) = {
+            let s = settings.borrow();
+            let o = &s.file_type_overrides[i];
+            (
+                o.pattern.clone(),
+                o.tab_width.unwrap_or(0) as f64,
+                o.use_spaces.unwrap_or(true),
+                o.format_on_save
+                    .as_ref()
+                    .map(|f| f.command.clone())
+                    .unwrap_or_default(),
+                o.format_on_save
+                    .as_ref()
+                    .map(|f| f.args.join(" "))
+                    .unwrap_or_default(),
+                override_summary(o),
+            )
+        };
+
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&pattern);
+        expander.set_subtitle(&summary);
+
+        let delete_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
+        delete_btn.set_valign(gtk4::Align::Center);
+        delete_btn.add_css_class("flat");
+        {
+            let group = group.clone();
+            let tracked = Rc::clone(tracked);
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            delete_btn.connect_clicked(move |_| {
+                {
+                    let mut s = settings.borrow_mut();
+                    s.file_type_overrides.remove(i);
+                    settings::save(&s);
+                    on_changed(&s);
+                }
+                rebuild_overrides_group(&group, &tracked, &settings, &on_changed);
+            });
+        }
+        expander.add_suffix(&delete_btn);
+
+        let pattern_row = adw::EntryRow::new();
+        pattern_row.set_title("Pattern");
+        pattern_row.set_text(&pattern);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            pattern_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.file_type_overrides[i].pattern = row.text().to_string();
+                expander.set_title(&row.text());
+                expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&pattern_row);
+
+        let tw_adj = gtk4::Adjustment::new(tab_width_val, 0.0, 16.0, 1.0, 1.0, 0.0);
+        let tw_row = adw::SpinRow::new(Some(&tw_adj), 1.0, 0);
+        tw_row.set_title("Tab Width");
+        tw_row.set_subtitle("0 = use auto-detection");
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            tw_row.connect_value_notify(move |row| {
+                let val = row.value() as u32;
+                let mut s = settings.borrow_mut();
+                s.file_type_overrides[i].tab_width = if val == 0 { None } else { Some(val) };
+                expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&tw_row);
+
+        let spaces_row = adw::SwitchRow::new();
+        spaces_row.set_title("Use Spaces");
+        spaces_row.set_active(use_spaces_val);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            spaces_row.connect_active_notify(move |row| {
+                let mut s = settings.borrow_mut();
+                s.file_type_overrides[i].use_spaces = Some(row.is_active());
+                expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&spaces_row);
+
+        let fmt_cmd_row = adw::EntryRow::new();
+        fmt_cmd_row.set_title("Format Command");
+        fmt_cmd_row.set_text(&fmt_cmd);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            fmt_cmd_row.connect_changed(move |row| {
+                let cmd = row.text().to_string();
+                let mut s = settings.borrow_mut();
+                let o = &mut s.file_type_overrides[i];
+                if cmd.is_empty() {
+                    o.format_on_save = None;
+                } else {
+                    match o.format_on_save.as_mut() {
+                        Some(f) => f.command = cmd,
+                        None => {
+                            o.format_on_save = Some(FormatOnSave {
+                                command: cmd,
+                                args: Vec::new(),
+                            });
+                        }
+                    }
+                }
+                expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&fmt_cmd_row);
+
+        let fmt_args_row = adw::EntryRow::new();
+        fmt_args_row.set_title("Format Arguments");
+        fmt_args_row.set_text(&fmt_args);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            fmt_args_row.connect_changed(move |row| {
+                let args_str = row.text().to_string();
+                let mut s = settings.borrow_mut();
+                if let Some(ref mut f) = s.file_type_overrides[i].format_on_save {
+                    f.args = args_str
+                        .split_whitespace()
+                        .map(String::from)
+                        .collect();
+                    settings::save(&s);
+                    on_changed(&s);
+                }
+            });
+        }
+        expander.add_row(&fmt_args_row);
+
+        group.add(&expander);
+        tracked.borrow_mut().push(expander.upcast());
+    }
+
+    let add_row = adw::ActionRow::new();
+    add_row.set_title("Add File Type Override");
+    add_row.set_activatable(true);
+    add_row.add_prefix(&gtk4::Image::from_icon_name("list-add-symbolic"));
+    {
+        let group = group.clone();
+        let tracked = Rc::clone(tracked);
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(on_changed);
+        add_row.connect_activated(move |_| {
+            {
+                let mut s = settings.borrow_mut();
+                s.file_type_overrides.push(FileTypeOverride {
+                    pattern: "*.ext".to_string(),
+                    tab_width: None,
+                    use_spaces: Some(true),
+                    format_on_save: None,
+                });
+                settings::save(&s);
+                on_changed(&s);
+            }
+            rebuild_overrides_group(&group, &tracked, &settings, &on_changed);
+        });
+    }
+    group.add(&add_row);
+    tracked.borrow_mut().push(add_row.upcast());
+}
+
+fn rebuild_commands_group(
+    group: &adw::PreferencesGroup,
+    tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
+    settings: &Rc<RefCell<Settings>>,
+    on_changed: &Rc<dyn Fn(&Settings)>,
+) {
+    for row in tracked.borrow().iter() {
+        group.remove(row);
+    }
+    tracked.borrow_mut().clear();
+
+    let count = settings.borrow().commands_on_save.len();
+    for i in 0..count {
+        let (name, command, args, file_pattern, summary) = {
+            let s = settings.borrow();
+            let c = &s.commands_on_save[i];
+            (
+                c.name.clone(),
+                c.command.clone(),
+                c.args.join(" "),
+                c.file_pattern.clone(),
+                command_summary(c),
+            )
+        };
+
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&name);
+        expander.set_subtitle(&summary);
+
+        let delete_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
+        delete_btn.set_valign(gtk4::Align::Center);
+        delete_btn.add_css_class("flat");
+        {
+            let group = group.clone();
+            let tracked = Rc::clone(tracked);
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            delete_btn.connect_clicked(move |_| {
+                {
+                    let mut s = settings.borrow_mut();
+                    s.commands_on_save.remove(i);
+                    settings::save(&s);
+                    on_changed(&s);
+                }
+                rebuild_commands_group(&group, &tracked, &settings, &on_changed);
+            });
+        }
+        expander.add_suffix(&delete_btn);
+
+        let name_row = adw::EntryRow::new();
+        name_row.set_title("Name");
+        name_row.set_text(&name);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            name_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save[i].name = row.text().to_string();
+                expander.set_title(&row.text());
+                expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&name_row);
+
+        let cmd_row = adw::EntryRow::new();
+        cmd_row.set_title("Command");
+        cmd_row.set_text(&command);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            cmd_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save[i].command = row.text().to_string();
+                expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&cmd_row);
+
+        let args_row = adw::EntryRow::new();
+        args_row.set_title("Arguments");
+        args_row.set_text(&args);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            args_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save[i].args = row
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect();
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&args_row);
+
+        let pattern_row = adw::EntryRow::new();
+        pattern_row.set_title("File Pattern");
+        pattern_row.set_text(&file_pattern);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            pattern_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save[i].file_pattern = row.text().to_string();
+                expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&pattern_row);
+
+        group.add(&expander);
+        tracked.borrow_mut().push(expander.upcast());
+    }
+
+    let add_row = adw::ActionRow::new();
+    add_row.set_title("Add Command on Save");
+    add_row.set_activatable(true);
+    add_row.add_prefix(&gtk4::Image::from_icon_name("list-add-symbolic"));
+    {
+        let group = group.clone();
+        let tracked = Rc::clone(tracked);
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(on_changed);
+        add_row.connect_activated(move |_| {
+            {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save.push(CommandOnSave {
+                    name: "new command".to_string(),
+                    command: String::new(),
+                    args: Vec::new(),
+                    file_pattern: "*".to_string(),
+                });
+                settings::save(&s);
+                on_changed(&s);
+            }
+            rebuild_commands_group(&group, &tracked, &settings, &on_changed);
+        });
+    }
+    group.add(&add_row);
+    tracked.borrow_mut().push(add_row.upcast());
+}
 
 /// Creates and presents an `adw::PreferencesWindow` that allows the user to
 /// edit all application settings. Changes are applied immediately, persisted
@@ -22,7 +395,7 @@ pub fn show_settings_window(
     preferences_window.set_search_enabled(true);
     preferences_window.set_title(Some("Settings"));
 
-    let on_changed = Rc::new(on_settings_changed);
+    let on_changed: Rc<dyn Fn(&Settings)> = Rc::new(on_settings_changed);
 
     // ── Page 1: Editor ───────────────────────────────────────────────────
     let editor_page = adw::PreferencesPage::new();
@@ -758,6 +1131,31 @@ pub fn show_settings_window(
     appearance_page.add(&theme_group);
 
     preferences_window.add(&appearance_page);
+
+    // ── Page 4: Automation ──────────────────────────────────────────────
+    let automation_page = adw::PreferencesPage::new();
+    automation_page.set_title("Automation");
+    automation_page.set_icon_name(Some("system-run-symbolic"));
+
+    let overrides_group = adw::PreferencesGroup::new();
+    overrides_group.set_title("File Type Overrides");
+    overrides_group.set_description(Some(
+        "Per-file-type editor settings and format-on-save commands",
+    ));
+    let tracked_overrides: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    rebuild_overrides_group(&overrides_group, &tracked_overrides, settings, &on_changed);
+    automation_page.add(&overrides_group);
+
+    let commands_group = adw::PreferencesGroup::new();
+    commands_group.set_title("Commands on Save");
+    commands_group.set_description(Some(
+        "Shell commands that run after saving matching files",
+    ));
+    let tracked_commands: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    rebuild_commands_group(&commands_group, &tracked_commands, settings, &on_changed);
+    automation_page.add(&commands_group);
+
+    preferences_window.add(&automation_page);
 
     preferences_window.present();
 }
