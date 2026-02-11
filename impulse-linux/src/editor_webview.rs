@@ -25,6 +25,9 @@ pub struct MonacoEditorHandle {
     pub language: RefCell<String>,
     pub version: Rc<Cell<u32>>,
     pub indent_info: RefCell<String>,
+    /// When true, the next ContentChanged event will not mark the file as modified.
+    /// Used when reloading file content externally (e.g. discard changes).
+    pub suppress_next_modify: Rc<Cell<bool>>,
 }
 
 impl MonacoEditorHandle {
@@ -253,6 +256,7 @@ where
         is_ready: Rc::new(Cell::new(false)),
         language: RefCell::new(language.to_string()),
         version: Rc::new(Cell::new(0)),
+        suppress_next_modify: Rc::new(Cell::new(false)),
         indent_info: RefCell::new(indent_info),
     });
 
@@ -312,7 +316,11 @@ where
             EditorEvent::ContentChanged { content, version } => {
                 *handle_for_signal.cached_content.borrow_mut() = content.clone();
                 handle_for_signal.version.set(*version);
-                handle_for_signal.is_modified.set(true);
+                if handle_for_signal.suppress_next_modify.get() {
+                    handle_for_signal.suppress_next_modify.set(false);
+                } else {
+                    handle_for_signal.is_modified.set(true);
+                }
             }
             _ => {}
         }

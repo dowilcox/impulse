@@ -527,7 +527,7 @@ pub fn build_window(app: &adw::Application) {
                                         send_diff_decorations(handle, &path);
                                     }
                                     impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
-                                        // Mark tab title with unsaved indicator
+                                        // Update tab title based on modified state
                                         let n = tab_view.n_pages();
                                         for i in 0..n {
                                             let page = tab_view.nth_page(i);
@@ -538,6 +538,8 @@ pub fn build_window(app: &adw::Application) {
                                                     .unwrap_or(&path);
                                                 if handle.is_modified.get() {
                                                     page.set_title(&format!("\u{25CF} {}", filename));
+                                                } else {
+                                                    page.set_title(filename);
                                                 }
                                                 break;
                                             }
@@ -2156,7 +2158,7 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32) {
     }
 }
 
-fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
+pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
     let decorations = match impulse_core::git::get_file_diff(file_path) {
         Ok(diff) => {
             let mut decos: Vec<impulse_editor::protocol::DiffDecoration> = diff

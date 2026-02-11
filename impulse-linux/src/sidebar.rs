@@ -431,6 +431,16 @@ pub fn build_sidebar(
 
                 match impulse_core::git::discard_file_changes(&path) {
                     Ok(()) => {
+                        // Reload the file in the editor if it's open
+                        if let Some(handle) = crate::editor::get_handle(&path) {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                let lang = handle.language.borrow().clone();
+                                handle.suppress_next_modify.set(true);
+                                handle.open_file(&path, &content, &lang);
+                                // Refresh diff decorations (should now be empty)
+                                crate::window::send_diff_decorations(&handle, &path);
+                            }
+                        }
                         refresh_tree(
                             &tree_nodes,
                             &file_tree_list_for_dialog,
