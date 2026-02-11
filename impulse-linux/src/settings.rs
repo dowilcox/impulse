@@ -141,7 +141,7 @@ impl Default for Settings {
             sidebar_show_hidden: false,
 
             // Appearance
-            color_scheme: String::from("kanagawa"),
+            color_scheme: String::from("nord"),
 
             // Custom commands
             commands_on_save: Vec::new(),

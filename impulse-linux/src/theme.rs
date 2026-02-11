@@ -179,7 +179,7 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
         "gruvbox" | "gruvbox-dark" | "gruvbox_dark" => &GRUVBOX,
         "tokyo-night" | "tokyo_night" | "tokyonight" => &TOKYO_NIGHT,
         "catppuccin-mocha" | "catppuccin_mocha" | "catppuccinmocha" => &CATPPUCCIN_MOCHA,
-        _ => &KANAGAWA,
+        _ => &NORD,
     }
 }
 
