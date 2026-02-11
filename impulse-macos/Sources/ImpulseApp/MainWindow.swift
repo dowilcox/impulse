@@ -59,6 +59,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Persisted sidebar width used to restore after collapse/expand.
     private var sidebarTargetWidth: CGFloat
 
+    // MARK: Git State
+
+    /// Cached git branch name for the current working directory.
+    private var cachedGitBranch: String?
+    /// The directory path for which `cachedGitBranch` was computed.
+    private var cachedGitBranchDir: String = ""
+
     // MARK: LSP State
 
     /// Per-URI document version counter for LSP.
@@ -365,14 +372,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         guard let tabInfo = tabManager.activeTabInfo else { return }
 
         if let shellName = tabInfo.shellName {
+            let cwd = tabInfo.cwd ?? NSHomeDirectory()
+            let branch = gitBranch(forDirectory: cwd)
             statusBar.updateForTerminal(
-                cwd: tabInfo.cwd ?? NSHomeDirectory(),
-                gitBranch: tabInfo.gitBranch,
+                cwd: cwd,
+                gitBranch: branch,
                 shellName: shellName
             )
         } else if let language = tabInfo.language {
+            let filePath = tabInfo.cwd ?? ""
+            let dir = (filePath as NSString).deletingLastPathComponent
+            let branch = dir.isEmpty ? nil : gitBranch(forDirectory: dir)
             statusBar.updateForEditor(
-                filePath: tabInfo.cwd ?? "",
+                filePath: filePath,
+                gitBranch: branch,
                 cursorLine: (tabInfo.cursorLine ?? 0) + 1,
                 cursorCol: (tabInfo.cursorCol ?? 0) + 1,
                 language: language,
@@ -411,13 +424,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard self?.window?.isKeyWindow == true else { return }
             self?.toggleSidebar()
         }
-        nc.addObserver(forName: .impulseNewTerminalTab, object: nil, queue: .main) { [weak self] _ in
-            guard self?.window?.isKeyWindow == true else { return }
-            self?.tabManager.addTerminalTab()
+        nc.addObserver(forName: .impulseNewTerminalTab, object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            self.tabManager.addTerminalTab()
+            // If a directory was specified (e.g. "Open in Terminal" from file tree),
+            // navigate the new terminal to that directory.
+            if let dir = notification.userInfo?["directory"] as? String,
+               self.tabManager.selectedIndex >= 0,
+               self.tabManager.selectedIndex < self.tabManager.tabs.count,
+               case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
+               let terminal = container.activeTerminal {
+                terminal.sendCommand("cd \(dir.replacingOccurrences(of: " ", with: "\\ "))")
+            }
         }
         nc.addObserver(forName: .impulseCloseTab, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.window?.isKeyWindow == true else { return }
-            self.tabManager.closeTab(index: self.tabManager.selectedIndex)
+            let index = self.tabManager.selectedIndex
+            guard index >= 0, index < self.tabManager.tabs.count else { return }
+            // Send LSP didClose before removing the tab.
+            if case .editor(let editor) = self.tabManager.tabs[index] {
+                self.lspDidClose(editor: editor)
+            }
+            self.tabManager.closeTab(index: index)
         }
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateStatusBar()
@@ -428,11 +456,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 self.tabManager.addEditorTab(path: path)
                 self.lspDidOpenIfNeeded(path: path)
                 // Navigate to specific line if provided (e.g. from search results).
-                if let line = notification.userInfo?["line"] as? UInt32,
-                   self.tabManager.selectedIndex >= 0,
+                if self.tabManager.selectedIndex >= 0,
                    self.tabManager.selectedIndex < self.tabManager.tabs.count,
                    case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                    editor.goToPosition(line: line, column: 1)
+                    if let line = notification.userInfo?["line"] as? UInt32 {
+                        editor.goToPosition(line: line, column: 1)
+                    }
+                    // Apply git diff decorations for the opened file.
+                    self.applyGitDiffDecorations(editor: editor)
                 }
             }
         }
@@ -458,9 +489,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             if let dir = notification.userInfo?["directory"] as? String {
                 self.fileTreeView.setRootPath(dir)
                 self.searchPanel.setRootPath(dir)
+                self.invalidateGitBranchCache()
+                let branch = self.gitBranch(forDirectory: dir)
                 self.statusBar.updateForTerminal(
                     cwd: dir,
-                    gitBranch: nil,
+                    gitBranch: branch,
                     shellName: ImpulseCore.getUserLoginShellName()
                 )
             }
@@ -478,9 +511,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard self.tabManager.selectedIndex >= 0,
                   self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
             if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                editor.saveFile()
-                self.tabManager.refreshSegmentLabels()
-                self.lspDidSave(editor: editor)
+                self.saveEditorTab(editor)
             }
         }
 
@@ -507,8 +538,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
                   case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex],
                   editor === notification.object as? EditorTab else { return }
+            let filePath = editor.filePath ?? ""
+            let dir = (filePath as NSString).deletingLastPathComponent
+            let branch = dir.isEmpty ? nil : self.gitBranch(forDirectory: dir)
             self.statusBar.updateForEditor(
-                filePath: editor.filePath ?? "",
+                filePath: filePath,
+                gitBranch: branch,
                 cursorLine: Int(line) + 1,
                 cursorCol: Int(col) + 1,
                 language: editor.language,
@@ -544,6 +579,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             if let editor = notification.object as? EditorTab {
                 self.lspDidChange(editor: editor)
             }
+        }
+
+        // Editor focus changed — auto-save on focus loss if enabled
+        nc.addObserver(forName: .editorFocusChanged, object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.settings.autoSave else { return }
+            guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
+            guard let editor = notification.object as? EditorTab,
+                  editor.isModified else { return }
+            self.saveEditorTab(editor)
+        }
+
+        // Custom keybinding command execution
+        nc.addObserver(forName: Notification.Name("impulseCustomCommand"), object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            guard let command = notification.userInfo?["command"] as? String,
+                  !command.isEmpty else { return }
+            let args = notification.userInfo?["args"] as? [String] ?? []
+            self.executeCustomCommand(command: command, args: args)
         }
 
         // LSP: completion requested
@@ -669,6 +722,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             {"textDocument":{"uri":"\(self.jsonEscape(uri))","version":\(version)},"contentChanges":[{"text":"\(self.jsonEscape(content))"}]}
             """
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didChange", paramsJson: params)
+        }
+    }
+
+    /// Sends LSP didClose when an editor tab is closed.
+    private func lspDidClose(editor: EditorTab) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        guard lspOpenFiles.contains(uri) else { return }
+        lspOpenFiles.remove(uri)
+        lspDocVersions.removeValue(forKey: uri)
+
+        let language = editor.language
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            let params = """
+            {"textDocument":{"uri":"\(self.jsonEscape(uri))"}}
+            """
+            self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didClose", paramsJson: params)
         }
     }
 
@@ -857,6 +928,174 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               let line = (start["line"] as? NSNumber)?.uint32Value,
               let character = (start["character"] as? NSNumber)?.uint32Value else { return nil }
         return (uri: uri, line: line, character: character)
+    }
+
+    // MARK: - Save Pipeline
+
+    /// Unified save pipeline for editor tabs. Handles:
+    /// 1. Format on save (if configured)
+    /// 2. Actual file save
+    /// 3. LSP didSave notification
+    /// 4. Commands on save
+    /// 5. Git diff decoration refresh
+    private func saveEditorTab(_ editor: EditorTab) {
+        guard let path = editor.filePath else { return }
+
+        // 1. Format on save — find applicable formatter
+        let formatter = resolveFormatOnSave(forPath: path)
+        if let fmt = formatter, !fmt.command.isEmpty {
+            // Save first so the formatter can read the file
+            editor.saveFile()
+            runExternalCommand(command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent) { [weak self, weak editor] in
+                guard let self, let editor else { return }
+                // Reload the file after formatting
+                if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
+                   newContent != editor.content {
+                    editor.openFile(path: path, content: newContent, language: editor.language)
+                }
+                self.postSaveActions(editor: editor, path: path)
+            }
+        } else {
+            editor.saveFile()
+            postSaveActions(editor: editor, path: path)
+        }
+    }
+
+    /// Actions that run after saving and optional formatting.
+    private func postSaveActions(editor: EditorTab, path: String) {
+        tabManager.refreshSegmentLabels()
+        lspDidSave(editor: editor)
+        invalidateGitBranchCache()
+        applyGitDiffDecorations(editor: editor)
+        fileTreeView.refreshGitStatus()
+
+        // Commands on save: run any matching commands
+        for cmd in settings.commandsOnSave {
+            guard !cmd.command.isEmpty else { continue }
+            guard Settings.matchesFilePattern(path, pattern: cmd.filePattern) else { continue }
+            let cwd = (path as NSString).deletingLastPathComponent
+            if cmd.reloadFile {
+                runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd) { [weak editor] in
+                    guard let editor else { return }
+                    if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
+                       newContent != editor.content {
+                        editor.openFile(path: path, content: newContent, language: editor.language)
+                    }
+                }
+            } else {
+                runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd, completion: nil)
+            }
+        }
+    }
+
+    /// Resolves the `FormatOnSave` configuration for a file path, checking
+    /// file-type overrides first, then falling back to the global setting.
+    private func resolveFormatOnSave(forPath path: String) -> FormatOnSave? {
+        // Check file-type-specific overrides first
+        for override_ in settings.fileTypeOverrides {
+            if Settings.matchesFilePattern(path, pattern: override_.pattern),
+               let fmt = override_.formatOnSave, !fmt.command.isEmpty {
+                return fmt
+            }
+        }
+        return nil
+    }
+
+    /// Runs an external command asynchronously. Calls `completion` on the main
+    /// thread when the process finishes.
+    private func runExternalCommand(command: String, args: [String], cwd: String,
+                                     completion: (() -> Void)?) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [command] + args
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                NSLog("Failed to run command '\(command)': \(error)")
+            }
+
+            if let completion = completion {
+                DispatchQueue.main.async { completion() }
+            }
+        }
+    }
+
+    // MARK: - Custom Command Execution
+
+    /// Executes a custom keybinding command by opening a new terminal tab
+    /// with the command running in it.
+    private func executeCustomCommand(command: String, args: [String]) {
+        // Get the CWD from the active tab
+        let cwd: String
+        if let tabInfo = tabManager.activeTabInfo, let dir = tabInfo.cwd {
+            if FileManager.default.fileExists(atPath: dir) {
+                // dir could be a file path (for editor tabs); use parent directory
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue {
+                    cwd = dir
+                } else {
+                    cwd = (dir as NSString).deletingLastPathComponent
+                }
+            } else {
+                cwd = NSHomeDirectory()
+            }
+        } else {
+            cwd = NSHomeDirectory()
+        }
+
+        // Build the full command string
+        let fullCommand = ([command] + args).joined(separator: " ")
+
+        // Post a notification to create a new terminal tab with the command
+        // We'll use the existing new terminal tab flow but with a custom initial command
+        tabManager.addTerminalTab()
+        // Send the command to the newly created terminal
+        if tabManager.selectedIndex >= 0,
+           tabManager.selectedIndex < tabManager.tabs.count,
+           case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+           let terminal = container.activeTerminal {
+            // Set the working directory and run the command
+            terminal.sendCommand(fullCommand)
+        }
+    }
+
+    // MARK: - Git Branch Cache
+
+    /// Returns the git branch for a directory, using a cache to avoid
+    /// redundant calls (e.g. on every cursor move).
+    private func gitBranch(forDirectory dir: String) -> String? {
+        if dir == cachedGitBranchDir {
+            return cachedGitBranch
+        }
+        cachedGitBranchDir = dir
+        cachedGitBranch = ImpulseCore.gitBranch(path: dir)
+        return cachedGitBranch
+    }
+
+    /// Invalidates the git branch cache (e.g. after a save or CWD change).
+    private func invalidateGitBranchCache() {
+        cachedGitBranchDir = ""
+        cachedGitBranch = nil
+    }
+
+    // MARK: - Git Diff Decorations
+
+    /// Applies git diff gutter decorations to an editor tab by querying
+    /// the FFI bridge for diff markers.
+    private func applyGitDiffDecorations(editor: EditorTab) {
+        guard let path = editor.filePath else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let markers = ImpulseCore.gitDiffMarkers(filePath: path)
+            DispatchQueue.main.async {
+                editor.applyDiffDecorations(markers)
+            }
+        }
     }
 
     // MARK: LSP Helpers

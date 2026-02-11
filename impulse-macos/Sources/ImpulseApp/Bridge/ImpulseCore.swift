@@ -142,6 +142,24 @@ final class ImpulseCore {
         return (try? JSONDecoder().decode([SearchResult].self, from: data)) ?? []
     }
 
+    // MARK: - Git
+
+    /// Returns the current git branch for the directory at `path`, or `nil`
+    /// if the path is not inside a git repository.
+    static func gitBranch(path: String) -> String? {
+        return consumeCString(impulse_git_branch(path))
+    }
+
+    /// Returns diff markers for the file at `path` as a `DiffDecoration` array.
+    ///
+    /// Each element contains a 1-based line number and a status string
+    /// (`"added"`, `"modified"`, or `"deleted"`).
+    static func gitDiffMarkers(filePath: String) -> [DiffDecoration] {
+        guard let json = consumeCString(impulse_git_diff_markers(filePath)) else { return [] }
+        guard let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([DiffDecoration].self, from: data)) ?? []
+    }
+
     // MARK: - LSP
 
     /// Creates a new LSP registry for the given workspace root URI.

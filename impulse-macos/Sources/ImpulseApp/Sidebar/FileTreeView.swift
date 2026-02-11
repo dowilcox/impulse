@@ -11,7 +11,8 @@ extension Notification.Name {
 // MARK: - File Tree View
 
 /// NSOutlineView-based file tree for the sidebar. Supports lazy-loading of
-/// directory children, git status colouring, and hidden file toggling.
+/// directory children, git status colouring, hidden file toggling, context
+/// menus for file operations, and filesystem watching for auto-refresh.
 final class FileTreeView: NSView {
 
     // MARK: Properties
@@ -27,6 +28,11 @@ final class FileTreeView: NSView {
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
     private let cellID = NSUserInterfaceItemIdentifier("FileCell")
 
+    // File watcher
+    private var watchedFileDescriptor: Int32 = -1
+    private var dispatchSource: DispatchSourceFileSystemObject?
+    private var debounceWorkItem: DispatchWorkItem?
+
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -37,6 +43,10 @@ final class FileTreeView: NSView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
+    }
+
+    deinit {
+        stopWatching()
     }
 
     private func setup() {
@@ -58,6 +68,9 @@ final class FileTreeView: NSView {
         column.resizingMask = .autoresizingMask
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
+
+        // Context menu
+        outline.menu = makeContextMenu()
 
         self.outlineView = outline
 
@@ -88,12 +101,14 @@ final class FileTreeView: NSView {
     // MARK: Public API
 
     /// Set (or change) the root project directory. Rebuilds the entire tree,
-    /// fetches git status, and reloads the outline view.
+    /// fetches git status, reloads the outline view, and starts watching for
+    /// filesystem changes.
     func setRootPath(_ path: String) {
         rootPath = path
         rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
         outlineView.reloadData()
+        startWatching(path: path)
     }
 
     /// Re-fetch git status for the current tree and reload visible cells to
@@ -108,6 +123,21 @@ final class FileTreeView: NSView {
         showHidden.toggle()
         guard !rootPath.isEmpty else { return }
         setRootPath(rootPath)
+    }
+
+    /// Rebuild the tree from disk, preserving expansion state.
+    func refreshTree() {
+        guard !rootPath.isEmpty else { return }
+
+        // Collect expanded paths before rebuilding.
+        let expandedPaths = collectExpandedPaths(rootNodes)
+
+        rootNodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
+        FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
+        outlineView.reloadData()
+
+        // Re-expand previously expanded directories.
+        restoreExpandedPaths(expandedPaths, in: rootNodes)
     }
 
     // MARK: Click Handling
@@ -131,6 +161,258 @@ final class FileTreeView: NSView {
         }
     }
 
+    // MARK: - Context Menu
+
+    /// Build the right-click context menu for the outline view.
+    private func makeContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }
+
+    /// Return the `FileTreeNode` for the row that was right-clicked, or `nil` if
+    /// the click landed on empty space.
+    private func clickedNode() -> FileTreeNode? {
+        let row = outlineView.clickedRow
+        guard row >= 0 else { return nil }
+        return outlineView.item(atRow: row) as? FileTreeNode
+    }
+
+    /// The directory to use for "New File" / "New Folder" when the user
+    /// right-clicks a node. If the node is a file, we use its parent directory.
+    private func targetDirectory(for node: FileTreeNode) -> String {
+        if node.isDirectory {
+            return node.path
+        }
+        return (node.path as NSString).deletingLastPathComponent
+    }
+
+    // MARK: Context Menu Actions
+
+    @objc private func contextNewFile(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let dirPath = targetDirectory(for: node)
+        showNameInputAlert(title: "New File",
+                           message: "Enter a name for the new file:",
+                           placeholder: "untitled",
+                           defaultValue: "") { [weak self] name in
+            guard let self, !name.isEmpty else { return }
+            let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            let fm = FileManager.default
+            guard fm.createFile(atPath: fullPath, contents: nil) else {
+                NSLog("FileTreeView: failed to create file at \(fullPath)")
+                return
+            }
+            self.refreshTree()
+        }
+    }
+
+    @objc private func contextNewFolder(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let dirPath = targetDirectory(for: node)
+        showNameInputAlert(title: "New Folder",
+                           message: "Enter a name for the new folder:",
+                           placeholder: "untitled-folder",
+                           defaultValue: "") { [weak self] name in
+            guard let self, !name.isEmpty else { return }
+            let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            do {
+                try FileManager.default.createDirectory(atPath: fullPath,
+                                                        withIntermediateDirectories: false)
+            } catch {
+                NSLog("FileTreeView: failed to create folder at \(fullPath): \(error)")
+                return
+            }
+            self.refreshTree()
+        }
+    }
+
+    @objc private func contextRename(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let oldName = (node.path as NSString).lastPathComponent
+        let parentDir = (node.path as NSString).deletingLastPathComponent
+        showNameInputAlert(title: "Rename",
+                           message: "Enter a new name:",
+                           placeholder: oldName,
+                           defaultValue: oldName) { [weak self] newName in
+            guard let self, !newName.isEmpty, newName != oldName else { return }
+            let newPath = (parentDir as NSString).appendingPathComponent(newName)
+            do {
+                try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
+            } catch {
+                NSLog("FileTreeView: failed to rename \(node.path) to \(newPath): \(error)")
+                return
+            }
+            self.refreshTree()
+        }
+    }
+
+    @objc private func contextDelete(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let name = (node.path as NSString).lastPathComponent
+        let isDir = node.isDirectory
+
+        let alert = NSAlert()
+        alert.messageText = "Delete \(isDir ? "Folder" : "File")"
+        alert.informativeText = "Are you sure you want to delete \"\(name)\"?"
+            + (isDir ? " This will delete the directory and all its contents." : "")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+
+        // Style the Delete button as destructive.
+        alert.buttons.first?.hasDestructiveAction = true
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try FileManager.default.removeItem(atPath: node.path)
+        } catch {
+            NSLog("FileTreeView: failed to delete \(node.path): \(error)")
+            return
+        }
+        refreshTree()
+    }
+
+    @objc private func contextCopyPath(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(node.path, forType: .string)
+    }
+
+    @objc private func contextOpenInTerminal(_ sender: Any?) {
+        guard let node = clickedNode(), node.isDirectory else { return }
+        NotificationCenter.default.post(
+            name: .impulseNewTerminalTab,
+            object: self,
+            userInfo: ["directory": node.path]
+        )
+    }
+
+    // MARK: Alert Helper
+
+    /// Show a modal alert with a text field for entering a name. Calls
+    /// `completion` with the trimmed text (or empty string if cancelled).
+    private func showNameInputAlert(title: String,
+                                    message: String,
+                                    placeholder: String,
+                                    defaultValue: String,
+                                    completion: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        textField.placeholderString = placeholder
+        textField.stringValue = defaultValue
+        alert.accessoryView = textField
+
+        // Make the text field the first responder so it receives focus.
+        alert.window.initialFirstResponder = textField
+
+        // If there is an extension, select just the stem so the user can
+        // easily type a new name without losing the extension.
+        if !defaultValue.isEmpty, let dotRange = defaultValue.range(of: ".", options: .backwards) {
+            let stemLength = defaultValue.distance(from: defaultValue.startIndex, to: dotRange.lowerBound)
+            textField.currentEditor()?.selectedRange = NSRange(location: 0, length: stemLength)
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            completion(textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    // MARK: Expansion State Helpers
+
+    /// Recursively collect the paths of all expanded directories.
+    private func collectExpandedPaths(_ nodes: [FileTreeNode]) -> Set<String> {
+        var paths = Set<String>()
+        for node in nodes {
+            if node.isDirectory && node.isExpanded {
+                paths.insert(node.path)
+                if let children = node.children {
+                    paths.formUnion(collectExpandedPaths(children))
+                }
+            }
+        }
+        return paths
+    }
+
+    /// After a reload, re-expand directories whose paths match the saved set.
+    /// This triggers lazy loading via the delegate as needed.
+    private func restoreExpandedPaths(_ paths: Set<String>, in nodes: [FileTreeNode]) {
+        for node in nodes {
+            if node.isDirectory && paths.contains(node.path) {
+                outlineView.expandItem(node)
+                if let children = node.children {
+                    restoreExpandedPaths(paths, in: children)
+                }
+            }
+        }
+    }
+
+    // MARK: - File System Watching
+
+    /// Start watching the root directory for filesystem changes.
+    private func startWatching(path: String) {
+        stopWatching()
+
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            NSLog("FileTreeView: failed to open \(path) for watching (errno \(errno))")
+            return
+        }
+        watchedFileDescriptor = fd
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .link],
+            queue: .main
+        )
+
+        source.setEventHandler { [weak self] in
+            self?.handleFileSystemEvent()
+        }
+
+        source.setCancelHandler { [fd] in
+            close(fd)
+        }
+
+        self.dispatchSource = source
+        source.resume()
+    }
+
+    /// Stop the current filesystem watcher and close the file descriptor.
+    private func stopWatching() {
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+
+        if let source = dispatchSource {
+            source.cancel()
+            dispatchSource = nil
+            // The cancel handler closes the fd, so reset our copy.
+            watchedFileDescriptor = -1
+        } else if watchedFileDescriptor >= 0 {
+            close(watchedFileDescriptor)
+            watchedFileDescriptor = -1
+        }
+    }
+
+    /// Called when the dispatch source fires. Debounces rapid events by
+    /// scheduling a refresh 300ms in the future.
+    private func handleFileSystemEvent() {
+        debounceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.refreshTree()
+        }
+        debounceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
     // MARK: Private Helpers
 
     private func reloadVisibleRows() {
@@ -142,6 +424,46 @@ final class FileTreeView: NSView {
         let indexSet = IndexSet(integersIn: visibleRange.location ..< (visibleRange.location + visibleRange.length))
         let columnSet = IndexSet(integer: 0)
         outlineView.reloadData(forRowIndexes: indexSet, columnIndexes: columnSet)
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension FileTreeView: NSMenuDelegate {
+
+    /// Populate the context menu dynamically based on the right-clicked row.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        guard let node = clickedNode() else { return }
+
+        menu.addItem(withTitle: "New File",
+                     action: #selector(contextNewFile(_:)),
+                     keyEquivalent: "").target = self
+        menu.addItem(withTitle: "New Folder",
+                     action: #selector(contextNewFolder(_:)),
+                     keyEquivalent: "").target = self
+        menu.addItem(.separator())
+
+        menu.addItem(withTitle: "Rename",
+                     action: #selector(contextRename(_:)),
+                     keyEquivalent: "").target = self
+        let deleteItem = menu.addItem(withTitle: "Delete",
+                                      action: #selector(contextDelete(_:)),
+                                      keyEquivalent: "")
+        deleteItem.target = self
+
+        menu.addItem(.separator())
+
+        menu.addItem(withTitle: "Copy Path",
+                     action: #selector(contextCopyPath(_:)),
+                     keyEquivalent: "").target = self
+
+        if node.isDirectory {
+            menu.addItem(withTitle: "Open in Terminal",
+                         action: #selector(contextOpenInTerminal(_:)),
+                         keyEquivalent: "").target = self
+        }
     }
 }
 

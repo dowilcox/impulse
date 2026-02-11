@@ -148,19 +148,22 @@ final class StatusBar: NSView {
 
     /// Updates the status bar for an editor tab context.
     ///
-    /// Shows CWD (derived from file path), cursor position, language,
-    /// encoding, and indentation info. Hides shell name.
-    func updateForEditor(filePath: String, cursorLine: Int, cursorCol: Int,
+    /// Shows CWD (derived from file path), git branch (if available), cursor
+    /// position, language, encoding, and indentation info. Hides shell name.
+    func updateForEditor(filePath: String, gitBranch: String? = nil,
+                         cursorLine: Int, cursorCol: Int,
                          language: String, tabWidth: Int, useSpaces: Bool) {
         // Derive CWD from file path
         let dir = (filePath as NSString).deletingLastPathComponent
         let displayPath = shortenHomePath(dir)
         cwdLabel.stringValue = displayPath
 
-        // Git branch for the file's directory
-        // NOTE: This would require calling into impulse-core for git branch
-        // detection. For now, hide the branch label in editor context.
-        gitBranchLabel.isHidden = true
+        if let branch = gitBranch, !branch.isEmpty {
+            gitBranchLabel.stringValue = "\u{E0A0} \(branch)"
+            gitBranchLabel.isHidden = false
+        } else {
+            gitBranchLabel.isHidden = true
+        }
 
         shellNameLabel.isHidden = true
 

@@ -197,6 +197,9 @@ final class TabManager: NSObject {
         editorTab.openFile(path: path, content: content, language: language)
         editorTab.loadEditor()
 
+        // Apply editor settings (font, tab size, etc.) from the current settings.
+        editorTab.applySettings(editorOptionsFromSettings())
+
         let entry = TabEntry.editor(editorTab)
         insertTab(entry)
     }
@@ -333,6 +336,36 @@ final class TabManager: NSObject {
 
     @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
         closeTab(index: sender.tag)
+    }
+
+    // MARK: - Editor Options
+
+    /// Builds an `EditorOptions` value from the current `Settings` so that
+    /// newly opened editor tabs inherit the user's preferences.
+    func editorOptionsFromSettings() -> EditorOptions {
+        return EditorOptions(
+            fontSize: UInt32(settings.fontSize),
+            fontFamily: settings.fontFamily,
+            tabSize: UInt32(settings.tabWidth),
+            insertSpaces: settings.useSpaces,
+            wordWrap: settings.wordWrap ? "on" : "off",
+            minimapEnabled: settings.minimapEnabled,
+            lineNumbers: settings.showLineNumbers ? "on" : "off",
+            renderWhitespace: settings.renderWhitespace,
+            renderLineHighlight: settings.highlightCurrentLine ? "all" : "none",
+            rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
+            stickyScroll: settings.stickyScroll,
+            bracketPairColorization: settings.bracketPairColorization,
+            indentGuides: settings.indentGuides,
+            fontLigatures: settings.fontLigatures,
+            folding: settings.folding,
+            scrollBeyondLastLine: settings.scrollBeyondLastLine,
+            smoothScrolling: settings.smoothScrolling,
+            cursorStyle: settings.editorCursorStyle,
+            cursorBlinking: settings.editorCursorBlinking,
+            lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
+            autoClosingBrackets: settings.editorAutoClosingBrackets
+        )
     }
 
     // MARK: - Language Detection

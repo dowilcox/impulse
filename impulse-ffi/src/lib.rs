@@ -490,3 +490,67 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
         Err(e) => to_c_string(&format!("ERROR:{}", e)),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Git
+// ---------------------------------------------------------------------------
+
+/// Returns the current git branch name for the given directory path.
+///
+/// Returns null if not in a git repo or on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
+    let path = match to_rust_str(path) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+
+    match impulse_core::filesystem::get_git_branch(&path) {
+        Ok(Some(branch)) => to_c_string(&branch),
+        Ok(None) | Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Computes diff markers for the given file path (comparing working copy to HEAD).
+///
+/// Returns a JSON array of objects with `"line"` (1-based u32) and `"status"`
+/// (`"added"` / `"modified"` / `"deleted"`) fields.
+/// Returns null on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_char {
+    let file_path = match to_rust_str(file_path) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+
+    match impulse_core::git::get_file_diff(&file_path) {
+        Ok(diff) => {
+            let mut markers: Vec<impulse_editor::protocol::DiffDecoration> = diff
+                .changed_lines
+                .iter()
+                .filter_map(|(&line, status)| {
+                    let status_str = match status {
+                        impulse_core::git::DiffLineStatus::Added => "added",
+                        impulse_core::git::DiffLineStatus::Modified => "modified",
+                        impulse_core::git::DiffLineStatus::Unchanged => return None,
+                    };
+                    Some(impulse_editor::protocol::DiffDecoration {
+                        line,
+                        status: status_str.to_string(),
+                    })
+                })
+                .collect();
+            for &line in &diff.deleted_lines {
+                markers.push(impulse_editor::protocol::DiffDecoration {
+                    line,
+                    status: "deleted".to_string(),
+                });
+            }
+            let json = serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
+            to_c_string(&json)
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}

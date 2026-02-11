@@ -153,6 +153,12 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         )
     }
 
+    /// Send a text string (e.g. a shell command + newline) to the terminal's PTY.
+    func sendCommand(_ text: String) {
+        let bytes = Array(text.utf8) + [0x0A]  // Append newline (Enter)
+        terminalView.send(bytes[...])
+    }
+
     /// Make this terminal the first responder.
     func focus() {
         window?.makeFirstResponder(terminalView)
