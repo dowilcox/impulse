@@ -345,11 +345,11 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding-left: 12px;
         }}
         .status-bar .encoding {{
-            color: {comment};
+            color: {fg_dark};
             padding-left: 12px;
         }}
         .status-bar .indent-info {{
-            color: {comment};
+            color: {fg_dark};
             padding-left: 12px;
         }}
         .status-bar .blame-info {{
@@ -377,7 +377,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             min-height: 32px;
             padding: 0 8px;
             background-color: {bg_dark};
-            color: {comment};
+            color: {fg_dark};
             border-radius: 6px 6px 0 0;
         }}
         tabbar tab:selected {{

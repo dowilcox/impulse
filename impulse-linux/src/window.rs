@@ -1192,6 +1192,28 @@ pub fn build_window(app: &adw::Application) {
                     create_tab_capture();
                     return gtk4::glib::Propagation::Stop;
                 }
+
+                // Ctrl+1-9: switch tab by number (VTE swallows these)
+                if ctrl && !shift && is_terminal {
+                    let digit = match key {
+                        gtk4::gdk::Key::_1 => Some(0),
+                        gtk4::gdk::Key::_2 => Some(1),
+                        gtk4::gdk::Key::_3 => Some(2),
+                        gtk4::gdk::Key::_4 => Some(3),
+                        gtk4::gdk::Key::_5 => Some(4),
+                        gtk4::gdk::Key::_6 => Some(5),
+                        gtk4::gdk::Key::_7 => Some(6),
+                        gtk4::gdk::Key::_8 => Some(7),
+                        gtk4::gdk::Key::_9 => Some(8),
+                        _ => None,
+                    };
+                    if let Some(idx) = digit {
+                        if idx < tab_view.n_pages() {
+                            tab_view.set_selected_page(&tab_view.nth_page(idx));
+                        }
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                }
             }
             gtk4::glib::Propagation::Proceed
         });
