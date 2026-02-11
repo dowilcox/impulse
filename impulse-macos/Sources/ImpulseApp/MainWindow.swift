@@ -38,6 +38,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Segmented control in the sidebar header to switch between files and search.
     private let sidebarModeControl: NSSegmentedControl
 
+    /// Button to toggle visibility of hidden (dot) files in the file tree.
+    private let toggleHiddenButton: NSButton = {
+        let btn = NSButton(image: NSImage(systemSymbolName: "eye.slash",
+                                           accessibilityDescription: "Toggle Hidden Files")
+                            ?? NSImage(named: NSImage.refreshTemplateName)!,
+                           target: nil, action: nil)
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.toolTip = "Toggle Hidden Files"
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
     /// Button to collapse all expanded directories in the file tree.
     private let collapseAllButton: NSButton = {
         let btn = NSButton(image: NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right",
@@ -148,6 +162,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         sidebarModeControl.action = #selector(sidebarModeChanged(_:))
         sidebarModeControl.selectedSegment = 0
 
+        toggleHiddenButton.target = self
+        toggleHiddenButton.action = #selector(toggleHiddenAction(_:))
+
         collapseAllButton.target = self
         collapseAllButton.action = #selector(collapseAllAction(_:))
 
@@ -166,6 +183,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         fileTreeView.setRootPath(rootPath)
         searchPanel.setRootPath(rootPath)
         fileTreeView.showHidden = settings.sidebarShowHidden
+        if settings.sidebarShowHidden {
+            toggleHiddenButton.image = NSImage(systemSymbolName: "eye",
+                                                accessibilityDescription: "Toggle Hidden Files")
+        }
 
         // Open a default terminal tab.
         tabManager.addTerminalTab()
@@ -203,6 +224,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         searchPanel.isHidden = true
 
         sidebarContainer.addSubview(sidebarModeControl)
+        sidebarContainer.addSubview(toggleHiddenButton)
         sidebarContainer.addSubview(collapseAllButton)
         sidebarContainer.addSubview(fileTreeView)
         sidebarContainer.addSubview(searchPanel)
@@ -211,8 +233,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             sidebarModeControl.topAnchor.constraint(equalTo: sidebarContainer.topAnchor, constant: 8),
             sidebarModeControl.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor, constant: 8),
 
+            toggleHiddenButton.centerYAnchor.constraint(equalTo: sidebarModeControl.centerYAnchor),
+            toggleHiddenButton.leadingAnchor.constraint(greaterThanOrEqualTo: sidebarModeControl.trailingAnchor, constant: 4),
+            toggleHiddenButton.widthAnchor.constraint(equalToConstant: 24),
+
             collapseAllButton.centerYAnchor.constraint(equalTo: sidebarModeControl.centerYAnchor),
-            collapseAllButton.leadingAnchor.constraint(greaterThanOrEqualTo: sidebarModeControl.trailingAnchor, constant: 4),
+            collapseAllButton.leadingAnchor.constraint(equalTo: toggleHiddenButton.trailingAnchor, constant: 2),
             collapseAllButton.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -8),
             collapseAllButton.widthAnchor.constraint(equalToConstant: 24),
 
@@ -376,6 +402,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     @objc private func newTabAction(_ sender: Any?) {
         tabManager.addTerminalTab()
+    }
+
+    @objc private func toggleHiddenAction(_ sender: Any?) {
+        fileTreeView.toggleHiddenFiles()
+        // Update the button icon to reflect the current state.
+        let iconName = fileTreeView.showHidden ? "eye" : "eye.slash"
+        toggleHiddenButton.image = NSImage(systemSymbolName: iconName,
+                                            accessibilityDescription: "Toggle Hidden Files")
+        // Persist the setting.
+        settings.sidebarShowHidden = fileTreeView.showHidden
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.settings.sidebarShowHidden = fileTreeView.showHidden
+        }
     }
 
     @objc private func collapseAllAction(_ sender: Any?) {
