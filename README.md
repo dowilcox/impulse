@@ -5,30 +5,31 @@
 <h1 align="center">Impulse</h1>
 
 <p align="center">
-  A terminal-first development environment for Linux, built with Rust, GTK4, and libadwaita.
+  A terminal-first development environment built with Rust.
 </p>
 
 <p align="center">
   <a href="#features">Features</a> &bull;
   <a href="#installation">Installation</a> &bull;
   <a href="#building-from-source">Building from Source</a> &bull;
+  <a href="#architecture">Architecture</a> &bull;
   <a href="#license">License</a>
 </p>
 
 ---
 
-Impulse combines a full VTE terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
+Impulse combines a terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
 
 ## Features
 
 **Terminal**
-- Full VTE terminal with shell integration (bash, zsh, fish)
+- Terminal emulator with shell integration (bash, zsh, fish)
 - Horizontal and vertical terminal splitting
 - OSC 133/7 escape sequence support for prompt/command/CWD tracking
 - Configurable scrollback, cursor shape, copy-on-select, and more
 
 **Editor**
-- Monaco editor embedded via WebKitGTK for full-featured code editing
+- Monaco editor for full-featured code editing
 - Syntax highlighting for 80+ languages
 - LSP integration with managed language server installation
 - Auto-detected indentation, configurable tab width and spaces/tabs
@@ -48,11 +49,17 @@ Impulse combines a full VTE terminal emulator with a Monaco-powered code editor 
 - Custom keybindings
 
 **Interface**
-- Tabbed interface powered by libadwaita TabView
-- Command palette for quick access to actions
+- Tabbed interface with command palette
 - Six built-in color themes: Kanagawa, Nord, Gruvbox, Tokyo Night, Catppuccin Mocha, Rose Pine
 - Settings UI with live-updating preferences
 - Drag-and-drop file opening
+
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Linux    | Available (GTK4 / libadwaita) |
+| macOS    | In development |
 
 ## Installation
 
@@ -60,20 +67,39 @@ Impulse combines a full VTE terminal emulator with a Monaco-powered code editor 
 
 ### Building from Source
 
-**System dependencies** (Arch/CachyOS):
+Impulse requires [Rust](https://rustup.rs/) and platform-specific system libraries.
+
+<details>
+<summary><strong>Linux (Arch / CachyOS)</strong></summary>
 
 ```bash
 sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
 ```
 
-**Build and run:**
+```bash
+git clone https://github.com/your-username/impulse.git
+cd impulse
+cargo build --release -p impulse-linux
+cargo run --release -p impulse-linux
+```
+
+</details>
+
+<details>
+<summary><strong>Linux (Debian / Ubuntu)</strong></summary>
+
+```bash
+sudo apt install libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev libwebkitgtk-6.0-dev
+```
 
 ```bash
 git clone https://github.com/your-username/impulse.git
 cd impulse
-cargo build --release
-cargo run -p impulse-linux --release
+cargo build --release -p impulse-linux
+cargo run --release -p impulse-linux
 ```
+
+</details>
 
 **Optional — install managed LSP servers** (for web language support):
 
@@ -83,15 +109,16 @@ cargo run -p impulse-linux --release
 
 ## Architecture
 
-Impulse is a Rust workspace with three crates:
+Impulse is a Rust workspace. Platform-agnostic logic lives in shared crates, with native frontends per platform.
 
 | Crate | Role |
 |-------|------|
 | `impulse-core` | Platform-agnostic backend: PTY management, shell integration, filesystem, search, git, LSP |
 | `impulse-editor` | Monaco editor assets and WebView communication protocol |
-| `impulse-linux` | GTK4/libadwaita frontend: window, tabs, terminal, sidebar, settings, themes |
+| `impulse-linux` | Linux frontend (GTK4 / libadwaita) |
+| `impulse-macos` | macOS frontend (in development) |
 
-Dependency direction is strictly one-way: `impulse-linux` depends on `impulse-core` and `impulse-editor`, never the reverse.
+Dependency direction is strictly one-way: frontends depend on `impulse-core` and `impulse-editor`, never the reverse.
 
 ## License
 
