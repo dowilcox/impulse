@@ -47,15 +47,15 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 - Project-wide file name and content search
 
 **Automation**
-- Per-file-type settings overrides (tab width, spaces, format command)
-- Format-on-save with configurable formatter per file type
-- Custom commands-on-save with file pattern matching
-- Custom keybindings
+- Per-file-type indentation overrides (tab width, spaces/tabs)
+- Commands-on-save with file pattern matching and optional file reload (for formatters)
+- Custom keybindings that run shell commands
 
 **Interface**
 - Tabbed interface with command palette
-- Six built-in color themes: Kanagawa, Nord, Gruvbox, Tokyo Night, Catppuccin Mocha, Rose Pine
-- Settings UI with live-updating preferences
+- Seven built-in color themes: Kanagawa, Nord, Gruvbox, Tokyo Night, Tokyo Night Storm, Catppuccin Mocha, Rose Pine
+- Settings UI with live-updating preferences for editor, terminal, appearance, automation, and keybindings
+- Full keybinding visibility and customization UI — click any shortcut to rebind it
 - Drag-and-drop file opening
 
 ## Platform Support

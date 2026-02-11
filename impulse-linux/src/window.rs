@@ -10,6 +10,7 @@ use std::rc::Rc;
 use url::Url;
 
 use crate::editor;
+use crate::keybindings;
 use crate::lsp_completion::{LspRequest, LspResponse};
 use crate::sidebar;
 use crate::status_bar;
@@ -598,14 +599,12 @@ pub fn build_window(app: &adw::Application) {
                                             send_diff_decorations(handle, &path);
                                             // Refresh sidebar to update git status badges
                                             sidebar_state.refresh();
-                                            // Run format-on-save + commands in a background thread
-                                            let overrides = settings.borrow().file_type_overrides.clone();
+                                            // Run commands-on-save in a background thread
                                             let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
                                             std::thread::spawn(move || {
-                                                let formatted = run_format_on_save(&save_path, &overrides);
-                                                run_commands_on_save(&save_path, &commands);
-                                                if formatted {
+                                                let needs_reload = run_commands_on_save(&save_path, &commands);
+                                                if needs_reload {
                                                     let reload_path = save_path.clone();
                                                     gtk4::glib::MainContext::default().invoke(move || {
                                                         if let Some(handle) = crate::editor::get_handle(&reload_path) {
@@ -1238,31 +1237,44 @@ pub fn build_window(app: &adw::Application) {
     // --- Keyboard shortcuts ---
     let shortcut_controller = gtk4::ShortcutController::new();
     shortcut_controller.set_scope(gtk4::ShortcutScope::Global);
+    let kb_overrides = settings.borrow().keybinding_overrides.clone();
 
     // Ctrl+T: New tab
     {
         let create_tab = create_tab.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>t", move || {
-            create_tab();
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("new_tab", &kb_overrides),
+            move || {
+                create_tab();
+            },
+        );
     }
 
     // Ctrl+W: Close current tab
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>w", move || {
-            if let Some(page) = tab_view.selected_page() {
-                tab_view.close_page(&page);
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("close_tab", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    tab_view.close_page(&page);
+                }
+            },
+        );
     }
 
     // Ctrl+Shift+B: Toggle sidebar
     {
         let sidebar_btn = sidebar_btn.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>b", move || {
-            sidebar_btn.set_active(!sidebar_btn.is_active());
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("toggle_sidebar", &kb_overrides),
+            move || {
+                sidebar_btn.set_active(!sidebar_btn.is_active());
+            },
+        );
     }
 
     // Shared closure to open settings and apply changes live
@@ -1331,7 +1343,10 @@ pub fn build_window(app: &adw::Application) {
         vec![
             Command {
                 name: "New Terminal Tab".to_string(),
-                shortcut: "Ctrl+T".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "new_tab",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let create_tab = create_tab.clone();
                     move || create_tab()
@@ -1339,7 +1354,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Close Tab".to_string(),
-                shortcut: "Ctrl+W".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "close_tab",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let tab_view = tab_view.clone();
                     move || {
@@ -1351,7 +1369,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Toggle Sidebar".to_string(),
-                shortcut: "Ctrl+Shift+B".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "toggle_sidebar",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let sidebar_btn = sidebar_btn.clone();
                     move || sidebar_btn.set_active(!sidebar_btn.is_active())
@@ -1368,7 +1389,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Find in Project".to_string(),
-                shortcut: "Ctrl+Shift+F".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "project_search",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let sidebar_btn = sidebar_btn.clone();
                     let sidebar_state = sidebar_state.clone();
@@ -1384,7 +1408,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Toggle Fullscreen".to_string(),
-                shortcut: "F11".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "fullscreen",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let window_ref = window_ref.clone();
                     move || {
@@ -1398,7 +1425,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "New Window".to_string(),
-                shortcut: "Ctrl+Shift+N".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "new_window",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let app = app.clone();
                     move || build_window(&app)
@@ -1406,7 +1436,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Split Terminal Horizontally".to_string(),
-                shortcut: "Ctrl+Shift+E".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "split_horizontal",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let tab_view = tab_view.clone();
                     let setup_terminal_signals = setup_terminal_signals.clone();
@@ -1436,7 +1469,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Split Terminal Vertically".to_string(),
-                shortcut: "Ctrl+Shift+O".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "split_vertical",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let tab_view = tab_view.clone();
                     let setup_terminal_signals = setup_terminal_signals.clone();
@@ -1466,7 +1502,10 @@ pub fn build_window(app: &adw::Application) {
             },
             Command {
                 name: "Open Settings".to_string(),
-                shortcut: "Ctrl+,".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "open_settings",
+                    &kb_overrides,
+                )),
                 action: Rc::new({
                     let open_settings = open_settings.clone();
                     move || {
@@ -1509,47 +1548,63 @@ pub fn build_window(app: &adw::Application) {
     {
         let window_ref = window.clone();
         let commands = commands.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>p", move || {
-            show_command_palette(&window_ref, &commands);
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("command_palette", &kb_overrides),
+            move || {
+                show_command_palette(&window_ref, &commands);
+            },
+        );
     }
 
     // Ctrl+,: Open Settings
     {
         let open_settings = open_settings.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>comma", move || {
-            open_settings();
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("open_settings", &kb_overrides),
+            move || {
+                open_settings();
+            },
+        );
     }
 
     // Ctrl+Tab / Ctrl+Shift+Tab: Switch tabs
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>Tab", move || {
-            let n = tab_view.n_pages();
-            if n <= 1 {
-                return;
-            }
-            if let Some(current) = tab_view.selected_page() {
-                let pos = tab_view.page_position(&current);
-                let next = (pos + 1) % n;
-                tab_view.set_selected_page(&tab_view.nth_page(next));
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("next_tab", &kb_overrides),
+            move || {
+                let n = tab_view.n_pages();
+                if n <= 1 {
+                    return;
+                }
+                if let Some(current) = tab_view.selected_page() {
+                    let pos = tab_view.page_position(&current);
+                    let next = (pos + 1) % n;
+                    tab_view.set_selected_page(&tab_view.nth_page(next));
+                }
+            },
+        );
     }
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>Tab", move || {
-            let n = tab_view.n_pages();
-            if n <= 1 {
-                return;
-            }
-            if let Some(current) = tab_view.selected_page() {
-                let pos = tab_view.page_position(&current);
-                let prev = if pos == 0 { n - 1 } else { pos - 1 };
-                tab_view.set_selected_page(&tab_view.nth_page(prev));
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("prev_tab", &kb_overrides),
+            move || {
+                let n = tab_view.n_pages();
+                if n <= 1 {
+                    return;
+                }
+                if let Some(current) = tab_view.selected_page() {
+                    let pos = tab_view.page_position(&current);
+                    let prev = if pos == 0 { n - 1 } else { pos - 1 };
+                    tab_view.set_selected_page(&tab_view.nth_page(prev));
+                }
+            },
+        );
     }
 
     // Ctrl+1-9: Switch to tab by number
@@ -1566,13 +1621,17 @@ pub fn build_window(app: &adw::Application) {
     // Ctrl+Shift+C: Copy selected text
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>c", move || {
-            if let Some(page) = tab_view.selected_page() {
-                if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
-                    term.copy_clipboard_format(vte4::Format::Text);
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("copy", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                        term.copy_clipboard_format(vte4::Format::Text);
+                    }
                 }
-            }
-        });
+            },
+        );
     }
 
     // Ctrl+Shift+V paste is handled by the capture-phase EventControllerKey
@@ -1582,48 +1641,64 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let font_size = font_size.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>equal", move || {
-            let new_size = font_size.get() + 1;
-            font_size.set(new_size);
-            apply_font_size_to_all_terminals(&tab_view, new_size);
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("font_increase", &kb_overrides),
+            move || {
+                let new_size = font_size.get() + 1;
+                font_size.set(new_size);
+                apply_font_size_to_all_terminals(&tab_view, new_size);
+            },
+        );
     }
 
     // Ctrl+minus: Decrease font size
     {
         let tab_view = tab_view.clone();
         let font_size = font_size.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>minus", move || {
-            let new_size = font_size.get() - 1;
-            if new_size > 0 {
-                font_size.set(new_size);
-                apply_font_size_to_all_terminals(&tab_view, new_size);
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("font_decrease", &kb_overrides),
+            move || {
+                let new_size = font_size.get() - 1;
+                if new_size > 0 {
+                    font_size.set(new_size);
+                    apply_font_size_to_all_terminals(&tab_view, new_size);
+                }
+            },
+        );
     }
 
     // Ctrl+0: Reset font size to default
     {
         let tab_view = tab_view.clone();
         let font_size = font_size.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>0", move || {
-            font_size.set(11);
-            apply_font_size_to_all_terminals(&tab_view, 11);
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("font_reset", &kb_overrides),
+            move || {
+                font_size.set(11);
+                apply_font_size_to_all_terminals(&tab_view, 11);
+            },
+        );
     }
 
     // Ctrl+Shift+F: Project-wide find and replace (open sidebar search tab)
     {
         let sidebar_btn = sidebar_btn.clone();
         let sidebar_state = sidebar_state.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>f", move || {
-            // Show sidebar and switch to search tab
-            if !sidebar_btn.is_active() {
-                sidebar_btn.set_active(true);
-            }
-            sidebar_state.search_btn.set_active(true);
-            sidebar_state.project_search.search_entry.grab_focus();
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("project_search", &kb_overrides),
+            move || {
+                // Show sidebar and switch to search tab
+                if !sidebar_btn.is_active() {
+                    sidebar_btn.set_active(true);
+                }
+                sidebar_state.search_btn.set_active(true);
+                sidebar_state.project_search.search_entry.grab_focus();
+            },
+        );
     }
 
     // Ctrl+F: Toggle terminal search bar (Monaco handles Ctrl+F for editor tabs)
@@ -1631,20 +1706,24 @@ pub fn build_window(app: &adw::Application) {
         let tab_view = tab_view.clone();
         let search_revealer = search_revealer.clone();
         let find_entry = find_entry.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>f", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if !editor::is_editor(&child) {
-                    // Terminal tab: toggle terminal search bar
-                    let is_visible = search_revealer.reveals_child();
-                    search_revealer.set_reveal_child(!is_visible);
-                    if !is_visible {
-                        find_entry.grab_focus();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("find", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    if !editor::is_editor(&child) {
+                        // Terminal tab: toggle terminal search bar
+                        let is_visible = search_revealer.reveals_child();
+                        search_revealer.set_reveal_child(!is_visible);
+                        if !is_visible {
+                            find_entry.grab_focus();
+                        }
                     }
+                    // Editor tabs: Ctrl+F is handled by Monaco's built-in search
                 }
-                // Editor tabs: Ctrl+F is handled by Monaco's built-in search
-            }
-        });
+            },
+        );
     }
 
     // Ctrl+H: Monaco handles find-and-replace for editor tabs natively
@@ -1655,61 +1734,75 @@ pub fn build_window(app: &adw::Application) {
         let toast_overlay = toast_overlay.clone();
         let lsp_tx = lsp_request_tx.clone();
         let settings = settings.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>s", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    let path = child.widget_name().to_string();
-                    if let Some(text) = editor::get_editor_text(&child) {
-                        match std::fs::write(&path, &text) {
-                            Ok(()) => {
-                                editor::set_unmodified(&child);
-                                // Revert tab title
-                                let filename = std::path::Path::new(&path)
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or(&path);
-                                page.set_title(filename);
-                                // LSP: send didSave
-                                let _ = lsp_tx.send(LspRequest::DidSave {
-                                    uri: file_path_to_uri(std::path::Path::new(&path))
-                                        .unwrap_or_else(|| format!("file://{}", path)),
-                                });
-                                let toast = adw::Toast::new(&format!("Saved {}", filename));
-                                toast.set_timeout(2);
-                                toast_overlay.add_toast(toast);
-                                // Run format-on-save + commands in a background thread
-                                let overrides = settings.borrow().file_type_overrides.clone();
-                                let commands = settings.borrow().commands_on_save.clone();
-                                let save_path = path.clone();
-                                std::thread::spawn(move || {
-                                    let formatted = run_format_on_save(&save_path, &overrides);
-                                    run_commands_on_save(&save_path, &commands);
-                                    if formatted {
-                                        let reload_path = save_path.clone();
-                                        gtk4::glib::MainContext::default().invoke(move || {
-                                            if let Some(handle) = crate::editor::get_handle(&reload_path) {
-                                                if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
-                                                    let lang = handle.language.borrow().clone();
-                                                    handle.suppress_next_modify.set(true);
-                                                    handle.open_file(&reload_path, &new_content, &lang);
-                                                    send_diff_decorations(&handle, &reload_path);
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("save", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    if editor::is_editor(&child) {
+                        let path = child.widget_name().to_string();
+                        if let Some(text) = editor::get_editor_text(&child) {
+                            match std::fs::write(&path, &text) {
+                                Ok(()) => {
+                                    editor::set_unmodified(&child);
+                                    // Revert tab title
+                                    let filename = std::path::Path::new(&path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(&path);
+                                    page.set_title(filename);
+                                    // LSP: send didSave
+                                    let _ = lsp_tx.send(LspRequest::DidSave {
+                                        uri: file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path)),
+                                    });
+                                    let toast = adw::Toast::new(&format!("Saved {}", filename));
+                                    toast.set_timeout(2);
+                                    toast_overlay.add_toast(toast);
+                                    // Run commands-on-save in a background thread
+                                    let commands = settings.borrow().commands_on_save.clone();
+                                    let save_path = path.clone();
+                                    std::thread::spawn(move || {
+                                        let needs_reload =
+                                            run_commands_on_save(&save_path, &commands);
+                                        if needs_reload {
+                                            let reload_path = save_path.clone();
+                                            gtk4::glib::MainContext::default().invoke(move || {
+                                                if let Some(handle) =
+                                                    crate::editor::get_handle(&reload_path)
+                                                {
+                                                    if let Ok(new_content) =
+                                                        std::fs::read_to_string(&reload_path)
+                                                    {
+                                                        let lang = handle.language.borrow().clone();
+                                                        handle.suppress_next_modify.set(true);
+                                                        handle.open_file(
+                                                            &reload_path,
+                                                            &new_content,
+                                                            &lang,
+                                                        );
+                                                        send_diff_decorations(
+                                                            &handle,
+                                                            &reload_path,
+                                                        );
+                                                    }
                                                 }
-                                            }
-                                        });
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                let toast = adw::Toast::new(&format!("Error saving: {}", e));
-                                toast.set_timeout(4);
-                                toast_overlay.add_toast(toast);
+                                            });
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    let toast = adw::Toast::new(&format!("Error saving: {}", e));
+                                    toast.set_timeout(4);
+                                    toast_overlay.add_toast(toast);
+                                }
                             }
                         }
                     }
                 }
-            }
-        });
+            },
+        );
     }
 
     // Ctrl+Shift+E: Split terminal horizontally (side by side)
@@ -1719,25 +1812,29 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
         let shell_cache = shell_cache.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>e", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                let setup = setup_terminal_signals.clone();
-                let s = settings.borrow();
-                let theme = crate::theme::get_theme(&s.color_scheme);
-                terminal_container::split_terminal(
-                    &child,
-                    gtk4::Orientation::Horizontal,
-                    &|term| {
-                        setup(term);
-                    },
-                    &s,
-                    theme,
-                    copy_on_select_flag.clone(),
-                    &shell_cache,
-                );
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("split_horizontal", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    let setup = setup_terminal_signals.clone();
+                    let s = settings.borrow();
+                    let theme = crate::theme::get_theme(&s.color_scheme);
+                    terminal_container::split_terminal(
+                        &child,
+                        gtk4::Orientation::Horizontal,
+                        &|term| {
+                            setup(term);
+                        },
+                        &s,
+                        theme,
+                        copy_on_select_flag.clone(),
+                        &shell_cache,
+                    );
+                }
+            },
+        );
     }
 
     // Ctrl+Shift+O: Split terminal vertically (top/bottom)
@@ -1747,45 +1844,57 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
         let shell_cache = shell_cache.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>o", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                let setup = setup_terminal_signals.clone();
-                let s = settings.borrow();
-                let theme = crate::theme::get_theme(&s.color_scheme);
-                terminal_container::split_terminal(
-                    &child,
-                    gtk4::Orientation::Vertical,
-                    &|term| {
-                        setup(term);
-                    },
-                    &s,
-                    theme,
-                    copy_on_select_flag.clone(),
-                    &shell_cache,
-                );
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("split_vertical", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    let setup = setup_terminal_signals.clone();
+                    let s = settings.borrow();
+                    let theme = crate::theme::get_theme(&s.color_scheme);
+                    terminal_container::split_terminal(
+                        &child,
+                        gtk4::Orientation::Vertical,
+                        &|term| {
+                            setup(term);
+                        },
+                        &s,
+                        theme,
+                        copy_on_select_flag.clone(),
+                        &shell_cache,
+                    );
+                }
+            },
+        );
     }
 
     // Alt+Left: Focus previous split pane
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Alt>Left", move || {
-            if let Some(page) = tab_view.selected_page() {
-                terminal_container::focus_prev_terminal(&page.child());
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("focus_prev_split", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    terminal_container::focus_prev_terminal(&page.child());
+                }
+            },
+        );
     }
 
     // Alt+Right: Focus next split pane
     {
         let tab_view = tab_view.clone();
-        add_shortcut(&shortcut_controller, "<Alt>Right", move || {
-            if let Some(page) = tab_view.selected_page() {
-                terminal_container::focus_next_terminal(&page.child());
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("focus_next_split", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    terminal_container::focus_next_terminal(&page.child());
+                }
+            },
+        );
     }
 
     // --- Terminal search bar wiring ---
@@ -1893,14 +2002,18 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let window_ref = window.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl>g", move || {
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                if editor::is_editor(&child) {
-                    show_go_to_line_dialog(&window_ref, &child);
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("go_to_line", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    if editor::is_editor(&child) {
+                        show_go_to_line_dialog(&window_ref, &child);
+                    }
                 }
-            }
-        });
+            },
+        );
     }
 
     // F12, Ctrl+Space, Ctrl+Shift+I: These are now handled by Monaco's
@@ -1910,28 +2023,36 @@ pub fn build_window(app: &adw::Application) {
     // Ctrl+Shift+N: New window
     {
         let app_clone = app.clone();
-        add_shortcut(&shortcut_controller, "<Ctrl><Shift>n", move || {
-            build_window(&app_clone);
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("new_window", &kb_overrides),
+            move || {
+                build_window(&app_clone);
+            },
+        );
     }
 
     // F11: Toggle fullscreen
     {
         let window_ref = window.clone();
-        add_shortcut(&shortcut_controller, "F11", move || {
-            if window_ref.is_fullscreen() {
-                window_ref.unfullscreen();
-            } else {
-                window_ref.fullscreen();
-            }
-        });
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("fullscreen", &kb_overrides),
+            move || {
+                if window_ref.is_fullscreen() {
+                    window_ref.unfullscreen();
+                } else {
+                    window_ref.fullscreen();
+                }
+            },
+        );
     }
 
     // Register custom keybindings from settings
     {
         let custom_keybindings = settings.borrow().custom_keybindings.clone();
         for kb in custom_keybindings {
-            let accel = parse_keybinding_to_accel(&kb.key);
+            let accel = keybindings::parse_keybinding_to_accel(&kb.key);
             if accel.is_empty() {
                 log::warn!("Invalid keybinding: {}", kb.key);
                 continue;
@@ -2241,7 +2362,10 @@ pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle,
     handle.apply_diff_decorations(decorations);
 }
 
-fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave]) {
+/// Runs all matching commands-on-save for the given file path.
+/// Returns `true` if any successful command had `reload_file` set.
+fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave]) -> bool {
+    let mut needs_reload = false;
     for cmd in commands {
         if crate::settings::matches_file_pattern(path, &cmd.file_pattern) {
             let mut command = std::process::Command::new(&cmd.command);
@@ -2258,67 +2382,16 @@ fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave])
                         );
                     } else {
                         log::info!("Command '{}' succeeded for {}", cmd.name, path);
+                        if cmd.reload_file {
+                            needs_reload = true;
+                        }
                     }
                 }
                 Err(e) => log::warn!("Failed to run command '{}': {}", cmd.name, e),
             }
         }
     }
-}
-
-/// Run a format-on-save command for the given file, if one matches.
-/// Returns `true` if a formatter was run successfully.
-fn run_format_on_save(
-    path: &str,
-    overrides: &[crate::settings::FileTypeOverride],
-) -> bool {
-    for ovr in overrides {
-        if let Some(ref fmt) = ovr.format_on_save {
-            if crate::settings::matches_file_pattern(path, &ovr.pattern) {
-                let mut command = std::process::Command::new(&fmt.command);
-                command.args(&fmt.args);
-                command.arg(path);
-                match command.output() {
-                    Ok(output) => {
-                        if output.status.success() {
-                            log::info!("Formatter '{}' succeeded for {}", fmt.command, path);
-                            return true;
-                        } else {
-                            log::warn!(
-                                "Formatter '{}' failed for {}: {}",
-                                fmt.command,
-                                path,
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        }
-                    }
-                    Err(e) => log::warn!("Failed to run formatter '{}': {}", fmt.command, e),
-                }
-                // Only match the first applicable override
-                return false;
-            }
-        }
-    }
-    false
-}
-
-fn parse_keybinding_to_accel(key: &str) -> String {
-    let parts: Vec<&str> = key.split('+').collect();
-    if parts.is_empty() {
-        return String::new();
-    }
-    let mut accel = String::new();
-    for part in &parts[..parts.len() - 1] {
-        match part.trim().to_lowercase().as_str() {
-            "ctrl" | "control" => accel.push_str("<Ctrl>"),
-            "shift" => accel.push_str("<Shift>"),
-            "alt" => accel.push_str("<Alt>"),
-            "super" => accel.push_str("<Super>"),
-            _ => return String::new(),
-        }
-    }
-    accel.push_str(parts.last().unwrap().trim());
-    accel
+    needs_reload
 }
 
 fn add_shortcut(controller: &gtk4::ShortcutController, accel: &str, callback: impl Fn() + 'static) {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// A formatter command that runs on save before the editor reloads the file.
@@ -29,6 +30,8 @@ pub struct CommandOnSave {
     #[serde(default)]
     pub args: Vec<String>,
     pub file_pattern: String,
+    #[serde(default)]
+    pub reload_file: bool,
 }
 
 /// A user-defined keybinding that runs a command.
@@ -106,6 +109,10 @@ pub struct Settings {
     pub commands_on_save: Vec<CommandOnSave>,
     pub custom_keybindings: Vec<CustomKeybinding>,
 
+    // ── Keybinding overrides ─────────────────────────────────────────────
+    #[serde(default)]
+    pub keybinding_overrides: HashMap<String, String>,
+
     // ── Per-file-type overrides ───────────────────────────────────────────
     pub file_type_overrides: Vec<FileTypeOverride>,
 }
@@ -170,6 +177,9 @@ impl Default for Settings {
             commands_on_save: Vec::new(),
             custom_keybindings: Vec::new(),
 
+            // Keybinding overrides
+            keybinding_overrides: HashMap::new(),
+
             // Per-file-type overrides
             file_type_overrides: Vec::new(),
         }
@@ -207,9 +217,32 @@ fn settings_path() -> PathBuf {
 
 pub fn load() -> Settings {
     let path = settings_path();
-    match std::fs::read_to_string(&path) {
+    let mut settings = match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Settings::default(),
+    };
+    migrate_format_on_save(&mut settings);
+    settings
+}
+
+/// Migrates `format_on_save` entries from `FileTypeOverride` into
+/// `CommandOnSave` entries with `reload_file: true`.
+fn migrate_format_on_save(settings: &mut Settings) {
+    let mut migrated = false;
+    for ovr in &mut settings.file_type_overrides {
+        if let Some(fmt) = ovr.format_on_save.take() {
+            settings.commands_on_save.push(CommandOnSave {
+                name: format!("Format ({})", ovr.pattern),
+                command: fmt.command,
+                args: fmt.args,
+                file_pattern: ovr.pattern.clone(),
+                reload_file: true,
+            });
+            migrated = true;
+        }
+    }
+    if migrated {
+        save(settings);
     }
 }
 

@@ -1,6 +1,7 @@
 mod editor;
 mod editor_webview;
 mod file_icons;
+mod keybindings;
 mod lsp_completion;
 mod lsp_hover;
 mod project_search;

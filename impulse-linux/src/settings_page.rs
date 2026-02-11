@@ -5,7 +5,8 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::settings::{self, CommandOnSave, FileTypeOverride, FormatOnSave, Settings};
+use crate::keybindings;
+use crate::settings::{self, CommandOnSave, CustomKeybinding, FileTypeOverride, Settings};
 use crate::theme;
 
 fn override_summary(o: &FileTypeOverride) -> String {
@@ -16,9 +17,6 @@ fn override_summary(o: &FileTypeOverride) -> String {
     if let Some(spaces) = o.use_spaces {
         parts.push(if spaces { "Spaces" } else { "Tabs" }.to_string());
     }
-    if let Some(ref fmt) = o.format_on_save {
-        parts.push(format!("Format: {}", fmt.command));
-    }
     if parts.is_empty() {
         "No overrides set".to_string()
     } else {
@@ -27,10 +25,11 @@ fn override_summary(o: &FileTypeOverride) -> String {
 }
 
 fn command_summary(c: &CommandOnSave) -> String {
+    let suffix = if c.reload_file { " (formatter)" } else { "" };
     if c.command.is_empty() {
-        c.file_pattern.clone()
+        format!("{}{}", c.file_pattern, suffix)
     } else {
-        format!("{} on {}", c.command, c.file_pattern)
+        format!("{} on {}{}", c.command, c.file_pattern, suffix)
     }
 }
 
@@ -47,21 +46,13 @@ fn rebuild_overrides_group(
 
     let count = settings.borrow().file_type_overrides.len();
     for i in 0..count {
-        let (pattern, tab_width_val, use_spaces_val, fmt_cmd, fmt_args, summary) = {
+        let (pattern, tab_width_val, use_spaces_val, summary) = {
             let s = settings.borrow();
             let o = &s.file_type_overrides[i];
             (
                 o.pattern.clone(),
                 o.tab_width.unwrap_or(0) as f64,
                 o.use_spaces.unwrap_or(true),
-                o.format_on_save
-                    .as_ref()
-                    .map(|f| f.command.clone())
-                    .unwrap_or_default(),
-                o.format_on_save
-                    .as_ref()
-                    .map(|f| f.args.join(" "))
-                    .unwrap_or_default(),
                 override_summary(o),
             )
         };
@@ -144,58 +135,6 @@ fn rebuild_overrides_group(
         }
         expander.add_row(&spaces_row);
 
-        let fmt_cmd_row = adw::EntryRow::new();
-        fmt_cmd_row.set_title("Format Command");
-        fmt_cmd_row.set_text(&fmt_cmd);
-        {
-            let settings = Rc::clone(settings);
-            let on_changed = Rc::clone(on_changed);
-            let expander = expander.clone();
-            fmt_cmd_row.connect_changed(move |row| {
-                let cmd = row.text().to_string();
-                let mut s = settings.borrow_mut();
-                let o = &mut s.file_type_overrides[i];
-                if cmd.is_empty() {
-                    o.format_on_save = None;
-                } else {
-                    match o.format_on_save.as_mut() {
-                        Some(f) => f.command = cmd,
-                        None => {
-                            o.format_on_save = Some(FormatOnSave {
-                                command: cmd,
-                                args: Vec::new(),
-                            });
-                        }
-                    }
-                }
-                expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
-                settings::save(&s);
-                on_changed(&s);
-            });
-        }
-        expander.add_row(&fmt_cmd_row);
-
-        let fmt_args_row = adw::EntryRow::new();
-        fmt_args_row.set_title("Format Arguments");
-        fmt_args_row.set_text(&fmt_args);
-        {
-            let settings = Rc::clone(settings);
-            let on_changed = Rc::clone(on_changed);
-            fmt_args_row.connect_changed(move |row| {
-                let args_str = row.text().to_string();
-                let mut s = settings.borrow_mut();
-                if let Some(ref mut f) = s.file_type_overrides[i].format_on_save {
-                    f.args = args_str
-                        .split_whitespace()
-                        .map(String::from)
-                        .collect();
-                    settings::save(&s);
-                    on_changed(&s);
-                }
-            });
-        }
-        expander.add_row(&fmt_args_row);
-
         group.add(&expander);
         tracked.borrow_mut().push(expander.upcast());
     }
@@ -241,7 +180,7 @@ fn rebuild_commands_group(
 
     let count = settings.borrow().commands_on_save.len();
     for i in 0..count {
-        let (name, command, args, file_pattern, summary) = {
+        let (name, command, args, file_pattern, reload_file, summary) = {
             let s = settings.borrow();
             let c = &s.commands_on_save[i];
             (
@@ -249,6 +188,7 @@ fn rebuild_commands_group(
                 c.command.clone(),
                 c.args.join(" "),
                 c.file_pattern.clone(),
+                c.reload_file,
                 command_summary(c),
             )
         };
@@ -349,6 +289,24 @@ fn rebuild_commands_group(
         }
         expander.add_row(&pattern_row);
 
+        let reload_row = adw::SwitchRow::new();
+        reload_row.set_title("Reload File After Run");
+        reload_row.set_subtitle("Reload the editor buffer after the command succeeds");
+        reload_row.set_active(reload_file);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            reload_row.connect_active_notify(move |row| {
+                let mut s = settings.borrow_mut();
+                s.commands_on_save[i].reload_file = row.is_active();
+                expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&reload_row);
+
         group.add(&expander);
         tracked.borrow_mut().push(expander.upcast());
     }
@@ -370,6 +328,7 @@ fn rebuild_commands_group(
                     command: String::new(),
                     args: Vec::new(),
                     file_pattern: "*".to_string(),
+                    reload_file: false,
                 });
                 settings::save(&s);
                 on_changed(&s);
@@ -1140,23 +1099,423 @@ pub fn show_settings_window(
 
     let overrides_group = adw::PreferencesGroup::new();
     overrides_group.set_title("File Type Overrides");
-    overrides_group.set_description(Some(
-        "Per-file-type editor settings and format-on-save commands",
-    ));
+    overrides_group.set_description(Some("Per-file-type indentation settings"));
     let tracked_overrides: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     rebuild_overrides_group(&overrides_group, &tracked_overrides, settings, &on_changed);
     automation_page.add(&overrides_group);
 
     let commands_group = adw::PreferencesGroup::new();
     commands_group.set_title("Commands on Save");
-    commands_group.set_description(Some(
-        "Shell commands that run after saving matching files",
-    ));
+    commands_group.set_description(Some("Shell commands that run after saving matching files"));
     let tracked_commands: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     rebuild_commands_group(&commands_group, &tracked_commands, settings, &on_changed);
     automation_page.add(&commands_group);
 
     preferences_window.add(&automation_page);
 
+    // ── Page 5: Keybindings ────────────────────────────────────────────
+    let keybindings_page = adw::PreferencesPage::new();
+    keybindings_page.set_title("Keybindings");
+    keybindings_page.set_icon_name(Some("preferences-desktop-keyboard-symbolic"));
+
+    // Built-in shortcuts group
+    let builtin_group = adw::PreferencesGroup::new();
+    builtin_group.set_title("Built-in Shortcuts");
+    builtin_group.set_description(Some(
+        "Click a shortcut to change it. Press Backspace to reset to default.\n\
+         Keybinding changes take effect after restarting Impulse.",
+    ));
+
+    for category in keybindings::categories() {
+        // Category header
+        let header = adw::ActionRow::new();
+        header.set_title(category);
+        header.add_css_class("heading");
+        builtin_group.add(&header);
+
+        for kb in keybindings::BUILTIN_KEYBINDINGS
+            .iter()
+            .filter(|kb| kb.category == *category)
+        {
+            let overrides = settings.borrow().keybinding_overrides.clone();
+            let current_accel = keybindings::get_accel(kb.id, &overrides);
+            let display_text = keybindings::accel_to_display(&current_accel);
+            let is_overridden = overrides.contains_key(kb.id);
+
+            let row = adw::ActionRow::new();
+            row.set_title(kb.description);
+            if is_overridden {
+                row.set_subtitle(&format!(
+                    "Default: {}",
+                    keybindings::accel_to_display(kb.default_accel)
+                ));
+            }
+
+            let btn = gtk4::Button::with_label(&display_text);
+            btn.set_valign(gtk4::Align::Center);
+            btn.add_css_class("flat");
+            row.add_suffix(&btn);
+
+            {
+                let settings = Rc::clone(settings);
+                let on_changed = Rc::clone(&on_changed);
+                let kb_id = kb.id.to_string();
+                let kb_default = kb.default_accel.to_string();
+                let kb_desc = kb.description.to_string();
+                let row = row.clone();
+                let preferences_window_ref = preferences_window.clone();
+                btn.connect_clicked(move |btn| {
+                    show_key_capture_dialog(
+                        &preferences_window_ref,
+                        &kb_desc,
+                        &kb_id,
+                        &kb_default,
+                        btn,
+                        &row,
+                        &settings,
+                        &on_changed,
+                    );
+                });
+            }
+
+            builtin_group.add(&row);
+        }
+    }
+
+    keybindings_page.add(&builtin_group);
+
+    // Custom keybindings group
+    let custom_kb_group = adw::PreferencesGroup::new();
+    custom_kb_group.set_title("Custom Keybindings");
+    custom_kb_group.set_description(Some("Shortcuts that run shell commands"));
+    let tracked_custom_kb: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    rebuild_custom_keybindings_group(&custom_kb_group, &tracked_custom_kb, settings, &on_changed);
+    keybindings_page.add(&custom_kb_group);
+
+    preferences_window.add(&keybindings_page);
+
     preferences_window.present();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_key_capture_dialog(
+    parent: &adw::PreferencesWindow,
+    description: &str,
+    kb_id: &str,
+    kb_default: &str,
+    btn: &gtk4::Button,
+    row: &adw::ActionRow,
+    settings: &Rc<RefCell<Settings>>,
+    on_changed: &Rc<dyn Fn(&Settings)>,
+) {
+    let dialog = gtk4::Window::builder()
+        .transient_for(parent)
+        .modal(true)
+        .decorated(false)
+        .default_width(400)
+        .default_height(120)
+        .build();
+    dialog.add_css_class("quick-open");
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    vbox.set_margin_top(24);
+    vbox.set_margin_bottom(24);
+    vbox.set_margin_start(24);
+    vbox.set_margin_end(24);
+
+    let label = gtk4::Label::new(Some(&format!(
+        "Press a key combination for \"{}\"\nPress Escape to cancel, Backspace to reset",
+        description
+    )));
+    label.set_halign(gtk4::Align::Center);
+    vbox.append(&label);
+
+    dialog.set_child(Some(&vbox));
+
+    let key_controller = gtk4::EventControllerKey::new();
+    {
+        let dialog = dialog.clone();
+        let kb_id = kb_id.to_string();
+        let kb_default = kb_default.to_string();
+        let btn = btn.clone();
+        let row = row.clone();
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(on_changed);
+        key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+            // Escape cancels
+            if key == gtk4::gdk::Key::Escape {
+                dialog.close();
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            // Backspace/Delete resets to default
+            if key == gtk4::gdk::Key::BackSpace || key == gtk4::gdk::Key::Delete {
+                {
+                    let mut s = settings.borrow_mut();
+                    s.keybinding_overrides.remove(&kb_id);
+                    settings::save(&s);
+                    on_changed(&s);
+                }
+                btn.set_label(&keybindings::accel_to_display(&kb_default));
+                row.set_subtitle("");
+                dialog.close();
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            // Ignore lone modifier keys
+            if matches!(
+                key,
+                gtk4::gdk::Key::Shift_L
+                    | gtk4::gdk::Key::Shift_R
+                    | gtk4::gdk::Key::Control_L
+                    | gtk4::gdk::Key::Control_R
+                    | gtk4::gdk::Key::Alt_L
+                    | gtk4::gdk::Key::Alt_R
+                    | gtk4::gdk::Key::Super_L
+                    | gtk4::gdk::Key::Super_R
+                    | gtk4::gdk::Key::Meta_L
+                    | gtk4::gdk::Key::Meta_R
+            ) {
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            // Build display string from modifiers + key
+            let mut parts = Vec::new();
+            if modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                parts.push("Ctrl");
+            }
+            if modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
+                parts.push("Shift");
+            }
+            if modifiers.contains(gtk4::gdk::ModifierType::ALT_MASK) {
+                parts.push("Alt");
+            }
+            if modifiers.contains(gtk4::gdk::ModifierType::SUPER_MASK) {
+                parts.push("Super");
+            }
+
+            let key_name = key_to_display_name(key);
+            if key_name.is_empty() {
+                return gtk4::glib::Propagation::Stop;
+            }
+            parts.push(&key_name);
+
+            let display_str = parts.join("+");
+
+            // Store the override
+            {
+                let mut s = settings.borrow_mut();
+                s.keybinding_overrides
+                    .insert(kb_id.clone(), display_str.clone());
+                settings::save(&s);
+                on_changed(&s);
+            }
+            btn.set_label(&display_str);
+            row.set_subtitle(&format!(
+                "Default: {}",
+                keybindings::accel_to_display(&kb_default)
+            ));
+            dialog.close();
+            gtk4::glib::Propagation::Stop
+        });
+    }
+    dialog.add_controller(key_controller);
+    dialog.present();
+}
+
+fn key_to_display_name(key: gtk4::gdk::Key) -> String {
+    match key {
+        gtk4::gdk::Key::Tab => "Tab".to_string(),
+        gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter => "Return".to_string(),
+        gtk4::gdk::Key::space => "Space".to_string(),
+        gtk4::gdk::Key::Left => "Left".to_string(),
+        gtk4::gdk::Key::Right => "Right".to_string(),
+        gtk4::gdk::Key::Up => "Up".to_string(),
+        gtk4::gdk::Key::Down => "Down".to_string(),
+        gtk4::gdk::Key::Home => "Home".to_string(),
+        gtk4::gdk::Key::End => "End".to_string(),
+        gtk4::gdk::Key::Page_Up => "Page_Up".to_string(),
+        gtk4::gdk::Key::Page_Down => "Page_Down".to_string(),
+        gtk4::gdk::Key::F1 => "F1".to_string(),
+        gtk4::gdk::Key::F2 => "F2".to_string(),
+        gtk4::gdk::Key::F3 => "F3".to_string(),
+        gtk4::gdk::Key::F4 => "F4".to_string(),
+        gtk4::gdk::Key::F5 => "F5".to_string(),
+        gtk4::gdk::Key::F6 => "F6".to_string(),
+        gtk4::gdk::Key::F7 => "F7".to_string(),
+        gtk4::gdk::Key::F8 => "F8".to_string(),
+        gtk4::gdk::Key::F9 => "F9".to_string(),
+        gtk4::gdk::Key::F10 => "F10".to_string(),
+        gtk4::gdk::Key::F11 => "F11".to_string(),
+        gtk4::gdk::Key::F12 => "F12".to_string(),
+        gtk4::gdk::Key::comma => ",".to_string(),
+        gtk4::gdk::Key::period => ".".to_string(),
+        gtk4::gdk::Key::equal => "=".to_string(),
+        gtk4::gdk::Key::minus => "-".to_string(),
+        gtk4::gdk::Key::semicolon => ";".to_string(),
+        gtk4::gdk::Key::slash => "/".to_string(),
+        gtk4::gdk::Key::bracketleft => "[".to_string(),
+        gtk4::gdk::Key::bracketright => "]".to_string(),
+        gtk4::gdk::Key::backslash => "\\".to_string(),
+        gtk4::gdk::Key::grave => "`".to_string(),
+        gtk4::gdk::Key::apostrophe => "'".to_string(),
+        _ => {
+            // Try to get the key name from the key value
+            let name = key.name().map(|n| n.to_string()).unwrap_or_default();
+            if name.len() == 1 {
+                name.to_uppercase()
+            } else {
+                name
+            }
+        }
+    }
+}
+
+fn rebuild_custom_keybindings_group(
+    group: &adw::PreferencesGroup,
+    tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
+    settings: &Rc<RefCell<Settings>>,
+    on_changed: &Rc<dyn Fn(&Settings)>,
+) {
+    for row in tracked.borrow().iter() {
+        group.remove(row);
+    }
+    tracked.borrow_mut().clear();
+
+    let count = settings.borrow().custom_keybindings.len();
+    for i in 0..count {
+        let (name, key, command, args) = {
+            let s = settings.borrow();
+            let kb = &s.custom_keybindings[i];
+            (
+                kb.name.clone(),
+                kb.key.clone(),
+                kb.command.clone(),
+                kb.args.join(" "),
+            )
+        };
+
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&name);
+        expander.set_subtitle(&key);
+
+        let delete_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
+        delete_btn.set_valign(gtk4::Align::Center);
+        delete_btn.add_css_class("flat");
+        {
+            let group = group.clone();
+            let tracked = Rc::clone(tracked);
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            delete_btn.connect_clicked(move |_| {
+                {
+                    let mut s = settings.borrow_mut();
+                    s.custom_keybindings.remove(i);
+                    settings::save(&s);
+                    on_changed(&s);
+                }
+                rebuild_custom_keybindings_group(&group, &tracked, &settings, &on_changed);
+            });
+        }
+        expander.add_suffix(&delete_btn);
+
+        let name_row = adw::EntryRow::new();
+        name_row.set_title("Name");
+        name_row.set_text(&name);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            name_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.custom_keybindings[i].name = row.text().to_string();
+                expander.set_title(&row.text());
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&name_row);
+
+        let key_row = adw::EntryRow::new();
+        key_row.set_title("Key");
+        key_row.set_text(&key);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            let expander = expander.clone();
+            key_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.custom_keybindings[i].key = row.text().to_string();
+                expander.set_subtitle(&row.text());
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&key_row);
+
+        let cmd_row = adw::EntryRow::new();
+        cmd_row.set_title("Command");
+        cmd_row.set_text(&command);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            cmd_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.custom_keybindings[i].command = row.text().to_string();
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&cmd_row);
+
+        let args_row = adw::EntryRow::new();
+        args_row.set_title("Arguments");
+        args_row.set_text(&args);
+        {
+            let settings = Rc::clone(settings);
+            let on_changed = Rc::clone(on_changed);
+            args_row.connect_changed(move |row| {
+                let mut s = settings.borrow_mut();
+                s.custom_keybindings[i].args = row
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect();
+                settings::save(&s);
+                on_changed(&s);
+            });
+        }
+        expander.add_row(&args_row);
+
+        group.add(&expander);
+        tracked.borrow_mut().push(expander.upcast());
+    }
+
+    let add_row = adw::ActionRow::new();
+    add_row.set_title("Add Custom Keybinding");
+    add_row.set_activatable(true);
+    add_row.add_prefix(&gtk4::Image::from_icon_name("list-add-symbolic"));
+    {
+        let group = group.clone();
+        let tracked = Rc::clone(tracked);
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(on_changed);
+        add_row.connect_activated(move |_| {
+            {
+                let mut s = settings.borrow_mut();
+                s.custom_keybindings.push(CustomKeybinding {
+                    name: "new keybinding".to_string(),
+                    key: String::new(),
+                    command: String::new(),
+                    args: Vec::new(),
+                });
+                settings::save(&s);
+                on_changed(&s);
+            }
+            rebuild_custom_keybindings_group(&group, &tracked, &settings, &on_changed);
+        });
+    }
+    group.add(&add_row);
+    tracked.borrow_mut().push(add_row.upcast());
 }
