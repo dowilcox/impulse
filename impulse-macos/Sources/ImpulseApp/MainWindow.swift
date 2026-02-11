@@ -59,6 +59,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Persisted sidebar width used to restore after collapse/expand.
     private var sidebarTargetWidth: CGFloat
 
+    // MARK: LSP State
+
+    /// Per-URI document version counter for LSP.
+    private var lspDocVersions: [String: Int32] = [:]
+
+    /// Tracks the latest completion request ID per URI for deduplication.
+    private var latestCompletionReq: [String: UInt64] = [:]
+
+    /// Tracks the latest hover request ID per URI for deduplication.
+    private var latestHoverReq: [String: UInt64] = [:]
+
+    /// Timer for polling LSP events (diagnostics, lifecycle).
+    private var lspPollTimer: Timer?
+
+    /// Serial queue for dispatching blocking LSP FFI calls off the main thread.
+    private let lspQueue = DispatchQueue(label: "dev.impulse.lsp", qos: .userInitiated)
+
+    /// Set of file URIs for which didOpen has been sent.
+    private var lspOpenFiles: Set<String> = []
+
     // MARK: - Initialization
 
     init(settings: Settings, theme: Theme, core: ImpulseCore) {
@@ -119,6 +139,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         // Open a default terminal tab.
         tabManager.addTerminalTab()
+
+        // Start polling for asynchronous LSP events (diagnostics, etc.).
+        startLspPolling()
     }
 
     @available(*, unavailable)
@@ -403,6 +426,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard let self, self.window?.isKeyWindow == true else { return }
             if let path = notification.userInfo?["path"] as? String {
                 self.tabManager.addEditorTab(path: path)
+                self.lspDidOpenIfNeeded(path: path)
+                // Navigate to specific line if provided (e.g. from search results).
+                if let line = notification.userInfo?["line"] as? UInt32,
+                   self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                   case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    editor.goToPosition(line: line, column: 1)
+                }
             }
         }
         nc.addObserver(forName: .impulseSplitHorizontal, object: nil, queue: .main) { [weak self] _ in
@@ -449,6 +480,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
                 editor.saveFile()
                 self.tabManager.refreshSegmentLabels()
+                self.lspDidSave(editor: editor)
             }
         }
 
@@ -504,11 +536,400 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 }
             }
         }
+
+        // Editor content changed — refresh tab labels and notify LSP
+        nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) { [weak self] notification in
+            guard let self else { return }
+            self.tabManager.refreshSegmentLabels()
+            if let editor = notification.object as? EditorTab {
+                self.lspDidChange(editor: editor)
+            }
+        }
+
+        // LSP: completion requested
+        nc.addObserver(forName: .editorCompletionRequested, object: nil, queue: .main) { [weak self] notification in
+            guard let self,
+                  let editor = notification.object as? EditorTab,
+                  let requestId = notification.userInfo?["requestId"] as? UInt64,
+                  let line = notification.userInfo?["line"] as? UInt32,
+                  let character = notification.userInfo?["character"] as? UInt32 else { return }
+            self.handleCompletionRequest(editor: editor, requestId: requestId, line: line, character: character)
+        }
+
+        // LSP: hover requested
+        nc.addObserver(forName: .editorHoverRequested, object: nil, queue: .main) { [weak self] notification in
+            guard let self,
+                  let editor = notification.object as? EditorTab,
+                  let requestId = notification.userInfo?["requestId"] as? UInt64,
+                  let line = notification.userInfo?["line"] as? UInt32,
+                  let character = notification.userInfo?["character"] as? UInt32 else { return }
+            self.handleHoverRequest(editor: editor, requestId: requestId, line: line, character: character)
+        }
+
+        // LSP: go-to-definition requested
+        nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
+            guard let self,
+                  let editor = notification.object as? EditorTab,
+                  let line = notification.userInfo?["line"] as? UInt32,
+                  let character = notification.userInfo?["character"] as? UInt32 else { return }
+            self.handleDefinitionRequest(editor: editor, line: line, character: character)
+        }
+    }
+
+    // MARK: - LSP Integration
+
+    private func startLspPolling() {
+        lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.processLspEvents()
+        }
+    }
+
+    private func stopLspPolling() {
+        lspPollTimer?.invalidate()
+        lspPollTimer = nil
+    }
+
+    /// Polls for asynchronous LSP events and dispatches them to the appropriate
+    /// editor tab. Called on a 100ms timer on the main thread.
+    private func processLspEvents() {
+        while let json = core.lspPollEvent() {
+            guard let data = json.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = event["type"] as? String else { continue }
+
+            switch type {
+            case "diagnostics":
+                guard let uri = event["uri"] as? String,
+                      let diagnosticsArray = event["diagnostics"] as? [[String: Any]] else { continue }
+
+                let filePath = uriToFilePath(uri)
+                guard let editorTab = findEditorTab(forPath: filePath) else { continue }
+
+                let markers: [MonacoDiagnostic] = diagnosticsArray.compactMap { d in
+                    guard let severity = (d["severity"] as? NSNumber)?.uint8Value,
+                          let startLine = (d["startLine"] as? NSNumber)?.uint32Value,
+                          let startColumn = (d["startColumn"] as? NSNumber)?.uint32Value,
+                          let endLine = (d["endLine"] as? NSNumber)?.uint32Value,
+                          let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
+                          let message = d["message"] as? String else { return nil }
+                    return MonacoDiagnostic(
+                        severity: diagnosticSeverityToMonaco(severity),
+                        startLine: startLine + 1,   // LSP 0-based → Monaco 1-based
+                        startColumn: startColumn + 1,
+                        endLine: endLine + 1,
+                        endColumn: endColumn + 1,
+                        message: message,
+                        source: d["source"] as? String
+                    )
+                }
+                editorTab.applyDiagnostics(uri: uri, markers: markers)
+
+            default:
+                break
+            }
+        }
+    }
+
+    /// Sends LSP didOpen for a file if not already tracked.
+    private func lspDidOpenIfNeeded(path: String) {
+        let uri = filePathToUri(path)
+        guard !lspOpenFiles.contains(uri) else { return }
+        lspOpenFiles.insert(uri)
+        lspDocVersions[uri] = 1
+
+        guard let editorTab = findEditorTab(forPath: path) else { return }
+        let language = editorTab.language
+        let content = editorTab.content
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            self.core.lspEnsureServers(languageId: language, fileUri: uri)
+            let params = """
+            {"textDocument":{"uri":"\(self.jsonEscape(uri))","languageId":"\(self.jsonEscape(language))","version":1,"text":"\(self.jsonEscape(content))"}}
+            """
+            self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didOpen", paramsJson: params)
+        }
+    }
+
+    /// Sends LSP didChange for a content update.
+    private func lspDidChange(editor: EditorTab) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        guard lspOpenFiles.contains(uri) else { return }
+
+        let version = (lspDocVersions[uri] ?? 1) + 1
+        lspDocVersions[uri] = version
+
+        let language = editor.language
+        let content = editor.content
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            let params = """
+            {"textDocument":{"uri":"\(self.jsonEscape(uri))","version":\(version)},"contentChanges":[{"text":"\(self.jsonEscape(content))"}]}
+            """
+            self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didChange", paramsJson: params)
+        }
+    }
+
+    /// Sends LSP didSave after a file is saved.
+    private func lspDidSave(editor: EditorTab) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        guard lspOpenFiles.contains(uri) else { return }
+
+        let language = editor.language
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            let params = """
+            {"textDocument":{"uri":"\(self.jsonEscape(uri))"}}
+            """
+            self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didSave", paramsJson: params)
+        }
+    }
+
+    /// Handles a completion request from the editor by forwarding it to the LSP.
+    private func handleCompletionRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestCompletionReq[uri] = requestId
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
+        """
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/completion", paramsJson: params
+            ) else { return }
+
+            let items = self.parseCompletionResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // Only resolve if this is still the latest request for this URI.
+                guard self.latestCompletionReq[uri] == requestId else { return }
+                editor.resolveCompletions(requestId: requestId, items: items)
+            }
+        }
+    }
+
+    /// Handles a hover request from the editor by forwarding it to the LSP.
+    private func handleHoverRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestHoverReq[uri] = requestId
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
+        """
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/hover", paramsJson: params
+            ) else { return }
+
+            let contents = self.parseHoverResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestHoverReq[uri] == requestId else { return }
+                editor.resolveHover(requestId: requestId, contents: contents)
+            }
+        }
+    }
+
+    /// Handles a go-to-definition request from the editor.
+    private func handleDefinitionRequest(editor: EditorTab, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
+        """
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/definition", paramsJson: params
+            ) else { return }
+
+            guard let def = self.parseDefinitionResponse(response) else { return }
+            let targetPath = self.uriToFilePath(def.uri)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.tabManager.addEditorTab(path: targetPath)
+                self.lspDidOpenIfNeeded(path: targetPath)
+                // Navigate to the definition position (convert 0-based to 1-based).
+                if self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                   case .editor(let targetEditor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    targetEditor.goToPosition(line: def.line + 1, column: def.character + 1)
+                }
+            }
+        }
+    }
+
+    // MARK: LSP Response Parsing
+
+    private func parseCompletionResponse(_ json: String) -> [MonacoCompletionItem] {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) else { return [] }
+
+        let items: [[String: Any]]
+        if let list = response as? [String: Any],
+           let listItems = list["items"] as? [[String: Any]] {
+            items = listItems
+        } else if let array = response as? [[String: Any]] {
+            items = array
+        } else {
+            return []
+        }
+
+        return items.compactMap { item in
+            guard let label = item["label"] as? String else { return nil }
+            let kind = (item["kind"] as? NSNumber)?.intValue ?? 1
+            let insertText = (item["insertText"] as? String) ?? label
+            let detail = item["detail"] as? String
+            let insertTextFormat = (item["insertTextFormat"] as? NSNumber)?.intValue ?? 1
+
+            return MonacoCompletionItem(
+                label: label,
+                kind: lspCompletionKindFromInt(kind),
+                detail: detail,
+                insertText: insertText,
+                insertTextRules: insertTextFormat == 2 ? 4 : nil
+            )
+        }
+    }
+
+    private func parseHoverResponse(_ json: String) -> [MonacoHoverContent] {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let contents = response["contents"] else { return [] }
+
+        if let markup = contents as? [String: Any], let value = markup["value"] as? String {
+            return [MonacoHoverContent(value: value, isTrusted: true)]
+        } else if let str = contents as? String {
+            return [MonacoHoverContent(value: str, isTrusted: true)]
+        } else if let array = contents as? [[String: Any]] {
+            return array.compactMap { item in
+                guard let value = item["value"] as? String else { return nil }
+                return MonacoHoverContent(value: value, isTrusted: true)
+            }
+        }
+        return []
+    }
+
+    private func parseDefinitionResponse(_ json: String) -> (uri: String, line: UInt32, character: UInt32)? {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) else { return nil }
+
+        let location: [String: Any]?
+        if let loc = response as? [String: Any], loc["uri"] != nil {
+            location = loc
+        } else if let array = response as? [[String: Any]], let first = array.first {
+            if first["targetUri"] != nil {
+                // LocationLink format
+                guard let uri = first["targetUri"] as? String,
+                      let range = (first["targetSelectionRange"] as? [String: Any])
+                          ?? (first["targetRange"] as? [String: Any]),
+                      let start = range["start"] as? [String: Any],
+                      let line = (start["line"] as? NSNumber)?.uint32Value,
+                      let character = (start["character"] as? NSNumber)?.uint32Value else { return nil }
+                return (uri: uri, line: line, character: character)
+            }
+            location = first
+        } else {
+            return nil
+        }
+
+        guard let loc = location,
+              let uri = loc["uri"] as? String,
+              let range = loc["range"] as? [String: Any],
+              let start = range["start"] as? [String: Any],
+              let line = (start["line"] as? NSNumber)?.uint32Value,
+              let character = (start["character"] as? NSNumber)?.uint32Value else { return nil }
+        return (uri: uri, line: line, character: character)
+    }
+
+    // MARK: LSP Helpers
+
+    /// Maps an LSP CompletionItemKind integer to a Monaco CompletionItemKind value.
+    private func lspCompletionKindFromInt(_ kind: Int) -> UInt32 {
+        switch kind {
+        case 1:  return 18  // Text
+        case 2:  return 0   // Method
+        case 3:  return 1   // Function
+        case 4:  return 2   // Constructor
+        case 5:  return 3   // Field
+        case 6:  return 4   // Variable
+        case 7:  return 5   // Class
+        case 8:  return 7   // Interface
+        case 9:  return 8   // Module
+        case 10: return 9   // Property
+        case 11: return 12  // Unit
+        case 12: return 13  // Value
+        case 13: return 15  // Enum
+        case 14: return 17  // Keyword
+        case 15: return 27  // Snippet
+        case 16: return 19  // Color
+        case 17: return 20  // File
+        case 18: return 21  // Reference
+        case 19: return 23  // Folder
+        case 20: return 16  // EnumMember
+        case 21: return 14  // Constant
+        case 22: return 6   // Struct
+        case 23: return 10  // Event
+        case 24: return 11  // Operator
+        case 25: return 24  // TypeParameter
+        default: return 18  // Text
+        }
+    }
+
+    /// Converts an absolute file path to a file:// URI.
+    private func filePathToUri(_ path: String) -> String {
+        return URL(fileURLWithPath: path).absoluteString
+    }
+
+    /// Extracts the file path from a file:// URI.
+    private func uriToFilePath(_ uri: String) -> String {
+        if let url = URL(string: uri), url.scheme == "file" {
+            return url.path
+        }
+        return uri
+    }
+
+    /// Escapes a string for safe embedding in a JSON string literal.
+    private func jsonEscape(_ str: String) -> String {
+        return str
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+    }
+
+    /// Finds the editor tab that has the given file path open.
+    private func findEditorTab(forPath path: String) -> EditorTab? {
+        for tab in tabManager.tabs {
+            if case .editor(let editor) = tab, editor.filePath == path {
+                return editor
+            }
+        }
+        return nil
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        stopLspPolling()
         (NSApp.delegate as? AppDelegate)?.windowControllerDidClose(self)
     }
 }

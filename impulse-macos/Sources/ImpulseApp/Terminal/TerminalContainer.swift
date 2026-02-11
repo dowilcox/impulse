@@ -64,6 +64,8 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     private func performSplit(isVertical: Bool) -> TerminalTab {
         let newTerminal = createTerminal()
+        // Capture the active terminal's CWD before we change the active index.
+        let inheritedCwd = activeTerminal?.currentWorkingDirectory
 
         if splitView == nil {
             // Currently showing a single terminal. Replace it with a split view.
@@ -72,7 +74,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
                 terminals.append(newTerminal)
                 addSubview(newTerminal)
                 constrainChildToFill(newTerminal)
-                newTerminal.spawnShell()
+                newTerminal.spawnShell(initialDirectory: inheritedCwd)
                 return newTerminal
             }
 
@@ -103,7 +105,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
                 guard let activeView = activeTerminal else {
                     split.addArrangedSubview(newTerminal)
                     terminals.append(newTerminal)
-                    newTerminal.spawnShell()
+                    newTerminal.spawnShell(initialDirectory: inheritedCwd)
                     return newTerminal
                 }
 
@@ -128,7 +130,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
         terminals.append(newTerminal)
         activeTerminalIndex = terminals.count - 1
-        newTerminal.spawnShell()
+        newTerminal.spawnShell(initialDirectory: inheritedCwd)
         newTerminal.focus()
 
         return newTerminal
