@@ -17,17 +17,19 @@ struct TabInfo {
 
 // MARK: - Tab Entry
 
-/// Discriminated union representing either a terminal or editor tab.
+/// Discriminated union representing either a terminal, editor, or image preview tab.
 /// Stores the NSView and the metadata needed for display in the tab bar.
 enum TabEntry {
     case terminal(TerminalContainer)
     case editor(EditorTab)
+    case imagePreview(path: String, view: NSView)
 
     /// The view to display in the content area.
     var view: NSView {
         switch self {
         case .terminal(let container): return container
         case .editor(let editor): return editor
+        case .imagePreview(_, let view): return view
         }
     }
 
@@ -46,6 +48,8 @@ enum TabEntry {
                 return editor.isModified ? "\(name) *" : name
             }
             return "Untitled"
+        case .imagePreview(let path, _):
+            return (path as NSString).lastPathComponent
         }
     }
 
@@ -70,6 +74,16 @@ enum TabEntry {
                 encoding: "UTF-8",
                 indentInfo: nil
             )
+        case .imagePreview(let path, _):
+            return TabInfo(
+                cwd: path,
+                gitBranch: nil,
+                shellName: nil,
+                cursorLine: nil, cursorCol: nil,
+                language: "Image",
+                encoding: nil,
+                indentInfo: nil
+            )
         }
     }
 
@@ -80,6 +94,8 @@ enum TabEntry {
             container.activeTerminal?.focus()
         case .editor(let editor):
             editor.focus()
+        case .imagePreview:
+            break
         }
     }
 
@@ -95,6 +111,8 @@ enum TabEntry {
             container.applyTheme(theme: termTheme)
         case .editor(let editor):
             editor.applyTheme(theme.monacoThemeDefinition())
+        case .imagePreview(_, let view):
+            view.layer?.backgroundColor = theme.bg.cgColor
         }
     }
 }
@@ -107,6 +125,9 @@ enum TabEntry {
 final class TabManager: NSObject {
     /// The ordered list of open tabs.
     private(set) var tabs: [TabEntry] = []
+
+    /// Per-tab pinned state, indexed in parallel with `tabs`.
+    private(set) var pinnedTabs: [Bool] = []
 
     /// The index of the currently selected tab, or -1 if no tabs are open.
     private(set) var selectedIndex: Int = -1
@@ -178,14 +199,35 @@ final class TabManager: NSObject {
     /// Creates a new editor tab for the given file path.
     ///
     /// If a tab for the same file is already open, it is selected instead of
-    /// creating a duplicate.
+    /// creating a duplicate. Image files are opened in a preview tab. Binary
+    /// files (>10 MB or containing null bytes) are skipped with an alert.
     func addEditorTab(path: String) {
         // Deduplicate: if a tab for this file already exists, select it.
         if let existingIndex = tabs.firstIndex(where: {
-            if case .editor(let e) = $0 { return e.filePath == path }
-            return false
+            switch $0 {
+            case .editor(let e): return e.filePath == path
+            case .imagePreview(let p, _): return p == path
+            default: return false
+            }
         }) {
             selectTab(index: existingIndex)
+            return
+        }
+
+        // Image files get a preview tab instead of an editor.
+        if Self.isImageFile(path) {
+            addImagePreviewTab(path: path)
+            return
+        }
+
+        // Reject binary files.
+        if Self.isBinaryFile(path) {
+            let alert = NSAlert()
+            alert.messageText = "Binary File"
+            alert.informativeText = "The file \"\((path as NSString).lastPathComponent)\" appears to be a binary file and cannot be opened in the editor."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
             return
         }
 
@@ -204,9 +246,43 @@ final class TabManager: NSObject {
         insertTab(entry)
     }
 
+    /// Creates an image preview tab with a scrollable NSImageView.
+    private func addImagePreviewTab(path: String) {
+        let container = NSView()
+        container.wantsLayer = true
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let imageView = NSImageView()
+        imageView.image = NSImage(contentsOfFile: path)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
+
+        scrollView.documentView = imageView
+        container.addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+        ])
+
+        let entry = TabEntry.imagePreview(path: path, view: container)
+        insertTab(entry)
+    }
+
     /// Inserts a new tab at the end and selects it.
     private func insertTab(_ entry: TabEntry) {
         tabs.append(entry)
+        pinnedTabs.append(false)
         rebuildSegments()
         selectTab(index: tabs.count - 1)
     }
@@ -227,6 +303,7 @@ final class TabManager: NSObject {
         }
 
         tabs.remove(at: index)
+        pinnedTabs.remove(at: index)
         rebuildSegments()
 
         if tabs.isEmpty {
@@ -238,6 +315,45 @@ final class TabManager: NSObject {
         // Select the nearest valid tab.
         let newIndex = min(index, tabs.count - 1)
         selectTab(index: newIndex)
+    }
+
+    /// Toggles the pinned state of the tab at the given index.
+    func togglePin(index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        pinnedTabs[index].toggle()
+        rebuildSegments()
+    }
+
+    /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
+    func closeOtherTabs(keepIndex: Int) {
+        guard keepIndex >= 0, keepIndex < tabs.count else { return }
+
+        // Remember the tab entry to keep so we can find it after removal.
+        let keepView = tabs[keepIndex].view
+
+        // Remove the currently displayed view before modifying the array.
+        if selectedIndex >= 0, selectedIndex < tabs.count, selectedIndex != keepIndex, !pinnedTabs[selectedIndex] {
+            tabs[selectedIndex].view.removeFromSuperview()
+        }
+
+        // Collect indices to close in reverse order to preserve index validity.
+        for i in stride(from: tabs.count - 1, through: 0, by: -1) {
+            if i != keepIndex && !pinnedTabs[i] {
+                tabs.remove(at: i)
+                pinnedTabs.remove(at: i)
+            }
+        }
+
+        rebuildSegments()
+
+        if tabs.isEmpty {
+            selectedIndex = -1
+            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: nil)
+        } else {
+            // Find the kept tab's new index.
+            let newIndex = tabs.firstIndex(where: { $0.view === keepView }) ?? 0
+            selectTab(index: newIndex)
+        }
     }
 
     // MARK: - Selection
@@ -304,15 +420,29 @@ final class TabManager: NSObject {
     private func rebuildSegments() {
         segmentedControl.segmentCount = tabs.count
         for (i, tab) in tabs.enumerated() {
-            segmentedControl.setLabel(tab.title, forSegment: i)
+            let pinPrefix = pinnedTabs[i] ? "\u{1F4CC} " : ""
+            segmentedControl.setLabel(pinPrefix + tab.title, forSegment: i)
             segmentedControl.setWidth(0, forSegment: i) // Auto-size to fit label.
 
-            // Provide a close-tab option via the segment's right-click menu.
+            // Context menu for each tab segment.
             let menu = NSMenu()
+
+            let pinTitle = pinnedTabs[i] ? "Unpin Tab" : "Pin Tab"
+            let pinItem = NSMenuItem(title: pinTitle, action: #selector(pinTabFromMenu(_:)), keyEquivalent: "")
+            pinItem.tag = i
+            pinItem.target = self
+            menu.addItem(pinItem)
+
             let closeItem = NSMenuItem(title: "Close Tab", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
             closeItem.tag = i
             closeItem.target = self
             menu.addItem(closeItem)
+
+            let closeOthersItem = NSMenuItem(title: "Close Other Tabs", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
+            closeOthersItem.tag = i
+            closeOthersItem.target = self
+            menu.addItem(closeOthersItem)
+
             segmentedControl.setMenu(menu, forSegment: i)
         }
         if selectedIndex >= 0, selectedIndex < tabs.count {
@@ -324,7 +454,8 @@ final class TabManager: NSObject {
     /// terminal title change or editor save).
     func refreshSegmentLabels() {
         for (i, tab) in tabs.enumerated() {
-            segmentedControl.setLabel(tab.title, forSegment: i)
+            let pinPrefix = pinnedTabs[i] ? "\u{1F4CC} " : ""
+            segmentedControl.setLabel(pinPrefix + tab.title, forSegment: i)
         }
     }
 
@@ -336,6 +467,14 @@ final class TabManager: NSObject {
 
     @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
         closeTab(index: sender.tag)
+    }
+
+    @objc private func pinTabFromMenu(_ sender: NSMenuItem) {
+        togglePin(index: sender.tag)
+    }
+
+    @objc private func closeOtherTabsFromMenu(_ sender: NSMenuItem) {
+        closeOtherTabs(keepIndex: sender.tag)
     }
 
     // MARK: - Editor Options
@@ -405,5 +544,35 @@ final class TabManager: NSObject {
         case "hs": return "haskell"
         default: return "plaintext"
         }
+    }
+
+    // MARK: - File Type Detection
+
+    /// Returns `true` if the file path has an image extension.
+    static func isImageFile(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "tiff", "tif":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Returns `true` if the file is likely a binary (>10 MB or contains null
+    /// bytes in the first 8 KB).
+    static func isBinaryFile(_ path: String) -> Bool {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              let size = attrs[.size] as? UInt64 else { return false }
+
+        // Files larger than 10 MB are treated as binary.
+        if size > 10 * 1024 * 1024 { return true }
+
+        // Read the first 8 KB and check for null bytes.
+        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { handle.closeFile() }
+        let data = handle.readData(ofLength: 8192)
+        return data.contains(0)
     }
 }

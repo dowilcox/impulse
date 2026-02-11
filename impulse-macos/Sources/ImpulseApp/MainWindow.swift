@@ -622,12 +622,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.updateStatusBar()
-            // Hide terminal search bar when switching to an editor tab.
+            // Hide terminal search bar when switching away from a terminal tab.
             if self.termSearchBarVisible,
                self.tabManager.selectedIndex >= 0,
-               self.tabManager.selectedIndex < self.tabManager.tabs.count,
-               case .editor = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                self.hideTerminalSearch()
+               self.tabManager.selectedIndex < self.tabManager.tabs.count {
+                if case .terminal = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    // Still on a terminal tab — keep search bar visible.
+                } else {
+                    self.hideTerminalSearch()
+                }
             }
         }
         nc.addObserver(forName: .impulseOpenFile, object: nil, queue: .main) { [weak self] notification in

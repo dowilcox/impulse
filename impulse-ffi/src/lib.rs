@@ -541,6 +541,22 @@ pub extern "C" fn impulse_git_blame(
     }
 }
 
+/// Discard working-tree changes for a single file, restoring it to the HEAD version.
+///
+/// Returns 0 on success or -1 on error.
+#[no_mangle]
+pub extern "C" fn impulse_git_discard_changes(file_path: *const c_char) -> i32 {
+    let file_path = match to_rust_str(file_path) {
+        Some(s) => s,
+        None => return -1,
+    };
+
+    match impulse_core::git::discard_file_changes(&file_path) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
 /// Computes diff markers for the given file path (comparing working copy to HEAD).
 ///
 /// Returns a JSON array of objects with `"line"` (1-based u32) and `"status"`

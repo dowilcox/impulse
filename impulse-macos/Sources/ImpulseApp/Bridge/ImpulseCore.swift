@@ -164,6 +164,14 @@ final class ImpulseCore {
         return dict
     }
 
+    /// Discards uncommitted changes to a file, restoring it to the HEAD version.
+    ///
+    /// - Parameter filePath: The absolute path to the file.
+    /// - Returns: `true` if the discard succeeded, `false` on error.
+    static func gitDiscardChanges(filePath: String) -> Bool {
+        return impulse_git_discard_changes(filePath) == 0
+    }
+
     /// Returns diff markers for the file at `path` as a `DiffDecoration` array.
     ///
     /// Each element contains a 1-based line number and a status string

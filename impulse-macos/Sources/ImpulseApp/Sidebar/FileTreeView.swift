@@ -308,6 +308,32 @@ final class FileTreeView: NSView {
         )
     }
 
+    @objc private func contextOpenInDefaultApp(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: node.path))
+    }
+
+    @objc private func contextDiscardChanges(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let name = (node.path as NSString).lastPathComponent
+
+        let alert = NSAlert()
+        alert.messageText = "Discard Changes"
+        alert.informativeText = "Are you sure you want to discard all changes to \"\(name)\"? This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        if ImpulseCore.gitDiscardChanges(filePath: node.path) {
+            refreshTree()
+        } else {
+            NSLog("FileTreeView: failed to discard changes for \(node.path)")
+        }
+    }
+
     // MARK: Alert Helper
 
     /// Show a modal alert with a text field for entering a name. Calls
@@ -471,11 +497,27 @@ extension FileTreeView: NSMenuDelegate {
                                       keyEquivalent: "")
         deleteItem.target = self
 
+        // Show "Discard Changes" for git-modified/added files.
+        if !node.isDirectory,
+           node.gitStatus == .modified || node.gitStatus == .added {
+            let discardItem = menu.addItem(withTitle: "Discard Changes",
+                                            action: #selector(contextDiscardChanges(_:)),
+                                            keyEquivalent: "")
+            discardItem.target = self
+        }
+
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Copy Path",
                      action: #selector(contextCopyPath(_:)),
                      keyEquivalent: "").target = self
+
+        // "Open in Default App" for files (uses system default application).
+        if !node.isDirectory {
+            menu.addItem(withTitle: "Open in Default App",
+                         action: #selector(contextOpenInDefaultApp(_:)),
+                         keyEquivalent: "").target = self
+        }
 
         if node.isDirectory {
             menu.addItem(withTitle: "Open in Terminal",
