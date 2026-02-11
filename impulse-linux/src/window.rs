@@ -1197,6 +1197,9 @@ pub fn build_window(app: &adw::Application) {
                     custom_kb_actions.push(CustomKbAction {
                         parsed,
                         action: Rc::new(move || {
+                            // Get CWD from the active terminal or editor tab
+                            let cwd = get_active_cwd(&tab_view);
+
                             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                             let term = terminal::create_terminal(
                                 &settings.borrow(),
@@ -1204,7 +1207,7 @@ pub fn build_window(app: &adw::Application) {
                                 copy_on_select_flag.clone(),
                             );
                             setup_terminal_signals(&term);
-                            terminal::spawn_command(&term, &command, &args);
+                            terminal::spawn_command(&term, &command, &args, cwd.as_deref());
                             let container = terminal_container::TerminalContainer::new(&term);
                             let page = tab_view.append(&container.widget);
                             page.set_title(&kb_name);
@@ -1282,7 +1285,6 @@ pub fn build_window(app: &adw::Application) {
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
-
             }
             gtk4::glib::Propagation::Proceed
         });
@@ -2120,7 +2122,9 @@ pub fn build_window(app: &adw::Application) {
             let settings = settings.clone();
             let copy_on_select_flag = copy_on_select_flag.clone();
             add_shortcut(&shortcut_controller, &accel, move || {
-                // Open a new terminal tab running the command
+                // Open a new terminal tab running the command in the active CWD
+                let cwd = get_active_cwd(&tab_view);
+
                 let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                 let term = terminal::create_terminal(
                     &settings.borrow(),
@@ -2128,7 +2132,7 @@ pub fn build_window(app: &adw::Application) {
                     copy_on_select_flag.clone(),
                 );
                 setup_terminal_signals(&term);
-                terminal::spawn_command(&term, &command, &args);
+                terminal::spawn_command(&term, &command, &args, cwd.as_deref());
 
                 let container = terminal_container::TerminalContainer::new(&term);
                 let page = tab_view.append(&container.widget);
@@ -2816,6 +2820,33 @@ fn completion_item_to_info(
             item.kind.unwrap_or(lsp_types::CompletionItemKind::TEXT)
         ),
     }
+}
+
+/// Get the working directory from the active tab: the terminal's CWD (via OSC 7)
+/// or the parent directory of the file in an editor tab.
+fn get_active_cwd(tab_view: &adw::TabView) -> Option<String> {
+    let page = tab_view.selected_page()?;
+    let child = page.child();
+
+    // Try terminal CWD first
+    if let Some(term) = terminal_container::get_active_terminal(&child) {
+        if let Some(uri) = term.current_directory_uri() {
+            let path = uri_to_file_path(&uri.to_string());
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+
+    // Try editor file's parent directory
+    if editor::is_editor(&child) {
+        let file_path = child.widget_name().to_string();
+        if let Some(parent) = std::path::Path::new(&file_path).parent() {
+            return Some(parent.to_string_lossy().to_string());
+        }
+    }
+
+    None
 }
 
 /// Convert a local path to a file:// URI.

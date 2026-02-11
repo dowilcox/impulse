@@ -246,7 +246,13 @@ pub fn spawn_shell(terminal: &vte4::Terminal, cache: &Rc<ShellSpawnCache>) {
 }
 
 /// Spawn a command (with arguments) in a VTE terminal instead of the default shell.
-pub fn spawn_command(terminal: &vte4::Terminal, command: &str, args: &[String]) {
+/// If `working_dir` is provided, the command starts in that directory.
+pub fn spawn_command(
+    terminal: &vte4::Terminal,
+    command: &str,
+    args: &[String],
+    working_dir: Option<&str>,
+) {
     let mut argv: Vec<&str> = vec![command];
     for arg in args {
         argv.push(arg.as_str());
@@ -258,11 +264,12 @@ pub fn spawn_command(terminal: &vte4::Terminal, command: &str, args: &[String]) 
         .collect();
     let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
 
-    let working_dir = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let fallback_dir = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let dir = working_dir.unwrap_or(&fallback_dir);
 
     terminal.spawn_async(
         vte4::PtyFlags::DEFAULT,
-        Some(&working_dir),
+        Some(dir),
         &argv,
         &envv_refs,
         gtk4::glib::SpawnFlags::DEFAULT,
