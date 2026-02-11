@@ -1143,6 +1143,7 @@ pub fn build_window(app: &adw::Application) {
     // shortcut controller (Global scope = bubble phase) can see them.
     {
         let tab_view = tab_view.clone();
+        let create_tab_capture = create_tab.clone();
         let capture_key_ctrl = gtk4::EventControllerKey::new();
         capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         capture_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
@@ -1169,8 +1170,8 @@ pub fn build_window(app: &adw::Application) {
 
                 // Ctrl+T: new tab (VTE eats this as "transpose chars")
                 if ctrl && !shift && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T) && is_terminal {
-                    // Let the shortcut controller handle it by proceeding
-                    // (Ctrl+T may or may not be eaten by VTE, but intercept just in case)
+                    create_tab_capture();
+                    return gtk4::glib::Propagation::Stop;
                 }
             }
             gtk4::glib::Propagation::Proceed
