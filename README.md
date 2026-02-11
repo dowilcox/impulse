@@ -18,6 +18,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshot.png" width="800" alt="Impulse screenshot">
+</p>
+
 Impulse combines a terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
 
 ## Features
