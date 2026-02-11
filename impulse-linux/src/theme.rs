@@ -145,6 +145,27 @@ pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
     ],
 };
 
+/// Tokyo Night Storm — deeper blue-tinted variant of Tokyo Night.
+pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
+    bg: "#24283b",
+    bg_dark: "#1f2335",
+    bg_highlight: "#292e42",
+    fg: "#c0caf5",
+    fg_dark: "#a9b1d6",
+    cyan: "#7dcfff",
+    blue: "#7aa2f7",
+    green: "#9ece6a",
+    magenta: "#bb9af7",
+    red: "#f7768e",
+    yellow: "#e0af68",
+    orange: "#ff9e64",
+    comment: "#565f89",
+    terminal_palette: [
+        "#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+        "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
+    ],
+};
+
 /// Catppuccin Mocha — warm pastel palette on dark base.
 pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
     bg: "#1e1e2e",
@@ -178,6 +199,7 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
         "nord" => &NORD,
         "gruvbox" | "gruvbox-dark" | "gruvbox_dark" => &GRUVBOX,
         "tokyo-night" | "tokyo_night" | "tokyonight" => &TOKYO_NIGHT,
+        "tokyo-night-storm" | "tokyo_night_storm" | "tokyonightstorm" => &TOKYO_NIGHT_STORM,
         "catppuccin-mocha" | "catppuccin_mocha" | "catppuccinmocha" => &CATPPUCCIN_MOCHA,
         _ => &NORD,
     }
@@ -191,6 +213,7 @@ pub fn get_available_themes() -> Vec<&'static str> {
         "nord",
         "gruvbox",
         "tokyo-night",
+        "tokyo-night-storm",
         "catppuccin-mocha",
     ]
 }

@@ -1099,6 +1099,7 @@ pub fn show_settings_window(
         "Nord",
         "Gruvbox",
         "Tokyo Night",
+        "Tokyo Night Storm",
         "Catppuccin Mocha",
     ];
     let available_themes = theme::get_available_themes();

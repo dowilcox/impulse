@@ -308,14 +308,47 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Paste clipboard contents into a terminal using the GTK4 clipboard API.
-/// Uses `paste_text()` which respects bracketed paste mode.
+/// Paste clipboard contents into a terminal.
+///
+/// If the clipboard contains text, it is pasted directly (respecting bracketed
+/// paste mode).  If it contains only an image (e.g. a screenshot), the image is
+/// saved to a temporary PNG file and its shell-escaped path is fed to the PTY so
+/// that CLI tools like Claude Code can consume it.
 pub fn paste_from_clipboard(terminal: &vte4::Terminal) {
+    use gtk4::gdk::prelude::TextureExt;
+
     let clipboard = terminal.clipboard();
-    let term = terminal.clone();
-    clipboard.read_text_async(None::<&gtk4::gio::Cancellable>, move |result| {
-        if let Ok(Some(text)) = result {
-            term.paste_text(&text);
-        }
-    });
+    let formats = clipboard.formats();
+
+    // Prefer text when available — this is the normal paste path.
+    if formats.contains_type(glib::types::Type::STRING) {
+        let term = terminal.clone();
+        clipboard.read_text_async(None::<&gtk4::gio::Cancellable>, move |result| {
+            if let Ok(Some(text)) = result {
+                term.paste_text(&text);
+            }
+        });
+        return;
+    }
+
+    // Fall back to image: save as a temp PNG and paste the path.
+    if formats.contains_type(gtk4::gdk::Texture::static_type()) {
+        let term = terminal.clone();
+        clipboard.read_texture_async(None::<&gtk4::gio::Cancellable>, move |result| {
+            if let Ok(Some(texture)) = result {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let path = format!("/tmp/impulse-clipboard-{}.png", ts);
+                match texture.save_to_png(&path) {
+                    Ok(()) => {
+                        let escaped = shell_escape(&path);
+                        term.feed_child(escaped.as_bytes());
+                    }
+                    Err(e) => log::warn!("Failed to save clipboard image: {}", e),
+                }
+            }
+        });
+    }
 }
