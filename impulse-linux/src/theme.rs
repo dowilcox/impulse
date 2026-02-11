@@ -224,7 +224,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding: 4px 12px;
             font-size: 12px;
             font-weight: 500;
-            color: {comment};
+            color: {fg_dark};
             background: transparent;
             border: none;
             box-shadow: none;
@@ -353,7 +353,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding-left: 12px;
         }}
         .status-bar .blame-info {{
-            color: {comment};
+            color: {fg_dark};
             font-size: 11px;
         }}
         /* --- Terminal --- */

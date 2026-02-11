@@ -130,6 +130,13 @@ pub fn build_sidebar(
     file_menu.append(Some("Rename"), Some("filetree.rename"));
     file_menu.append(Some("Delete"), Some("filetree.delete"));
 
+    let file_menu_git = gio::Menu::new();
+    file_menu_git.append(Some("Open in Default App"), Some("filetree.open"));
+    file_menu_git.append(Some("Copy Path"), Some("filetree.copy-path"));
+    file_menu_git.append(Some("Rename"), Some("filetree.rename"));
+    file_menu_git.append(Some("Delete"), Some("filetree.delete"));
+    file_menu_git.append(Some("Discard Changes"), Some("filetree.discard-changes"));
+
     let dir_menu = gio::Menu::new();
     dir_menu.append(Some("Open in Terminal"), Some("filetree.open-terminal"));
     dir_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
@@ -376,6 +383,78 @@ pub fn build_sidebar(
     }
     action_group.add_action(&delete_action);
 
+    // "discard-changes" action - revert file to HEAD version
+    let discard_action = gio::SimpleAction::new("discard-changes", None);
+    {
+        let clicked_path = clicked_path.clone();
+        let tree_nodes = tree_nodes.clone();
+        let file_tree_list = file_tree_list.clone();
+        let icon_cache = icon_cache.clone();
+        let current_path = current_path.clone();
+        let file_tree_scroll = file_tree_scroll.clone();
+        let show_hidden = show_hidden.clone();
+        discard_action.connect_activate(move |_, _| {
+            let path = clicked_path.borrow().clone();
+            if path.is_empty() {
+                return;
+            }
+
+            let filename = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
+
+            let dialog = adw::AlertDialog::builder()
+                .heading("Discard Changes")
+                .body(format!(
+                    "Are you sure you want to discard all changes to \"{}\"? This cannot be undone.",
+                    filename
+                ))
+                .build();
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("discard", "Discard");
+            dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_close_response("cancel");
+
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list_for_dialog = file_tree_list.clone();
+            let file_tree_scroll = file_tree_scroll.clone();
+            let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
+            let show_hidden = show_hidden.clone();
+            dialog.connect_response(None, move |_dialog, response| {
+                if response != "discard" {
+                    return;
+                }
+
+                match impulse_core::git::discard_file_changes(&path) {
+                    Ok(()) => {
+                        refresh_tree(
+                            &tree_nodes,
+                            &file_tree_list_for_dialog,
+                            &file_tree_scroll,
+                            &current_path,
+                            *show_hidden.borrow(),
+                            icon_cache.clone(),
+                        );
+                    }
+                    Err(e) => {
+                        log::error!("Failed to discard changes for {}: {}", path, e);
+                    }
+                }
+            });
+
+            if let Some(root) = file_tree_list.root() {
+                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
+                    dialog.present(Some(window));
+                }
+            }
+        });
+    }
+    action_group.add_action(&discard_action);
+
     // "new-file" action - create a new file in a directory
     let new_file_action = gio::SimpleAction::new("new-file", None);
     {
@@ -554,19 +633,30 @@ pub fn build_sidebar(
         let file_tree_list_ref = file_tree_list.clone();
         let clicked_path = clicked_path.clone();
         let file_menu = file_menu.clone();
+        let file_menu_git = file_menu_git.clone();
         let dir_menu = dir_menu.clone();
         let current_path = current_path.clone();
+        let tree_nodes_for_menu = tree_nodes.clone();
         gesture.connect_pressed(move |_gesture, _n_press, x, y| {
             if let Some(row) = file_tree_list_ref.row_at_y(y as i32) {
                 if let Some(child) = row.child() {
                     let path = child.widget_name().to_string();
                     let is_dir = std::path::Path::new(&path).is_dir();
-                    *clicked_path.borrow_mut() = path;
+                    *clicked_path.borrow_mut() = path.clone();
 
                     if is_dir {
                         popover.set_menu_model(Some(&dir_menu));
                     } else {
-                        popover.set_menu_model(Some(&file_menu));
+                        // Check if file has git changes
+                        let has_git_status = tree_nodes_for_menu
+                            .borrow()
+                            .iter()
+                            .any(|n| n.entry.path == path && n.entry.git_status.is_some());
+                        if has_git_status {
+                            popover.set_menu_model(Some(&file_menu_git));
+                        } else {
+                            popover.set_menu_model(Some(&file_menu));
+                        }
                     }
 
                     let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
@@ -1033,6 +1123,18 @@ impl SidebarState {
         self.icon_cache.borrow_mut().rebuild(theme);
         let nodes = self.tree_nodes.borrow().clone();
         render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());
+    }
+
+    /// Refresh the file tree to pick up git status changes (e.g. after saving a file).
+    pub fn refresh(&self) {
+        refresh_tree(
+            &self.tree_nodes,
+            &self.file_tree_list,
+            &self.file_tree_scroll,
+            &self.current_path,
+            *self.show_hidden.borrow(),
+            self.icon_cache.clone(),
+        );
     }
 }
 

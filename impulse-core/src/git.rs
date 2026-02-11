@@ -165,6 +165,23 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     })
 }
 
+/// Discard working-tree changes for a single file, restoring it to the HEAD version.
+/// For untracked files this is a no-op (returns Ok).
+pub fn discard_file_changes(file_path: &str) -> Result<(), String> {
+    let path = Path::new(file_path);
+    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let repo_root = repo.workdir().ok_or("Bare repository")?;
+    let rel_path = path
+        .strip_prefix(repo_root)
+        .map_err(|_| "File not in repo".to_string())?;
+
+    let mut checkout_opts = git2::build::CheckoutBuilder::new();
+    checkout_opts.path(rel_path);
+    checkout_opts.force();
+    repo.checkout_head(Some(&mut checkout_opts))
+        .map_err(|e| format!("Checkout failed: {}", e))
+}
+
 /// Get blame information for a specific line in a file.
 /// line is 1-based.
 pub fn get_line_blame(file_path: &str, line: u32) -> Result<BlameInfo, String> {

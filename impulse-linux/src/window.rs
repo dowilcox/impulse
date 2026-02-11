@@ -445,6 +445,7 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let lsp_tx = lsp_request_tx.clone();
         let doc_versions = lsp_doc_versions.clone();
+        let sidebar_state_for_editor = sidebar_state.clone();
         let tree_states = sidebar_state.tab_tree_states.clone();
         let tree_nodes = sidebar_state.tree_nodes.clone();
         let tree_current_path = sidebar_state.current_path.clone();
@@ -503,6 +504,7 @@ pub fn build_window(app: &adw::Application) {
                             let latest_completion_req = latest_completion_req.clone();
                             let latest_hover_req = latest_hover_req.clone();
                             let latest_definition_req = latest_definition_req.clone();
+                            let sidebar_state = sidebar_state_for_editor.clone();
                             let path = path.to_string();
                             move |handle, event| {
                                 match event {
@@ -592,6 +594,8 @@ pub fn build_window(app: &adw::Application) {
                                             let _ = lsp_tx.send(LspRequest::DidSave { uri });
                                             // Refresh diff decorations after save
                                             send_diff_decorations(handle, &path);
+                                            // Refresh sidebar to update git status badges
+                                            sidebar_state.refresh();
                                             // Run commands on save in a background thread
                                             let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
