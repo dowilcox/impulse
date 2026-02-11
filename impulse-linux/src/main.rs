@@ -143,9 +143,7 @@ fn install_app_icon() {
         None => return,
     };
     let icon_path = icon_dir.join("dev.impulse.Impulse.svg");
-    if icon_path.exists() {
-        return;
-    }
+    // Always overwrite so the icon stays in sync with the embedded SVG.
     if std::fs::create_dir_all(&icon_dir).is_ok() {
         let _ = std::fs::write(&icon_path, APP_ICON_SVG);
     }
