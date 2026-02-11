@@ -40,24 +40,87 @@ impl ThemeColors {
 // Built-in themes
 // ---------------------------------------------------------------------------
 
-/// Cyberpunk — neon accents on deep dark purple (default).
-pub static CYBERPUNK: ThemeColors = ThemeColors {
-    bg: "#2b2444",
-    bg_dark: "#221c3a",
-    bg_highlight: "#3a3260",
-    fg: "#d8d5e8",
-    fg_dark: "#a8a2be",
-    cyan: "#5ecfb8",
-    blue: "#56b8d6",
-    green: "#7ddb6a",
-    magenta: "#d97aaa",
-    red: "#e05577",
-    yellow: "#d4b855",
-    orange: "#d98a4a",
-    comment: "#605888",
+/// Kanagawa Wave — warm golden tones inspired by Hokusai's Great Wave (default).
+pub static KANAGAWA: ThemeColors = ThemeColors {
+    bg: "#1F1F28",
+    bg_dark: "#16161D",
+    bg_highlight: "#2A2A37",
+    fg: "#DCD7BA",
+    fg_dark: "#C8C093",
+    cyan: "#7AA89F",
+    blue: "#7E9CD8",
+    green: "#98BB6C",
+    magenta: "#957FB8",
+    red: "#E46876",
+    yellow: "#E6C384",
+    orange: "#FFA066",
+    comment: "#727169",
     terminal_palette: [
-        "#1c1735", "#e05577", "#7ddb6a", "#d4b855", "#56b8d6", "#b85aac", "#5ecfb8", "#a8a2be",
-        "#605888", "#e87a95", "#96e484", "#e0c96e", "#6ec8e0", "#cc76c0", "#7adbc8", "#d8d5e8",
+        "#090618", "#C34043", "#76946A", "#C0A36E", "#7E9CD8", "#957FB8", "#6A9589", "#C8C093",
+        "#727169", "#E82424", "#98BB6C", "#E6C384", "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
+    ],
+};
+
+/// Rosé Pine — muted pastels on warm dark purple, "soho vibes".
+pub static ROSE_PINE: ThemeColors = ThemeColors {
+    bg: "#191724",
+    bg_dark: "#1f1d2e",
+    bg_highlight: "#26233a",
+    fg: "#e0def4",
+    fg_dark: "#908caa",
+    cyan: "#9ccfd8",
+    blue: "#31748f",
+    green: "#9ccfd8",
+    magenta: "#c4a7e7",
+    red: "#eb6f92",
+    yellow: "#f6c177",
+    orange: "#ebbcba",
+    comment: "#6e6a86",
+    terminal_palette: [
+        "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
+        "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
+    ],
+};
+
+/// Nord — arctic, clean, minimal blue palette.
+pub static NORD: ThemeColors = ThemeColors {
+    bg: "#2E3440",
+    bg_dark: "#272C36",
+    bg_highlight: "#434C5E",
+    fg: "#D8DEE9",
+    fg_dark: "#E5E9F0",
+    cyan: "#88C0D0",
+    blue: "#81A1C1",
+    green: "#A3BE8C",
+    magenta: "#B48EAD",
+    red: "#BF616A",
+    yellow: "#EBCB8B",
+    orange: "#D08770",
+    comment: "#4C566A",
+    terminal_palette: [
+        "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
+        "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
+    ],
+};
+
+/// Gruvbox Dark — warm retro palette with earthy tones.
+pub static GRUVBOX: ThemeColors = ThemeColors {
+    bg: "#282828",
+    bg_dark: "#1d2021",
+    bg_highlight: "#3c3836",
+    fg: "#ebdbb2",
+    fg_dark: "#d5c4a1",
+    cyan: "#8ec07c",
+    blue: "#83a598",
+    green: "#b8bb26",
+    magenta: "#d3869b",
+    red: "#fb4934",
+    yellow: "#fabd2f",
+    orange: "#fe8019",
+    comment: "#928374",
+    terminal_palette: [
+        "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
+        "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
     ],
 };
 
@@ -103,45 +166,33 @@ pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
     ],
 };
 
-/// Dracula — classic dark theme with vivid accents.
-pub static DRACULA: ThemeColors = ThemeColors {
-    bg: "#282a36",
-    bg_dark: "#21222c",
-    bg_highlight: "#44475a",
-    fg: "#f8f8f2",
-    fg_dark: "#bfbfbf",
-    cyan: "#8be9fd",
-    blue: "#6272a4",
-    green: "#50fa7b",
-    magenta: "#ff79c6",
-    red: "#ff5555",
-    yellow: "#f1fa8c",
-    orange: "#ffb86c",
-    comment: "#6272a4",
-    terminal_palette: [
-        "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
-        "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
-    ],
-};
-
 // ---------------------------------------------------------------------------
 // Theme lookup helpers
 // ---------------------------------------------------------------------------
 
-/// Return the theme matching `name` (case-insensitive). Falls back to `CYBERPUNK`.
+/// Return the theme matching `name` (case-insensitive). Falls back to `KANAGAWA`.
 pub fn get_theme(name: &str) -> &'static ThemeColors {
     match name.to_ascii_lowercase().as_str() {
-        "cyberpunk" => &CYBERPUNK,
+        "kanagawa" => &KANAGAWA,
+        "rose-pine" | "rose_pine" | "rosepine" => &ROSE_PINE,
+        "nord" => &NORD,
+        "gruvbox" | "gruvbox-dark" | "gruvbox_dark" => &GRUVBOX,
         "tokyo-night" | "tokyo_night" | "tokyonight" => &TOKYO_NIGHT,
         "catppuccin-mocha" | "catppuccin_mocha" | "catppuccinmocha" => &CATPPUCCIN_MOCHA,
-        "dracula" => &DRACULA,
-        _ => &CYBERPUNK,
+        _ => &KANAGAWA,
     }
 }
 
 /// Return the list of built-in theme names.
 pub fn get_available_themes() -> Vec<&'static str> {
-    vec!["cyberpunk", "tokyo-night", "catppuccin-mocha", "dracula"]
+    vec![
+        "kanagawa",
+        "rose-pine",
+        "nord",
+        "gruvbox",
+        "tokyo-night",
+        "catppuccin-mocha",
+    ]
 }
 
 // ---------------------------------------------------------------------------
