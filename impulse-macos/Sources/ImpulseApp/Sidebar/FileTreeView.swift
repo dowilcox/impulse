@@ -18,6 +18,57 @@ private final class PointerOutlineView: NSOutlineView {
     }
 }
 
+// MARK: - Hover Row View
+
+/// Custom row view that draws subtle hover and selection backgrounds with
+/// rounded corners, giving the file tree a polished native appearance.
+private final class HoverRowView: NSTableRowView {
+
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        if isHovered && !isSelected {
+            let inset = bounds.insetBy(dx: 4, dy: 1)
+            let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
+            NSColor.white.withAlphaComponent(0.05).setFill()
+            path.fill()
+        }
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        let inset = bounds.insetBy(dx: 4, dy: 1)
+        let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        path.fill()
+    }
+}
+
 // MARK: - File Tree View
 
 /// NSOutlineView-based file tree for the sidebar. Supports lazy-loading of
@@ -67,7 +118,7 @@ final class FileTreeView: NSView {
         let outline = PointerOutlineView()
         outline.headerView = nil
         outline.indentationPerLevel = 16
-        outline.rowHeight = 22
+        outline.rowHeight = 24
         outline.focusRingType = .none
         outline.allowsMultipleSelection = false
         outline.autoresizesOutlineColumn = true
@@ -641,6 +692,10 @@ extension FileTreeView: NSOutlineViewDelegate {
         return cell
     }
 
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        return HoverRowView()
+    }
+
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? FileTreeNode else { return }
         node.isExpanded = true
@@ -703,7 +758,7 @@ extension FileTreeView: NSOutlineViewDelegate {
             imageView.widthAnchor.constraint(equalToConstant: 16),
             imageView.heightAnchor.constraint(equalToConstant: 16),
 
-            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 6),
+            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
             textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])

@@ -119,10 +119,10 @@ enum TabEntry {
 
 // MARK: - Tab Manager
 
-/// Manages the collection of open tabs (terminal or editor) and the segmented
-/// control used to switch between them. The segmented control is placed in the
-/// window's toolbar.
-final class TabManager: NSObject {
+/// Manages the collection of open tabs (terminal or editor) and the custom
+/// tab bar used to switch between them. The tab bar is placed in the
+/// window's tab bar container.
+final class TabManager: NSObject, CustomTabBarDelegate {
     /// The ordered list of open tabs.
     private(set) var tabs: [TabEntry] = []
 
@@ -132,8 +132,11 @@ final class TabManager: NSObject {
     /// The index of the currently selected tab, or -1 if no tabs are open.
     private(set) var selectedIndex: Int = -1
 
-    /// The segmented control displayed in the toolbar.
-    let segmentedControl: NSSegmentedControl
+    /// The custom tab bar displayed in the window.
+    let tabBar: CustomTabBar
+
+    /// Icon cache for themed file icons in tab bar.
+    private var iconCache: IconCache?
 
     /// The container view that hosts the active tab's view.
     let contentView: NSView
@@ -154,10 +157,8 @@ final class TabManager: NSObject {
         self.theme = theme
         self.core = core
 
-        segmentedControl = NSSegmentedControl()
-        segmentedControl.segmentStyle = .texturedSquare
-        segmentedControl.trackingMode = .selectOne
-        segmentedControl.controlSize = .regular
+        tabBar = CustomTabBar()
+        iconCache = IconCache(theme: theme)
 
         contentView = NSView()
         contentView.wantsLayer = true
@@ -165,8 +166,7 @@ final class TabManager: NSObject {
 
         super.init()
 
-        segmentedControl.target = self
-        segmentedControl.action = #selector(segmentSelected(_:))
+        tabBar.delegate = self
     }
 
     // MARK: - Adding Tabs
@@ -284,7 +284,7 @@ final class TabManager: NSObject {
     private func insertTab(_ entry: TabEntry) {
         tabs.append(entry)
         pinnedTabs.append(false)
-        rebuildSegments()
+        rebuildTabBar()
         selectTab(index: tabs.count - 1)
     }
 
@@ -305,7 +305,7 @@ final class TabManager: NSObject {
 
         tabs.remove(at: index)
         pinnedTabs.remove(at: index)
-        rebuildSegments()
+        rebuildTabBar()
 
         if tabs.isEmpty {
             selectedIndex = -1
@@ -322,7 +322,7 @@ final class TabManager: NSObject {
     func togglePin(index: Int) {
         guard index >= 0, index < tabs.count else { return }
         pinnedTabs[index].toggle()
-        rebuildSegments()
+        rebuildTabBar()
     }
 
     /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
@@ -345,7 +345,7 @@ final class TabManager: NSObject {
             }
         }
 
-        rebuildSegments()
+        rebuildTabBar()
 
         if tabs.isEmpty {
             selectedIndex = -1
@@ -369,7 +369,7 @@ final class TabManager: NSObject {
         }
 
         selectedIndex = index
-        segmentedControl.selectedSegment = index
+        tabBar.selectTab(index: index)
 
         // Activate the new tab.
         let entry = tabs[index]
@@ -410,6 +410,12 @@ final class TabManager: NSObject {
     func applyTheme(_ theme: Theme) {
         self.theme = theme
         contentView.layer?.backgroundColor = theme.bg.cgColor
+        if let cache = iconCache {
+            cache.rebuild(theme: theme)
+        } else {
+            iconCache = IconCache(theme: theme)
+        }
+        tabBar.applyTheme(theme)
         for tab in tabs {
             tab.applyTheme(theme)
         }
@@ -417,53 +423,74 @@ final class TabManager: NSObject {
 
     // MARK: - Segmented Control
 
-    /// Rebuilds the segmented control segments to match the current tab list.
-    private func rebuildSegments() {
-        segmentedControl.segmentCount = tabs.count
-        for (i, tab) in tabs.enumerated() {
-            let pinPrefix = pinnedTabs[i] ? "\u{1F4CC} " : ""
-            segmentedControl.setLabel(pinPrefix + tab.title, forSegment: i)
-            segmentedControl.setWidth(0, forSegment: i) // Auto-size to fit label.
-
-            // Context menu for each tab segment.
-            let menu = NSMenu()
-
-            let pinTitle = pinnedTabs[i] ? "Unpin Tab" : "Pin Tab"
-            let pinItem = NSMenuItem(title: pinTitle, action: #selector(pinTabFromMenu(_:)), keyEquivalent: "")
-            pinItem.tag = i
-            pinItem.target = self
-            menu.addItem(pinItem)
-
-            let closeItem = NSMenuItem(title: "Close Tab", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
-            closeItem.tag = i
-            closeItem.target = self
-            menu.addItem(closeItem)
-
-            let closeOthersItem = NSMenuItem(title: "Close Other Tabs", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
-            closeOthersItem.tag = i
-            closeOthersItem.target = self
-            menu.addItem(closeOthersItem)
-
-            segmentedControl.setMenu(menu, forSegment: i)
+    /// Rebuilds the custom tab bar to match the current tab list.
+    private func rebuildTabBar() {
+        let tabData = tabs.enumerated().map { (i, tab) -> TabItemData in
+            let icon = tabIcon(for: tab)
+            return TabItemData(title: tab.title, icon: icon, isPinned: pinnedTabs[i])
         }
-        if selectedIndex >= 0, selectedIndex < tabs.count {
-            segmentedControl.selectedSegment = selectedIndex
-        }
+        tabBar.rebuild(tabs: tabData, selectedIndex: selectedIndex, theme: theme)
     }
 
-    /// Updates segment labels to reflect current tab titles (e.g., after a
+    /// Updates tab labels to reflect current tab titles (e.g., after a
     /// terminal title change or editor save).
     func refreshSegmentLabels() {
-        for (i, tab) in tabs.enumerated() {
-            let pinPrefix = pinnedTabs[i] ? "\u{1F4CC} " : ""
-            segmentedControl.setLabel(pinPrefix + tab.title, forSegment: i)
+        let tabData = tabs.enumerated().map { (i, tab) -> TabItemData in
+            let icon = tabIcon(for: tab)
+            return TabItemData(title: tab.title, icon: icon, isPinned: pinnedTabs[i])
+        }
+        tabBar.updateLabels(tabs: tabData)
+    }
+
+    /// Returns the appropriate icon for a tab entry.
+    private func tabIcon(for tab: TabEntry) -> NSImage? {
+        switch tab {
+        case .terminal:
+            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        case .editor(let editor):
+            if let path = editor.filePath {
+                let filename = (path as NSString).lastPathComponent
+                return iconCache?.icon(filename: filename, isDirectory: false, expanded: false)
+                    ?? NSWorkspace.shared.icon(forFile: path)
+            }
+            return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
+        case .imagePreview:
+            return NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
         }
     }
 
-    @objc private func segmentSelected(_ sender: NSSegmentedControl) {
-        let index = sender.selectedSegment
+    // MARK: - CustomTabBarDelegate
+
+    func tabItemClicked(index: Int) {
         guard index >= 0, index < tabs.count else { return }
         selectTab(index: index)
+    }
+
+    func tabItemCloseClicked(index: Int) {
+        closeTab(index: index)
+    }
+
+    func tabItemContextMenu(index: Int) -> NSMenu? {
+        guard index >= 0, index < tabs.count else { return nil }
+        let menu = NSMenu()
+
+        let pinTitle = pinnedTabs[index] ? "Unpin Tab" : "Pin Tab"
+        let pinItem = NSMenuItem(title: pinTitle, action: #selector(pinTabFromMenu(_:)), keyEquivalent: "")
+        pinItem.tag = index
+        pinItem.target = self
+        menu.addItem(pinItem)
+
+        let closeItem = NSMenuItem(title: "Close Tab", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
+        closeItem.tag = index
+        closeItem.target = self
+        menu.addItem(closeItem)
+
+        let closeOthersItem = NSMenuItem(title: "Close Other Tabs", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
+        closeOthersItem.tag = index
+        closeOthersItem.target = self
+        menu.addItem(closeOthersItem)
+
+        return menu
     }
 
     @objc private func closeTabFromMenu(_ sender: NSMenuItem) {

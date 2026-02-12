@@ -25,7 +25,7 @@ final class StatusBar: NSView {
     private let topBorder = NSView()
 
     /// The fixed status bar height.
-    static let barHeight: CGFloat = 24
+    static let barHeight: CGFloat = 26
 
     // MARK: - Initialization
 
@@ -52,7 +52,7 @@ final class StatusBar: NSView {
                          blameLabel, cursorPositionLabel, languageLabel,
                          encodingLabel, indentInfoLabel]
         for label in allLabels {
-            label.font = NSFont.systemFont(ofSize: 12)
+            label.font = NSFont.systemFont(ofSize: 11)
             label.drawsBackground = false
             label.isBezeled = false
             label.isEditable = false

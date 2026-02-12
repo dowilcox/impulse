@@ -41,7 +41,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return v
     }()
     private let splitView = NSSplitView()
-    private let sidebarContainer = NSView()
+    private let sidebarContainer: NSVisualEffectView = {
+        let v = NSVisualEffectView()
+        v.material = .sidebar
+        v.blendingMode = .behindWindow
+        v.state = .active
+        return v
+    }()
     private let contentContainer = NSView()
 
     /// The sidebar file tree using the NSOutlineView-based FileTreeView.
@@ -233,7 +239,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         // Sidebar: header (mode switch) + file tree / search panel
         sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
-        sidebarContainer.wantsLayer = true
 
         sidebarModeControl.translatesAutoresizingMaskIntoConstraints = false
         sidebarModeControl.segmentStyle = .texturedRounded
@@ -312,9 +317,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         // Tab bar container: sits between toolbar safe area and splitView
         tabBarContainer.layer?.backgroundColor = theme.bgDark.cgColor
-        let segmented = tabManager.segmentedControl
-        segmented.translatesAutoresizingMaskIntoConstraints = false
-        tabBarContainer.addSubview(segmented)
+        let tabBarView = tabManager.tabBar
+        tabBarView.translatesAutoresizingMaskIntoConstraints = false
+        tabBarContainer.addSubview(tabBarView)
 
         contentView.addSubview(tabBarContainer)
         contentView.addSubview(splitView)
@@ -323,11 +328,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             tabBarContainer.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
             tabBarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             tabBarContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            tabBarContainer.heightAnchor.constraint(equalToConstant: 30),
+            tabBarContainer.heightAnchor.constraint(equalToConstant: 34),
 
-            segmented.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 4),
-            segmented.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
-            segmented.trailingAnchor.constraint(lessThanOrEqualTo: tabBarContainer.trailingAnchor, constant: -4),
+            tabBarView.topAnchor.constraint(equalTo: tabBarContainer.topAnchor),
+            tabBarView.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor),
+            tabBarView.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor),
+            tabBarView.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
 
             splitView.topAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -634,9 +640,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         // Tab bar container
         tabBarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
-
-        // Sidebar
-        sidebarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
 
         // Sidebar views
         fileTreeView.applyTheme(newTheme)
