@@ -92,6 +92,10 @@ final class FileTreeView: NSView {
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
     private let cellID = NSUserInterfaceItemIdentifier("FileCell")
 
+    // Re-entrancy guard to prevent infinite recursion when reloadItem
+    // triggers outlineViewItemDidExpand during a reload.
+    private var isReloadingItem = false
+
     // File watcher
     private var watchedFileDescriptor: Int32 = -1
     private var dispatchSource: DispatchSourceFileSystemObject?
@@ -697,6 +701,7 @@ extension FileTreeView: NSOutlineViewDelegate {
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
+        guard !isReloadingItem else { return }
         guard let node = notification.userInfo?["NSObject"] as? FileTreeNode else { return }
         node.isExpanded = true
 
@@ -706,7 +711,9 @@ extension FileTreeView: NSOutlineViewDelegate {
             FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: rootPath)
         }
         // Always reload to update the folder icon (closed -> open).
+        isReloadingItem = true
         outlineView.reloadItem(node, reloadChildren: true)
+        isReloadingItem = false
     }
 
     func outlineViewItemWillCollapse(_ notification: Notification) {

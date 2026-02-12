@@ -119,8 +119,7 @@ private final class TabItemView: NSView {
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 34),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
-            widthAnchor.constraint(lessThanOrEqualToConstant: 200),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
 
             pinIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             pinIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -272,7 +271,7 @@ final class CustomTabBar: NSView {
         sv.orientation = .horizontal
         sv.spacing = 1
         sv.alignment = .bottom
-        sv.distribution = .fillProportionally
+        sv.distribution = .fillEqually
         return sv
     }()
 
@@ -309,7 +308,8 @@ final class CustomTabBar: NSView {
             stackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             stackView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             stackView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-            // Don't pin trailing — let the stack grow beyond the clip view.
+            // Fill at least the full width; allow overflow for scrolling.
+            stackView.trailingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.trailingAnchor),
         ])
     }
 

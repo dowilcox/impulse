@@ -563,6 +563,7 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         case "css": return "css"
         case "scss": return "scss"
         case "xml": return "xml"
+        case "php": return "php"
         case "sql": return "sql"
         case "lua": return "lua"
         case "zig": return "zig"

@@ -41,11 +41,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return v
     }()
     private let splitView = NSSplitView()
-    private let sidebarContainer: NSVisualEffectView = {
-        let v = NSVisualEffectView()
-        v.material = .sidebar
-        v.blendingMode = .behindWindow
-        v.state = .active
+    private let sidebarContainer: NSView = {
+        let v = NSView()
+        v.wantsLayer = true
         return v
     }()
     private let contentContainer = NSView()
@@ -641,6 +639,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // Tab bar container
         tabBarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
 
+        // Sidebar background
+        sidebarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
+
         // Sidebar views
         fileTreeView.applyTheme(newTheme)
         searchPanel.applyTheme(newTheme)
@@ -693,6 +694,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.updateStatusBar()
+            // Update sidebar file tree when switching to a terminal tab.
+            if self.tabManager.selectedIndex >= 0,
+               self.tabManager.selectedIndex < self.tabManager.tabs.count,
+               case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
+               let terminal = container.activeTerminal {
+                let dir = terminal.currentWorkingDirectory
+                let showHidden = self.fileTreeView.showHidden
+                self.searchPanel.setRootPath(dir)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+                    FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                    }
+                }
+            }
             // Hide terminal search bar when switching away from a terminal tab.
             if self.termSearchBarVisible,
                self.tabManager.selectedIndex >= 0,
