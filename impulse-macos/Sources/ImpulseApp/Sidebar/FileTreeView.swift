@@ -96,6 +96,10 @@ final class FileTreeView: NSView {
     // triggers outlineViewItemDidExpand during a reload.
     private var isReloadingItem = false
 
+    // Set during bulk state restoration so the expand/collapse delegates
+    // skip heavy work (reloadItem, watchers, UserDefaults persistence).
+    private var isBulkRestoring = false
+
     // File watcher (root directory)
     private var watchedFileDescriptor: Int32 = -1
     private var dispatchSource: DispatchSourceFileSystemObject?
@@ -180,10 +184,14 @@ final class FileTreeView: NSView {
         rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
 
-        // Suppress expand/collapse animations during the full reload so the
-        // tree doesn't visibly flash.
+        // Start root watcher first — this stops all previous watchers.
+        startWatching(path: path)
+
+        // Suppress expand/collapse animations and heavy delegate work
+        // during the full reload so the tree doesn't visibly flash.
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
+        isBulkRestoring = true
         outlineView.reloadData()
 
         // Restore persisted expansion state.
@@ -191,32 +199,42 @@ final class FileTreeView: NSView {
         if !savedPaths.isEmpty {
             restoreExpandedPaths(savedPaths, in: rootNodes)
         }
+        isBulkRestoring = false
         NSAnimationContext.endGrouping()
 
-        startWatching(path: path)
+        // Batch-set up subdirectory watchers for all expanded directories.
+        watchExpandedSubdirectories(rootNodes)
     }
 
     /// Accept a pre-built tree (constructed off the main thread) and update
     /// the UI. Call this from a `DispatchQueue.main.async` block after
     /// building the tree on a background queue.
     func updateTree(nodes: [FileTreeNode], rootPath: String) {
-        // Preserve expansion state across the reload.
+        // Preserve expansion state from the current tree, the incoming
+        // (possibly cached) tree, and persisted UserDefaults.
         let expandedPaths = collectExpandedPaths(rootNodes)
+        let incomingExpanded = collectExpandedPaths(nodes)
         let savedPaths = loadExpandedPaths()
-        let allExpanded = expandedPaths.union(savedPaths)
+        let allExpanded = expandedPaths.union(incomingExpanded).union(savedPaths)
 
         self.rootPath = rootPath
         self.rootNodes = nodes
 
+        // Start root watcher first — this stops all previous watchers.
+        startWatching(path: rootPath)
+
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
+        isBulkRestoring = true
         outlineView.reloadData()
         if !allExpanded.isEmpty {
             restoreExpandedPaths(allExpanded, in: rootNodes)
         }
+        isBulkRestoring = false
         NSAnimationContext.endGrouping()
 
-        startWatching(path: rootPath)
+        // Batch-set up subdirectory watchers for all expanded directories.
+        watchExpandedSubdirectories(rootNodes)
     }
 
     /// Re-fetch git status for the current tree and reload visible cells to
@@ -286,9 +304,12 @@ final class FileTreeView: NSView {
                 self.rootNodes = newNodes
                 NSAnimationContext.beginGrouping()
                 NSAnimationContext.current.duration = 0
+                self.isBulkRestoring = true
                 self.outlineView.reloadData()
                 self.restoreExpandedPaths(expandedPaths, in: self.rootNodes)
+                self.isBulkRestoring = false
                 NSAnimationContext.endGrouping()
+                self.watchExpandedSubdirectories(self.rootNodes)
             }
         }
     }
@@ -627,6 +648,18 @@ final class FileTreeView: NSView {
         }
     }
 
+    /// Set up watchers for all currently expanded subdirectories in a batch.
+    private func watchExpandedSubdirectories(_ nodes: [FileTreeNode]) {
+        for node in nodes {
+            if node.isDirectory && node.isExpanded {
+                watchSubdirectory(node.path)
+                if let children = node.children {
+                    watchExpandedSubdirectories(children)
+                }
+            }
+        }
+    }
+
     /// Stop all subdirectory watchers.
     private func stopAllSubdirWatchers() {
         for (_, entry) in subdirWatchers {
@@ -810,20 +843,29 @@ extension FileTreeView: NSOutlineViewDelegate {
         node.isExpanded = true
 
         // Lazy-load children on first expansion.
+        var didLoadChildren = false
         if !node.isLoaded {
             node.loadChildren(showHidden: showHidden)
-            FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: rootPath)
+            didLoadChildren = true
+            if !isBulkRestoring {
+                FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: rootPath)
+            }
         }
-        // Always reload to update the folder icon (closed -> open).
-        isReloadingItem = true
-        outlineView.reloadItem(node, reloadChildren: true)
-        isReloadingItem = false
 
-        // Watch this subdirectory for changes.
-        watchSubdirectory(node.path)
+        // During bulk restore, only reload if we just loaded children for the
+        // first time. For already-loaded (cached) nodes, reloadData() +
+        // expandItem() is sufficient — no per-node reload needed.
+        if didLoadChildren || !isBulkRestoring {
+            isReloadingItem = true
+            outlineView.reloadItem(node, reloadChildren: true)
+            isReloadingItem = false
+        }
 
-        // Persist expansion state.
-        saveExpandedPaths()
+        if !isBulkRestoring {
+            // Watch this subdirectory for changes.
+            watchSubdirectory(node.path)
+            saveExpandedPaths()
+        }
     }
 
     func outlineViewItemWillCollapse(_ notification: Notification) {
