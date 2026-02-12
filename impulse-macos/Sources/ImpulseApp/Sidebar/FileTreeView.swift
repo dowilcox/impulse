@@ -191,9 +191,19 @@ final class FileTreeView: NSView {
     /// the UI. Call this from a `DispatchQueue.main.async` block after
     /// building the tree on a background queue.
     func updateTree(nodes: [FileTreeNode], rootPath: String) {
+        // Preserve expansion state across the reload.
+        let expandedPaths = collectExpandedPaths(rootNodes)
+        let savedPaths = loadExpandedPaths()
+        let allExpanded = expandedPaths.union(savedPaths)
+
         self.rootPath = rootPath
         self.rootNodes = nodes
         outlineView.reloadData()
+
+        if !allExpanded.isEmpty {
+            restoreExpandedPaths(allExpanded, in: rootNodes)
+        }
+
         startWatching(path: rootPath)
     }
 

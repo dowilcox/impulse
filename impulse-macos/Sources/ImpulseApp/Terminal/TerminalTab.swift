@@ -30,6 +30,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     let terminalView: LocalProcessTerminalView
 
+    /// Local event monitor for copy-on-select behaviour.
+    private var mouseUpMonitor: Any?
+
     // MARK: Initializer
 
     override init(frame frameRect: NSRect) {
@@ -44,11 +47,39 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         addSubview(terminalView)
         setupConstraints()
         setupDragAndDrop()
+        setupCopyOnSelect()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    deinit {
+        if let monitor = mouseUpMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+
+    // MARK: Copy on Select
+
+    private func setupCopyOnSelect() {
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+            guard let self else { return event }
+            // Only act if the mouse-up is within this terminal view.
+            let pt = self.terminalView.convert(event.locationInWindow, from: nil)
+            guard self.terminalView.bounds.contains(pt) else { return event }
+            // Defer to the next run-loop cycle so SwiftTerm finalises the selection first.
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.terminalView.selectionActive,
+                      let text = self.terminalView.getSelection(),
+                      !text.isEmpty else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+            return event
+        }
     }
 
     // MARK: Drag & Drop

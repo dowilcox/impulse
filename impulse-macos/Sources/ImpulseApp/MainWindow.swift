@@ -794,15 +794,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.updateStatusBar()
-            // Only rebuild the file tree when switching to a terminal tab whose
-            // CWD differs from the current root. Editor and image preview tabs
-            // should NOT change the file tree — the user's folder context should
-            // be preserved.
+            // Rebuild the file tree when the active tab's directory context differs
+            // from the current root. Terminal tabs use their CWD; editor tabs use
+            // the parent directory of the open file.
             if self.tabManager.selectedIndex >= 0,
                self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                if case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
-                   let dir = container.activeTerminal?.currentWorkingDirectory,
-                   !dir.isEmpty, dir != self.fileTreeRootPath {
+                let tab = self.tabManager.tabs[self.tabManager.selectedIndex]
+                let dir: String?
+                switch tab {
+                case .terminal(let container):
+                    dir = container.activeTerminal?.currentWorkingDirectory
+                case .editor(let editor):
+                    if let fp = editor.filePath {
+                        dir = (fp as NSString).deletingLastPathComponent
+                    } else {
+                        dir = nil
+                    }
+                case .imagePreview(let path, _):
+                    dir = (path as NSString).deletingLastPathComponent
+                }
+                if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
                     self.fileTreeRootPath = dir
                     self.searchPanel.setRootPath(dir)
                     let showHidden = self.fileTreeView.showHidden
