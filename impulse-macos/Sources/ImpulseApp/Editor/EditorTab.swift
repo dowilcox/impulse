@@ -52,6 +52,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Whether the content has been modified since the last save.
     private(set) var isModified: Bool = false
 
+    /// The sidebar root directory that was active when this editor tab was opened.
+    /// Restored when the user switches back to this tab.
+    var projectDirectory: String?
+
     /// The WKWebView hosting Monaco.
     private(set) var webView: WKWebView!
 

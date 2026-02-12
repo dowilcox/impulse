@@ -804,10 +804,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 switch tab {
                 case .terminal(let container):
                     dir = container.activeTerminal?.currentWorkingDirectory
-                case .editor:
-                    // Don't change the sidebar directory when switching to an
-                    // editor tab — keep the current terminal's working directory.
-                    dir = nil
+                case .editor(let editor):
+                    // Restore the sidebar directory that was active when this
+                    // editor tab was opened, so each editor keeps its context.
+                    dir = editor.projectDirectory
                 case .imagePreview:
                     dir = nil
                 }
@@ -845,6 +845,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 if self.tabManager.selectedIndex >= 0,
                    self.tabManager.selectedIndex < self.tabManager.tabs.count,
                    case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    // Record the sidebar directory that was active when this file was opened.
+                    if editor.projectDirectory == nil {
+                        editor.projectDirectory = self.fileTreeRootPath
+                    }
                     if let line = notification.userInfo?["line"] as? UInt32 {
                         editor.goToPosition(line: line, column: 1)
                     }
