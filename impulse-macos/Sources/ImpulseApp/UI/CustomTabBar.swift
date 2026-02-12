@@ -88,14 +88,21 @@ private final class TabItemView: NSView {
                 width: iconSize,
                 height: iconSize
             )
-            let tintedIcon = icon.copy() as! NSImage
-            tintedIcon.isTemplate = true
-            tintedIcon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-
-            // Tint by drawing over with the text color
-            textColor.set()
-            iconRect.fill(using: .sourceAtop)
-
+            if icon.isTemplate {
+                // SF Symbol / template icon — tint in an isolated image context
+                // so sourceAtop doesn't interact with the tab's background fill.
+                let size = NSSize(width: iconSize, height: iconSize)
+                let tinted = NSImage(size: size, flipped: false) { [textColor] rect in
+                    icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                    textColor.set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            } else {
+                // Pre-colored icon (themed file icons) — draw directly.
+                icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            }
             x += iconSize + iconTextGap
         }
 
@@ -210,6 +217,21 @@ private final class TabItemView: NSView {
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .pointingHand)
     }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+// MARK: - Non-Draggable Helpers
+
+/// NSView that refuses to let mouseDown start a window drag.
+/// Used inside the tab bar so clicks reach TabItemView.mouseDown
+/// instead of being hijacked by the window's `isMovableByWindowBackground`.
+private final class NonDraggableView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+private final class NonDraggableScrollView: NSScrollView {
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 // MARK: - Custom Tab Bar
@@ -220,8 +242,10 @@ final class CustomTabBar: NSView {
 
     weak var delegate: CustomTabBarDelegate?
 
+    override var mouseDownCanMoveWindow: Bool { false }
+
     private let scrollView: NSScrollView = {
-        let sv = NSScrollView()
+        let sv = NonDraggableScrollView()
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.hasHorizontalScroller = true
         sv.hasVerticalScroller = false
@@ -232,7 +256,7 @@ final class CustomTabBar: NSView {
         return sv
     }()
 
-    private let containerView = NSView()
+    private let containerView = NonDraggableView()
     private var tabViews: [TabItemView] = []
     private var selectedIndex: Int = -1
     private var currentTheme: Theme?

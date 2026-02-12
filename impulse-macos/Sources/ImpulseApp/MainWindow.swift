@@ -274,7 +274,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: .darkAqua)
-        window.isMovableByWindowBackground = true
+        window.backgroundColor = theme.bgDark
 
         super.init(window: window)
         window.delegate = self
@@ -328,9 +328,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Open a default terminal tab.
         tabManager.addTerminalTab()
 
-        // Center the traffic light buttons vertically in the titlebar.
-        centerTrafficLightButtons()
-
         // Start polling for asynchronous LSP events (diagnostics, etc.).
         startLspPolling()
     }
@@ -338,22 +335,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
-    }
-
-    // MARK: - Traffic Light Buttons
-
-    /// Vertically centers the standard window buttons (close, minimize, zoom)
-    /// within the custom 50pt titlebar area.
-    private func centerTrafficLightButtons() {
-        guard let window else { return }
-        let titlebarHeight: CGFloat = 50
-        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
-            guard let button = window.standardWindowButton(buttonType) else { continue }
-            guard let titlebarView = button.superview else { continue }
-            let buttonHeight = button.frame.height
-            let yOffset = (titlebarHeight - buttonHeight) / 2
-            button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: titlebarView.frame.height - titlebarHeight + yOffset))
-        }
     }
 
     // MARK: - Layout
@@ -447,7 +428,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         splitView.addArrangedSubview(sidebarContainer)
         splitView.addArrangedSubview(contentContainer)
 
-        // Tab bar container: sits in the titlebar area (pinned to window top, not safe area)
+        // Tab bar container: below the titlebar safe area (in normal content space)
+        // so that mouse events are delivered through the standard responder chain
+        // without interference from the titlebar's event routing.
         tabBarContainer.layer?.backgroundColor = theme.bgDark.cgColor
         let tabSegment = tabManager.tabBar
 
@@ -459,28 +442,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         contentView.addSubview(splitView)
 
         NSLayoutConstraint.activate([
-            // Pin to window top (not safe area) so tabs overlap the titlebar
-            tabBarContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+            // Pin to safe area top (below the titlebar) — clicks work reliably here
+            tabBarContainer.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
             tabBarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             tabBarContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            tabBarContainer.heightAnchor.constraint(equalToConstant: 50),
+            tabBarContainer.heightAnchor.constraint(equalToConstant: 38),
 
-            // Sidebar toggle: left side, after traffic light inset (78pt clears traffic lights + padding)
-            sidebarToggleButton.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 78),
+            // Sidebar toggle: left side
+            sidebarToggleButton.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 8),
             sidebarToggleButton.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
-            sidebarToggleButton.widthAnchor.constraint(equalToConstant: 30),
-            sidebarToggleButton.heightAnchor.constraint(equalToConstant: 30),
+            sidebarToggleButton.widthAnchor.constraint(equalToConstant: 28),
+            sidebarToggleButton.heightAnchor.constraint(equalToConstant: 28),
 
-            // Segmented control: fills between sidebar toggle and + button
-            tabSegment.leadingAnchor.constraint(equalTo: sidebarToggleButton.trailingAnchor, constant: 8),
+            // Tab strip: fills between sidebar toggle and + button
+            tabSegment.leadingAnchor.constraint(equalTo: sidebarToggleButton.trailingAnchor, constant: 6),
             tabSegment.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
-            tabSegment.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -8),
+            tabSegment.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -6),
 
-            // New tab button: right side with generous trailing padding
-            newTabButton.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor, constant: -16),
+            // New tab button: right side
+            newTabButton.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor, constant: -8),
             newTabButton.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
-            newTabButton.widthAnchor.constraint(equalToConstant: 30),
-            newTabButton.heightAnchor.constraint(equalToConstant: 30),
+            newTabButton.widthAnchor.constraint(equalToConstant: 28),
+            newTabButton.heightAnchor.constraint(equalToConstant: 28),
 
             splitView.topAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -744,8 +727,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func handleThemeChange(_ newTheme: Theme) {
         theme = newTheme
 
-        // Window background
-        window?.backgroundColor = newTheme.bg
+        // Window background — use bgDark so the titlebar blends with the tab bar
+        window?.backgroundColor = newTheme.bgDark
 
         // Tab bar container and titlebar buttons
         tabBarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
@@ -1804,11 +1787,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     // MARK: - NSWindowDelegate
 
     func windowDidResize(_ notification: Notification) {
-        centerTrafficLightButtons()
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        centerTrafficLightButtons()
     }
 
     func windowWillClose(_ notification: Notification) {
