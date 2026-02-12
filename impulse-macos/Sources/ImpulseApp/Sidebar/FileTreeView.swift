@@ -170,13 +170,20 @@ final class FileTreeView: NSView {
     // MARK: Public API
 
     /// Set (or change) the root project directory. Rebuilds the entire tree,
-    /// fetches git status, reloads the outline view, and starts watching for
-    /// filesystem changes.
+    /// fetches git status, reloads the outline view, starts watching for
+    /// filesystem changes, and restores previously expanded folders.
     func setRootPath(_ path: String) {
         rootPath = path
         rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
         outlineView.reloadData()
+
+        // Restore persisted expansion state.
+        let savedPaths = loadExpandedPaths()
+        if !savedPaths.isEmpty {
+            restoreExpandedPaths(savedPaths, in: rootNodes)
+        }
+
         startWatching(path: path)
     }
 
@@ -502,6 +509,22 @@ final class FileTreeView: NSView {
         }
     }
 
+    // MARK: Expansion Persistence
+
+    private static let expandedPathsKey = "impulse.fileTree.expandedPaths"
+
+    /// Save the current set of expanded paths to UserDefaults.
+    private func saveExpandedPaths() {
+        let paths = collectExpandedPaths(rootNodes)
+        UserDefaults.standard.set(Array(paths), forKey: Self.expandedPathsKey)
+    }
+
+    /// Load the saved set of expanded paths from UserDefaults.
+    private func loadExpandedPaths() -> Set<String> {
+        let paths = UserDefaults.standard.stringArray(forKey: Self.expandedPathsKey) ?? []
+        return Set(paths)
+    }
+
     // MARK: - File System Watching
 
     /// Start watching the root directory for filesystem changes.
@@ -714,6 +737,9 @@ extension FileTreeView: NSOutlineViewDelegate {
         isReloadingItem = true
         outlineView.reloadItem(node, reloadChildren: true)
         isReloadingItem = false
+
+        // Persist expansion state.
+        saveExpandedPaths()
     }
 
     func outlineViewItemWillCollapse(_ notification: Notification) {
@@ -724,6 +750,9 @@ extension FileTreeView: NSOutlineViewDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.outlineView.reloadItem(node, reloadChildren: false)
         }
+
+        // Persist expansion state.
+        saveExpandedPaths()
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {

@@ -2,24 +2,16 @@ import AppKit
 
 // SearchResult is defined in Bridge/ImpulseCore.swift
 
-// MARK: - Search Mode
-
-private enum SearchMode: Int {
-    case files = 0
-    case content = 1
-}
-
 // MARK: - Search Panel
 
 /// Project-wide file name and content search panel for the sidebar.
 /// Uses the FFI bridge to `impulse-core` search functions and displays results
-/// in an NSTableView.
+/// in an NSTableView. Searches both file names and content simultaneously.
 final class SearchPanel: NSView {
 
     // MARK: Properties
 
     private var searchField: NSSearchField!
-    private var modeSegment: NSSegmentedControl!
     private var caseSensitiveButton: NSButton!
     private var resultsTableView: NSTableView!
     private var resultsScrollView: NSScrollView!
@@ -28,11 +20,12 @@ final class SearchPanel: NSView {
     private var results: [SearchResult] = []
     private var rootPath: String = ""
 
-    private var searchMode: SearchMode = .content
-
     /// Debounce timer for search-as-you-type.
     private var debounceTimer: Timer?
     private let debounceInterval: TimeInterval = 0.3
+
+    /// Cached theme for styling.
+    private var currentTheme: Theme?
 
     // Table view identifiers
     private let resultCellID = NSUserInterfaceItemIdentifier("ResultCell")
@@ -52,37 +45,34 @@ final class SearchPanel: NSView {
     private func setup() {
         // --- Search field ---
         let field = NSSearchField()
-        field.placeholderString = "Search project..."
+        field.placeholderString = "Search files and content..."
         field.translatesAutoresizingMaskIntoConstraints = false
         field.sendsWholeSearchString = false
         field.sendsSearchStringImmediately = false
         field.delegate = self
+        field.focusRingType = .none
         self.searchField = field
 
-        // --- Mode segmented control ---
-        let segment = NSSegmentedControl(labels: ["Files", "Content"], trackingMode: .selectOne, target: self, action: #selector(searchModeChanged(_:)))
-        segment.selectedSegment = SearchMode.content.rawValue
-        segment.translatesAutoresizingMaskIntoConstraints = false
-        segment.segmentStyle = .texturedRounded
-        segment.controlSize = .small
-        self.modeSegment = segment
-
-        // --- Case-sensitive toggle ---
+        // --- Case-sensitive toggle (placed beside the search field) ---
         let caseBtn = NSButton(title: "Aa", target: self, action: #selector(caseSensitiveToggled(_:)))
         caseBtn.setButtonType(.toggle)
-        caseBtn.bezelStyle = .texturedRounded
-        caseBtn.controlSize = .small
+        caseBtn.bezelStyle = .inline
+        caseBtn.isBordered = false
+        caseBtn.controlSize = .regular
         caseBtn.toolTip = "Case sensitive"
         caseBtn.translatesAutoresizingMaskIntoConstraints = false
         caseBtn.state = .off
+        caseBtn.wantsLayer = true
+        caseBtn.layer?.cornerRadius = 4
+        caseBtn.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
         self.caseSensitiveButton = caseBtn
 
-        // Options row: segment + case toggle
-        let optionsRow = NSStackView(views: [segment, caseBtn])
-        optionsRow.orientation = .horizontal
-        optionsRow.spacing = 6
-        optionsRow.translatesAutoresizingMaskIntoConstraints = false
-        optionsRow.distribution = .fill
+        // Search row: field + case toggle
+        let searchRow = NSStackView(views: [field, caseBtn])
+        searchRow.orientation = .horizontal
+        searchRow.spacing = 4
+        searchRow.translatesAutoresizingMaskIntoConstraints = false
+        searchRow.distribution = .fill
 
         // --- Results table ---
         let table = NSTableView()
@@ -123,7 +113,7 @@ final class SearchPanel: NSView {
         self.statusLabel = label
 
         // --- Layout ---
-        let stack = NSStackView(views: [field, optionsRow, scroll, label])
+        let stack = NSStackView(views: [searchRow, scroll, label])
         stack.orientation = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -138,6 +128,8 @@ final class SearchPanel: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             field.heightAnchor.constraint(equalToConstant: 28),
+            caseBtn.widthAnchor.constraint(equalToConstant: 28),
+            caseBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -155,20 +147,30 @@ final class SearchPanel: NSView {
 
     /// Re-apply theme colours to the search panel.
     func applyTheme(_ theme: Theme) {
+        currentTheme = theme
         resultsTableView.backgroundColor = .clear
         statusLabel.textColor = theme.fgDark
+
+        // Style the case-sensitive toggle
+        caseSensitiveButton.contentTintColor = theme.fgDark
+
+        // Style the search field to match the theme
+        searchField.appearance = NSAppearance(named: .darkAqua)
     }
 
     // MARK: Actions
 
-    @objc private func searchModeChanged(_ sender: NSSegmentedControl) {
-        searchMode = SearchMode(rawValue: sender.selectedSegment) ?? .content
-        // Hide case-sensitive button for file search (filename search is always case-insensitive).
-        caseSensitiveButton.isHidden = (searchMode == .files)
-        triggerSearch()
-    }
-
     @objc private func caseSensitiveToggled(_ sender: NSButton) {
+        // Update button visual state
+        if let theme = currentTheme {
+            if sender.state == .on {
+                caseSensitiveButton.layer?.backgroundColor = theme.bgHighlight.cgColor
+                caseSensitiveButton.contentTintColor = theme.cyan
+            } else {
+                caseSensitiveButton.layer?.backgroundColor = NSColor.clear.cgColor
+                caseSensitiveButton.contentTintColor = theme.fgDark
+            }
+        }
         triggerSearch()
     }
 
@@ -210,35 +212,42 @@ final class SearchPanel: NSView {
     private func executeSearch(query: String) {
         guard !rootPath.isEmpty else { return }
 
-        // Capture UI state on the main thread before dispatching to background.
-        let mode = self.searchMode
         let root = self.rootPath
         let caseSensitive = (self.caseSensitiveButton.state == .on)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard self != nil else { return }
 
-            let decoded: [SearchResult]
+            // Run both searches in parallel
+            let fileResults = ImpulseCore.searchFiles(root: root, query: query)
+            let contentResults = ImpulseCore.searchContent(root: root,
+                                                            query: query,
+                                                            caseSensitive: caseSensitive)
 
-            switch mode {
-            case .files:
-                decoded = ImpulseCore.searchFiles(root: root, query: query)
-
-            case .content:
-                decoded = ImpulseCore.searchContent(root: root,
-                                                    query: query,
-                                                    caseSensitive: caseSensitive)
-            }
+            // Combine: file matches first, then content matches.
+            // Deduplicate: if a file appears in both, keep the content result
+            // (which has line info) and skip the file-only result.
+            let contentPaths = Set(contentResults.map { $0.path })
+            let uniqueFileResults = fileResults.filter { !contentPaths.contains($0.path) }
+            let combined = uniqueFileResults + contentResults
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.results = decoded
+                self.results = combined
                 self.resultsTableView.reloadData()
-                if decoded.isEmpty {
+                if combined.isEmpty {
                     self.statusLabel.stringValue = "No results"
                 } else {
-                    let noun = decoded.count == 1 ? "result" : "results"
-                    self.statusLabel.stringValue = "\(decoded.count) \(noun)"
+                    let fileCount = uniqueFileResults.count
+                    let contentCount = contentResults.count
+                    var parts: [String] = []
+                    if fileCount > 0 {
+                        parts.append("\(fileCount) \(fileCount == 1 ? "file" : "files")")
+                    }
+                    if contentCount > 0 {
+                        parts.append("\(contentCount) \(contentCount == 1 ? "match" : "matches")")
+                    }
+                    self.statusLabel.stringValue = parts.joined(separator: ", ")
                 }
             }
         }
@@ -274,7 +283,6 @@ extension SearchPanel: NSTableViewDelegate {
 
         let cell: NSTableCellView
         if let reused = tableView.makeView(withIdentifier: resultCellID, owner: self) as? NSTableCellView {
-            // Reuse existing cell, but we need to update the secondary label.
             cell = reused
         } else {
             cell = makeResultCellView()

@@ -304,11 +304,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         setupLayout()
         setupNotificationObservers()
 
-        // Right-click on tab segments for close/pin context menu.
-        let rightClick = NSClickGestureRecognizer(target: self, action: #selector(tabSegmentRightClicked(_:)))
-        rightClick.buttonMask = 0x2 // right button
-        tabManager.segmentedControl.addGestureRecognizer(rightClick)
-
         // Apply initial theme to sidebar views.
         fileTreeView.applyTheme(theme)
         searchPanel.applyTheme(theme)
@@ -333,6 +328,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Open a default terminal tab.
         tabManager.addTerminalTab()
 
+        // Center the traffic light buttons vertically in the titlebar.
+        centerTrafficLightButtons()
+
         // Start polling for asynchronous LSP events (diagnostics, etc.).
         startLspPolling()
     }
@@ -340,6 +338,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    // MARK: - Traffic Light Buttons
+
+    /// Vertically centers the standard window buttons (close, minimize, zoom)
+    /// within the custom 50pt titlebar area.
+    private func centerTrafficLightButtons() {
+        guard let window else { return }
+        let titlebarHeight: CGFloat = 50
+        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(buttonType) else { continue }
+            guard let titlebarView = button.superview else { continue }
+            let buttonHeight = button.frame.height
+            let yOffset = (titlebarHeight - buttonHeight) / 2
+            button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: titlebarView.frame.height - titlebarHeight + yOffset))
+        }
     }
 
     // MARK: - Layout
@@ -435,7 +449,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         // Tab bar container: sits in the titlebar area (pinned to window top, not safe area)
         tabBarContainer.layer?.backgroundColor = theme.bgDark.cgColor
-        let tabSegment = tabManager.segmentedControl
+        let tabSegment = tabManager.tabBar
 
         tabBarContainer.addSubview(sidebarToggleButton)
         tabBarContainer.addSubview(tabSegment)
@@ -521,23 +535,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     @objc private func newTabAction(_ sender: Any?) {
         tabManager.addTerminalTab()
-    }
-
-    @objc private func tabSegmentRightClicked(_ sender: NSClickGestureRecognizer) {
-        let seg = tabManager.segmentedControl
-        let location = sender.location(in: seg)
-        // Determine which segment was clicked by testing each segment's bounds.
-        var offset: CGFloat = 0
-        for i in 0..<seg.segmentCount {
-            let width = seg.width(forSegment: i) > 0 ? seg.width(forSegment: i) : seg.frame.width / CGFloat(seg.segmentCount)
-            if location.x >= offset && location.x < offset + width {
-                if let menu = tabManager.contextMenu(forTabIndex: i) {
-                    menu.popUp(positioning: nil, at: NSPoint(x: location.x, y: 0), in: seg)
-                }
-                return
-            }
-            offset += width
-        }
     }
 
     @objc private func toggleHiddenAction(_ sender: Any?) {
@@ -814,32 +811,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.updateStatusBar()
-            // Determine the relevant directory for the active tab.
-            var dir: String?
+            // Only rebuild the file tree when switching to a terminal tab whose
+            // CWD differs from the current root. Editor and image preview tabs
+            // should NOT change the file tree — the user's folder context should
+            // be preserved.
             if self.tabManager.selectedIndex >= 0,
                self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                switch self.tabManager.tabs[self.tabManager.selectedIndex] {
-                case .terminal(let container):
-                    dir = container.activeTerminal?.currentWorkingDirectory
-                case .editor(let editor):
-                    if let path = editor.filePath {
-                        dir = (path as NSString).deletingLastPathComponent
-                    }
-                case .imagePreview(let path, _):
-                    dir = (path as NSString).deletingLastPathComponent
-                }
-            }
-            // Only rebuild the file tree if the directory has actually changed.
-            if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
-                self.fileTreeRootPath = dir
-                self.searchPanel.setRootPath(dir)
-                let showHidden = self.fileTreeView.showHidden
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                    FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                if case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
+                   let dir = container.activeTerminal?.currentWorkingDirectory,
+                   !dir.isEmpty, dir != self.fileTreeRootPath {
+                    self.fileTreeRootPath = dir
+                    self.searchPanel.setRootPath(dir)
+                    let showHidden = self.fileTreeView.showHidden
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+                        FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self else { return }
+                            self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                        }
                     }
                 }
             }
@@ -924,9 +914,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             self.commandPalette.show(relativeTo: window)
         }
 
-        // Save file
-        nc.addObserver(forName: .impulseSaveFile, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
+        // Save file — fired from menu Cmd+S or from EditorTab's SaveRequested event
+        nc.addObserver(forName: .impulseSaveFile, object: nil, queue: .main) { [weak self] notification in
+            guard let self else { return }
+
+            // If the notification came from an EditorTab (Monaco Cmd+S path),
+            // save that specific editor directly — no key-window check needed
+            // because the editor itself initiated the save.
+            if let sourceEditor = notification.object as? EditorTab {
+                self.saveEditorTab(sourceEditor)
+                return
+            }
+
+            // Menu path: save the currently selected editor tab.
+            guard self.window?.isKeyWindow == true else { return }
             guard self.tabManager.selectedIndex >= 0,
                   self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
             if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
@@ -1087,6 +1088,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             if index >= 0, index < self.tabManager.tabs.count {
                 self.tabManager.selectTab(index: index)
             }
+        }
+
+        // Settings changed (from SettingsWindow)
+        nc.addObserver(forName: .impulseSettingsDidChange, object: nil, queue: .main) { [weak self] notification in
+            guard let self, let newSettings = notification.object as? Settings else { return }
+            self.settings = newSettings
+            self.tabManager.settings = newSettings
+            self.applyAllSettings()
         }
 
         // LSP: go-to-definition requested
@@ -1411,23 +1420,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     private func saveEditorTab(_ editor: EditorTab) {
         guard let path = editor.filePath else { return }
 
-        // 1. Format on save — find applicable formatter
-        let formatter = resolveFormatOnSave(forPath: path)
-        if let fmt = formatter, !fmt.command.isEmpty {
-            // Save first so the formatter can read the file
-            editor.saveFile()
-            runExternalCommand(command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent) { [weak self, weak editor] in
-                guard let self, let editor else { return }
-                // Reload the file after formatting
-                if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
-                   newContent != editor.content {
-                    editor.openFile(path: path, content: newContent, language: editor.language)
+        // Fetch the latest content from Monaco (content changes are debounced
+        // in JS, so the Swift property may be stale when saving via menu Cmd+S).
+        editor.fetchContentAndSave { [weak self, weak editor] success in
+            guard let self, let editor, success else { return }
+
+            // Format on save — find applicable formatter
+            let formatter = self.resolveFormatOnSave(forPath: path)
+            if let fmt = formatter, !fmt.command.isEmpty {
+                self.runExternalCommand(command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent) { [weak self, weak editor] in
+                    guard let self, let editor else { return }
+                    // Reload the file after formatting
+                    if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
+                       newContent != editor.content {
+                        editor.openFile(path: path, content: newContent, language: editor.language)
+                    }
+                    self.postSaveActions(editor: editor, path: path)
                 }
+            } else {
                 self.postSaveActions(editor: editor, path: path)
             }
-        } else {
-            editor.saveFile()
-            postSaveActions(editor: editor, path: path)
         }
     }
 
@@ -1605,6 +1617,66 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         }
     }
 
+    // MARK: - Apply All Settings
+
+    /// Re-applies all settings to every open tab. Called when settings change
+    /// via the preferences window.
+    private func applyAllSettings() {
+        let editorOptions = EditorOptions(
+            fontSize: UInt32(settings.fontSize),
+            fontFamily: settings.fontFamily,
+            tabSize: UInt32(settings.tabWidth),
+            insertSpaces: settings.useSpaces,
+            wordWrap: settings.wordWrap ? "on" : "off",
+            minimapEnabled: settings.minimapEnabled,
+            lineNumbers: settings.showLineNumbers ? "on" : "off",
+            renderWhitespace: settings.renderWhitespace,
+            renderLineHighlight: settings.highlightCurrentLine ? "line" : "none",
+            rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
+            stickyScroll: settings.stickyScroll,
+            bracketPairColorization: settings.bracketPairColorization,
+            indentGuides: settings.indentGuides,
+            fontLigatures: settings.fontLigatures,
+            folding: settings.folding,
+            scrollBeyondLastLine: settings.scrollBeyondLastLine,
+            smoothScrolling: settings.smoothScrolling,
+            cursorStyle: settings.editorCursorStyle,
+            cursorBlinking: settings.editorCursorBlinking,
+            lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
+            autoClosingBrackets: settings.editorAutoClosingBrackets
+        )
+        let termSettings = TerminalSettings(
+            terminalFontSize: settings.terminalFontSize,
+            terminalFontFamily: settings.terminalFontFamily,
+            terminalCursorShape: settings.terminalCursorShape,
+            terminalCursorBlink: settings.terminalCursorBlink,
+            terminalScrollback: settings.terminalScrollback,
+            lastDirectory: settings.lastDirectory
+        )
+
+        for tab in tabManager.tabs {
+            switch tab {
+            case .editor(let editor):
+                editor.applySettings(editorOptions)
+            case .terminal(let container):
+                container.applySettings(settings: termSettings)
+            case .imagePreview:
+                break
+            }
+        }
+
+        // Re-apply sidebar show-hidden preference.
+        if fileTreeView.showHidden != settings.sidebarShowHidden {
+            fileTreeView.showHidden = settings.sidebarShowHidden
+            let iconName = settings.sidebarShowHidden ? "eye" : "eye.slash"
+            toggleHiddenButton.image = NSImage(systemSymbolName: iconName,
+                                                accessibilityDescription: "Toggle Hidden Files")
+            if !fileTreeRootPath.isEmpty {
+                fileTreeView.setRootPath(fileTreeRootPath)
+            }
+        }
+    }
+
     // MARK: - Git Branch Cache
 
     /// Returns the git branch for a directory, using a cache to avoid
@@ -1730,6 +1802,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     // MARK: - NSWindowDelegate
+
+    func windowDidResize(_ notification: Notification) {
+        centerTrafficLightButtons()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        centerTrafficLightButtons()
+    }
 
     func windowWillClose(_ notification: Notification) {
         stopLspPolling()

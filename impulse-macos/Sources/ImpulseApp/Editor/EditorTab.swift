@@ -200,7 +200,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             )
 
         case .saveRequested:
-            saveFile()
+            // Route through the main save pipeline so format-on-save, LSP
+            // notifications, and other post-save actions run correctly.
+            NotificationCenter.default.post(name: .impulseSaveFile, object: self)
 
         case let .completionRequested(requestId, line, character):
             NotificationCenter.default.post(
@@ -322,6 +324,38 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         } catch {
             os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
             return false
+        }
+    }
+
+    /// Fetch the latest content from Monaco and then call `completion`.
+    /// This is necessary because content changes are debounced in JS, so
+    /// the Swift `content` property may be stale when a save is triggered
+    /// via the menu (Cmd+S) rather than through Monaco's own save handler.
+    func fetchContentAndSave(completion: @escaping (Bool) -> Void) {
+        guard let path = filePath else {
+            completion(false)
+            return
+        }
+
+        guard isEditorReady else {
+            // Editor not ready, save whatever we have
+            completion(saveFile())
+            return
+        }
+
+        webView.evaluateJavaScript("editor.getValue()") { [weak self] result, error in
+            guard let self else { completion(false); return }
+            if let latest = result as? String {
+                self.content = latest
+            }
+            do {
+                try self.content.write(toFile: path, atomically: true, encoding: .utf8)
+                self.isModified = false
+                completion(true)
+            } catch {
+                os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
+                completion(false)
+            }
         }
     }
 

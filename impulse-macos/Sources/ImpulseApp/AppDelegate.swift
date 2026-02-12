@@ -7,6 +7,8 @@ extension Notification.Name {
     static let impulseThemeDidChange = Notification.Name("impulseThemeDidChange")
     /// Posted when the active tab changes (used by status bar).
     static let impulseActiveTabDidChange = Notification.Name("impulseActiveTabDidChange")
+    /// Posted when settings are changed (e.g. from the settings window).
+    static let impulseSettingsDidChange = Notification.Name("impulseSettingsDidChange")
     /// Requests a new terminal tab in the frontmost window.
     static let impulseNewTerminalTab = Notification.Name("impulseNewTerminalTab")
     /// Requests closing the current tab in the frontmost window.

@@ -27,7 +27,7 @@ final class SettingsWindowController: NSWindowController {
         self.settings = settings
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 560),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -35,7 +35,7 @@ final class SettingsWindowController: NSWindowController {
         window.title = "Settings"
         window.center()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 500, height: 400)
+        window.minSize = NSSize(width: 560, height: 420)
 
         super.init(window: window)
 
@@ -71,20 +71,18 @@ final class SettingsWindowController: NSWindowController {
         let item = NSTabViewItem(identifier: "editor")
         item.label = "Editor"
 
-        let grid = NSGridView(numberOfColumns: 2, rows: 0)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = 8
-        grid.columnSpacing = 12
-        grid.column(at: 0).xPlacement = .trailing
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
 
-        // Font family
+        // -- Font Section --
+
         let fontFamilyField = NSTextField(string: settings.fontFamily)
         fontFamilyField.target = self
         fontFamilyField.action = #selector(fontFamilyChanged(_:))
         fontFamilyField.tag = 0
-        grid.addRow(with: [makeLabel("Font Family:"), fontFamilyField])
 
-        // Font size
         let fontSizeStepper = NSStepper()
         fontSizeStepper.minValue = 6
         fontSizeStepper.maxValue = 72
@@ -97,106 +95,72 @@ final class SettingsWindowController: NSWindowController {
         let fontSizeRow = NSStackView(views: [fontSizeField, fontSizeStepper])
         fontSizeRow.orientation = .horizontal
         fontSizeRow.spacing = 4
-        grid.addRow(with: [makeLabel("Font Size:"), fontSizeRow])
 
-        // Tab width
+        let ligaturesCheck = NSButton(checkboxWithTitle: "Font ligatures",
+                                       target: self, action: #selector(fontLigaturesChanged(_:)))
+        ligaturesCheck.state = settings.fontLigatures ? .on : .off
+
+        addSection(to: stack, title: "Font", subtitle: "Editor typeface and size", rows: [
+            makeRow(label: "Font Family:", control: fontFamilyField),
+            makeRow(label: "Font Size:", control: fontSizeRow),
+            ligaturesCheck,
+        ], addSeparator: false)
+
+        // -- Indentation Section --
+
         let tabWidthField = NSTextField(string: "\(settings.tabWidth)")
         tabWidthField.target = self
         tabWidthField.action = #selector(tabWidthChanged(_:))
         tabWidthField.tag = 1
-        grid.addRow(with: [makeLabel("Tab Width:"), tabWidthField])
 
-        // Use spaces
         let useSpacesCheck = NSButton(checkboxWithTitle: "Insert spaces instead of tabs",
                                        target: self, action: #selector(useSpacesChanged(_:)))
         useSpacesCheck.state = settings.useSpaces ? .on : .off
-        grid.addRow(with: [makeLabel(""), useSpacesCheck])
 
-        // Show line numbers
-        let lineNumbersCheck = NSButton(checkboxWithTitle: "Show line numbers",
-                                         target: self, action: #selector(showLineNumbersChanged(_:)))
-        lineNumbersCheck.state = settings.showLineNumbers ? .on : .off
-        grid.addRow(with: [makeLabel(""), lineNumbersCheck])
-
-        // Word wrap
-        let wordWrapCheck = NSButton(checkboxWithTitle: "Word wrap",
-                                      target: self, action: #selector(wordWrapChanged(_:)))
-        wordWrapCheck.state = settings.wordWrap ? .on : .off
-        grid.addRow(with: [makeLabel(""), wordWrapCheck])
-
-        // Minimap
-        let minimapCheck = NSButton(checkboxWithTitle: "Show minimap",
-                                     target: self, action: #selector(minimapChanged(_:)))
-        minimapCheck.state = settings.minimapEnabled ? .on : .off
-        grid.addRow(with: [makeLabel(""), minimapCheck])
-
-        // Highlight current line
-        let highlightLineCheck = NSButton(checkboxWithTitle: "Highlight current line",
-                                           target: self, action: #selector(highlightLineChanged(_:)))
-        highlightLineCheck.state = settings.highlightCurrentLine ? .on : .off
-        grid.addRow(with: [makeLabel(""), highlightLineCheck])
-
-        // Bracket pair colorization
-        let bracketCheck = NSButton(checkboxWithTitle: "Bracket pair colorization",
-                                     target: self, action: #selector(bracketColorizationChanged(_:)))
-        bracketCheck.state = settings.bracketPairColorization ? .on : .off
-        grid.addRow(with: [makeLabel(""), bracketCheck])
-
-        // Font ligatures
-        let ligaturesCheck = NSButton(checkboxWithTitle: "Font ligatures",
-                                       target: self, action: #selector(fontLigaturesChanged(_:)))
-        ligaturesCheck.state = settings.fontLigatures ? .on : .off
-        grid.addRow(with: [makeLabel(""), ligaturesCheck])
-
-        // Indent guides
         let indentGuidesCheck = NSButton(checkboxWithTitle: "Indent guides",
                                           target: self, action: #selector(indentGuidesChanged(_:)))
         indentGuidesCheck.state = settings.indentGuides ? .on : .off
-        grid.addRow(with: [makeLabel(""), indentGuidesCheck])
 
-        // Sticky scroll
+        addSection(to: stack, title: "Indentation", rows: [
+            makeRow(label: "Tab Width:", control: tabWidthField),
+            useSpacesCheck,
+            indentGuidesCheck,
+        ])
+
+        // -- Display Section --
+
+        let lineNumbersCheck = NSButton(checkboxWithTitle: "Show line numbers",
+                                         target: self, action: #selector(showLineNumbersChanged(_:)))
+        lineNumbersCheck.state = settings.showLineNumbers ? .on : .off
+
+        let wordWrapCheck = NSButton(checkboxWithTitle: "Word wrap",
+                                      target: self, action: #selector(wordWrapChanged(_:)))
+        wordWrapCheck.state = settings.wordWrap ? .on : .off
+
+        let minimapCheck = NSButton(checkboxWithTitle: "Show minimap",
+                                     target: self, action: #selector(minimapChanged(_:)))
+        minimapCheck.state = settings.minimapEnabled ? .on : .off
+
+        let highlightLineCheck = NSButton(checkboxWithTitle: "Highlight current line",
+                                           target: self, action: #selector(highlightLineChanged(_:)))
+        highlightLineCheck.state = settings.highlightCurrentLine ? .on : .off
+
+        let bracketCheck = NSButton(checkboxWithTitle: "Bracket pair colorization",
+                                     target: self, action: #selector(bracketColorizationChanged(_:)))
+        bracketCheck.state = settings.bracketPairColorization ? .on : .off
+
         let stickyScrollCheck = NSButton(checkboxWithTitle: "Sticky scroll",
                                           target: self, action: #selector(stickyScrollChanged(_:)))
         stickyScrollCheck.state = settings.stickyScroll ? .on : .off
-        grid.addRow(with: [makeLabel(""), stickyScrollCheck])
 
-        // Auto save
-        let autoSaveCheck = NSButton(checkboxWithTitle: "Auto save on focus loss",
-                                      target: self, action: #selector(autoSaveChanged(_:)))
-        autoSaveCheck.state = settings.autoSave ? .on : .off
-        grid.addRow(with: [makeLabel(""), autoSaveCheck])
-
-        // Render whitespace
         let whitespacePopup = NSPopUpButton(title: "", target: self, action: #selector(renderWhitespaceChanged(_:)))
         whitespacePopup.addItems(withTitles: ["none", "boundary", "selection", "trailing", "all"])
         whitespacePopup.selectItem(withTitle: settings.renderWhitespace)
-        grid.addRow(with: [makeLabel("Render Whitespace:"), whitespacePopup])
 
-        // Cursor style
-        let cursorPopup = NSPopUpButton(title: "", target: self, action: #selector(cursorStyleChanged(_:)))
-        cursorPopup.addItems(withTitles: ["line", "block", "underline", "line-thin", "block-outline", "underline-thin"])
-        cursorPopup.selectItem(withTitle: settings.editorCursorStyle)
-        grid.addRow(with: [makeLabel("Cursor Style:"), cursorPopup])
-
-        // Cursor blinking
-        let blinkPopup = NSPopUpButton(title: "", target: self, action: #selector(cursorBlinkingChanged(_:)))
-        blinkPopup.addItems(withTitles: ["blink", "smooth", "phase", "expand", "solid"])
-        blinkPopup.selectItem(withTitle: settings.editorCursorBlinking)
-        grid.addRow(with: [makeLabel("Cursor Blinking:"), blinkPopup])
-
-        // Auto-closing brackets
-        let autoClosePopup = NSPopUpButton(title: "", target: self, action: #selector(autoClosingBracketsChanged(_:)))
-        autoClosePopup.addItems(withTitles: ["always", "languageDefined", "beforeWhitespace", "never"])
-        autoClosePopup.selectItem(withTitle: settings.editorAutoClosingBrackets)
-        grid.addRow(with: [makeLabel("Auto-Close Brackets:"), autoClosePopup])
-
-        // Show right margin
         let rightMarginCheck = NSButton(checkboxWithTitle: "Show right margin",
                                          target: self, action: #selector(showRightMarginChanged(_:)))
         rightMarginCheck.state = settings.showRightMargin ? .on : .off
-        grid.addRow(with: [makeLabel(""), rightMarginCheck])
 
-        // Right margin column
         let marginStepper = NSStepper()
         marginStepper.minValue = 1
         marginStepper.maxValue = 500
@@ -209,27 +173,7 @@ final class SettingsWindowController: NSWindowController {
         let marginRow = NSStackView(views: [marginField, marginStepper])
         marginRow.orientation = .horizontal
         marginRow.spacing = 4
-        grid.addRow(with: [makeLabel("Right Margin Column:"), marginRow])
 
-        // Scroll beyond last line
-        let scrollBeyondCheck = NSButton(checkboxWithTitle: "Scroll beyond last line",
-                                          target: self, action: #selector(scrollBeyondLastLineChanged(_:)))
-        scrollBeyondCheck.state = settings.scrollBeyondLastLine ? .on : .off
-        grid.addRow(with: [makeLabel(""), scrollBeyondCheck])
-
-        // Smooth scrolling
-        let smoothScrollCheck = NSButton(checkboxWithTitle: "Smooth scrolling",
-                                          target: self, action: #selector(smoothScrollingChanged(_:)))
-        smoothScrollCheck.state = settings.smoothScrolling ? .on : .off
-        grid.addRow(with: [makeLabel(""), smoothScrollCheck])
-
-        // Code folding
-        let foldingCheck = NSButton(checkboxWithTitle: "Code folding",
-                                     target: self, action: #selector(foldingChanged(_:)))
-        foldingCheck.state = settings.folding ? .on : .off
-        grid.addRow(with: [makeLabel(""), foldingCheck])
-
-        // Editor line height
         let lineHeightStepper = NSStepper()
         lineHeightStepper.minValue = 0
         lineHeightStepper.maxValue = 50
@@ -242,26 +186,66 @@ final class SettingsWindowController: NSWindowController {
         let lineHeightRow = NSStackView(views: [lineHeightField, lineHeightStepper])
         lineHeightRow.orientation = .horizontal
         lineHeightRow.spacing = 4
-        grid.addRow(with: [makeLabel("Line Height:"), lineHeightRow])
 
-        let scrollView = NSScrollView()
-        scrollView.documentView = grid
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-
-        grid.widthAnchor.constraint(greaterThanOrEqualToConstant: 450).isActive = true
-
-        let container = NSView()
-        container.addSubview(scrollView)
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+        addSection(to: stack, title: "Display", subtitle: "Visual appearance of the editor", rows: [
+            lineNumbersCheck,
+            wordWrapCheck,
+            minimapCheck,
+            highlightLineCheck,
+            bracketCheck,
+            stickyScrollCheck,
+            makeRow(label: "Render Whitespace:", control: whitespacePopup),
+            rightMarginCheck,
+            makeRow(label: "Right Margin Column:", control: marginRow),
+            makeRow(label: "Line Height:", control: lineHeightRow),
         ])
 
-        item.view = container
+        // -- Cursor Section --
+
+        let cursorPopup = NSPopUpButton(title: "", target: self, action: #selector(cursorStyleChanged(_:)))
+        cursorPopup.addItems(withTitles: ["line", "block", "underline", "line-thin", "block-outline", "underline-thin"])
+        cursorPopup.selectItem(withTitle: settings.editorCursorStyle)
+
+        let blinkPopup = NSPopUpButton(title: "", target: self, action: #selector(cursorBlinkingChanged(_:)))
+        blinkPopup.addItems(withTitles: ["blink", "smooth", "phase", "expand", "solid"])
+        blinkPopup.selectItem(withTitle: settings.editorCursorBlinking)
+
+        addSection(to: stack, title: "Cursor", rows: [
+            makeRow(label: "Cursor Style:", control: cursorPopup),
+            makeRow(label: "Cursor Blinking:", control: blinkPopup),
+        ])
+
+        // -- Behavior Section --
+
+        let autoClosePopup = NSPopUpButton(title: "", target: self, action: #selector(autoClosingBracketsChanged(_:)))
+        autoClosePopup.addItems(withTitles: ["always", "languageDefined", "beforeWhitespace", "never"])
+        autoClosePopup.selectItem(withTitle: settings.editorAutoClosingBrackets)
+
+        let foldingCheck = NSButton(checkboxWithTitle: "Code folding",
+                                     target: self, action: #selector(foldingChanged(_:)))
+        foldingCheck.state = settings.folding ? .on : .off
+
+        let autoSaveCheck = NSButton(checkboxWithTitle: "Auto save on focus loss",
+                                      target: self, action: #selector(autoSaveChanged(_:)))
+        autoSaveCheck.state = settings.autoSave ? .on : .off
+
+        let scrollBeyondCheck = NSButton(checkboxWithTitle: "Scroll beyond last line",
+                                          target: self, action: #selector(scrollBeyondLastLineChanged(_:)))
+        scrollBeyondCheck.state = settings.scrollBeyondLastLine ? .on : .off
+
+        let smoothScrollCheck = NSButton(checkboxWithTitle: "Smooth scrolling",
+                                          target: self, action: #selector(smoothScrollingChanged(_:)))
+        smoothScrollCheck.state = settings.smoothScrolling ? .on : .off
+
+        addSection(to: stack, title: "Behavior", rows: [
+            makeRow(label: "Auto-Close Brackets:", control: autoClosePopup),
+            foldingCheck,
+            autoSaveCheck,
+            scrollBeyondCheck,
+            smoothScrollCheck,
+        ])
+
+        item.view = wrapInScrollView(stack)
         return item
     }
 
@@ -271,19 +255,17 @@ final class SettingsWindowController: NSWindowController {
         let item = NSTabViewItem(identifier: "terminal")
         item.label = "Terminal"
 
-        let grid = NSGridView(numberOfColumns: 2, rows: 0)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = 8
-        grid.columnSpacing = 12
-        grid.column(at: 0).xPlacement = .trailing
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
 
-        // Terminal font family
+        // -- Font Section --
+
         let fontFamilyField = NSTextField(string: settings.terminalFontFamily)
         fontFamilyField.target = self
         fontFamilyField.action = #selector(termFontFamilyChanged(_:))
-        grid.addRow(with: [makeLabel("Font Family:"), fontFamilyField])
 
-        // Terminal font size
         let fontSizeStepper = NSStepper()
         fontSizeStepper.minValue = 6
         fontSizeStepper.maxValue = 72
@@ -296,65 +278,68 @@ final class SettingsWindowController: NSWindowController {
         let fontSizeRow = NSStackView(views: [fontSizeLabel, fontSizeStepper])
         fontSizeRow.orientation = .horizontal
         fontSizeRow.spacing = 4
-        grid.addRow(with: [makeLabel("Font Size:"), fontSizeRow])
 
-        // Scrollback
-        let scrollbackField = NSTextField(string: "\(settings.terminalScrollback)")
-        scrollbackField.target = self
-        scrollbackField.action = #selector(scrollbackChanged(_:))
-        grid.addRow(with: [makeLabel("Scrollback Lines:"), scrollbackField])
+        addSection(to: stack, title: "Font", subtitle: "Terminal typeface and size", rows: [
+            makeRow(label: "Font Family:", control: fontFamilyField),
+            makeRow(label: "Font Size:", control: fontSizeRow),
+        ], addSeparator: false)
 
-        // Cursor shape
+        // -- Cursor Section --
+
         let cursorPopup = NSPopUpButton(title: "", target: self, action: #selector(termCursorShapeChanged(_:)))
         cursorPopup.addItems(withTitles: ["block", "underline", "bar"])
         cursorPopup.selectItem(withTitle: settings.terminalCursorShape)
-        grid.addRow(with: [makeLabel("Cursor Shape:"), cursorPopup])
 
-        // Cursor blink
         let cursorBlinkCheck = NSButton(checkboxWithTitle: "Cursor blink",
                                          target: self, action: #selector(termCursorBlinkChanged(_:)))
         cursorBlinkCheck.state = settings.terminalCursorBlink ? .on : .off
-        grid.addRow(with: [makeLabel(""), cursorBlinkCheck])
 
-        // Copy on select
+        addSection(to: stack, title: "Cursor", rows: [
+            makeRow(label: "Cursor Shape:", control: cursorPopup),
+            cursorBlinkCheck,
+        ])
+
+        // -- Behavior Section --
+
         let copyOnSelectCheck = NSButton(checkboxWithTitle: "Copy on select",
                                           target: self, action: #selector(termCopyOnSelectChanged(_:)))
         copyOnSelectCheck.state = settings.terminalCopyOnSelect ? .on : .off
-        grid.addRow(with: [makeLabel(""), copyOnSelectCheck])
 
-        // Bell
         let bellCheck = NSButton(checkboxWithTitle: "Audible bell",
                                   target: self, action: #selector(termBellChanged(_:)))
         bellCheck.state = settings.terminalBell ? .on : .off
-        grid.addRow(with: [makeLabel(""), bellCheck])
 
-        // Scroll on output
         let scrollOutputCheck = NSButton(checkboxWithTitle: "Scroll on output",
                                           target: self, action: #selector(termScrollOnOutputChanged(_:)))
         scrollOutputCheck.state = settings.terminalScrollOnOutput ? .on : .off
-        grid.addRow(with: [makeLabel(""), scrollOutputCheck])
 
-        // Allow hyperlinks
         let hyperlinkCheck = NSButton(checkboxWithTitle: "Allow hyperlinks",
                                        target: self, action: #selector(termHyperlinkChanged(_:)))
         hyperlinkCheck.state = settings.terminalAllowHyperlink ? .on : .off
-        grid.addRow(with: [makeLabel(""), hyperlinkCheck])
 
-        // Bold is bright
         let boldBrightCheck = NSButton(checkboxWithTitle: "Bold is bright",
                                         target: self, action: #selector(termBoldIsBrightChanged(_:)))
         boldBrightCheck.state = settings.terminalBoldIsBright ? .on : .off
-        grid.addRow(with: [makeLabel(""), boldBrightCheck])
 
-        let container = NSView()
-        container.addSubview(grid)
-        NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            grid.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            grid.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
+        addSection(to: stack, title: "Behavior", rows: [
+            copyOnSelectCheck,
+            bellCheck,
+            scrollOutputCheck,
+            hyperlinkCheck,
+            boldBrightCheck,
         ])
 
-        item.view = container
+        // -- Scrollback Section --
+
+        let scrollbackField = NSTextField(string: "\(settings.terminalScrollback)")
+        scrollbackField.target = self
+        scrollbackField.action = #selector(scrollbackChanged(_:))
+
+        addSection(to: stack, title: "Scrollback", subtitle: "Number of lines kept in the scroll buffer", rows: [
+            makeRow(label: "Scrollback Lines:", control: scrollbackField),
+        ])
+
+        item.view = wrapInScrollView(stack)
         return item
     }
 
@@ -364,10 +349,13 @@ final class SettingsWindowController: NSWindowController {
         let item = NSTabViewItem(identifier: "appearance")
         item.label = "Appearance"
 
-        let container = NSView()
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
 
-        // Color scheme popup
-        let schemeLabel = makeLabel("Color Scheme:")
+        // -- Color Scheme Section --
+
         let schemePopup = NSPopUpButton(title: "", target: self, action: #selector(colorSchemeChanged(_:)))
         schemePopup.addItems(withTitles: ThemeManager.availableThemes())
         schemePopup.selectItem(withTitle: settings.colorScheme)
@@ -380,46 +368,28 @@ final class SettingsWindowController: NSWindowController {
         previewBox.borderColor = .separatorColor
         previewBox.translatesAutoresizingMaskIntoConstraints = false
         previewBox.identifier = NSUserInterfaceItemIdentifier("colorPreviewBox")
+        previewBox.heightAnchor.constraint(equalToConstant: 200).isActive = true
 
         let theme = ThemeManager.theme(forName: settings.colorScheme)
         previewBox.fillColor = theme.bg
-        let previewContent = buildColorPreview(theme: theme)
-        previewBox.contentView = previewContent
+        previewBox.contentView = buildColorPreview(theme: theme)
 
-        container.addSubview(schemeLabel)
-        container.addSubview(schemePopup)
-        container.addSubview(previewBox)
+        addSection(to: stack, title: "Color Scheme", subtitle: "Theme applied to editor, terminal, and UI", rows: [
+            makeRow(label: "Color Scheme:", control: schemePopup),
+            previewBox,
+        ], addSeparator: false)
 
-        schemeLabel.translatesAutoresizingMaskIntoConstraints = false
-        schemePopup.translatesAutoresizingMaskIntoConstraints = false
+        // -- Sidebar Section --
 
-        NSLayoutConstraint.activate([
-            schemeLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            schemeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-
-            schemePopup.centerYAnchor.constraint(equalTo: schemeLabel.centerYAnchor),
-            schemePopup.leadingAnchor.constraint(equalTo: schemeLabel.trailingAnchor, constant: 8),
-            schemePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
-
-            previewBox.topAnchor.constraint(equalTo: schemeLabel.bottomAnchor, constant: 16),
-            previewBox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            previewBox.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            previewBox.heightAnchor.constraint(equalToConstant: 200),
-        ])
-
-        // Sidebar show hidden
         let hiddenCheck = NSButton(checkboxWithTitle: "Show hidden files in sidebar",
                                     target: self, action: #selector(sidebarShowHiddenChanged(_:)))
         hiddenCheck.state = settings.sidebarShowHidden ? .on : .off
-        hiddenCheck.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(hiddenCheck)
 
-        NSLayoutConstraint.activate([
-            hiddenCheck.topAnchor.constraint(equalTo: previewBox.bottomAnchor, constant: 16),
-            hiddenCheck.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+        addSection(to: stack, title: "Sidebar", rows: [
+            hiddenCheck,
         ])
 
-        item.view = container
+        item.view = wrapInScrollView(stack)
         return item
     }
 
@@ -759,12 +729,112 @@ final class SettingsWindowController: NSWindowController {
         return label
     }
 
+    /// Creates a section header with a bold title and optional subtitle.
+    private func makeSectionHeader(title: String, subtitle: String? = nil) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 13)
+        stack.addArrangedSubview(titleLabel)
+
+        if let subtitle = subtitle {
+            let subtitleLabel = NSTextField(labelWithString: subtitle)
+            subtitleLabel.font = NSFont.systemFont(ofSize: 11)
+            subtitleLabel.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(subtitleLabel)
+        }
+
+        return stack
+    }
+
+    /// Creates a horizontal separator line.
+    private func makeSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        return box
+    }
+
+    /// Creates a labeled row with a control on the right side.
+    private func makeRow(label: String, control: NSView) -> NSStackView {
+        let labelView = NSTextField(labelWithString: label)
+        labelView.font = NSFont.systemFont(ofSize: 13)
+        labelView.alignment = .right
+        labelView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        labelView.translatesAutoresizingMaskIntoConstraints = false
+        labelView.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+
+        let row = NSStackView(views: [labelView, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// Wraps a section header + items into a vertical group within the outer stack.
+    private func addSection(to stack: NSStackView, title: String, subtitle: String? = nil,
+                            rows: [NSView], addSeparator: Bool = true) {
+        if addSeparator && !stack.arrangedSubviews.isEmpty {
+            stack.addArrangedSubview(makeSeparator())
+        }
+        stack.addArrangedSubview(makeSectionHeader(title: title, subtitle: subtitle))
+        for row in rows {
+            stack.addArrangedSubview(row)
+        }
+    }
+
+    /// Wraps a stack view in a scroll view with consistent padding.
+    /// A flipped NSView so the document view pins to the top of the scroll area.
+    private final class FlippedView: NSView {
+        override var isFlipped: Bool { true }
+    }
+
+    private func wrapInScrollView(_ stack: NSStackView) -> NSView {
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        // Wrap the stack in a flipped container so content aligns to the top.
+        let docView = FlippedView()
+        docView.translatesAutoresizingMaskIntoConstraints = false
+        docView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: docView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: docView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: docView.trailingAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: docView.bottomAnchor),
+        ])
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = docView
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+
+        let container = NSView()
+        container.addSubview(scrollView)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+        ])
+
+        return container
+    }
+
     private func persistSettings() {
         settings.save()
         // Propagate to AppDelegate so runtime state stays in sync.
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.settings = settings
         }
+        // Notify all windows so they can apply the new settings immediately.
+        NotificationCenter.default.post(name: .impulseSettingsDidChange, object: settings)
     }
 
     // MARK: - Editor Actions
@@ -956,10 +1026,9 @@ final class SettingsWindowController: NSWindowController {
         settings.colorScheme = name
         persistSettings()
 
-        // Update the preview box
+        // Update the preview box by searching the entire window content view.
         let theme = ThemeManager.theme(forName: name)
-        let boxes = (sender.superview?.subviews ?? []).compactMap { $0 as? NSBox }
-        if let previewBox = boxes.first(where: { $0.identifier?.rawValue == "colorPreviewBox" }) {
+        if let previewBox = findView(withIdentifier: "colorPreviewBox", in: window?.contentView) as? NSBox {
             previewBox.fillColor = theme.bg
             previewBox.contentView = buildColorPreview(theme: theme)
         }
@@ -969,6 +1038,16 @@ final class SettingsWindowController: NSWindowController {
             delegate.applyTheme(named: name)
         }
         NotificationCenter.default.post(name: .impulseThemeDidChange, object: theme)
+    }
+
+    /// Recursively searches for a view with the given identifier.
+    private func findView(withIdentifier id: String, in view: NSView?) -> NSView? {
+        guard let view else { return nil }
+        if view.identifier?.rawValue == id { return view }
+        for sub in view.subviews {
+            if let found = findView(withIdentifier: id, in: sub) { return found }
+        }
+        return nil
     }
 
     @objc private func sidebarShowHiddenChanged(_ sender: NSButton) {
