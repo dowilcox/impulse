@@ -1,7 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::mpsc as std_mpsc;
+use std::time::Duration;
 
+use gtk4::glib;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -28,6 +31,10 @@ pub struct MonacoEditorHandle {
     /// When true, the next ContentChanged event will not mark the file as modified.
     /// Used when reloading file content externally (e.g. discard changes).
     pub suppress_next_modify: Rc<Cell<bool>>,
+    /// Keeps the file watcher alive. Dropping this stops watching.
+    _file_watcher: RefCell<Option<notify::RecommendedWatcher>>,
+    /// Source ID for the file watcher's polling timer.
+    _file_watcher_timer: RefCell<Option<glib::SourceId>>,
 }
 
 impl MonacoEditorHandle {
@@ -190,6 +197,97 @@ impl MonacoEditorHandle {
     pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
         self.send_command(&EditorCommand::ApplyDiffDecorations { decorations });
     }
+
+    /// Set up a filesystem watcher that reloads the editor content when the file
+    /// is modified externally (only if there are no unsaved changes).
+    pub fn setup_file_watcher(&self) {
+        use notify::{RecursiveMode, Watcher};
+
+        let file_path = self.file_path.borrow().clone();
+        if file_path.is_empty() {
+            return;
+        }
+
+        // Cancel previous watcher timer
+        if let Some(id) = self._file_watcher_timer.borrow_mut().take() {
+            id.remove();
+        }
+
+        let (tx, rx) = std_mpsc::channel::<()>();
+
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    if matches!(
+                        event.kind,
+                        notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
+                    ) {
+                        let _ = tx.send(());
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::warn!("Failed to create file watcher: {}", e);
+                    return;
+                }
+            };
+
+        if let Err(e) = watcher.watch(
+            std::path::Path::new(&file_path),
+            RecursiveMode::NonRecursive,
+        ) {
+            log::warn!("Failed to watch file {}: {}", file_path, e);
+            return;
+        }
+
+        let is_modified = self.is_modified.clone();
+        let suppress_next_modify = self.suppress_next_modify.clone();
+        let cached_content = self.cached_content.clone();
+        let file_path_cell = self.file_path.clone();
+        let language = self.language.clone();
+        let webview = self.webview.clone();
+        let is_ready = self.is_ready.clone();
+
+        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
+            let mut has_event = false;
+            while rx.try_recv().is_ok() {
+                has_event = true;
+            }
+            if has_event && !is_modified.get() && is_ready.get() {
+                let fp = file_path_cell.borrow().clone();
+                if let Ok(new_content) = std::fs::read_to_string(&fp) {
+                    if new_content != *cached_content.borrow() {
+                        *cached_content.borrow_mut() = new_content.clone();
+                        suppress_next_modify.set(true);
+                        let lang = language.borrow().clone();
+                        let cmd = EditorCommand::OpenFile {
+                            file_path: fp,
+                            content: new_content,
+                            language: lang,
+                        };
+                        if let Ok(json) = serde_json::to_string(&cmd) {
+                            let escaped =
+                                json.replace('\\', "\\\\").replace('\'', "\\'");
+                            let script =
+                                format!("impulseReceiveCommand('{}')", escaped);
+                            webview.evaluate_javascript(
+                                &script,
+                                None,
+                                None,
+                                None::<&gtk4::gio::Cancellable>,
+                                |_| {},
+                            );
+                        }
+                    }
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+
+        *self._file_watcher.borrow_mut() = Some(watcher);
+        *self._file_watcher_timer.borrow_mut() = Some(timer_id);
+    }
 }
 
 /// Create a Monaco editor widget inside a WebView.
@@ -269,6 +367,8 @@ where
         version: Rc::new(Cell::new(0)),
         suppress_next_modify: Rc::new(Cell::new(false)),
         indent_info: RefCell::new(indent_info),
+        _file_watcher: RefCell::new(None),
+        _file_watcher_timer: RefCell::new(None),
     });
 
     // Store initial content, language, settings, and theme to send after Ready

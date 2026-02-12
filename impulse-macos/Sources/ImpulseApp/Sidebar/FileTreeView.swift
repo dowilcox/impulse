@@ -96,10 +96,13 @@ final class FileTreeView: NSView {
     // triggers outlineViewItemDidExpand during a reload.
     private var isReloadingItem = false
 
-    // File watcher
+    // File watcher (root directory)
     private var watchedFileDescriptor: Int32 = -1
     private var dispatchSource: DispatchSourceFileSystemObject?
     private var debounceWorkItem: DispatchWorkItem?
+
+    // Subdirectory watchers — keyed by path
+    private var subdirWatchers: [String: (fd: Int32, source: DispatchSourceFileSystemObject)] = [:]
 
     // MARK: Initialisation
 
@@ -566,10 +569,60 @@ final class FileTreeView: NSView {
         source.resume()
     }
 
+    /// Start watching an expanded subdirectory.
+    private func watchSubdirectory(_ path: String) {
+        guard subdirWatchers[path] == nil else { return }
+
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else { return }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .link],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            self?.handleFileSystemEvent()
+        }
+        source.setCancelHandler { [fd] in
+            close(fd)
+        }
+        subdirWatchers[path] = (fd: fd, source: source)
+        source.resume()
+    }
+
+    /// Stop watching a collapsed subdirectory.
+    private func unwatchSubdirectory(_ path: String) {
+        guard let entry = subdirWatchers.removeValue(forKey: path) else { return }
+        entry.source.cancel()
+    }
+
+    /// Recursively unwatch any expanded children being collapsed.
+    private func unwatchExpandedChildren(_ nodes: [FileTreeNode]) {
+        for node in nodes {
+            if node.isDirectory && node.isExpanded {
+                unwatchSubdirectory(node.path)
+                if let children = node.children {
+                    unwatchExpandedChildren(children)
+                }
+            }
+        }
+    }
+
+    /// Stop all subdirectory watchers.
+    private func stopAllSubdirWatchers() {
+        for (_, entry) in subdirWatchers {
+            entry.source.cancel()
+        }
+        subdirWatchers.removeAll()
+    }
+
     /// Stop the current filesystem watcher and close the file descriptor.
     private func stopWatching() {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
+
+        stopAllSubdirWatchers()
 
         if let source = dispatchSource {
             source.cancel()
@@ -748,6 +801,9 @@ extension FileTreeView: NSOutlineViewDelegate {
         outlineView.reloadItem(node, reloadChildren: true)
         isReloadingItem = false
 
+        // Watch this subdirectory for changes.
+        watchSubdirectory(node.path)
+
         // Persist expansion state.
         saveExpandedPaths()
     }
@@ -755,6 +811,12 @@ extension FileTreeView: NSOutlineViewDelegate {
     func outlineViewItemWillCollapse(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? FileTreeNode else { return }
         node.isExpanded = false
+
+        // Stop watching this subdirectory and any expanded children.
+        unwatchSubdirectory(node.path)
+        if let children = node.children {
+            unwatchExpandedChildren(children)
+        }
         // Reload to update the folder icon (open -> closed).
         // Use async to let the collapse animation complete first.
         DispatchQueue.main.async { [weak self] in

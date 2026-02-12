@@ -825,6 +825,7 @@ pub fn build_sidebar(
         let on_file_activated = on_file_activated.clone();
         let show_hidden = state.show_hidden.clone();
         let icon_cache = icon_cache.clone();
+        let watcher_rc = state._watcher.clone();
         state
             .file_tree_list
             .connect_row_activated(move |_list, row| {
@@ -847,12 +848,26 @@ pub fn build_sidebar(
                     let cache = icon_cache.borrow();
                     if node.expanded {
                         // Collapse: remove descendant nodes and rows incrementally
+                        // Stop watching this directory and any collapsed subdirectories
+                        {
+                            use notify::Watcher;
+                            if let Some(ref mut w) = *watcher_rc.borrow_mut() {
+                                let _ = w.unwatch(Path::new(&node.entry.path));
+                            }
+                        }
                         let mut nodes = tree_nodes_ref.borrow_mut();
                         nodes[index].expanded = false;
                         let depth = node.depth;
                         let mut remove_count = 0;
                         for i in (index + 1)..nodes.len() {
                             if nodes[i].depth > depth {
+                                // Also unwatch any expanded subdirectories being collapsed
+                                if nodes[i].entry.is_dir && nodes[i].expanded {
+                                    use notify::Watcher;
+                                    if let Some(ref mut w) = *watcher_rc.borrow_mut() {
+                                        let _ = w.unwatch(Path::new(&nodes[i].entry.path));
+                                    }
+                                }
                                 remove_count += 1;
                             } else {
                                 break;
@@ -873,6 +888,17 @@ pub fn build_sidebar(
                             let mut nodes = tree_nodes_ref.borrow_mut();
                             nodes[index].expanded = true;
                             update_dir_row_expanded(&list, index, nodes[index].expanded, &cache);
+                        }
+
+                        // Start watching this subdirectory for changes
+                        {
+                            use notify::{RecursiveMode, Watcher};
+                            if let Some(ref mut w) = *watcher_rc.borrow_mut() {
+                                let _ = w.watch(
+                                    Path::new(&node.entry.path),
+                                    RecursiveMode::NonRecursive,
+                                );
+                            }
                         }
 
                         let child_depth = node.depth + 1;
@@ -1061,6 +1087,14 @@ impl SidebarState {
             }
             glib::ControlFlow::Continue
         });
+
+        // Also watch currently expanded subdirectories so changes in them
+        // are detected without needing recursive inotify watches.
+        for node in self.tree_nodes.borrow().iter() {
+            if node.entry.is_dir && node.expanded {
+                let _ = watcher.watch(Path::new(&node.entry.path), RecursiveMode::NonRecursive);
+            }
+        }
 
         *self._watcher.borrow_mut() = Some(watcher);
         *self._watcher_timer.borrow_mut() = Some(timer_id);

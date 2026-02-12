@@ -73,6 +73,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     private static let log = OSLog(subsystem: "dev.impulse.Impulse", category: "EditorTab")
 
+    // File watching for external changes
+    private var fileWatchDescriptor: Int32 = -1
+    private var fileWatchSource: DispatchSourceFileSystemObject?
+    private var fileWatchDebounce: DispatchWorkItem?
+    /// When true, the next ContentChanged event will not mark the file as modified.
+    private var suppressNextModify: Bool = false
+
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -185,7 +192,11 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         case let .contentChanged(newContent, _):
             content = newContent
-            isModified = true
+            if suppressNextModify {
+                suppressNextModify = false
+            } else {
+                isModified = true
+            }
             NotificationCenter.default.post(
                 name: .editorContentChanged,
                 object: self,
@@ -307,6 +318,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         self.isModified = false
 
         sendCommand(.openFile(filePath: path, content: content, language: language))
+        startFileWatching()
     }
 
     /// Save the current content to the file at `filePath`.
@@ -404,9 +416,80 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         window?.makeFirstResponder(webView)
     }
 
+    // MARK: - File Watching
+
+    /// Start watching the current file for external modifications.
+    private func startFileWatching() {
+        stopFileWatching()
+
+        guard let path = filePath else { return }
+
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            os_log(.info, log: Self.log, "Cannot watch file %{public}@ (errno %d)", path, errno)
+            return
+        }
+        fileWatchDescriptor = fd
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename],
+            queue: .main
+        )
+
+        source.setEventHandler { [weak self] in
+            self?.handleFileChangeEvent()
+        }
+
+        source.setCancelHandler { [fd] in
+            close(fd)
+        }
+
+        fileWatchSource = source
+        source.resume()
+    }
+
+    /// Stop the current file watcher.
+    private func stopFileWatching() {
+        fileWatchDebounce?.cancel()
+        fileWatchDebounce = nil
+
+        if let source = fileWatchSource {
+            source.cancel()
+            fileWatchSource = nil
+            fileWatchDescriptor = -1
+        } else if fileWatchDescriptor >= 0 {
+            close(fileWatchDescriptor)
+            fileWatchDescriptor = -1
+        }
+    }
+
+    /// Debounced handler for file change events.
+    private func handleFileChangeEvent() {
+        fileWatchDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.reloadIfUnmodified()
+        }
+        fileWatchDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// Reload the file content if the editor has no unsaved changes.
+    private func reloadIfUnmodified() {
+        guard !isModified, let path = filePath else { return }
+
+        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        guard newContent != content else { return }
+
+        suppressNextModify = true
+        content = newContent
+        sendCommand(.openFile(filePath: path, content: newContent, language: language))
+    }
+
     // MARK: Cleanup
 
     deinit {
+        stopFileWatching()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
     }
 }

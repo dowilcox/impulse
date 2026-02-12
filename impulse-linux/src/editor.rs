@@ -57,6 +57,7 @@ where
     );
 
     register_handle(file_path, handle.clone());
+    handle.setup_file_watcher();
 
     (container, handle)
 }
