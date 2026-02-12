@@ -218,6 +218,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// unnecessary rebuilds (which lose expansion state) when switching tabs.
     private var fileTreeRootPath: String = ""
 
+    /// Cached file tree nodes keyed by root path for instant tab switching.
+    private var fileTreeCache: [String: [FileTreeNode]] = [:]
+
     // MARK: Git State
 
     /// Cached git branch name for the current working directory.
@@ -479,6 +482,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             splitView.setPosition(0, ofDividerAt: 0)
             sidebarContainer.isHidden = true
         }
+        updateSidebarToggleIcon()
 
         // Content area has a minimum width so the sidebar cannot push it off screen.
         contentContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -559,6 +563,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Toggles the sidebar visibility with animation.
     func toggleSidebar() {
         sidebarVisible.toggle()
+        updateSidebarToggleIcon()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -574,6 +579,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 self.sidebarContainer.isHidden = true
             }
         })
+    }
+
+    /// Update the sidebar toggle button icon to reflect the current state.
+    private func updateSidebarToggleIcon() {
+        let symbolName = sidebarVisible ? "sidebar.left" : "sidebar.left"
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Toggle Sidebar")?
+            .withSymbolConfiguration(config)
+        sidebarToggleButton.image = image
+        sidebarToggleButton.contentTintColor = sidebarVisible
+            ? NSColor.controlAccentColor
+            : theme.fgDark
     }
 
     // MARK: - Terminal Search Bar
@@ -732,7 +749,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         // Tab bar container and titlebar buttons
         tabBarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
-        sidebarToggleButton.contentTintColor = newTheme.fgDark
+        updateSidebarToggleIcon()
         newTabButton.contentTintColor = newTheme.fgDark
 
         // Sidebar background
@@ -812,15 +829,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     dir = nil
                 }
                 if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
+                    // Save the current tree into the cache before switching away.
+                    if !self.fileTreeRootPath.isEmpty {
+                        self.fileTreeCache[self.fileTreeRootPath] = self.fileTreeView.rootNodes
+                    }
                     self.fileTreeRootPath = dir
                     self.searchPanel.setRootPath(dir)
+
+                    // If we have a cached tree for this directory, show it
+                    // immediately and refresh in the background.
+                    if let cached = self.fileTreeCache[dir] {
+                        self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
+                    }
+
                     let showHidden = self.fileTreeView.showHidden
                     DispatchQueue.global(qos: .userInitiated).async {
                         let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
                         FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
                         DispatchQueue.main.async { [weak self] in
                             guard let self else { return }
+                            // Only update if we're still on this directory.
+                            guard self.fileTreeRootPath == dir else { return }
                             self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                            self.fileTreeCache[dir] = nodes
                         }
                     }
                 }
@@ -891,6 +922,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) { [weak self] notification in
             guard let self else { return }
             if let dir = notification.userInfo?["directory"] as? String {
+                // Save current tree to cache before switching.
+                if !self.fileTreeRootPath.isEmpty {
+                    self.fileTreeCache[self.fileTreeRootPath] = self.fileTreeView.rootNodes
+                }
                 self.fileTreeRootPath = dir
                 self.searchPanel.setRootPath(dir)
                 self.invalidateGitBranchCache()
@@ -900,7 +935,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     gitBranch: nil,
                     shellName: ImpulseCore.getUserLoginShellName()
                 )
-                // Heavy work on a background queue.
+
+                // Show cached tree instantly if available.
+                if let cached = self.fileTreeCache[dir] {
+                    self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
+                }
+
+                // Refresh from disk in the background.
                 let showHidden = self.fileTreeView.showHidden
                 DispatchQueue.global(qos: .userInitiated).async {
                     let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
@@ -908,7 +949,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     let branch = ImpulseCore.gitBranch(path: dir)
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
+                        guard self.fileTreeRootPath == dir else { return }
                         self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                        self.fileTreeCache[dir] = nodes
                         self.statusBar.updateForTerminal(
                             cwd: dir,
                             gitBranch: branch,
