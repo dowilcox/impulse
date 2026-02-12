@@ -119,10 +119,10 @@ enum TabEntry {
 
 // MARK: - Tab Manager
 
-/// Manages the collection of open tabs (terminal or editor) and the custom
-/// tab bar used to switch between them. The tab bar is placed in the
-/// window's tab bar container.
-final class TabManager: NSObject, CustomTabBarDelegate {
+/// Manages the collection of open tabs (terminal or editor) and the
+/// segmented control used to switch between them. The segmented control is
+/// placed in the window's titlebar container.
+final class TabManager: NSObject {
     /// The ordered list of open tabs.
     private(set) var tabs: [TabEntry] = []
 
@@ -132,8 +132,8 @@ final class TabManager: NSObject, CustomTabBarDelegate {
     /// The index of the currently selected tab, or -1 if no tabs are open.
     private(set) var selectedIndex: Int = -1
 
-    /// The custom tab bar displayed in the window.
-    let tabBar: CustomTabBar
+    /// The segmented control displayed in the titlebar for tab switching.
+    let segmentedControl: NSSegmentedControl
 
     /// Icon cache for themed file icons in tab bar.
     private var iconCache: IconCache?
@@ -157,7 +157,12 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         self.theme = theme
         self.core = core
 
-        tabBar = CustomTabBar()
+        segmentedControl = NSSegmentedControl()
+        segmentedControl.segmentStyle = .separated
+        segmentedControl.trackingMode = .selectOne
+        segmentedControl.controlSize = .large
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+
         iconCache = IconCache(theme: theme)
 
         contentView = NSView()
@@ -166,7 +171,14 @@ final class TabManager: NSObject, CustomTabBarDelegate {
 
         super.init()
 
-        tabBar.delegate = self
+        segmentedControl.target = self
+        segmentedControl.action = #selector(segmentSelected(_:))
+    }
+
+    @objc private func segmentSelected(_ sender: NSSegmentedControl) {
+        let index = sender.selectedSegment
+        guard index >= 0, index < tabs.count else { return }
+        selectTab(index: index)
     }
 
     // MARK: - Adding Tabs
@@ -284,7 +296,7 @@ final class TabManager: NSObject, CustomTabBarDelegate {
     private func insertTab(_ entry: TabEntry) {
         tabs.append(entry)
         pinnedTabs.append(false)
-        rebuildTabBar()
+        rebuildSegments()
         selectTab(index: tabs.count - 1)
     }
 
@@ -305,7 +317,7 @@ final class TabManager: NSObject, CustomTabBarDelegate {
 
         tabs.remove(at: index)
         pinnedTabs.remove(at: index)
-        rebuildTabBar()
+        rebuildSegments()
 
         if tabs.isEmpty {
             selectedIndex = -1
@@ -322,7 +334,7 @@ final class TabManager: NSObject, CustomTabBarDelegate {
     func togglePin(index: Int) {
         guard index >= 0, index < tabs.count else { return }
         pinnedTabs[index].toggle()
-        rebuildTabBar()
+        rebuildSegments()
     }
 
     /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
@@ -345,7 +357,7 @@ final class TabManager: NSObject, CustomTabBarDelegate {
             }
         }
 
-        rebuildTabBar()
+        rebuildSegments()
 
         if tabs.isEmpty {
             selectedIndex = -1
@@ -369,7 +381,9 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         }
 
         selectedIndex = index
-        tabBar.selectTab(index: index)
+        if segmentedControl.selectedSegment != index {
+            segmentedControl.selectedSegment = index
+        }
 
         // Activate the new tab.
         let entry = tabs[index]
@@ -415,7 +429,8 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         } else {
             iconCache = IconCache(theme: theme)
         }
-        tabBar.applyTheme(theme)
+        // Re-tint segment images for the new theme
+        rebuildSegments()
         for tab in tabs {
             tab.applyTheme(theme)
         }
@@ -423,23 +438,28 @@ final class TabManager: NSObject, CustomTabBarDelegate {
 
     // MARK: - Segmented Control
 
-    /// Rebuilds the custom tab bar to match the current tab list.
-    private func rebuildTabBar() {
-        let tabData = tabs.enumerated().map { (i, tab) -> TabItemData in
-            let icon = tabIcon(for: tab)
-            return TabItemData(title: tab.title, icon: icon, isPinned: pinnedTabs[i])
+    /// Rebuilds the segmented control to match the current tab list.
+    private func rebuildSegments() {
+        segmentedControl.segmentCount = tabs.count
+        for (i, tab) in tabs.enumerated() {
+            let title = pinnedTabs[i] ? "\u{1F4CC} \(tab.title)" : tab.title
+            segmentedControl.setLabel(title, forSegment: i)
+            segmentedControl.setImage(tabIcon(for: tab), forSegment: i)
+            segmentedControl.setImageScaling(.scaleProportionallyDown, forSegment: i)
+            segmentedControl.setWidth(0, forSegment: i) // auto-size
         }
-        tabBar.rebuild(tabs: tabData, selectedIndex: selectedIndex, theme: theme)
+        if selectedIndex >= 0, selectedIndex < tabs.count {
+            segmentedControl.selectedSegment = selectedIndex
+        }
     }
 
     /// Updates tab labels to reflect current tab titles (e.g., after a
     /// terminal title change or editor save).
     func refreshSegmentLabels() {
-        let tabData = tabs.enumerated().map { (i, tab) -> TabItemData in
-            let icon = tabIcon(for: tab)
-            return TabItemData(title: tab.title, icon: icon, isPinned: pinnedTabs[i])
+        for (i, tab) in tabs.enumerated() where i < segmentedControl.segmentCount {
+            let title = pinnedTabs[i] ? "\u{1F4CC} \(tab.title)" : tab.title
+            segmentedControl.setLabel(title, forSegment: i)
         }
-        tabBar.updateLabels(tabs: tabData)
     }
 
     /// Returns the appropriate icon for a tab entry.
@@ -459,18 +479,10 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         }
     }
 
-    // MARK: - CustomTabBarDelegate
+    // MARK: - Context Menu
 
-    func tabItemClicked(index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-        selectTab(index: index)
-    }
-
-    func tabItemCloseClicked(index: Int) {
-        closeTab(index: index)
-    }
-
-    func tabItemContextMenu(index: Int) -> NSMenu? {
+    /// Returns a context menu for the tab at the given index.
+    func contextMenu(forTabIndex index: Int) -> NSMenu? {
         guard index >= 0, index < tabs.count else { return nil }
         let menu = NSMenu()
 
@@ -539,29 +551,37 @@ final class TabManager: NSObject, CustomTabBarDelegate {
 
     /// Maps a file path to its Monaco language identifier based on extension.
     private func languageIdForPath(_ path: String) -> String {
+        // Check filename (without extension) for special cases like Dockerfile.
+        let filename = (path as NSString).lastPathComponent.lowercased()
+        if filename == "dockerfile" || filename == "containerfile" || filename.hasPrefix("dockerfile.") || filename.hasPrefix("containerfile.") {
+            return "dockerfile"
+        }
+
         let ext = (path as NSString).pathExtension.lowercased()
         switch ext {
         case "rs": return "rust"
         case "swift": return "swift"
-        case "py": return "python"
-        case "js": return "javascript"
+        case "py", "pyi": return "python"
+        case "js", "mjs", "cjs": return "javascript"
         case "ts": return "typescript"
         case "jsx": return "javascriptreact"
         case "tsx": return "typescriptreact"
         case "c": return "c"
-        case "cpp", "cc", "cxx": return "cpp"
+        case "cpp", "cc", "cxx", "hxx": return "cpp"
         case "h", "hpp": return "cpp"
         case "go": return "go"
         case "java": return "java"
         case "rb": return "ruby"
         case "sh", "bash", "zsh", "fish": return "shellscript"
         case "json": return "json"
+        case "jsonc": return "jsonc"
         case "yaml", "yml": return "yaml"
         case "toml": return "toml"
         case "md", "markdown": return "markdown"
         case "html", "htm": return "html"
         case "css": return "css"
         case "scss": return "scss"
+        case "less": return "less"
         case "xml": return "xml"
         case "php": return "php"
         case "sql": return "sql"
@@ -571,6 +591,9 @@ final class TabManager: NSObject, CustomTabBarDelegate {
         case "dart": return "dart"
         case "ex", "exs": return "elixir"
         case "hs": return "haskell"
+        case "vue": return "vue"
+        case "svelte": return "svelte"
+        case "graphql", "gql": return "graphql"
         default: return "plaintext"
         }
     }

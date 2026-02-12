@@ -118,7 +118,7 @@ private final class TabItemView: NSView {
         closeButton.action = #selector(closeClicked(_:))
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 34),
+            heightAnchor.constraint(equalToConstant: 38),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
 
             pinIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),

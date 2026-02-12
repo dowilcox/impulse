@@ -98,10 +98,10 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     private func setupConstraints() {
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
     }
 
