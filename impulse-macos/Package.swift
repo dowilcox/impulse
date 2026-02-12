@@ -23,6 +23,7 @@ let package = Package(
             path: "Sources/ImpulseApp",
             resources: [
                 .copy("Resources/monaco"),
+                .copy("Resources/icons"),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L", "../target/release"]),

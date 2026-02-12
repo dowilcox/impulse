@@ -241,6 +241,7 @@ final class TabManager: NSObject {
 
         // Apply editor settings (font, tab size, etc.) from the current settings.
         editorTab.applySettings(editorOptionsFromSettings())
+        editorTab.applyTheme(theme.monacoThemeDefinition())
 
         let entry = TabEntry.editor(editorTab)
         insertTab(entry)

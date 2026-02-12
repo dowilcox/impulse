@@ -92,6 +92,7 @@ final class SearchPanel: NSView {
         table.allowsMultipleSelection = false
         table.usesAlternatingRowBackgroundColors = false
         table.style = .plain
+        table.backgroundColor = .clear
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -150,6 +151,12 @@ final class SearchPanel: NSView {
     /// Focus the search field.
     func focus() {
         window?.makeFirstResponder(searchField)
+    }
+
+    /// Re-apply theme colours to the search panel.
+    func applyTheme(_ theme: Theme) {
+        resultsTableView.backgroundColor = .clear
+        statusLabel.textColor = theme.fgDark
     }
 
     // MARK: Actions

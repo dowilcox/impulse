@@ -2,3 +2,8 @@
 /dist
 .claude/
 .serena/
+
+# macOS Swift Package Manager build artifacts
+impulse-macos/.build/
+impulse-macos/Package.resolved
+impulse-macos/Sources/ImpulseApp/Resources/

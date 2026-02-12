@@ -8,6 +8,16 @@ extension Notification.Name {
     static let impulseOpenFile = Notification.Name("dev.impulse.openFile")
 }
 
+// MARK: - Pointer Outline View
+
+/// NSOutlineView subclass that shows a pointing hand cursor over rows.
+private final class PointerOutlineView: NSOutlineView {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(visibleRect, cursor: .pointingHand)
+    }
+}
+
 // MARK: - File Tree View
 
 /// NSOutlineView-based file tree for the sidebar. Supports lazy-loading of
@@ -23,6 +33,9 @@ final class FileTreeView: NSView {
     private(set) var rootNodes: [FileTreeNode] = []
     private(set) var rootPath: String = ""
     var showHidden: Bool = false
+
+    // Icon cache for themed file icons
+    private var iconCache: IconCache?
 
     // Column identifier
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
@@ -50,8 +63,8 @@ final class FileTreeView: NSView {
     }
 
     private func setup() {
-        // Outline view
-        let outline = NSOutlineView()
+        // Outline view (uses PointerOutlineView for pointing hand cursor on hover)
+        let outline = PointerOutlineView()
         outline.headerView = nil
         outline.indentationPerLevel = 16
         outline.rowHeight = 22
@@ -59,7 +72,8 @@ final class FileTreeView: NSView {
         outline.allowsMultipleSelection = false
         outline.autoresizesOutlineColumn = true
         outline.usesAlternatingRowBackgroundColors = false
-        outline.style = .sourceList
+        outline.style = .plain
+        outline.backgroundColor = .clear
         outline.dataSource = self
         outline.delegate = self
 
@@ -111,11 +125,27 @@ final class FileTreeView: NSView {
         startWatching(path: path)
     }
 
+    /// Accept a pre-built tree (constructed off the main thread) and update
+    /// the UI. Call this from a `DispatchQueue.main.async` block after
+    /// building the tree on a background queue.
+    func updateTree(nodes: [FileTreeNode], rootPath: String) {
+        self.rootPath = rootPath
+        self.rootNodes = nodes
+        outlineView.reloadData()
+        startWatching(path: rootPath)
+    }
+
     /// Re-fetch git status for the current tree and reload visible cells to
-    /// reflect any changes.
+    /// reflect any changes. Heavy work runs on a background queue.
     func refreshGitStatus() {
-        FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
-        reloadVisibleRows()
+        let nodes = rootNodes
+        let root = rootPath
+        DispatchQueue.global(qos: .utility).async {
+            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: root)
+            DispatchQueue.main.async { [weak self] in
+                self?.reloadVisibleRows()
+            }
+        }
     }
 
     /// Collapse all expanded directories back to root-level only.
@@ -143,19 +173,37 @@ final class FileTreeView: NSView {
         setRootPath(rootPath)
     }
 
-    /// Rebuild the tree from disk, preserving expansion state.
+    /// Re-apply theme colours so the sidebar background shows through.
+    func applyTheme(_ theme: Theme) {
+        outlineView.backgroundColor = .clear
+        if let cache = iconCache {
+            cache.rebuild(theme: theme)
+        } else {
+            iconCache = IconCache(theme: theme)
+        }
+        reloadVisibleRows()
+    }
+
+    /// Rebuild the tree from disk, preserving expansion state. Heavy work
+    /// (filesystem scan + git status) runs on a background queue.
     func refreshTree() {
         guard !rootPath.isEmpty else { return }
 
         // Collect expanded paths before rebuilding.
         let expandedPaths = collectExpandedPaths(rootNodes)
+        let root = rootPath
+        let hidden = showHidden
 
-        rootNodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
-        FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
-        outlineView.reloadData()
-
-        // Re-expand previously expanded directories.
-        restoreExpandedPaths(expandedPaths, in: rootNodes)
+        DispatchQueue.global(qos: .utility).async {
+            let newNodes = FileTreeNode.buildTree(rootPath: root, showHidden: hidden)
+            FileTreeNode.refreshGitStatus(nodes: newNodes, rootPath: root)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.rootNodes = newNodes
+                self.outlineView.reloadData()
+                self.restoreExpandedPaths(expandedPaths, in: self.rootNodes)
+            }
+        }
     }
 
     // MARK: Click Handling
@@ -569,16 +617,21 @@ extension FileTreeView: NSOutlineViewDelegate {
             cell = makeCellView()
         }
 
-        // Icon
-        let icon: NSImage
-        if node.isDirectory {
-            icon = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: "Folder")
-                ?? NSImage(named: NSImage.folderName)!
+        // Icon: use themed SVG icons from the cache, with system fallback
+        let isExpanded = node.isDirectory && outlineView.isItemExpanded(node)
+        if let themedIcon = iconCache?.icon(filename: node.name, isDirectory: node.isDirectory, expanded: isExpanded) {
+            cell.imageView?.image = themedIcon
         } else {
-            icon = NSWorkspace.shared.icon(forFile: node.path)
+            let fallback: NSImage
+            if node.isDirectory {
+                fallback = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: "Folder")
+                    ?? NSImage(named: NSImage.folderName)!
+            } else {
+                fallback = NSWorkspace.shared.icon(forFile: node.path)
+            }
+            fallback.size = NSSize(width: 16, height: 16)
+            cell.imageView?.image = fallback
         }
-        icon.size = NSSize(width: 16, height: 16)
-        cell.imageView?.image = icon
 
         // Name
         cell.textField?.stringValue = node.name
@@ -596,13 +649,19 @@ extension FileTreeView: NSOutlineViewDelegate {
         if !node.isLoaded {
             node.loadChildren(showHidden: showHidden)
             FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: rootPath)
-            outlineView.reloadItem(node, reloadChildren: true)
         }
+        // Always reload to update the folder icon (closed -> open).
+        outlineView.reloadItem(node, reloadChildren: true)
     }
 
     func outlineViewItemWillCollapse(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? FileTreeNode else { return }
         node.isExpanded = false
+        // Reload to update the folder icon (open -> closed).
+        // Use async to let the collapse animation complete first.
+        DispatchQueue.main.async { [weak self] in
+            self?.outlineView.reloadItem(node, reloadChildren: false)
+        }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {

@@ -98,6 +98,17 @@ cp -r "${MONACO_SRC}"/* "${MONACO_DST}/"
 cp "${EDITOR_HTML_SRC}" "${MONACO_DST}/"
 echo "    OK: Monaco assets copied to ${MONACO_DST}"
 
+# ── Step 2b: Copy file icons ─────────────────────────────────────
+
+echo "==> Copying file icons..."
+
+ICONS_SRC="assets/icons"
+ICONS_DST="impulse-macos/Sources/ImpulseApp/Resources/icons"
+
+mkdir -p "${ICONS_DST}"
+cp -f "${ICONS_SRC}"/*.svg "${ICONS_DST}/"
+echo "    OK: File icons copied to ${ICONS_DST}"
+
 # ── Step 3: Build Swift app ───────────────────────────────────────────
 
 echo "==> Building ImpulseApp (Swift)..."
