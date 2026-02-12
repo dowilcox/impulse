@@ -804,14 +804,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 switch tab {
                 case .terminal(let container):
                     dir = container.activeTerminal?.currentWorkingDirectory
-                case .editor(let editor):
-                    if let fp = editor.filePath {
-                        dir = (fp as NSString).deletingLastPathComponent
-                    } else {
-                        dir = nil
-                    }
-                case .imagePreview(let path, _):
-                    dir = (path as NSString).deletingLastPathComponent
+                case .editor:
+                    // Don't change the sidebar directory when switching to an
+                    // editor tab — keep the current terminal's working directory.
+                    dir = nil
+                case .imagePreview:
+                    dir = nil
                 }
                 if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
                     self.fileTreeRootPath = dir
@@ -852,6 +850,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     }
                     // Apply git diff decorations for the opened file.
                     self.applyGitDiffDecorations(editor: editor)
+                }
+            }
+        }
+        nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            if let path = notification.userInfo?["path"] as? String {
+                // Find the open editor tab for this file and reload from disk.
+                for tab in self.tabManager.tabs {
+                    if case .editor(let editor) = tab, editor.filePath == path {
+                        if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+                            editor.openFile(path: path, content: content, language: editor.language)
+                            self.applyGitDiffDecorations(editor: editor)
+                        }
+                        break
+                    }
                 }
             }
         }

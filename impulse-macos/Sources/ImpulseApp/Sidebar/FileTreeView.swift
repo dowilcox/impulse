@@ -179,6 +179,11 @@ final class FileTreeView: NSView {
         rootPath = path
         rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
+
+        // Suppress expand/collapse animations during the full reload so the
+        // tree doesn't visibly flash.
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
         outlineView.reloadData()
 
         // Restore persisted expansion state.
@@ -186,6 +191,7 @@ final class FileTreeView: NSView {
         if !savedPaths.isEmpty {
             restoreExpandedPaths(savedPaths, in: rootNodes)
         }
+        NSAnimationContext.endGrouping()
 
         startWatching(path: path)
     }
@@ -201,11 +207,14 @@ final class FileTreeView: NSView {
 
         self.rootPath = rootPath
         self.rootNodes = nodes
-        outlineView.reloadData()
 
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        outlineView.reloadData()
         if !allExpanded.isEmpty {
             restoreExpandedPaths(allExpanded, in: rootNodes)
         }
+        NSAnimationContext.endGrouping()
 
         startWatching(path: rootPath)
     }
@@ -275,8 +284,11 @@ final class FileTreeView: NSView {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.rootNodes = newNodes
+                NSAnimationContext.beginGrouping()
+                NSAnimationContext.current.duration = 0
                 self.outlineView.reloadData()
                 self.restoreExpandedPaths(expandedPaths, in: self.rootNodes)
+                NSAnimationContext.endGrouping()
             }
         }
     }
@@ -451,6 +463,12 @@ final class FileTreeView: NSView {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         if ImpulseCore.gitDiscardChanges(filePath: node.path) {
+            // Notify any open editor tab to reload from disk.
+            NotificationCenter.default.post(
+                name: .impulseReloadEditorFile,
+                object: self,
+                userInfo: ["path": node.path]
+            )
             refreshTree()
         } else {
             NSLog("FileTreeView: failed to discard changes for \(node.path)")

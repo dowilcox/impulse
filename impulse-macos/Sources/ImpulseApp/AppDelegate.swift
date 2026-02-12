@@ -41,6 +41,9 @@ extension Notification.Name {
     static let impulsePrevTab = Notification.Name("impulsePrevTab")
     /// Requests switching to a specific tab by index (0-based in userInfo "index").
     static let impulseSelectTab = Notification.Name("impulseSelectTab")
+    /// Requests reloading an editor tab from disk (e.g. after discarding git changes).
+    /// The `userInfo` dictionary contains `"path"` (String).
+    static let impulseReloadEditorFile = Notification.Name("impulseReloadEditorFile")
 }
 
 // MARK: - AppDelegate
