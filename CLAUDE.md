@@ -13,23 +13,29 @@ Impulse is a terminal-first development environment built with Rust. It combines
 ## Build & Development Commands
 
 ```bash
+# Rust workspace (impulse-core, impulse-editor, impulse-linux, impulse-ffi)
 cargo build                        # Build all workspace members
 cargo build -p impulse-core        # Build only the core library
 cargo build -p impulse-editor      # Build only the editor crate
 cargo build -p impulse-linux       # Build only the Linux frontend
-cargo build -p impulse-macos       # Build only the macOS frontend
+cargo build -p impulse-ffi         # Build only the FFI static library (for macOS)
 cargo run -p impulse-linux         # Run the Linux app
-cargo run -p impulse-macos         # Run the macOS app
 cargo check                        # Type-check without full compilation
 cargo fmt                          # Format all code
 cargo clippy                       # Lint
 cargo test                         # Run tests
 cargo test -p impulse-core         # Test only the core crate
+
+# macOS (Swift Package, built separately)
+./impulse-macos/build.sh           # Build .app bundle (builds impulse-ffi + Swift app)
+./impulse-macos/build.sh --dmg     # Build .app + .dmg disk image
+./impulse-macos/build.sh --sign    # Build + codesign with Developer ID
+./impulse-macos/build.sh --sign --notarize --dmg  # Full release build
 ```
 
 ## Architecture
 
-The workspace has four crates. Dependency direction is strictly one-way: frontend crates (`impulse-linux`, `impulse-macos`) depend on `impulse-core` and `impulse-editor`, never the reverse. The two frontend crates are independent of each other.
+The Cargo workspace has four Rust crates (`impulse-core`, `impulse-editor`, `impulse-linux`, `impulse-ffi`) plus one Swift package (`impulse-macos`). Dependency direction is strictly one-way: frontend code depends on `impulse-core` and `impulse-editor`, never the reverse. The macOS frontend links against `impulse-ffi` (a C-compatible static library wrapping `impulse-core` and `impulse-editor`). The two frontends are independent of each other.
 
 ### impulse-core (library, no GUI dependencies)
 
@@ -68,16 +74,40 @@ Bundles the vendored Monaco editor and defines the WebView communication protoco
 - **settings_page.rs** — `adw::PreferencesWindow` with pages for Editor, Terminal, Appearance, Automation, and Keybindings.
 - **theme.rs** — Color theme constants (Kanagawa, Nord, Gruvbox, Tokyo Night, Tokyo Night Storm, Catppuccin Mocha, Rose Pine) and CSS generation.
 
-### impulse-macos (binary, macOS frontend)
+### impulse-ffi (static library, C-compatible FFI)
 
-The macOS frontend. Should implement feature parity with `impulse-linux` using native macOS frameworks.
+C-compatible wrappers around `impulse-core` and `impulse-editor` for the macOS Swift frontend. Compiled as a static library (`libimpulse_ffi.a`). All functions use C strings for input/output and JSON encoding for complex types. Callers must free returned strings with `impulse_free_string`.
 
-- Uses AppKit/SwiftUI for the UI layer
-- Uses WKWebView for the Monaco editor (equivalent to WebKitGTK WebView on Linux)
-- Terminal emulation via macOS PTY APIs (equivalent to VTE on Linux)
-- Shares `impulse-core` for all backend logic (PTY, filesystem, git, search, LSP, shell integration)
-- Shares `impulse-editor` for Monaco assets and the WebView communication protocol
-- Settings stored at `~/Library/Application Support/impulse/settings.json` (same schema as Linux)
+- **lib.rs** — `extern "C"` functions exposing filesystem, git, search, LSP, PTY, shell detection, and editor asset operations to Swift via the `CImpulseFFI` module.
+
+### impulse-macos (Swift Package, macOS frontend)
+
+The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
+
+- **ImpulseApp.swift** — App entry point.
+- **AppDelegate.swift** — NSApplication delegate, app lifecycle.
+- **MainWindow.swift** — Main window setup, layout, and signal wiring.
+- **TabManager.swift** — Tab management (custom tab bar mixing terminal and editor tabs).
+- **Terminal/TerminalContainer.swift** — Terminal view with splitting support.
+- **Terminal/TerminalTab.swift** — Terminal tab using SwiftTerm for terminal emulation.
+- **Editor/EditorTab.swift** — Monaco editor tab via WKWebView.
+- **Editor/EditorProtocol.swift** — Bidirectional JSON messaging with Monaco (mirrors `impulse-editor` protocol).
+- **Editor/EditorWebViewPool.swift** — WebView pooling for editor instances.
+- **Sidebar/FileTreeView.swift** — File tree with lazy-loaded directory expansion.
+- **Sidebar/FileTreeNode.swift** — Tree node model for the file tree.
+- **Sidebar/FileIcons.swift** — Maps file extensions to bundled SVG icons.
+- **Sidebar/SearchPanel.swift** — Project-wide file and content search UI.
+- **UI/CommandPalette.swift** — Command palette (equivalent to Linux Ctrl+Shift+P).
+- **UI/CustomTabBar.swift** — Native tab bar widget.
+- **UI/MenuBuilder.swift** — macOS menu bar construction.
+- **UI/StatusBar.swift** — Status bar with CWD, git branch, cursor position, etc.
+- **Settings/Settings.swift** — `Settings` struct (Codable), stored at `~/Library/Application Support/impulse/settings.json`.
+- **Settings/SettingsFormSheet.swift** — Settings editor form.
+- **Settings/SettingsWindow.swift** — Settings window controller.
+- **Theme/Theme.swift** — Color theme constants matching the Linux themes.
+- **Keybindings/Keybindings.swift** — Keybinding registry and handling.
+- **Bridge/ImpulseCore.swift** — Swift wrapper calling `impulse-ffi` C functions.
+- **CImpulseFFI/** — C header module (`impulse_ffi.h` + `module.modulemap`) for Swift-to-Rust bridging.
 
 ### Key patterns
 
@@ -95,6 +125,7 @@ The macOS frontend. Should implement feature parity with `impulse-linux` using n
 | Filesystem listing, git status, search | `impulse-core` |
 | LSP client, JSON-RPC, server management | `impulse-core` |
 | Monaco assets, editor HTML, WebView protocol | `impulse-editor` |
+| C FFI wrappers for macOS Swift frontend | `impulse-ffi` |
 | Window management, tab UI, native widgets | `impulse-linux` or `impulse-macos` |
 | Terminal widget creation and configuration | `impulse-linux` or `impulse-macos` |
 | Keybinding registration and UI | `impulse-linux` or `impulse-macos` |
@@ -104,6 +135,13 @@ The macOS frontend. Should implement feature parity with `impulse-linux` using n
 
 - **scripts/install-lsp-servers.sh** — Installs managed web LSP servers (typescript-language-server, etc.) to `~/.local/share/impulse/lsp/`. Invoked via `--install-lsp-servers` CLI flag.
 - **scripts/vendor-monaco.sh** — Downloads and vendors Monaco Editor into `impulse-editor/vendor/monaco/`. Run once or when upgrading Monaco.
+- **scripts/release.sh** — Cross-platform release script. Tags a release, builds, and produces distribution packages. Run on Linux for .deb/.rpm/.pkg.tar.zst, on macOS for .app/.dmg. Usage: `./scripts/release.sh 0.4.0 [--push] [--macos-only] [--linux-only]`.
+
+## Project Directories
+
+- **assets/** — App logo SVG (`impulse-logo.svg`), `.desktop` file, screenshots, and `icons/` subdirectory with file type SVG icons.
+- **pkg/arch/** — PKGBUILD for Arch Linux packaging.
+- **dist/** — Built distribution packages (.deb, .rpm, .pkg.tar.zst for Linux; .app, .dmg for macOS).
 
 ## System Dependencies
 
@@ -117,4 +155,4 @@ sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
 
 ### macOS
 
-Building `impulse-macos` requires Xcode command line tools. AppKit, WKWebView, and PTY APIs are provided by the system frameworks.
+Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is required for LSP TLS support (`brew install openssl@3`).
