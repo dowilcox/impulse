@@ -19,7 +19,11 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshot.png" width="800" alt="Impulse screenshot">
+  <img src="assets/screenshot.png" width="800" alt="Impulse on Linux (GTK4)">
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-mac.png" width="800" alt="Impulse on macOS (AppKit)">
 </p>
 
 Impulse combines a terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
@@ -67,7 +71,7 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 
 ## Installation
 
-Download the latest package for your platform from [GitHub Releases](https://github.com/your-username/impulse/releases).
+Download the latest package for your platform from [GitHub Releases](https://github.com/dowilcox/impulse/releases).
 
 ### macOS
 
@@ -81,7 +85,7 @@ Requires macOS 13 (Ventura) or later.
 <summary><strong>Arch / CachyOS / Manjaro</strong></summary>
 
 ```bash
-sudo pacman -U impulse-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U impulse-0.4.0-1-x86_64.pkg.tar.zst
 ```
 
 </details>
@@ -90,7 +94,7 @@ sudo pacman -U impulse-0.1.0-1-x86_64.pkg.tar.zst
 <summary><strong>Debian / Ubuntu</strong></summary>
 
 ```bash
-sudo dpkg -i impulse_0.1.0-1_amd64.deb
+sudo dpkg -i impulse_0.4.0-1_amd64.deb
 sudo apt install -f   # install any missing dependencies
 ```
 
@@ -100,7 +104,7 @@ sudo apt install -f   # install any missing dependencies
 <summary><strong>Fedora / RHEL / openSUSE</strong></summary>
 
 ```bash
-sudo rpm -i impulse-0.1.0-1.x86_64.rpm
+sudo rpm -i impulse-0.4.0-1.x86_64.rpm
 ```
 
 </details>
@@ -121,13 +125,15 @@ xcode-select --install
 Clone and build using the macOS build script:
 
 ```bash
-git clone https://github.com/your-username/impulse.git
+git clone https://github.com/dowilcox/impulse.git
 cd impulse
-./impulse-macos/build.sh           # produces dist/Impulse.app
-./impulse-macos/build.sh --dmg     # also creates dist/Impulse-X.Y.Z.dmg
+./impulse-macos/build.sh                           # produces dist/Impulse.app
+./impulse-macos/build.sh --dmg                     # also creates dist/Impulse-X.Y.Z.dmg
+./impulse-macos/build.sh --sign                    # build + codesign with Developer ID
+./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
 ```
 
-The build script handles all steps automatically: building the Rust FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle.
+The build script handles all steps automatically: building the Rust FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle. Code signing auto-detects your Developer ID from the keychain, or you can set `IMPULSE_SIGN_IDENTITY` explicitly.
 
 To run the built app:
 
@@ -145,7 +151,7 @@ sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
 ```
 
 ```bash
-git clone https://github.com/your-username/impulse.git
+git clone https://github.com/dowilcox/impulse.git
 cd impulse
 cargo build --release -p impulse-linux
 cargo run --release -p impulse-linux
@@ -161,7 +167,7 @@ sudo apt install libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev libgtksource
 ```
 
 ```bash
-git clone https://github.com/your-username/impulse.git
+git clone https://github.com/dowilcox/impulse.git
 cd impulse
 cargo build --release -p impulse-linux
 cargo run --release -p impulse-linux
@@ -195,22 +201,24 @@ The release script tags a version, builds platform-appropriate packages, and opt
 
 ```bash
 # 1. On Linux — tag, build, and package Linux artifacts
-./scripts/release.sh 0.3.0
+./scripts/release.sh 0.4.0
 
-# 2. On macOS — build macOS .app and .dmg (no tagging, tag already exists)
-./scripts/release.sh 0.3.0 --macos-only
+# 2. On macOS — build signed + notarized macOS .app and .dmg (no tagging, tag already exists)
+./scripts/release.sh 0.4.0 --macos-only
 
 # 3. On either — push tag and upload all dist/ artifacts to GitHub
-./scripts/release.sh 0.3.0 --push
+./scripts/release.sh 0.4.0 --push
 ```
 
 If you only need one platform, you can combine steps:
 
 ```bash
-./scripts/release.sh 0.3.0 --push             # Linux tag + build + push (on Linux)
-./scripts/release.sh 0.3.0 --linux-only        # Linux build only (skip tagging)
-./scripts/release.sh 0.3.0 --macos-only --push # macOS build + upload to existing release
+./scripts/release.sh 0.4.0 --push             # Linux tag + build + push (on Linux)
+./scripts/release.sh 0.4.0 --linux-only        # Linux build only (skip tagging)
+./scripts/release.sh 0.4.0 --macos-only --push # macOS build + upload to existing release
 ```
+
+The macOS build step automatically codesigns with your Developer ID and submits for Apple notarization. See the [macOS build script](#macos) for required environment variables.
 
 The `dist/` directory will contain:
 
@@ -219,7 +227,7 @@ The `dist/` directory will contain:
 | `.deb` | Linux | Debian, Ubuntu |
 | `.rpm` | Linux | Fedora, RHEL, openSUSE |
 | `.pkg.tar.zst` | Linux | Arch, CachyOS, Manjaro (requires `makepkg`) |
-| `.dmg` | macOS | macOS 13+ |
+| `.dmg` | macOS | macOS 13+ (signed and notarized) |
 | `SHA256SUMS` | Both | Checksums for all packages |
 
 The script automatically bumps the version in all `Cargo.toml` files, creates an annotated git tag, and installs `cargo-deb` / `cargo-generate-rpm` if needed on Linux.
