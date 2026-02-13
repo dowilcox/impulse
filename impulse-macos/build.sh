@@ -280,17 +280,7 @@ if [[ "${SIGN}" == true ]]; then
 
     ENTITLEMENTS="impulse-macos/Impulse.entitlements"
 
-    # Sign embedded bundles first (inside-out signing order)
-    if [[ -d "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle" ]]; then
-        echo "    Signing resource bundle..."
-        codesign --force --options runtime \
-            --entitlements "${ENTITLEMENTS}" \
-            --sign "${IMPULSE_SIGN_IDENTITY}" \
-            --timestamp \
-            "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle"
-    fi
-
-    # Sign the main app bundle
+    # Sign the app bundle (covers all contents including resource bundles)
     echo "    Signing app bundle..."
     codesign --force --options runtime \
         --entitlements "${ENTITLEMENTS}" \
