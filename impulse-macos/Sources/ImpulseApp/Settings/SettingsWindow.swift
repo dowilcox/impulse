@@ -1,13 +1,40 @@
 import AppKit
 
+// MARK: - Toolbar Item Identifiers
+
+private extension NSToolbarItem.Identifier {
+    static let editor = NSToolbarItem.Identifier("editor")
+    static let terminal = NSToolbarItem.Identifier("terminal")
+    static let appearance = NSToolbarItem.Identifier("appearance")
+    static let automation = NSToolbarItem.Identifier("automation")
+    static let keybindings = NSToolbarItem.Identifier("keybindings")
+}
+
+// MARK: - Pane Metadata
+
+private struct PaneInfo {
+    let id: NSToolbarItem.Identifier
+    let label: String
+    let icon: String // SF Symbol name
+}
+
+private let allPanes: [PaneInfo] = [
+    PaneInfo(id: .editor, label: "Editor", icon: "doc.plaintext"),
+    PaneInfo(id: .terminal, label: "Terminal", icon: "terminal"),
+    PaneInfo(id: .appearance, label: "Appearance", icon: "paintpalette"),
+    PaneInfo(id: .automation, label: "Automation", icon: "gearshape.2"),
+    PaneInfo(id: .keybindings, label: "Keybindings", icon: "keyboard"),
+]
+
 // MARK: - Settings Window Controller
 
-/// NSWindow-based preferences window with tabbed sections for Editor, Terminal,
+/// NSToolbar-based preferences window with panes for Editor, Terminal,
 /// Appearance, Automation, and Keybindings. Changes save immediately.
 final class SettingsWindowController: NSWindowController {
 
     private var settings: Settings
-    private let tabView = NSTabView()
+    private var paneCache: [String: NSView] = [:]
+    private var currentPaneId: String = "editor"
 
     /// The singleton preferences window. Only one is shown at a time.
     private static var shared: SettingsWindowController?
@@ -27,7 +54,7 @@ final class SettingsWindowController: NSWindowController {
         self.settings = settings
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -35,12 +62,21 @@ final class SettingsWindowController: NSWindowController {
         window.title = "Settings"
         window.center()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 560, height: 420)
+        window.minSize = NSSize(width: 560, height: 400)
 
         super.init(window: window)
 
-        buildTabs()
-        window.contentView = tabView
+        // Toolbar setup
+        let toolbar = NSToolbar(identifier: "SettingsToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        window.toolbarStyle = .preference
+        window.toolbar = toolbar
+
+        // Restore last selected pane
+        let lastPane = UserDefaults.standard.string(forKey: "settingsSelectedPane") ?? "editor"
+        switchToPane(lastPane, animated: false)
+        toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(lastPane)
     }
 
     @available(*, unavailable)
@@ -53,24 +89,39 @@ final class SettingsWindowController: NSWindowController {
         SettingsWindowController.shared = nil
     }
 
-    // MARK: Tab Construction
+    // MARK: - Pane Switching
 
-    private func buildTabs() {
-        tabView.tabViewType = .topTabsBezelBorder
+    private func switchToPane(_ identifier: String, animated: Bool = true) {
+        currentPaneId = identifier
+        UserDefaults.standard.set(identifier, forKey: "settingsSelectedPane")
 
-        tabView.addTabViewItem(makeEditorTab())
-        tabView.addTabViewItem(makeTerminalTab())
-        tabView.addTabViewItem(makeAppearanceTab())
-        tabView.addTabViewItem(makeAutomationTab())
-        tabView.addTabViewItem(makeKeybindingsTab())
+        let paneView: NSView
+        if let cached = paneCache[identifier] {
+            paneView = cached
+        } else {
+            switch identifier {
+            case "editor":      paneView = makeEditorPane()
+            case "terminal":    paneView = makeTerminalPane()
+            case "appearance":  paneView = makeAppearancePane()
+            case "automation":  paneView = makeAutomationPane()
+            case "keybindings": paneView = makeKeybindingsPane()
+            default:            paneView = makeEditorPane()
+            }
+            paneCache[identifier] = paneView
+        }
+
+        guard let window else { return }
+
+        window.contentView = paneView
     }
 
-    // MARK: - Editor Tab
+    @objc private func toolbarPaneSelected(_ sender: NSToolbarItem) {
+        switchToPane(sender.itemIdentifier.rawValue)
+    }
 
-    private func makeEditorTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "editor")
-        item.label = "Editor"
+    // MARK: - Editor Pane
 
+    private func makeEditorPane() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -245,16 +296,12 @@ final class SettingsWindowController: NSWindowController {
             smoothScrollCheck,
         ])
 
-        item.view = wrapInScrollView(stack)
-        return item
+        return wrapInScrollView(stack)
     }
 
-    // MARK: - Terminal Tab
+    // MARK: - Terminal Pane
 
-    private func makeTerminalTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "terminal")
-        item.label = "Terminal"
-
+    private func makeTerminalPane() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -339,16 +386,12 @@ final class SettingsWindowController: NSWindowController {
             makeRow(label: "Scrollback Lines:", control: scrollbackField),
         ])
 
-        item.view = wrapInScrollView(stack)
-        return item
+        return wrapInScrollView(stack)
     }
 
-    // MARK: - Appearance Tab
+    // MARK: - Appearance Pane
 
-    private func makeAppearanceTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "appearance")
-        item.label = "Appearance"
-
+    private func makeAppearancePane() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -368,6 +411,8 @@ final class SettingsWindowController: NSWindowController {
         previewBox.borderColor = .separatorColor
         previewBox.translatesAutoresizingMaskIntoConstraints = false
         previewBox.identifier = NSUserInterfaceItemIdentifier("colorPreviewBox")
+        // Also tag for full-width stretching in addSection
+        previewBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
         previewBox.heightAnchor.constraint(equalToConstant: 200).isActive = true
 
         let theme = ThemeManager.theme(forName: settings.colorScheme)
@@ -389,8 +434,7 @@ final class SettingsWindowController: NSWindowController {
             hiddenCheck,
         ])
 
-        item.view = wrapInScrollView(stack)
-        return item
+        return wrapInScrollView(stack)
     }
 
     private func buildColorPreview(theme: Theme) -> NSView {
@@ -465,34 +509,16 @@ final class SettingsWindowController: NSWindowController {
         return stack
     }
 
-    // MARK: - Automation Tab
+    // MARK: - Automation Pane
 
-    private func makeAutomationTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "automation")
-        item.label = "Automation"
-
-        let outerScroll = NSScrollView()
-        outerScroll.hasVerticalScroller = true
-        outerScroll.drawsBackground = false
-
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
+    private func makeAutomationPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
 
         // -- Commands on Save Section --
 
-        let headerLabel = NSTextField(labelWithString: "Commands on Save")
-        headerLabel.font = NSFont.boldSystemFont(ofSize: 13)
-        headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(headerLabel)
-
-        let descLabel = NSTextField(wrappingLabelWithString:
-            "Commands that run automatically when a file matching the pattern is saved.")
-        descLabel.font = NSFont.systemFont(ofSize: 11)
-        descLabel.textColor = .secondaryLabelColor
-        descLabel.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(descLabel)
-
-        // Table view for commands
         let cmdScrollView = NSScrollView()
         cmdScrollView.translatesAutoresizingMaskIntoConstraints = false
         cmdScrollView.hasVerticalScroller = true
@@ -525,33 +551,23 @@ final class SettingsWindowController: NSWindowController {
 
         tableView.delegate = self
         tableView.dataSource = self
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         cmdScrollView.documentView = tableView
 
-        container.addSubview(cmdScrollView)
+        cmdScrollView.heightAnchor.constraint(equalToConstant: 120).isActive = true
 
-        // Add/Remove buttons for commands
         let addCmdButton = NSButton(title: "Add", target: self, action: #selector(addCommandOnSave(_:)))
-        addCmdButton.translatesAutoresizingMaskIntoConstraints = false
         let removeCmdButton = NSButton(title: "Remove", target: self, action: #selector(removeCommandOnSave(_:)))
-        removeCmdButton.translatesAutoresizingMaskIntoConstraints = false
         removeCmdButton.tag = 401
+        let cmdButtonRow = NSStackView(views: [addCmdButton, removeCmdButton])
+        cmdButtonRow.orientation = .horizontal
+        cmdButtonRow.spacing = 8
 
-        container.addSubview(addCmdButton)
-        container.addSubview(removeCmdButton)
+        addSection(to: stack, title: "Commands on Save",
+                   subtitle: "Commands that run automatically when a file matching the pattern is saved.",
+                   rows: [cmdScrollView, cmdButtonRow], addSeparator: false)
 
         // -- File Type Overrides Section --
-
-        let ftoHeader = NSTextField(labelWithString: "File Type Overrides")
-        ftoHeader.font = NSFont.boldSystemFont(ofSize: 13)
-        ftoHeader.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(ftoHeader)
-
-        let ftoDesc = NSTextField(wrappingLabelWithString:
-            "Per-file-type overrides for tab width, spaces vs tabs, and format-on-save.")
-        ftoDesc.font = NSFont.systemFont(ofSize: 11)
-        ftoDesc.textColor = .secondaryLabelColor
-        ftoDesc.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(ftoDesc)
 
         let ftoScrollView = NSScrollView()
         ftoScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -587,81 +603,33 @@ final class SettingsWindowController: NSWindowController {
 
         ftoTable.delegate = self
         ftoTable.dataSource = self
+        ftoTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         ftoScrollView.documentView = ftoTable
 
-        container.addSubview(ftoScrollView)
+        ftoScrollView.heightAnchor.constraint(equalToConstant: 120).isActive = true
 
         let addFtoButton = NSButton(title: "Add", target: self, action: #selector(addFileTypeOverride(_:)))
-        addFtoButton.translatesAutoresizingMaskIntoConstraints = false
         let removeFtoButton = NSButton(title: "Remove", target: self, action: #selector(removeFileTypeOverride(_:)))
-        removeFtoButton.translatesAutoresizingMaskIntoConstraints = false
+        let ftoButtonRow = NSStackView(views: [addFtoButton, removeFtoButton])
+        ftoButtonRow.orientation = .horizontal
+        ftoButtonRow.spacing = 8
 
-        container.addSubview(addFtoButton)
-        container.addSubview(removeFtoButton)
+        addSection(to: stack, title: "File Type Overrides",
+                   subtitle: "Per-file-type overrides for tab width, spaces vs tabs, and format-on-save.",
+                   rows: [ftoScrollView, ftoButtonRow])
 
-        NSLayoutConstraint.activate([
-            // Commands on Save
-            headerLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            headerLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-
-            descLabel.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
-            descLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            descLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-
-            cmdScrollView.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 12),
-            cmdScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            cmdScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            cmdScrollView.heightAnchor.constraint(equalToConstant: 120),
-
-            addCmdButton.topAnchor.constraint(equalTo: cmdScrollView.bottomAnchor, constant: 8),
-            addCmdButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-
-            removeCmdButton.topAnchor.constraint(equalTo: cmdScrollView.bottomAnchor, constant: 8),
-            removeCmdButton.leadingAnchor.constraint(equalTo: addCmdButton.trailingAnchor, constant: 8),
-
-            // File Type Overrides
-            ftoHeader.topAnchor.constraint(equalTo: addCmdButton.bottomAnchor, constant: 24),
-            ftoHeader.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-
-            ftoDesc.topAnchor.constraint(equalTo: ftoHeader.bottomAnchor, constant: 4),
-            ftoDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            ftoDesc.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-
-            ftoScrollView.topAnchor.constraint(equalTo: ftoDesc.bottomAnchor, constant: 12),
-            ftoScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            ftoScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            ftoScrollView.heightAnchor.constraint(equalToConstant: 120),
-
-            addFtoButton.topAnchor.constraint(equalTo: ftoScrollView.bottomAnchor, constant: 8),
-            addFtoButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-
-            removeFtoButton.topAnchor.constraint(equalTo: ftoScrollView.bottomAnchor, constant: 8),
-            removeFtoButton.leadingAnchor.constraint(equalTo: addFtoButton.trailingAnchor, constant: 8),
-
-            removeFtoButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-
-            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
-        ])
-
-        outerScroll.documentView = container
-        item.view = outerScroll
-        return item
+        return wrapInScrollView(stack)
     }
 
-    // MARK: - Keybindings Tab
+    // MARK: - Keybindings Pane
 
-    private func makeKeybindingsTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "keybindings")
-        item.label = "Keybindings"
+    private func makeKeybindingsPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
 
-        let container = NSView()
-
-        let descLabel = NSTextField(wrappingLabelWithString:
-            "Double-click a shortcut to edit it. Overrides are saved to settings.")
-        descLabel.font = NSFont.systemFont(ofSize: 11)
-        descLabel.textColor = .secondaryLabelColor
-        descLabel.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(descLabel)
+        // -- Built-in Keybindings --
 
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -692,35 +660,73 @@ final class SettingsWindowController: NSWindowController {
 
         tableView.delegate = self
         tableView.dataSource = self
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         scrollView.documentView = tableView
 
-        container.addSubview(scrollView)
+        scrollView.heightAnchor.constraint(equalToConstant: 200).isActive = true
 
-        // Reset button
         let resetButton = NSButton(title: "Reset All to Defaults", target: self,
                                     action: #selector(resetKeybindings(_:)))
-        resetButton.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(resetButton)
 
-        NSLayoutConstraint.activate([
-            descLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            descLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            descLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+        addSection(to: stack, title: "Built-in Keybindings",
+                   subtitle: "Double-click a shortcut to edit it. Overrides are saved to settings.",
+                   rows: [scrollView, resetButton], addSeparator: false)
 
-            scrollView.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            scrollView.bottomAnchor.constraint(equalTo: resetButton.topAnchor, constant: -8),
+        // -- Custom Keybindings --
 
-            resetButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            resetButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-        ])
+        let customScrollView = NSScrollView()
+        customScrollView.translatesAutoresizingMaskIntoConstraints = false
+        customScrollView.hasVerticalScroller = true
+        customScrollView.borderType = .bezelBorder
 
-        item.view = container
-        return item
+        let customTable = NSTableView()
+        customTable.tag = 501
+        customTable.headerView = NSTableHeaderView()
+        customTable.usesAlternatingRowBackgroundColors = true
+        customTable.doubleAction = #selector(customKeybindingDoubleClicked(_:))
+        customTable.target = self
+
+        let ckNameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ck_name"))
+        ckNameCol.title = "Name"
+        ckNameCol.width = 120
+        customTable.addTableColumn(ckNameCol)
+
+        let ckKeyCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ck_key"))
+        ckKeyCol.title = "Key"
+        ckKeyCol.width = 120
+        customTable.addTableColumn(ckKeyCol)
+
+        let ckCommandCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ck_command"))
+        ckCommandCol.title = "Command"
+        ckCommandCol.width = 120
+        customTable.addTableColumn(ckCommandCol)
+
+        let ckArgsCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ck_args"))
+        ckArgsCol.title = "Args"
+        ckArgsCol.width = 120
+        customTable.addTableColumn(ckArgsCol)
+
+        customTable.delegate = self
+        customTable.dataSource = self
+        customTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        customScrollView.documentView = customTable
+
+        customScrollView.heightAnchor.constraint(equalToConstant: 140).isActive = true
+
+        let addCustomButton = NSButton(title: "Add", target: self, action: #selector(addCustomKeybinding(_:)))
+        let removeCustomButton = NSButton(title: "Remove", target: self, action: #selector(removeCustomKeybinding(_:)))
+        let customButtonRow = NSStackView(views: [addCustomButton, removeCustomButton])
+        customButtonRow.orientation = .horizontal
+        customButtonRow.spacing = 8
+
+        addSection(to: stack, title: "Custom Keybindings",
+                   subtitle: "User-defined shortcuts that open a new terminal and run a command. Double-click to edit.",
+                   rows: [customScrollView, customButtonRow])
+
+        return wrapInScrollView(stack)
     }
 
-    // MARK: - Helpers
+    // MARK: - Layout Helpers
 
     private func makeLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
@@ -729,7 +735,6 @@ final class SettingsWindowController: NSWindowController {
         return label
     }
 
-    /// Creates a section header with a bold title and optional subtitle.
     private func makeSectionHeader(title: String, subtitle: String? = nil) -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -751,7 +756,6 @@ final class SettingsWindowController: NSWindowController {
         return stack
     }
 
-    /// Creates a horizontal separator line.
     private func makeSeparator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
@@ -759,7 +763,8 @@ final class SettingsWindowController: NSWindowController {
         return box
     }
 
-    /// Creates a labeled row with a control on the right side.
+    private static let labelFieldRowId = NSUserInterfaceItemIdentifier("settingsLabelFieldRow")
+
     private func makeRow(label: String, control: NSView) -> NSStackView {
         let labelView = NSTextField(labelWithString: label)
         labelView.font = NSFont.systemFont(ofSize: 13)
@@ -768,15 +773,19 @@ final class SettingsWindowController: NSWindowController {
         labelView.translatesAutoresizingMaskIntoConstraints = false
         labelView.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
 
+        // Allow the control to stretch horizontally
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         let row = NSStackView(views: [labelView, control])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
         row.translatesAutoresizingMaskIntoConstraints = false
+        row.identifier = Self.labelFieldRowId
         return row
     }
 
-    /// Wraps a section header + items into a vertical group within the outer stack.
     private func addSection(to stack: NSStackView, title: String, subtitle: String? = nil,
                             rows: [NSView], addSeparator: Bool = true) {
         if addSeparator && !stack.arrangedSubviews.isEmpty {
@@ -785,11 +794,16 @@ final class SettingsWindowController: NSWindowController {
         stack.addArrangedSubview(makeSectionHeader(title: title, subtitle: subtitle))
         for row in rows {
             stack.addArrangedSubview(row)
+            // Stretch label+field rows, tables, and boxes to fill the available width
+            let shouldStretch = row is NSScrollView
+                || row.identifier == Self.labelFieldRowId
+                || (row is NSBox && (row as! NSBox).boxType == .custom)
+            if shouldStretch {
+                row.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+            }
         }
     }
 
-    /// Wraps a stack view in a scroll view with consistent padding.
-    /// A flipped NSView so the document view pins to the top of the scroll area.
     private final class FlippedView: NSView {
         override var isFlipped: Bool { true }
     }
@@ -797,7 +811,6 @@ final class SettingsWindowController: NSWindowController {
     private func wrapInScrollView(_ stack: NSStackView) -> NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // Wrap the stack in a flipped container so content aligns to the top.
         let docView = FlippedView()
         docView.translatesAutoresizingMaskIntoConstraints = false
         docView.addSubview(stack)
@@ -814,6 +827,11 @@ final class SettingsWindowController: NSWindowController {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
+        // Pin document view width to the scroll view's clip view so content fills horizontally
+        if let clipView = scrollView.contentView as? NSClipView {
+            docView.widthAnchor.constraint(equalTo: clipView.widthAnchor).isActive = true
+        }
+
         let container = NSView()
         container.addSubview(scrollView)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -829,11 +847,9 @@ final class SettingsWindowController: NSWindowController {
 
     private func persistSettings() {
         settings.save()
-        // Propagate to AppDelegate so runtime state stays in sync.
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.settings = settings
         }
-        // Notify all windows so they can apply the new settings immediately.
         NotificationCenter.default.post(name: .impulseSettingsDidChange, object: settings)
     }
 
@@ -846,7 +862,6 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
         settings.fontSize = sender.integerValue
-        // Update the label next to the stepper
         if let label = sender.superview?.subviews.compactMap({ $0 as? NSTextField }).first(where: { $0.tag == 100 }) {
             label.stringValue = "\(settings.fontSize)"
         }
@@ -1026,21 +1041,18 @@ final class SettingsWindowController: NSWindowController {
         settings.colorScheme = name
         persistSettings()
 
-        // Update the preview box by searching the entire window content view.
         let theme = ThemeManager.theme(forName: name)
         if let previewBox = findView(withIdentifier: "colorPreviewBox", in: window?.contentView) as? NSBox {
             previewBox.fillColor = theme.bg
             previewBox.contentView = buildColorPreview(theme: theme)
         }
 
-        // Post theme change notification
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.applyTheme(named: name)
         }
         NotificationCenter.default.post(name: .impulseThemeDidChange, object: theme)
     }
 
-    /// Recursively searches for a view with the given identifier.
     private func findView(withIdentifier id: String, in view: NSView?) -> NSView? {
         guard let view else { return nil }
         if view.identifier?.rawValue == id { return view }
@@ -1103,76 +1115,60 @@ final class SettingsWindowController: NSWindowController {
         let row = sender.clickedRow
         guard row >= 0 && row < settings.fileTypeOverrides.count else { return }
         let override_ = settings.fileTypeOverrides[row]
+        guard let parentWindow = window else { return }
 
-        let alert = NSAlert()
-        alert.messageText = "Edit File Type Override"
-        alert.informativeText = "Configure per-file-type settings."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-
-        let grid = NSGridView(numberOfColumns: 2, rows: 0)
-        grid.rowSpacing = 6
-        grid.columnSpacing = 8
-        grid.column(at: 0).xPlacement = .trailing
-
-        let patternField = NSTextField(string: override_.pattern)
-        grid.addRow(with: [makeLabel("Pattern:"), patternField])
-
-        let tabWidthField = NSTextField(string: override_.tabWidth.map { "\($0)" } ?? "")
-        tabWidthField.placeholderString = "Default"
-        grid.addRow(with: [makeLabel("Tab Width:"), tabWidthField])
-
-        let spacesPopup = NSPopUpButton()
-        spacesPopup.addItems(withTitles: ["Default", "Spaces", "Tabs"])
-        if let useSpaces = override_.useSpaces {
-            spacesPopup.selectItem(withTitle: useSpaces ? "Spaces" : "Tabs")
-        } else {
-            spacesPopup.selectItem(withTitle: "Default")
-        }
-        grid.addRow(with: [makeLabel("Indentation:"), spacesPopup])
-
-        let fmtCommandField = NSTextField(string: override_.formatOnSave?.command ?? "")
-        fmtCommandField.placeholderString = "e.g. rustfmt"
-        grid.addRow(with: [makeLabel("Format Command:"), fmtCommandField])
-
-        let fmtArgsField = NSTextField(string: (override_.formatOnSave?.args ?? []).joined(separator: " "))
-        fmtArgsField.placeholderString = "e.g. --edition 2021"
-        grid.addRow(with: [makeLabel("Format Args:"), fmtArgsField])
-
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
-        alert.accessoryView = grid
-        alert.window.initialFirstResponder = patternField
-
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
-
-        let pattern = patternField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !pattern.isEmpty else { return }
-
-        let tabWidth = Int(tabWidthField.stringValue)
-        let useSpaces: Bool? = {
-            switch spacesPopup.titleOfSelectedItem {
-            case "Spaces": return true
-            case "Tabs":   return false
-            default:       return nil
+        let indentationValue: String = {
+            if let useSpaces = override_.useSpaces {
+                return useSpaces ? "Spaces" : "Tabs"
             }
+            return "Default"
         }()
 
-        let fmtCmd = fmtCommandField.stringValue.trimmingCharacters(in: .whitespaces)
-        let fmtArgs = fmtArgsField.stringValue
-            .split(separator: " ")
-            .map(String.init)
-        let formatOnSave: FormatOnSave? = fmtCmd.isEmpty ? nil : FormatOnSave(command: fmtCmd, args: fmtArgs)
+        SettingsFormSheet.present(
+            on: parentWindow,
+            title: "Edit File Type Override",
+            fields: [
+                FormField(label: "Pattern:", key: "pattern",
+                          type: .text(placeholder: "e.g. *.rs", value: override_.pattern)),
+                FormField(label: "Tab Width:", key: "tabWidth",
+                          type: .text(placeholder: "Default", value: override_.tabWidth.map { "\($0)" } ?? "")),
+                FormField(label: "Indentation:", key: "indentation",
+                          type: .popup(options: ["Default", "Spaces", "Tabs"], selected: indentationValue)),
+                FormField(label: "Format Command:", key: "fmtCommand",
+                          type: .text(placeholder: "e.g. rustfmt", value: override_.formatOnSave?.command ?? "")),
+                FormField(label: "Format Args:", key: "fmtArgs",
+                          type: .text(placeholder: "e.g. --edition 2021",
+                                      value: (override_.formatOnSave?.args ?? []).joined(separator: " "))),
+            ]
+        ) { [weak self] values in
+            guard let self else { return }
+            let pattern = values["pattern"]?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !pattern.isEmpty else { return }
 
-        settings.fileTypeOverrides[row] = FileTypeOverride(
-            pattern: pattern,
-            tabWidth: tabWidth,
-            useSpaces: useSpaces,
-            formatOnSave: formatOnSave
-        )
-        persistSettings()
-        sender.reloadData()
+            let tabWidth = Int(values["tabWidth"] ?? "")
+            let useSpaces: Bool? = {
+                switch values["indentation"] {
+                case "Spaces": return true
+                case "Tabs":   return false
+                default:       return nil
+                }
+            }()
+
+            let fmtCmd = (values["fmtCommand"] ?? "").trimmingCharacters(in: .whitespaces)
+            let fmtArgs = (values["fmtArgs"] ?? "")
+                .split(separator: " ")
+                .map(String.init)
+            let formatOnSave: FormatOnSave? = fmtCmd.isEmpty ? nil : FormatOnSave(command: fmtCmd, args: fmtArgs)
+
+            self.settings.fileTypeOverrides[row] = FileTypeOverride(
+                pattern: pattern,
+                tabWidth: tabWidth,
+                useSpaces: useSpaces,
+                formatOnSave: formatOnSave
+            )
+            self.persistSettings()
+            sender.reloadData()
+        }
     }
 
     // MARK: - Keybinding Actions
@@ -1181,35 +1177,28 @@ final class SettingsWindowController: NSWindowController {
         let row = sender.clickedRow
         guard row >= 0 && row < Keybindings.builtins.count else { return }
         let binding = Keybindings.builtins[row]
+        guard let parentWindow = window else { return }
 
         let currentShortcut = settings.keybindingOverrides[binding.id] ?? binding.defaultShortcut
 
-        let alert = NSAlert()
-        alert.messageText = "Edit Shortcut for \"\(binding.description)\""
-        alert.informativeText = "Enter the new shortcut (e.g. Cmd+Shift+B):"
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Reset to Default")
+        SettingsFormSheet.present(
+            on: parentWindow,
+            title: "Edit Shortcut for \"\(binding.description)\"",
+            fields: [
+                FormField(label: "Shortcut:", key: "shortcut",
+                          type: .text(placeholder: "e.g. Cmd+Shift+B", value: currentShortcut)),
+            ]
+        ) { [weak self] values in
+            guard let self else { return }
+            let newShortcut = (values["shortcut"] ?? "").trimmingCharacters(in: .whitespaces)
+            guard !newShortcut.isEmpty else { return }
 
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        input.stringValue = currentShortcut
-        alert.accessoryView = input
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            let newShortcut = input.stringValue.trimmingCharacters(in: .whitespaces)
-            if !newShortcut.isEmpty {
-                if newShortcut == binding.defaultShortcut {
-                    settings.keybindingOverrides.removeValue(forKey: binding.id)
-                } else {
-                    settings.keybindingOverrides[binding.id] = newShortcut
-                }
-                persistSettings()
-                sender.reloadData()
+            if newShortcut == binding.defaultShortcut {
+                self.settings.keybindingOverrides.removeValue(forKey: binding.id)
+            } else {
+                self.settings.keybindingOverrides[binding.id] = newShortcut
             }
-        } else if response == .alertThirdButtonReturn {
-            settings.keybindingOverrides.removeValue(forKey: binding.id)
-            persistSettings()
+            self.persistSettings()
             sender.reloadData()
         }
     }
@@ -1218,6 +1207,67 @@ final class SettingsWindowController: NSWindowController {
         settings.keybindingOverrides.removeAll()
         persistSettings()
         findTableView(withTag: 500)?.reloadData()
+    }
+
+    // MARK: - Custom Keybinding Actions
+
+    @objc private func addCustomKeybinding(_ sender: Any?) {
+        settings.customKeybindings.append(CustomKeybinding(
+            name: "New Keybinding",
+            key: "",
+            command: "",
+            args: []
+        ))
+        persistSettings()
+        findTableView(withTag: 501)?.reloadData()
+    }
+
+    @objc private func removeCustomKeybinding(_ sender: Any?) {
+        guard let tableView = findTableView(withTag: 501) else { return }
+        let row = tableView.selectedRow
+        guard row >= 0 && row < settings.customKeybindings.count else { return }
+        settings.customKeybindings.remove(at: row)
+        persistSettings()
+        tableView.reloadData()
+    }
+
+    @objc private func customKeybindingDoubleClicked(_ sender: NSTableView) {
+        let row = sender.clickedRow
+        guard row >= 0 && row < settings.customKeybindings.count else { return }
+        let kb = settings.customKeybindings[row]
+        guard let parentWindow = window else { return }
+
+        SettingsFormSheet.present(
+            on: parentWindow,
+            title: "Edit Custom Keybinding",
+            fields: [
+                FormField(label: "Name:", key: "name",
+                          type: .text(placeholder: "e.g. Lazygit", value: kb.name)),
+                FormField(label: "Key:", key: "key",
+                          type: .text(placeholder: "e.g. Cmd+Shift+G", value: kb.key)),
+                FormField(label: "Command:", key: "command",
+                          type: .text(placeholder: "e.g. lazygit", value: kb.command)),
+                FormField(label: "Args:", key: "args",
+                          type: .text(placeholder: "e.g. --use-config-dir", value: kb.args.joined(separator: " "))),
+            ]
+        ) { [weak self] values in
+            guard let self else { return }
+            let name = (values["name"] ?? "").trimmingCharacters(in: .whitespaces)
+            let key = (values["key"] ?? "").trimmingCharacters(in: .whitespaces)
+            let command = (values["command"] ?? "").trimmingCharacters(in: .whitespaces)
+            let args = (values["args"] ?? "")
+                .split(separator: " ")
+                .map(String.init)
+
+            self.settings.customKeybindings[row] = CustomKeybinding(
+                name: name.isEmpty ? "Untitled" : name,
+                key: key,
+                command: command,
+                args: args
+            )
+            self.persistSettings()
+            sender.reloadData()
+        }
     }
 
     // MARK: - Table View Helpers
@@ -1235,6 +1285,35 @@ final class SettingsWindowController: NSWindowController {
     }
 }
 
+// MARK: - NSToolbarDelegate
+
+extension SettingsWindowController: NSToolbarDelegate {
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        allPanes.map(\.id)
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        allPanes.map(\.id)
+    }
+
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        allPanes.map(\.id)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard let pane = allPanes.first(where: { $0.id == itemIdentifier }) else { return nil }
+
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = pane.label
+        item.image = NSImage(systemSymbolName: pane.icon, accessibilityDescription: pane.label)
+        item.target = self
+        item.action = #selector(toolbarPaneSelected(_:))
+        return item
+    }
+}
+
 // MARK: - NSTableViewDataSource & Delegate
 
 extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
@@ -1243,6 +1322,7 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         switch tableView.tag {
         case 400: return settings.commandsOnSave.count
         case 500: return Keybindings.builtins.count
+        case 501: return settings.customKeybindings.count
         case 600: return settings.fileTypeOverrides.count
         default:  return 0
         }
@@ -1290,6 +1370,17 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 } else {
                     cell.textColor = .labelColor
                 }
+            default: break
+            }
+
+        case 501:
+            guard row < settings.customKeybindings.count else { break }
+            let kb = settings.customKeybindings[row]
+            switch identifier.rawValue {
+            case "ck_name":    cell.stringValue = kb.name
+            case "ck_key":     cell.stringValue = kb.key
+            case "ck_command": cell.stringValue = kb.command
+            case "ck_args":    cell.stringValue = kb.args.joined(separator: " ")
             default: break
             }
 

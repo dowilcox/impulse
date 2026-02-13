@@ -175,14 +175,16 @@ final class TabManager: NSObject {
 
     /// Creates a new terminal tab (wrapped in a TerminalContainer for split
     /// support) and makes it active.
-    func addTerminalTab() {
+    func addTerminalTab(directory: String? = nil) {
+        let dir = directory ?? settings.lastDirectory
         let termSettings = TerminalSettings(
             terminalFontSize: settings.terminalFontSize,
             terminalFontFamily: settings.terminalFontFamily,
             terminalCursorShape: settings.terminalCursorShape,
             terminalCursorBlink: settings.terminalCursorBlink,
             terminalScrollback: settings.terminalScrollback,
-            lastDirectory: settings.lastDirectory
+            lastDirectory: dir,
+            terminalCopyOnSelect: settings.terminalCopyOnSelect
         )
         let termTheme = TerminalTheme(
             bg: theme.bgHex,

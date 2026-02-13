@@ -212,6 +212,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Persisted sidebar width used to restore after collapse/expand.
     private var sidebarTargetWidth: CGFloat
 
+    /// Local event monitor for custom keybinding interception.
+    private var customKeybindingMonitor: Any?
+
     // MARK: File Tree State
 
     /// The root path currently displayed in the file tree. Used to avoid
@@ -306,6 +309,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         setupLayout()
         setupNotificationObservers()
+        setupCustomKeybindingMonitor()
 
         // Apply initial theme to sidebar views.
         fileTreeView.applyTheme(theme)
@@ -589,8 +593,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             .withSymbolConfiguration(config)
         sidebarToggleButton.image = image
         sidebarToggleButton.contentTintColor = sidebarVisible
-            ? NSColor.controlAccentColor
+            ? theme.cyan
             : theme.fgDark
+    }
+
+    // MARK: - Custom Keybinding Monitor
+
+    /// Installs a local event monitor that intercepts key-down events matching
+    /// any configured custom keybinding. When a match is found the custom
+    /// command is executed and the event is consumed.
+    private func setupCustomKeybindingMonitor() {
+        // Tear down any existing monitor first.
+        if let existing = customKeybindingMonitor {
+            NSEvent.removeMonitor(existing)
+            customKeybindingMonitor = nil
+        }
+
+        customKeybindingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.window?.isKeyWindow == true else { return event }
+
+            for kb in self.settings.customKeybindings {
+                let parsed = Keybindings.parseShortcut(kb.key)
+                guard !parsed.keyEquivalent.isEmpty else { continue }
+                if Keybindings.eventMatchesShortcut(event, keyEquivalent: parsed.keyEquivalent, modifierFlags: parsed.modifierFlags) {
+                    self.executeCustomCommand(command: kb.command, args: kb.args)
+                    return nil // consume the event
+                }
+            }
+
+            return event
+        }
+    }
+
+    /// Tears down the custom keybinding event monitor.
+    private func teardownCustomKeybindingMonitor() {
+        if let monitor = customKeybindingMonitor {
+            NSEvent.removeMonitor(monitor)
+            customKeybindingMonitor = nil
+        }
     }
 
     // MARK: - Terminal Search Bar
@@ -807,6 +847,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 self.lspDidClose(editor: editor)
             }
             self.tabManager.closeTab(index: index)
+            // Close the window when the last tab is closed.
+            if self.tabManager.tabs.isEmpty {
+                self.window?.close()
+            }
         }
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -910,6 +954,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         nc.addObserver(forName: .impulseSplitVertical, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.window?.isKeyWindow == true else { return }
             self.tabManager.splitTerminalVertically()
+        }
+        nc.addObserver(forName: .impulseFocusPrevSplit, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            guard self.tabManager.selectedIndex >= 0,
+                  self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                  case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+            container.focusPreviousSplit()
+        }
+        nc.addObserver(forName: .impulseFocusNextSplit, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.window?.isKeyWindow == true else { return }
+            guard self.tabManager.selectedIndex >= 0,
+                  self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                  case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+            container.focusNextSplit()
         }
         nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.window?.isKeyWindow == true else { return }
@@ -1052,6 +1110,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     }
                 }
             }
+            // Close the window when the last tab is closed.
+            if self.tabManager.tabs.isEmpty {
+                self.window?.close()
+            }
         }
 
         // Editor content changed — refresh tab labels and notify LSP
@@ -1150,6 +1212,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             self.settings = newSettings
             self.tabManager.settings = newSettings
             self.applyAllSettings()
+            // Rebuild custom keybinding monitor so new/changed bindings take effect.
+            self.setupCustomKeybindingMonitor()
         }
 
         // LSP: go-to-definition requested
@@ -1565,22 +1629,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     // MARK: - Custom Command Execution
 
     /// Executes a custom keybinding command by opening a new terminal tab
-    /// with the command running in it.
+    /// with the command running in it, using the active tab's working directory.
     private func executeCustomCommand(command: String, args: [String]) {
-        // Build the full command string
         let fullCommand = ([command] + args).joined(separator: " ")
 
-        // Post a notification to create a new terminal tab with the command
-        // We'll use the existing new terminal tab flow but with a custom initial command
-        tabManager.addTerminalTab()
-        // Send the command to the newly created terminal
+        // Get the CWD from the active tab (terminal CWD or editor file's parent)
+        let cwd = getActiveCwd()
+
+        tabManager.addTerminalTab(directory: cwd)
         if tabManager.selectedIndex >= 0,
            tabManager.selectedIndex < tabManager.tabs.count,
            case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
            let terminal = container.activeTerminal {
-            // Set the working directory and run the command
             terminal.sendCommand(fullCommand)
         }
+    }
+
+    /// Returns the current working directory from the active tab:
+    /// terminal CWD, or the parent directory of the active editor file.
+    private func getActiveCwd() -> String? {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count else { return nil }
+        switch tabManager.tabs[tabManager.selectedIndex] {
+        case .terminal(let container):
+            if let cwd = container.activeTerminal?.currentWorkingDirectory, !cwd.isEmpty {
+                return cwd
+            }
+        case .editor(let editor):
+            if let path = editor.filePath {
+                return (path as NSString).deletingLastPathComponent
+            }
+        case .imagePreview(let path, _):
+            return (path as NSString).deletingLastPathComponent
+        }
+        return nil
     }
 
     // MARK: - Go to Line
@@ -1656,7 +1738,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             terminalCursorShape: settings.terminalCursorShape,
             terminalCursorBlink: settings.terminalCursorBlink,
             terminalScrollback: settings.terminalScrollback,
-            lastDirectory: settings.lastDirectory
+            lastDirectory: settings.lastDirectory,
+            terminalCopyOnSelect: settings.terminalCopyOnSelect
         )
 
         for tab in tabManager.tabs {
@@ -1705,7 +1788,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             terminalCursorShape: settings.terminalCursorShape,
             terminalCursorBlink: settings.terminalCursorBlink,
             terminalScrollback: settings.terminalScrollback,
-            lastDirectory: settings.lastDirectory
+            lastDirectory: settings.lastDirectory,
+            terminalCopyOnSelect: settings.terminalCopyOnSelect
         )
 
         for tab in tabManager.tabs {
@@ -1865,6 +1949,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     func windowWillClose(_ notification: Notification) {
         stopLspPolling()
+        teardownCustomKeybindingMonitor()
 
         // Persist sidebar state back to AppDelegate settings.
         if let delegate = NSApp.delegate as? AppDelegate {

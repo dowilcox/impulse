@@ -277,6 +277,22 @@ enum MenuBuilder {
         splitVItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(splitVItem)
 
+        menu.addItem(.separator())
+
+        let focusPrevItem = NSMenuItem(title: "Focus Previous Split",
+                                       action: #selector(MenuActions.menuFocusPrevSplit(_:)),
+                                       keyEquivalent: String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)))
+        focusPrevItem.target = MenuActions.shared
+        focusPrevItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(focusPrevItem)
+
+        let focusNextItem = NSMenuItem(title: "Focus Next Split",
+                                       action: #selector(MenuActions.menuFocusNextSplit(_:)),
+                                       keyEquivalent: String(Character(UnicodeScalar(NSRightArrowFunctionKey)!)))
+        focusNextItem.target = MenuActions.shared
+        focusNextItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(focusNextItem)
+
         return item
     }
 
@@ -417,6 +433,14 @@ final class MenuActions: NSObject {
 
     @objc func menuSplitVertical(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseSplitVertical, object: nil)
+    }
+
+    @objc func menuFocusPrevSplit(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseFocusPrevSplit, object: nil)
+    }
+
+    @objc func menuFocusNextSplit(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseFocusNextSplit, object: nil)
     }
 
     @objc func menuGoToLine(_ sender: Any?) {

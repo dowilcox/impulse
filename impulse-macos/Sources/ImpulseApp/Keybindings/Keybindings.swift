@@ -367,6 +367,26 @@ enum Keybindings {
         return false
     }
 
+    /// Checks whether an NSEvent matches a given key equivalent and modifier flags.
+    /// Reusable for custom keybindings that are not `BuiltinKeybinding` instances.
+    static func eventMatchesShortcut(_ event: NSEvent, keyEquivalent: String, modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        let relevantMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let eventMods = event.modifierFlags.intersection(relevantMask)
+        let bindingMods = modifierFlags.intersection(relevantMask)
+        guard eventMods == bindingMods else { return false }
+
+        guard let chars = event.charactersIgnoringModifiers?.lowercased() else { return false }
+        let expected = keyEquivalent.lowercased()
+
+        if chars == expected { return true }
+
+        if chars.unicodeScalars.count == 1 && expected.unicodeScalars.count == 1 {
+            return chars.unicodeScalars.first!.value == expected.unicodeScalars.first!.value
+        }
+
+        return false
+    }
+
     /// Finds the first keybinding matching the given event, with override support.
     static func matchingKeybinding(for event: NSEvent, overrides: [String: String] = [:]) -> BuiltinKeybinding? {
         for builtin in builtins {

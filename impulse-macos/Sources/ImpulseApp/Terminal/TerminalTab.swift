@@ -33,6 +33,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Local event monitor for copy-on-select behaviour.
     private var mouseUpMonitor: Any?
 
+    /// Whether copy-on-select is currently active.
+    private var copyOnSelectEnabled: Bool = false
+
     // MARK: Initializer
 
     override init(frame frameRect: NSRect) {
@@ -47,7 +50,8 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         addSubview(terminalView)
         setupConstraints()
         setupDragAndDrop()
-        setupCopyOnSelect()
+        // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
+        // after configureTerminal() to respect the user's setting.
     }
 
     @available(*, unavailable)
@@ -63,22 +67,31 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     // MARK: Copy on Select
 
-    private func setupCopyOnSelect() {
-        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
-            guard let self else { return event }
-            // Only act if the mouse-up is within this terminal view.
-            let pt = self.terminalView.convert(event.locationInWindow, from: nil)
-            guard self.terminalView.bounds.contains(pt) else { return event }
-            // Defer to the next run-loop cycle so SwiftTerm finalises the selection first.
-            DispatchQueue.main.async { [weak self] in
-                guard let self,
-                      self.terminalView.selectionActive,
-                      let text = self.terminalView.getSelection(),
-                      !text.isEmpty else { return }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+    /// Enables or disables the copy-on-select behaviour at runtime.
+    func setCopyOnSelect(enabled: Bool) {
+        guard enabled != copyOnSelectEnabled else { return }
+        copyOnSelectEnabled = enabled
+
+        if enabled {
+            mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+                guard let self else { return event }
+                let pt = self.terminalView.convert(event.locationInWindow, from: nil)
+                guard self.terminalView.bounds.contains(pt) else { return event }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.terminalView.selectionActive,
+                          let text = self.terminalView.getSelection(),
+                          !text.isEmpty else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                return event
             }
-            return event
+        } else {
+            if let monitor = mouseUpMonitor {
+                NSEvent.removeMonitor(monitor)
+                mouseUpMonitor = nil
+            }
         }
     }
 
@@ -165,6 +178,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
         // Scrollback
         terminal.options.scrollback = settings.terminalScrollback
+
+        // Copy on select
+        setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
     }
 
     /// Update terminal colors from a theme at runtime.
@@ -292,6 +308,7 @@ struct TerminalSettings {
     var terminalCursorBlink: Bool = true
     var terminalScrollback: Int = 10_000
     var lastDirectory: String = ""
+    var terminalCopyOnSelect: Bool = true
 }
 
 /// Terminal color theme definition. Hex color strings (e.g. "#1F1F28").
