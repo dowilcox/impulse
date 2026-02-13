@@ -280,7 +280,35 @@ if [[ "${SIGN}" == true ]]; then
 
     ENTITLEMENTS="impulse-macos/Impulse.entitlements"
 
-    # Sign the app bundle (covers all contents including resource bundles)
+    # The SwiftPM resource bundle is a flat directory with a .bundle extension.
+    # codesign treats it as a nested bundle but rejects it because it lacks an
+    # Info.plist. Add a minimal one so it can be signed properly inside-out.
+    if [[ -d "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle" ]]; then
+        cat > "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle/Info.plist" << 'RPLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.impulse.Impulse.resources</string>
+    <key>CFBundleName</key>
+    <string>ImpulseApp Resources</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+</dict>
+</plist>
+RPLIST
+
+        echo "    Signing resource bundle..."
+        codesign --force \
+            --sign "${IMPULSE_SIGN_IDENTITY}" \
+            --timestamp \
+            "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle"
+    fi
+
+    # Sign the app bundle (inside-out: resource bundle first, then the .app)
     echo "    Signing app bundle..."
     codesign --force --options runtime \
         --entitlements "${ENTITLEMENTS}" \
