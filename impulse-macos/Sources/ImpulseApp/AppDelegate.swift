@@ -44,6 +44,10 @@ extension Notification.Name {
     /// Requests reloading an editor tab from disk (e.g. after discarding git changes).
     /// The `userInfo` dictionary contains `"path"` (String).
     static let impulseReloadEditorFile = Notification.Name("impulseReloadEditorFile")
+    /// Requests moving focus to the previous terminal split pane.
+    static let impulseFocusPrevSplit = Notification.Name("impulseFocusPrevSplit")
+    /// Requests moving focus to the next terminal split pane.
+    static let impulseFocusNextSplit = Notification.Name("impulseFocusNextSplit")
 }
 
 // MARK: - AppDelegate
@@ -66,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = Settings.load()
         theme = ThemeManager.theme(forName: settings.colorScheme)
+
+        // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
+        EditorWebViewPool.shared.warmUp()
 
         // Initialize LSP with the last known directory, or home.
         let rootDir: String

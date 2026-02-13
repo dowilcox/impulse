@@ -97,6 +97,23 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
 
     private func setupWebView() {
+        // Try to claim a pre-warmed WebView from the pool. If available,
+        // Monaco is already loaded and we can skip loadEditor() entirely.
+        if let warmed = EditorWebViewPool.shared.claim(newHandler: self) {
+            warmed.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(warmed)
+            NSLayoutConstraint.activate([
+                warmed.topAnchor.constraint(equalTo: topAnchor),
+                warmed.bottomAnchor.constraint(equalTo: bottomAnchor),
+                warmed.leadingAnchor.constraint(equalTo: leadingAnchor),
+                warmed.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ])
+            self.webView = warmed
+            self.isEditorReady = true
+            return
+        }
+
+        // Fall back to creating a new WebView.
         let config = WKWebViewConfiguration()
 
         // Register the script message handler on the "impulse" channel.
@@ -132,7 +149,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     // MARK: Loading
 
     /// Extract Monaco assets via the FFI bridge and load the editor HTML.
+    /// This is a no-op if the editor is already ready (e.g. from a pre-warmed WebView).
     func loadEditor() {
+        guard !isEditorReady else { return }
+
         switch ImpulseCore.ensureMonacoExtracted() {
         case .failure(let error):
             os_log(.error, log: Self.log, "Failed to extract Monaco: %{public}@", error.message)

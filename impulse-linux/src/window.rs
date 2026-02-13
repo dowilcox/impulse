@@ -25,6 +25,9 @@ struct Command {
 }
 
 pub fn build_window(app: &adw::Application) {
+    // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
+    crate::editor_webview::warm_up_editor();
+
     let settings = Rc::new(RefCell::new(crate::settings::load()));
 
     let window = adw::ApplicationWindow::builder()

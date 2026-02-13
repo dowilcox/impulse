@@ -290,6 +290,102 @@ impl MonacoEditorHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// WebView pre-warming pool
+// ---------------------------------------------------------------------------
+
+/// A pre-warmed WebView with Monaco loaded and ready to accept commands.
+struct WarmWebView {
+    webview: webkit6::WebView,
+    user_content_manager: webkit6::UserContentManager,
+    is_ready: Rc<Cell<bool>>,
+    signal_handler_id: glib::SignalHandlerId,
+}
+
+thread_local! {
+    static WARM_POOL: RefCell<Option<WarmWebView>> = RefCell::new(None);
+}
+
+/// Pre-extract Monaco assets and start loading a WebView in the background.
+/// When the WebView is ready, it can be claimed by `create_monaco_editor` for
+/// an instant editor open. Call this once at app startup.
+pub fn warm_up_editor() {
+    WARM_POOL.with(|cell| {
+        if cell.borrow().is_some() {
+            return;
+        }
+
+        let monaco_dir = match impulse_editor::assets::ensure_monaco_extracted() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::warn!("Failed to extract Monaco for pre-warm: {}", e);
+                return;
+            }
+        };
+
+        let ucm = webkit6::UserContentManager::new();
+        let webview = webkit6::WebView::builder()
+            .user_content_manager(&ucm)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+
+        webview
+            .set_background_color(&gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+
+        if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
+            wk_settings.set_enable_javascript(true);
+            wk_settings.set_enable_developer_extras(true);
+            wk_settings.set_allow_file_access_from_file_urls(true);
+            wk_settings.set_allow_universal_access_from_file_urls(true);
+        }
+
+        let is_ready = Rc::new(Cell::new(false));
+        let is_ready_clone = is_ready.clone();
+
+        ucm.register_script_message_handler("impulse", None);
+        let signal_id =
+            ucm.connect_script_message_received(Some("impulse"), move |_ucm, value| {
+                let json_str = value.to_str().to_string();
+                if let Ok(event) = serde_json::from_str::<EditorEvent>(&json_str) {
+                    if matches!(event, EditorEvent::Ready) {
+                        is_ready_clone.set(true);
+                        log::info!("Pre-warmed editor WebView is ready");
+                    }
+                }
+            });
+
+        let uri = format!("file://{}/editor.html", monaco_dir.display());
+        webview.load_uri(&uri);
+
+        log::info!("Started pre-warming editor WebView");
+
+        *cell.borrow_mut() = Some(WarmWebView {
+            webview,
+            user_content_manager: ucm,
+            is_ready,
+            signal_handler_id: signal_id,
+        });
+    });
+}
+
+/// Try to claim a pre-warmed WebView. Returns `Some` only if one is ready.
+fn claim_warm_editor() -> Option<WarmWebView> {
+    WARM_POOL.with(|cell| {
+        let is_ready = cell
+            .borrow()
+            .as_ref()
+            .map_or(false, |w| w.is_ready.get());
+        if is_ready {
+            cell.borrow_mut().take()
+        } else {
+            None
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+
 /// Create a Monaco editor widget inside a WebView.
 ///
 /// Returns the container `gtk4::Box` (with `widget_name` set to `file_path`)
@@ -332,6 +428,90 @@ where
     } else {
         format!("Tab Size: {}", indent_width)
     };
+
+    // Try to claim a pre-warmed WebView for instant editor opening.
+    if let Some(warm) = claim_warm_editor() {
+        let webview = warm.webview;
+        let ucm = warm.user_content_manager;
+
+        // Disconnect the warm-up signal handler.
+        ucm.disconnect(warm.signal_handler_id);
+
+        // Update the background to match the current theme.
+        let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
+            .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+        webview.set_background_color(&bg_rgba);
+
+        // Create the handle with is_ready already set — Monaco is loaded.
+        let handle = Rc::new(MonacoEditorHandle {
+            webview: webview.clone(),
+            file_path: RefCell::new(file_path.to_string()),
+            cached_content: Rc::new(RefCell::new(content.to_string())),
+            is_modified: Rc::new(Cell::new(false)),
+            is_ready: Rc::new(Cell::new(true)),
+            language: RefCell::new(language.to_string()),
+            version: Rc::new(Cell::new(0)),
+            suppress_next_modify: Rc::new(Cell::new(false)),
+            indent_info: RefCell::new(indent_info),
+            _file_watcher: RefCell::new(None),
+            _file_watcher_timer: RefCell::new(None),
+        });
+
+        // Connect the real signal handler for ongoing events.
+        let handle_for_signal = handle.clone();
+        ucm.connect_script_message_received(Some("impulse"), move |_ucm, value| {
+            let json_str = value.to_str().to_string();
+
+            let event: EditorEvent = match serde_json::from_str(&json_str) {
+                Ok(e) => e,
+                Err(e) => {
+                    log::warn!("Failed to parse EditorEvent: {} (json: {})", e, json_str);
+                    return;
+                }
+            };
+
+            // Update cached state for content/cursor events.
+            match &event {
+                EditorEvent::ContentChanged { content, version } => {
+                    *handle_for_signal.cached_content.borrow_mut() = content.clone();
+                    handle_for_signal.version.set(*version);
+                    if handle_for_signal.suppress_next_modify.get() {
+                        handle_for_signal.suppress_next_modify.set(false);
+                    } else {
+                        handle_for_signal.is_modified.set(true);
+                    }
+                }
+                _ => {}
+            }
+
+            on_event(&handle_for_signal, event);
+        });
+
+        // Immediately send theme, settings, and file content.
+        handle.send_command(&EditorCommand::SetTheme {
+            theme: theme_to_monaco(theme),
+        });
+
+        let mut options = settings_to_editor_options(settings);
+        options.tab_size = Some(indent_width);
+        options.insert_spaces = Some(use_spaces);
+        handle.send_command(&EditorCommand::UpdateSettings { options });
+
+        handle.send_command(&EditorCommand::OpenFile {
+            file_path: file_path.to_string(),
+            content: content.to_string(),
+            language: language.to_string(),
+        });
+
+        container.append(&webview);
+
+        // Start warming the next WebView.
+        glib::idle_add_local_once(|| warm_up_editor());
+
+        return (container, handle);
+    }
+
+    // -- Fallback: create a fresh WebView --
 
     // Create the UserContentManager and register our message handler
     let user_content_manager = webkit6::UserContentManager::new();
@@ -458,6 +638,9 @@ where
     }
 
     container.append(&webview);
+
+    // Start warming the next WebView (for subsequent tabs).
+    glib::idle_add_local_once(|| warm_up_editor());
 
     (container, handle)
 }
