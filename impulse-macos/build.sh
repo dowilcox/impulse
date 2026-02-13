@@ -77,7 +77,7 @@ fi
 if [[ "${SIGN}" == true ]]; then
     # Auto-detect signing identity if not set
     if [[ -z "${IMPULSE_SIGN_IDENTITY:-}" ]]; then
-        IMPULSE_SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+        IMPULSE_SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
         if [[ -z "${IMPULSE_SIGN_IDENTITY}" ]]; then
             echo "ERROR: No Developer ID Application certificate found in keychain." >&2
             echo "" >&2
