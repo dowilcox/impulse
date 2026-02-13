@@ -1173,6 +1173,7 @@ pub fn build_window(app: &adw::Application) {
     {
         let tab_view = tab_view.clone();
         let create_tab_capture = create_tab.clone();
+        let sidebar_btn_capture = sidebar_btn.clone();
 
         // Build parsed accels + callbacks for custom keybindings so they work
         // even when VTE or WebView has focus (those widgets consume key events
@@ -1234,6 +1235,13 @@ pub fn build_window(app: &adw::Application) {
                     (ckb.action)();
                     return gtk4::glib::Propagation::Stop;
                 }
+            }
+
+            // Ctrl+Shift+B: toggle sidebar (VTE/WebView eat this before
+            // the Global ShortcutController can see it)
+            if ctrl && shift && (key == gtk4::gdk::Key::b || key == gtk4::gdk::Key::B) {
+                sidebar_btn_capture.set_active(!sidebar_btn_capture.is_active());
+                return gtk4::glib::Propagation::Stop;
             }
 
             if let Some(page) = tab_view.selected_page() {
