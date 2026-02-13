@@ -63,13 +63,6 @@ if [[ "$PUSH" == true ]] && ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
-# ── Check working tree ──────────────────────────────────────────────────
-
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-    echo "Error: working tree has uncommitted changes. Commit or stash first." >&2
-    exit 1
-fi
-
 # ── Version bump ───────────────────────────────────────────────────────
 
 echo "Setting version to ${VERSION}..."
@@ -85,6 +78,16 @@ cargo check -p impulse-core --quiet 2>/dev/null || true
 # ── Commit + tag (skip for --macos-only / --linux-only) ──────────────
 
 if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
+    # Only enforce clean tree when we're committing/tagging (version bump
+    # changes are expected and will be committed below). Check for changes
+    # beyond the Cargo.toml/lockfile version bump.
+    PRE_BUMP_DIRTY=$(git diff --name-only -- ':!Cargo.lock' ':!impulse-core/Cargo.toml' ':!impulse-editor/Cargo.toml' ':!impulse-linux/Cargo.toml' ':!impulse-ffi/Cargo.toml')
+    if [[ -n "$PRE_BUMP_DIRTY" ]]; then
+        echo "Error: working tree has uncommitted changes beyond version files:" >&2
+        echo "$PRE_BUMP_DIRTY" >&2
+        echo "Commit or stash first." >&2
+        exit 1
+    fi
     # Commit version bump if anything changed
     if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
         git add -A
