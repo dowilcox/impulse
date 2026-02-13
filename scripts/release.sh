@@ -176,8 +176,8 @@ if [[ "$LINUX_ONLY" == false && "$PLATFORM" == "Darwin" ]]; then
         exit 1
     fi
 
-    # Use the macOS build script to create .app + .dmg
-    bash impulse-macos/build.sh --dmg
+    # Use the macOS build script to create signed, notarized .app + .dmg
+    bash impulse-macos/build.sh --dmg --sign --notarize
 
     DMG_NAME="Impulse-${VERSION}.dmg"
     if [[ -f "$DIST_DIR/$DMG_NAME" ]]; then

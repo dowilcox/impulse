@@ -11,20 +11,35 @@ set -euo pipefail
 #   2. Copy vendored Monaco editor assets into the Swift package resources.
 #   3. Build the Swift macOS app with SwiftPM.
 #   4. Create a proper .app bundle.
+#   4b. Optionally codesign with Developer ID (with --sign flag).
 #   5. Optionally create a .dmg disk image (with --dmg flag).
+#   6. Optionally notarize with Apple (with --notarize flag).
 #
 # Usage:
-#   ./impulse-macos/build.sh               # build .app bundle
-#   ./impulse-macos/build.sh --dmg         # build .app + .dmg
-#   ./impulse-macos/build.sh --release     # same as default (release build)
+#   ./impulse-macos/build.sh                           # build .app bundle
+#   ./impulse-macos/build.sh --dmg                     # build .app + .dmg
+#   ./impulse-macos/build.sh --sign                    # build + codesign
+#   ./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
+#   ./impulse-macos/build.sh --release                 # same as default (release build)
+#
+# Environment variables for signing:
+#   IMPULSE_SIGN_IDENTITY  — codesign identity, e.g. "Developer ID Application: Name (TEAM_ID)"
+#                            Auto-detected if not set.
+#   IMPULSE_NOTARY_KEY     — path to App Store Connect API key .p8 file
+#   IMPULSE_NOTARY_KEY_ID  — API key ID
+#   IMPULSE_NOTARY_ISSUER  — API key issuer ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 CREATE_DMG=false
+SIGN=false
+NOTARIZE=false
 for arg in "$@"; do
     case "$arg" in
         --dmg) CREATE_DMG=true ;;
+        --sign) SIGN=true ;;
+        --notarize) NOTARIZE=true; SIGN=true ;;
     esac
 done
 
@@ -55,6 +70,51 @@ fi
 if ! command -v swift >/dev/null 2>&1; then
     echo "ERROR: swift not found. Install Xcode command line tools: xcode-select --install" >&2
     exit 1
+fi
+
+# ── Signing preflight ────────────────────────────────────────────────
+
+if [[ "${SIGN}" == true ]]; then
+    # Auto-detect signing identity if not set
+    if [[ -z "${IMPULSE_SIGN_IDENTITY:-}" ]]; then
+        IMPULSE_SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+        if [[ -z "${IMPULSE_SIGN_IDENTITY}" ]]; then
+            echo "ERROR: No Developer ID Application certificate found in keychain." >&2
+            echo "" >&2
+            echo "To set up code signing:" >&2
+            echo "  1. Download your Developer ID Application certificate from developer.apple.com" >&2
+            echo "  2. Double-click to install in Keychain, or run:" >&2
+            echo "     security import DeveloperIDApplication.p12 -k login.keychain" >&2
+            echo "  3. Set IMPULSE_SIGN_IDENTITY to your identity, e.g.:" >&2
+            echo '     export IMPULSE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAM_ID)"' >&2
+            exit 1
+        fi
+        echo "Auto-detected signing identity: ${IMPULSE_SIGN_IDENTITY}"
+    fi
+
+    if [[ "${NOTARIZE}" == true ]]; then
+        if [[ -z "${IMPULSE_NOTARY_KEY:-}" || -z "${IMPULSE_NOTARY_KEY_ID:-}" || -z "${IMPULSE_NOTARY_ISSUER:-}" ]]; then
+            echo "ERROR: Notarization requires the following environment variables:" >&2
+            echo "  IMPULSE_NOTARY_KEY     — path to App Store Connect API key .p8 file" >&2
+            echo "  IMPULSE_NOTARY_KEY_ID  — API key ID" >&2
+            echo "  IMPULSE_NOTARY_ISSUER  — API key issuer ID" >&2
+            echo "" >&2
+            echo "To set up notarization:" >&2
+            echo "  1. Go to appstoreconnect.apple.com > Users and Access > Integrations > App Store Connect API" >&2
+            echo "  2. Generate a key with 'Developer' access" >&2
+            echo "  3. Download the .p8 file (only available once)" >&2
+            echo "  4. Note the Key ID and Issuer ID" >&2
+            echo "  5. Set environment variables, e.g. in ~/.zshrc:" >&2
+            echo '     export IMPULSE_NOTARY_KEY=~/private/AuthKey_XXXXXXXXXX.p8' >&2
+            echo '     export IMPULSE_NOTARY_KEY_ID=XXXXXXXXXX' >&2
+            echo '     export IMPULSE_NOTARY_ISSUER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' >&2
+            exit 1
+        fi
+        if [[ ! -f "${IMPULSE_NOTARY_KEY}" ]]; then
+            echo "ERROR: Notary key file not found: ${IMPULSE_NOTARY_KEY}" >&2
+            exit 1
+        fi
+    fi
 fi
 
 # ── Version detection ─────────────────────────────────────────────────
@@ -213,6 +273,38 @@ fi
 
 echo "    OK: ${APP_DIR}"
 
+# ── Step 4b: Code Signing (optional) ─────────────────────────────────
+
+if [[ "${SIGN}" == true ]]; then
+    echo "==> Signing Impulse.app with Developer ID..."
+
+    ENTITLEMENTS="impulse-macos/Impulse.entitlements"
+
+    # Sign embedded bundles first (inside-out signing order)
+    if [[ -d "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle" ]]; then
+        echo "    Signing resource bundle..."
+        codesign --force --options runtime \
+            --entitlements "${ENTITLEMENTS}" \
+            --sign "${IMPULSE_SIGN_IDENTITY}" \
+            --timestamp \
+            "${MACOS_DIR}/ImpulseApp_ImpulseApp.bundle"
+    fi
+
+    # Sign the main app bundle
+    echo "    Signing app bundle..."
+    codesign --force --options runtime \
+        --entitlements "${ENTITLEMENTS}" \
+        --sign "${IMPULSE_SIGN_IDENTITY}" \
+        --timestamp \
+        "${APP_DIR}"
+
+    # Verify
+    echo "    Verifying signature..."
+    codesign --verify --deep --strict "${APP_DIR}"
+    spctl --assess --type exec "${APP_DIR}"
+    echo "    OK: Code signing verified"
+fi
+
 # ── Step 5: Create .dmg (optional) ────────────────────────────────────
 
 if [[ "${CREATE_DMG}" == true ]]; then
@@ -234,7 +326,50 @@ if [[ "${CREATE_DMG}" == true ]]; then
         "${DMG_PATH}"
 
     rm -rf "${DMG_STAGING}"
+
+    # Sign the DMG if signing is enabled
+    if [[ "${SIGN}" == true ]]; then
+        echo "    Signing DMG..."
+        codesign --force --sign "${IMPULSE_SIGN_IDENTITY}" --timestamp "${DMG_PATH}"
+    fi
+
     echo "    OK: ${DMG_PATH}"
+fi
+
+# ── Step 6: Notarization (optional) ──────────────────────────────────
+
+if [[ "${NOTARIZE}" == true ]]; then
+    echo "==> Notarizing with Apple..."
+
+    # Determine what to submit: prefer DMG, fall back to zipped .app
+    if [[ "${CREATE_DMG}" == true && -f "dist/Impulse-${VERSION}.dmg" ]]; then
+        NOTARIZE_TARGET="dist/Impulse-${VERSION}.dmg"
+    else
+        echo "    Creating zip for notarization..."
+        NOTARIZE_TARGET="dist/Impulse-${VERSION}.zip"
+        ditto -c -k --keepParent "${APP_DIR}" "${NOTARIZE_TARGET}"
+    fi
+
+    echo "    Submitting ${NOTARIZE_TARGET} for notarization..."
+    xcrun notarytool submit "${NOTARIZE_TARGET}" \
+        --key "${IMPULSE_NOTARY_KEY}" \
+        --key-id "${IMPULSE_NOTARY_KEY_ID}" \
+        --issuer "${IMPULSE_NOTARY_ISSUER}" \
+        --wait
+
+    echo "    Stapling notarization ticket..."
+    xcrun stapler staple "${APP_DIR}"
+
+    if [[ "${CREATE_DMG}" == true && -f "dist/Impulse-${VERSION}.dmg" ]]; then
+        xcrun stapler staple "dist/Impulse-${VERSION}.dmg"
+    fi
+
+    # Clean up temporary zip if we created one
+    if [[ "${CREATE_DMG}" != true && -f "dist/Impulse-${VERSION}.zip" ]]; then
+        rm -f "dist/Impulse-${VERSION}.zip"
+    fi
+
+    echo "    OK: Notarization complete"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────
@@ -242,6 +377,12 @@ fi
 echo ""
 echo "==> Build complete."
 echo "    App bundle: ${APP_DIR}"
+if [[ "${SIGN}" == true ]]; then
+    echo "    Signed:     yes (${IMPULSE_SIGN_IDENTITY})"
+fi
+if [[ "${NOTARIZE}" == true ]]; then
+    echo "    Notarized:  yes"
+fi
 if [[ "${CREATE_DMG}" == true ]]; then
     echo "    Disk image: dist/Impulse-${VERSION}.dmg"
 fi
