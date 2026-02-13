@@ -316,10 +316,9 @@ RPLIST
         --timestamp \
         "${APP_DIR}"
 
-    # Verify
+    # Verify signature (spctl requires notarization, so it runs after step 6)
     echo "    Verifying signature..."
     codesign --verify --deep --strict "${APP_DIR}"
-    spctl --assess --type exec "${APP_DIR}"
     echo "    OK: Code signing verified"
 fi
 
@@ -387,6 +386,9 @@ if [[ "${NOTARIZE}" == true ]]; then
         rm -f "dist/Impulse-${VERSION}.zip"
     fi
 
+    # Verify Gatekeeper acceptance (requires notarization on modern macOS)
+    echo "    Verifying Gatekeeper acceptance..."
+    spctl --assess --type exec "${APP_DIR}"
     echo "    OK: Notarization complete"
 fi
 
