@@ -245,7 +245,6 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         currentSettings = settings
         for terminal in terminals {
             terminal.configureTerminal(settings: settings, theme: currentTheme)
-            terminal.configureScrollerStyle()
         }
     }
 
@@ -273,7 +272,6 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     private func createTerminal() -> TerminalTab {
         let terminal = TerminalTab(frame: bounds)
         terminal.configureTerminal(settings: currentSettings, theme: currentTheme)
-        terminal.configureScrollerStyle()
         return terminal
     }
 

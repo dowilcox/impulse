@@ -36,6 +36,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
+
     // MARK: Initializer
 
     override init(frame frameRect: NSRect) {
@@ -52,6 +53,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         setupDragAndDrop()
         // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
         // after configureTerminal() to respect the user's setting.
+
     }
 
     @available(*, unavailable)
@@ -160,13 +162,26 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     // MARK: Scrollbar
 
-    /// SwiftTerm hardcodes its internal NSScroller to the `.legacy` style,
-    /// which makes the scrollbar permanently visible regardless of system
-    /// preferences. Override the style to use the user's system setting.
-    func configureScrollerStyle() {
+    override func layout() {
+        super.layout()
+        // Defer so this runs after SwiftTerm's own layout resets the scroller frame.
+        DispatchQueue.main.async { [weak self] in
+            self?.resizeScroller()
+        }
+    }
+
+    private func resizeScroller() {
         for subview in terminalView.subviews {
             if let scroller = subview as? NSScroller {
-                scroller.scrollerStyle = NSScroller.preferredScrollerStyle
+                scroller.controlSize = .mini
+                let width = NSScroller.scrollerWidth(for: .mini, scrollerStyle: scroller.scrollerStyle)
+                let tvBounds = terminalView.bounds
+                scroller.frame = NSRect(
+                    x: tvBounds.maxX - width,
+                    y: tvBounds.minY,
+                    width: width,
+                    height: tvBounds.height
+                )
                 break
             }
         }
