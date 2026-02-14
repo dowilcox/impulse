@@ -358,7 +358,7 @@ pub fn build_window(app: &adw::Application) {
     let new_tab_btn = gtk4::Button::from_icon_name("tab-new-symbolic");
     new_tab_btn.set_tooltip_text(Some("New Tab (Ctrl+T)"));
     new_tab_btn.set_cursor_from_name(Some("pointer"));
-    header.pack_start(&new_tab_btn);
+    header.pack_end(&new_tab_btn);
 
     // Settings button (right side of header, click handler wired below after tab_view setup)
     let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
@@ -458,6 +458,7 @@ pub fn build_window(app: &adw::Application) {
         let latest_completion_req = latest_completion_req.clone();
         let latest_hover_req = latest_hover_req.clone();
         let latest_definition_req = latest_definition_req.clone();
+        let icon_cache = sidebar_state.icon_cache.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
                 // Check if the file is already open in a tab
@@ -481,6 +482,7 @@ pub fn build_window(app: &adw::Application) {
                     let preview = editor::create_image_preview(path);
                     let page = tab_view.append(&preview);
                     page.set_title(&filename);
+                    page.set_icon(Some(&gio::ThemedIcon::new("image-x-generic-symbolic")));
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
                         preview.clone().upcast::<gtk4::Widget>(),
@@ -678,6 +680,9 @@ pub fn build_window(app: &adw::Application) {
                     );
                     let page = tab_view.append(&editor_widget);
                     page.set_title(&filename);
+                    if let Some(texture) = icon_cache.borrow().get(&filename, false, false) {
+                        page.set_icon(Some(texture));
+                    }
 
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
@@ -829,6 +834,7 @@ pub fn build_window(app: &adw::Application) {
             let container = terminal_container::TerminalContainer::new(&term);
             let page = tab_view.append(&container.widget);
             page.set_title(shell_cache.shell_name());
+            page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
             tab_view.set_selected_page(&page);
             term.grab_focus();
         }
@@ -1218,6 +1224,7 @@ pub fn build_window(app: &adw::Application) {
                             let container = terminal_container::TerminalContainer::new(&term);
                             let page = tab_view.append(&container.widget);
                             page.set_title(&kb_name);
+                            page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
                             tab_view.set_selected_page(&page);
                             term.grab_focus();
                         }),
@@ -2151,6 +2158,7 @@ pub fn build_window(app: &adw::Application) {
                 let container = terminal_container::TerminalContainer::new(&term);
                 let page = tab_view.append(&container.widget);
                 page.set_title(&kb_name);
+                page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
                 tab_view.set_selected_page(&page);
                 term.grab_focus();
             });

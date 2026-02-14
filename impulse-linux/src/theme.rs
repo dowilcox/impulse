@@ -279,8 +279,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding: 3px 10px;
         }}
         .file-entry-dir {{
-            color: {cyan};
-            font-weight: bold;
+            color: {fg};
         }}
         .file-entry-file {{
             color: {fg};
