@@ -1039,7 +1039,7 @@ impl SidebarState {
                     match event.kind {
                         notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_)
-                        | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                        | notify::EventKind::Modify(_) => {
                             let _ = tx.send(());
                         }
                         _ => {}
@@ -1138,8 +1138,11 @@ impl SidebarState {
                 });
             } else {
                 *self.tree_nodes.borrow_mut() = nodes.clone();
-                *self.current_path.borrow_mut() = saved_path;
+                *self.current_path.borrow_mut() = saved_path.clone();
                 render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());
+
+                // Re-establish filesystem watcher for the restored directory
+                self.setup_watcher(&saved_path);
 
                 // Restore scroll position after the render
                 let scroll = self.file_tree_scroll.clone();
