@@ -456,22 +456,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             tabBarContainer.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
             tabBarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             tabBarContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            tabBarContainer.heightAnchor.constraint(equalToConstant: 38),
+            tabBarContainer.heightAnchor.constraint(equalToConstant: 44),
 
-            // Sidebar toggle: left side
+            // Sidebar toggle: left side, vertically aligned with tab items
+            // Tab items are 30px tall at y=10 (bottom padding) inside the 44px bar,
+            // so their visual center is 25px from the bottom.
             sidebarToggleButton.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 8),
-            sidebarToggleButton.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
+            sidebarToggleButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -11),
             sidebarToggleButton.widthAnchor.constraint(equalToConstant: 28),
             sidebarToggleButton.heightAnchor.constraint(equalToConstant: 28),
 
             // Tab strip: fills between sidebar toggle and + button
             tabSegment.leadingAnchor.constraint(equalTo: sidebarToggleButton.trailingAnchor, constant: 6),
-            tabSegment.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
+            tabSegment.topAnchor.constraint(equalTo: tabBarContainer.topAnchor),
+            tabSegment.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
             tabSegment.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -6),
 
-            // New tab button: right side
+            // New tab button: right side, vertically aligned with tab items
             newTabButton.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor, constant: -8),
-            newTabButton.centerYAnchor.constraint(equalTo: tabBarContainer.centerYAnchor),
+            newTabButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -11),
             newTabButton.widthAnchor.constraint(equalToConstant: 28),
             newTabButton.heightAnchor.constraint(equalToConstant: 28),
 
@@ -481,15 +484,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Set initial divider position so both the sidebar and content
-        // container get proper widths from the NSSplitView.
-        if sidebarVisible {
-            splitView.setPosition(sidebarTargetWidth, ofDividerAt: 0)
-        } else {
-            splitView.setPosition(0, ofDividerAt: 0)
-            sidebarContainer.isHidden = true
-        }
+        // Start with sidebar hidden; apply the saved state after layout
+        // so the split view has valid geometry when setPosition is called.
+        sidebarContainer.isHidden = true
+        splitView.setPosition(0, ofDividerAt: 0)
         updateSidebarToggleIcon()
+
+        // Defer sidebar restore so the window has laid out first.
+        if sidebarVisible {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.sidebarContainer.isHidden = false
+                self.splitView.setPosition(self.sidebarTargetWidth, ofDividerAt: 0)
+            }
+        }
 
         // Content area has a minimum width so the sidebar cannot push it off screen.
         contentContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
