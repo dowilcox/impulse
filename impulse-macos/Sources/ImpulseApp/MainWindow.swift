@@ -572,11 +572,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func toggleSidebar() {
         sidebarVisible.toggle()
         updateSidebarToggleIcon()
-        NSAnimationContext.runAnimationGroup({ context in
+        // Unhide before the animation so the layout engine can process
+        // the visibility change and the split view animates correctly.
+        if sidebarVisible {
+            sidebarContainer.isHidden = false
+        }
+        NSAnimationContext.runAnimationGroup({ [self] context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             if sidebarVisible {
-                sidebarContainer.isHidden = false
                 splitView.animator().setPosition(sidebarTargetWidth, ofDividerAt: 0)
             } else {
                 splitView.animator().setPosition(0, ofDividerAt: 0)
