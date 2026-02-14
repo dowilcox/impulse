@@ -854,6 +854,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         }
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
+            // Close the window when the last tab is closed (covers tab bar X button,
+            // context menu "Close Tab", etc.).
+            if self.tabManager.tabs.isEmpty {
+                self.window?.close()
+                return
+            }
             self.updateStatusBar()
             // Rebuild the file tree when the active tab's directory context differs
             // from the current root. Terminal tabs use their CWD; editor tabs use
