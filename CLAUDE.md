@@ -155,4 +155,4 @@ sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
 
 ### macOS
 
-Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is required for LSP TLS support (`brew install openssl@3`).
+Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.

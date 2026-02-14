@@ -15,3 +15,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 log = "0.4"
 lsp-types = { version = "0.97", features = ["proposed"] }
+# Statically link OpenSSL so the macOS binary doesn't depend on Homebrew.
+# git2 pulls in openssl-sys via libgit2-sys; without vendoring, the built
+# binary tries to load /opt/homebrew/libssl.3.dylib at runtime which crashes
+# on machines without Homebrew.
+git2 = { version = "0.20", features = ["vendored-openssl"] }
