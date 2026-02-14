@@ -92,6 +92,9 @@ final class FileTreeView: NSView {
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
     private let cellID = NSUserInterfaceItemIdentifier("FileCell")
 
+    // Internal drag pasteboard type for distinguishing internal vs external drops
+    private static let internalDragType = NSPasteboard.PasteboardType("dev.impulse.fileTreeDrag")
+
     // Re-entrancy guard to prevent infinite recursion when reloadItem
     // triggers outlineViewItemDidExpand during a reload.
     private var isReloadingItem = false
@@ -147,6 +150,11 @@ final class FileTreeView: NSView {
 
         // Context menu
         outline.menu = makeContextMenu()
+
+        // Drag and drop
+        outline.registerForDraggedTypes([.fileURL, FileTreeView.internalDragType])
+        outline.setDraggingSourceOperationMask(.copy, forLocal: false)
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
 
         self.outlineView = outline
 
@@ -699,6 +707,21 @@ final class FileTreeView: NSView {
 
     // MARK: Private Helpers
 
+    /// Recursively find a node by its file path.
+    private func findNode(withPath path: String, in nodes: [FileTreeNode]) -> FileTreeNode? {
+        for node in nodes {
+            if node.path == path {
+                return node
+            }
+            if let children = node.children {
+                if let found = findNode(withPath: path, in: children) {
+                    return found
+                }
+            }
+        }
+        return nil
+    }
+
     private func reloadVisibleRows() {
         let visibleRange = outlineView.rows(in: outlineView.visibleRect)
         guard visibleRange.length > 0 else {
@@ -790,6 +813,137 @@ extension FileTreeView: NSOutlineViewDataSource {
             return node.isDirectory
         }
         return false
+    }
+
+    // MARK: Drag Source
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        guard let node = item as? FileTreeNode else { return nil }
+        return NSURL(fileURLWithPath: node.path)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     draggingSession session: NSDraggingSession,
+                     willBeginAt screenPoint: NSPoint,
+                     forItems draggedItems: [Any]) {
+        // Mark the drag as internal so validateDrop can distinguish it
+        session.draggingPasteboard.setString("internal", forType: FileTreeView.internalDragType)
+    }
+
+    // MARK: Drop Target
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     validateDrop info: NSDraggingInfo,
+                     proposedItem item: Any?,
+                     proposedChildIndex index: Int) -> NSDragOperation {
+        // Determine the target directory
+        var targetDir: String
+        if let node = item as? FileTreeNode {
+            if node.isDirectory {
+                targetDir = node.path
+            } else {
+                // Retarget: drop on a file -> target its parent directory
+                let parentPath = (node.path as NSString).deletingLastPathComponent
+                if let parentNode = findNode(withPath: parentPath, in: rootNodes) {
+                    outlineView.setDropItem(parentNode, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                } else {
+                    outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                }
+                targetDir = parentPath
+            }
+        } else {
+            // Drop on root
+            targetDir = rootPath
+        }
+
+        let isInternal = info.draggingPasteboard.string(forType: FileTreeView.internalDragType) != nil
+
+        if isInternal {
+            guard let urls = info.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]
+            ) as? [NSURL],
+                  let sourceURL = urls.first,
+                  let sourcePath = sourceURL.path else {
+                return []
+            }
+
+            // Don't move a directory into itself
+            if targetDir.hasPrefix(sourcePath + "/") || targetDir == sourcePath {
+                return []
+            }
+
+            // No-op: already in target directory
+            let sourceParent = (sourcePath as NSString).deletingLastPathComponent
+            if sourceParent == targetDir {
+                return []
+            }
+
+            // Don't overwrite existing items
+            let fileName = (sourcePath as NSString).lastPathComponent
+            let destPath = (targetDir as NSString).appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: destPath) {
+                return []
+            }
+
+            return .move
+        } else {
+            return .copy
+        }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     acceptDrop info: NSDraggingInfo,
+                     item: Any?,
+                     childIndex index: Int) -> Bool {
+        let targetDir: String
+        if let node = item as? FileTreeNode {
+            targetDir = node.isDirectory
+                ? node.path
+                : (node.path as NSString).deletingLastPathComponent
+        } else {
+            targetDir = rootPath
+        }
+
+        let isInternal = info.draggingPasteboard.string(forType: FileTreeView.internalDragType) != nil
+
+        guard let urls = info.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [NSURL] else {
+            return false
+        }
+
+        let fm = FileManager.default
+        var anySuccess = false
+
+        for url in urls {
+            guard let sourcePath = url.path else { continue }
+            let fileName = (sourcePath as NSString).lastPathComponent
+            let destPath = (targetDir as NSString).appendingPathComponent(fileName)
+
+            guard !fm.fileExists(atPath: destPath) else {
+                NSLog("FileTreeView: skipping drop — \(fileName) already exists in target")
+                continue
+            }
+
+            do {
+                if isInternal {
+                    try fm.moveItem(atPath: sourcePath, toPath: destPath)
+                } else {
+                    try fm.copyItem(atPath: sourcePath, toPath: destPath)
+                }
+                anySuccess = true
+            } catch {
+                NSLog("FileTreeView: drop failed for \(sourcePath): \(error)")
+            }
+        }
+
+        if anySuccess {
+            refreshTree()
+        }
+        return anySuccess
     }
 }
 

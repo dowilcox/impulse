@@ -321,6 +321,11 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .file-entry-git-conflict {{
             color: {orange};
         }}
+        .drop-target {{
+            background-color: alpha({cyan}, 0.10);
+            outline: 1px dashed {cyan};
+            outline-offset: -1px;
+        }}
         /* --- Search --- */
         .search-entry {{
             margin: 6px 8px;

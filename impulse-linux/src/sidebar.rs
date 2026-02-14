@@ -127,12 +127,16 @@ pub fn build_sidebar(
     let file_menu = gio::Menu::new();
     file_menu.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
+    file_menu.append(Some("New File"), Some("filetree.new-file"));
+    file_menu.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu.append(Some("Rename"), Some("filetree.rename"));
     file_menu.append(Some("Delete"), Some("filetree.delete"));
 
     let file_menu_git = gio::Menu::new();
     file_menu_git.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu_git.append(Some("Copy Path"), Some("filetree.copy-path"));
+    file_menu_git.append(Some("New File"), Some("filetree.new-file"));
+    file_menu_git.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu_git.append(Some("Rename"), Some("filetree.rename"));
     file_menu_git.append(Some("Delete"), Some("filetree.delete"));
     file_menu_git.append(Some("Discard Changes"), Some("filetree.discard-changes"));
@@ -474,10 +478,19 @@ pub fn build_sidebar(
         let current_path = current_path.clone();
         let icon_cache = icon_cache.clone();
         new_file_action.connect_activate(move |_, _| {
-            let dir_path = clicked_path.borrow().clone();
-            if dir_path.is_empty() {
+            let clicked = clicked_path.borrow().clone();
+            if clicked.is_empty() {
                 return;
             }
+            // Resolve to parent directory if the clicked path is a file
+            let dir_path = if std::path::Path::new(&clicked).is_dir() {
+                clicked
+            } else {
+                std::path::Path::new(&clicked)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            };
 
             let dialog = gtk4::Window::builder()
                 .modal(true)
@@ -558,10 +571,19 @@ pub fn build_sidebar(
         let current_path = current_path.clone();
         let icon_cache = icon_cache.clone();
         new_folder_action.connect_activate(move |_, _| {
-            let dir_path = clicked_path.borrow().clone();
-            if dir_path.is_empty() {
+            let clicked = clicked_path.borrow().clone();
+            if clicked.is_empty() {
                 return;
             }
+            // Resolve to parent directory if the clicked path is a file
+            let dir_path = if std::path::Path::new(&clicked).is_dir() {
+                clicked
+            } else {
+                std::path::Path::new(&clicked)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            };
 
             let dialog = gtk4::Window::builder()
                 .modal(true)
@@ -690,7 +712,7 @@ pub fn build_sidebar(
 
     // Enable dragging file paths from the tree
     let drag_source = gtk4::DragSource::new();
-    drag_source.set_actions(gtk4::gdk::DragAction::COPY);
+    drag_source.set_actions(gtk4::gdk::DragAction::COPY | gtk4::gdk::DragAction::MOVE);
     {
         let file_tree_list = file_tree_list.clone();
         drag_source.connect_prepare(move |_source, _x, y| {
@@ -707,6 +729,125 @@ pub fn build_sidebar(
         });
     }
     file_tree_list.add_controller(drag_source);
+
+    // Accept internal moves: string paths from our DragSource
+    let drop_target_internal = gtk4::DropTarget::new(
+        glib::types::Type::STRING,
+        gtk4::gdk::DragAction::MOVE,
+    );
+    {
+        let file_tree_list = file_tree_list.clone();
+        drop_target_internal.connect_motion(move |_target, _x, y| {
+            remove_drop_highlights(&file_tree_list);
+            if let Some(row) = file_tree_list.row_at_y(y as i32) {
+                row.add_css_class("drop-target");
+            }
+            gtk4::gdk::DragAction::MOVE
+        });
+    }
+    {
+        let file_tree_list = file_tree_list.clone();
+        drop_target_internal.connect_leave(move |_target| {
+            remove_drop_highlights(&file_tree_list);
+        });
+    }
+    {
+        let file_tree_list = file_tree_list.clone();
+        let tree_nodes = tree_nodes.clone();
+        let current_path = current_path.clone();
+        let file_tree_scroll = file_tree_scroll.clone();
+        let show_hidden = show_hidden.clone();
+        let icon_cache = icon_cache.clone();
+        drop_target_internal.connect_drop(move |_target, value, _x, y| {
+            remove_drop_highlights(&file_tree_list);
+            if let Ok(source_path) = value.get::<String>() {
+                let cur = current_path.borrow().clone();
+                if let Some(target_dir) = resolve_drop_target_dir(&file_tree_list, y, &cur) {
+                    match perform_internal_move(&source_path, &target_dir) {
+                        Ok(()) => {
+                            refresh_tree(
+                                &tree_nodes,
+                                &file_tree_list,
+                                &file_tree_scroll,
+                                &current_path,
+                                *show_hidden.borrow(),
+                                icon_cache.clone(),
+                            );
+                            return true;
+                        }
+                        Err(e) => {
+                            log::warn!("Internal move failed: {}", e);
+                        }
+                    }
+                }
+            }
+            false
+        });
+    }
+    file_tree_list.add_controller(drop_target_internal);
+
+    // Accept external file drops from file managers
+    let drop_target_external = gtk4::DropTarget::new(
+        gtk4::gdk::FileList::static_type(),
+        gtk4::gdk::DragAction::COPY,
+    );
+    {
+        let file_tree_list = file_tree_list.clone();
+        drop_target_external.connect_motion(move |_target, _x, y| {
+            remove_drop_highlights(&file_tree_list);
+            if let Some(row) = file_tree_list.row_at_y(y as i32) {
+                row.add_css_class("drop-target");
+            }
+            gtk4::gdk::DragAction::COPY
+        });
+    }
+    {
+        let file_tree_list = file_tree_list.clone();
+        drop_target_external.connect_leave(move |_target| {
+            remove_drop_highlights(&file_tree_list);
+        });
+    }
+    {
+        let file_tree_list = file_tree_list.clone();
+        let tree_nodes = tree_nodes.clone();
+        let current_path = current_path.clone();
+        let file_tree_scroll = file_tree_scroll.clone();
+        let show_hidden = show_hidden.clone();
+        let icon_cache = icon_cache.clone();
+        drop_target_external.connect_drop(move |_target, value, _x, y| {
+            remove_drop_highlights(&file_tree_list);
+            if let Ok(file_list) = value.get::<gtk4::gdk::FileList>() {
+                let cur = current_path.borrow().clone();
+                if let Some(target_dir) = resolve_drop_target_dir(&file_tree_list, y, &cur) {
+                    let mut any_success = false;
+                    for file in file_list.files() {
+                        if let Some(path) = file.path() {
+                            let source = path.to_string_lossy().to_string();
+                            match perform_external_copy(&source, &target_dir) {
+                                Ok(()) => any_success = true,
+                                Err(e) => {
+                                    log::warn!("External copy failed for {}: {}", source, e);
+                                }
+                            }
+                        }
+                    }
+                    if any_success {
+                        refresh_tree(
+                            &tree_nodes,
+                            &file_tree_list,
+                            &file_tree_scroll,
+                            &current_path,
+                            *show_hidden.borrow(),
+                            icon_cache.clone(),
+                        );
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+    }
+    file_tree_list.add_controller(drop_target_external);
 
     // Search page: project-wide find and replace
     let project_search_state = project_search::build_project_search_panel();
@@ -1595,4 +1736,130 @@ fn clear_list(list: &gtk4::ListBox) {
     while let Some(row) = list.row_at_index(0) {
         list.remove(&row);
     }
+}
+
+/// Remove the `drop-target` CSS class from all rows in the list.
+fn remove_drop_highlights(list: &gtk4::ListBox) {
+    let mut i = 0;
+    while let Some(row) = list.row_at_index(i) {
+        row.remove_css_class("drop-target");
+        i += 1;
+    }
+}
+
+/// Determine the target directory for a drop at the given y coordinate.
+/// If the drop lands on a file row, returns the file's parent directory.
+/// If on a directory row, returns that directory.
+/// If on empty space, returns the project root.
+fn resolve_drop_target_dir(list: &gtk4::ListBox, y: f64, current_path: &str) -> Option<String> {
+    if let Some(row) = list.row_at_y(y as i32) {
+        if let Some(child) = row.child() {
+            let path = child.widget_name().to_string();
+            if !path.is_empty() {
+                if Path::new(&path).is_dir() {
+                    return Some(path);
+                } else {
+                    return Path::new(&path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    // Empty space — use project root
+    if !current_path.is_empty() {
+        Some(current_path.to_string())
+    } else {
+        None
+    }
+}
+
+/// Move a file or directory from `source` into `target_dir`.
+/// Validates against moving into self, same-parent no-ops, and name conflicts.
+/// Falls back to copy+delete for cross-device moves.
+fn perform_internal_move(source: &str, target_dir: &str) -> Result<(), String> {
+    let source_path = Path::new(source);
+    let target_dir_path = Path::new(target_dir);
+
+    // Don't move a directory into itself
+    if source_path.is_dir() && target_dir_path.starts_with(source_path) {
+        return Err("Cannot move a directory into itself".to_string());
+    }
+
+    // No-op: already in target directory
+    if let Some(parent) = source_path.parent() {
+        if parent == target_dir_path {
+            return Err("Already in target directory".to_string());
+        }
+    }
+
+    let file_name = source_path
+        .file_name()
+        .ok_or("Invalid source path")?;
+    let dest = target_dir_path.join(file_name);
+
+    if dest.exists() {
+        return Err(format!(
+            "'{}' already exists in target directory",
+            file_name.to_string_lossy()
+        ));
+    }
+
+    // Try rename (fast, same-device)
+    match std::fs::rename(source, &dest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(18) => {
+            // EXDEV: cross-device move — fall back to copy + delete
+            if source_path.is_dir() {
+                copy_dir_recursive(source_path, &dest)?;
+                std::fs::remove_dir_all(source).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::copy(source, &dest).map_err(|e| e.to_string())?;
+                std::fs::remove_file(source).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Copy a file or directory from `source` into `target_dir`.
+fn perform_external_copy(source: &str, target_dir: &str) -> Result<(), String> {
+    let source_path = Path::new(source);
+    let target_dir_path = Path::new(target_dir);
+
+    let file_name = source_path
+        .file_name()
+        .ok_or("Invalid source path")?;
+    let dest = target_dir_path.join(file_name);
+
+    if dest.exists() {
+        return Err(format!(
+            "'{}' already exists in target directory",
+            file_name.to_string_lossy()
+        ));
+    }
+
+    if source_path.is_dir() {
+        copy_dir_recursive(source_path, &dest)?;
+    } else {
+        std::fs::copy(source, &dest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Recursively copy a directory tree from `src` to `dst`.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
