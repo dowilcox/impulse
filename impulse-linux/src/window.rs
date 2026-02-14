@@ -364,7 +364,7 @@ pub fn build_window(app: &adw::Application) {
     let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
     settings_btn.set_tooltip_text(Some("Settings"));
     settings_btn.set_cursor_from_name(Some("pointer"));
-    header.pack_end(&settings_btn);
+    header.pack_start(&settings_btn);
 
     main_box.append(&header);
 

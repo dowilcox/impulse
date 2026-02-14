@@ -415,6 +415,9 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: {bg_highlight};
             color: {fg_dark};
         }}
+        tabbar tab image {{
+            margin-right: 2px;
+        }}
         tabbar tab label {{
             font-size: 13px;
             font-weight: 500;
