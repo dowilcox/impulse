@@ -384,6 +384,32 @@ final class TabManager: NSObject {
         }
     }
 
+    // MARK: - Reordering
+
+    /// Moves a tab from one index to another, preserving pinned state and
+    /// updating selection to follow the moved tab.
+    func moveTab(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              sourceIndex >= 0, sourceIndex < tabs.count,
+              destinationIndex >= 0, destinationIndex < tabs.count else { return }
+
+        let entry = tabs.remove(at: sourceIndex)
+        let pinned = pinnedTabs.remove(at: sourceIndex)
+        tabs.insert(entry, at: destinationIndex)
+        pinnedTabs.insert(pinned, at: destinationIndex)
+
+        // Track the moved tab's new position.
+        if selectedIndex == sourceIndex {
+            selectedIndex = destinationIndex
+        } else if sourceIndex < selectedIndex && destinationIndex >= selectedIndex {
+            selectedIndex -= 1
+        } else if sourceIndex > selectedIndex && destinationIndex <= selectedIndex {
+            selectedIndex += 1
+        }
+
+        rebuildSegments()
+    }
+
     // MARK: - Selection
 
     /// Switches the visible tab to the one at `index`.
@@ -663,5 +689,9 @@ extension TabManager: CustomTabBarDelegate {
 
     func tabItemContextMenu(index: Int) -> NSMenu? {
         return contextMenu(forTabIndex: index)
+    }
+
+    func tabItemMoved(from sourceIndex: Int, to destinationIndex: Int) {
+        moveTab(from: sourceIndex, to: destinationIndex)
     }
 }

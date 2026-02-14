@@ -6,6 +6,7 @@ protocol CustomTabBarDelegate: AnyObject {
     func tabItemClicked(index: Int)
     func tabItemCloseClicked(index: Int)
     func tabItemContextMenu(index: Int) -> NSMenu?
+    func tabItemMoved(from sourceIndex: Int, to destinationIndex: Int)
 }
 
 // MARK: - Tab Item Data
@@ -32,8 +33,11 @@ private final class TabItemView: NSView {
     var isHovered: Bool = false { didSet { needsDisplay = true } }
 
     weak var tabDelegate: CustomTabBarDelegate?
+    weak var barDelegate: CustomTabBar?
 
     // Theme
+    var bgColor: NSColor = .controlBackgroundColor
+    var bgDarkColor: NSColor = .windowBackgroundColor
     var bgHighlight: NSColor = .controlAccentColor
     var fgColor: NSColor = .labelColor
     var fgDarkColor: NSColor = .secondaryLabelColor
@@ -42,7 +46,7 @@ private final class TabItemView: NSView {
     // Layout
     private let iconSize: CGFloat = 16
     private let closeSize: CGFloat = 12
-    private let padding: CGFloat = 12
+    private let padding: CGFloat = 14
     private let iconTextGap: CGFloat = 6
     private let textCloseGap: CGFloat = 8
 
@@ -53,7 +57,6 @@ private final class TabItemView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = 4
     }
 
     required init?(coder: NSCoder) {
@@ -63,22 +66,52 @@ private final class TabItemView: NSView {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        // Background
-        let bgColor: NSColor
-        if isSelected {
-            bgColor = bgHighlight
-        } else if isHovered {
-            bgColor = bgHighlight.withAlphaComponent(0.4)
-        } else {
-            bgColor = .clear
-        }
-        bgColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        let cornerRadius: CGFloat = 6
 
-        let textColor = (isSelected || isHovered) ? fgColor : fgDarkColor
+        // Tab shape: fully rounded rectangle
+        let tabPath = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
+
+        // Background color
+        let fillColor: NSColor
+        if isSelected {
+            fillColor = bgColor        // theme.bg — visual continuity with content
+        } else if isHovered {
+            fillColor = bgHighlight     // theme.bgHighlight
+        } else {
+            fillColor = bgDarkColor     // theme.bgDark
+        }
+        fillColor.setFill()
+        tabPath.fill()
+
+        // Text color: selected = accent (cyan), others = fgDark
+        let textColor = isSelected ? accentColor : fgDarkColor
         let y = bounds.midY
 
-        var x = padding
+        // Measure content width (icon + gap + text) for centering
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: textColor,
+        ]
+        let str = NSAttributedString(string: title, attributes: attrs)
+        let textSize = str.size()
+
+        let hasIcon = icon != nil
+        let iconWidth = hasIcon ? (iconSize + iconTextGap) : 0
+        let contentWidth = iconWidth + textSize.width
+
+        // Reserve space for close button on right when visible
+        let closeReserved: CGFloat = (isSelected || isHovered) ? (closeSize + textCloseGap + padding) : padding
+        let availableWidth = bounds.width - padding - closeReserved
+
+        // Center the icon+text group within the available area
+        let contentX: CGFloat
+        if contentWidth <= availableWidth {
+            contentX = padding + (availableWidth - contentWidth) / 2
+        } else {
+            contentX = padding  // fall back to left-aligned if it doesn't fit
+        }
+
+        var x = contentX
 
         // Draw icon
         if let icon = icon {
@@ -89,33 +122,24 @@ private final class TabItemView: NSView {
                 height: iconSize
             )
             if icon.isTemplate {
-                // SF Symbol / template icon — tint in an isolated image context
-                // so sourceAtop doesn't interact with the tab's background fill.
                 let size = NSSize(width: iconSize, height: iconSize)
-                let tinted = NSImage(size: size, flipped: false) { [textColor] rect in
+                let tintColor = isSelected ? accentColor : fgDarkColor
+                let tinted = NSImage(size: size, flipped: false) { [tintColor] rect in
                     icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                    textColor.set()
+                    tintColor.set()
                     rect.fill(using: .sourceAtop)
                     return true
                 }
                 tinted.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             } else {
-                // Pre-colored icon (themed file icons) — draw directly.
                 icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             }
             x += iconSize + iconTextGap
         }
 
         // Draw title
-        let closeSpace = (isSelected || isHovered) ? (closeSize + textCloseGap + padding) : padding
-        let maxTextWidth = bounds.width - x - closeSpace
+        let maxTextWidth = bounds.width - x - closeReserved
         if maxTextWidth > 0 {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: textColor,
-            ]
-            let str = NSAttributedString(string: title, attributes: attrs)
-            let textSize = str.size()
             let textRect = NSRect(
                 x: x,
                 y: y - textSize.height / 2,
@@ -123,7 +147,6 @@ private final class TabItemView: NSView {
                 height: textSize.height
             )
 
-            // Clip to prevent text overflow
             NSGraphicsContext.current?.saveGraphicsState()
             NSBezierPath(rect: NSRect(x: x, y: 0, width: maxTextWidth, height: bounds.height)).addClip()
             str.draw(in: textRect)
@@ -146,13 +169,6 @@ private final class TabItemView: NSView {
             path.move(to: NSPoint(x: closeX + closeSize - inset, y: closeY + inset))
             path.line(to: NSPoint(x: closeX + inset, y: closeY + closeSize - inset))
             path.stroke()
-        }
-
-        // Draw accent bar for selected tab
-        if isSelected {
-            accentColor.setFill()
-            let barRect = NSRect(x: 6, y: 0, width: bounds.width - 12, height: 2)
-            NSBezierPath(roundedRect: barRect, xRadius: 1, yRadius: 1).fill()
         }
     }
 
@@ -177,7 +193,15 @@ private final class TabItemView: NSView {
             }
         }
 
-        tabDelegate?.tabItemClicked(index: index)
+        barDelegate?.beginPotentialDrag(tabIndex: index, event: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        barDelegate?.continueDrag(event: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        barDelegate?.endDrag(event: event)
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -261,8 +285,25 @@ final class CustomTabBar: NSView {
     private var selectedIndex: Int = -1
     private var currentTheme: Theme?
 
-    private let tabHeight: CGFloat = 38
+    private let tabBarHeight: CGFloat = 44
+    private let tabItemHeight: CGFloat = 30
     private let tabMinWidth: CGFloat = 120
+    private let tabTopPadding: CGFloat = 4
+    private let tabBottomPadding: CGFloat = 10
+    private let tabSpacing: CGFloat = 4
+    private let tabHorizontalInset: CGFloat = 6
+
+    // Drag-to-reorder state
+    private struct DragState {
+        let sourceIndex: Int
+        let initialMouseX: CGFloat
+        let initialTabX: CGFloat
+        let tabWidth: CGFloat
+        var isDragging: Bool = false
+        var currentDropIndex: Int
+    }
+    private var dragState: DragState?
+    private let dragThreshold: CGFloat = 5
 
     // MARK: Init
 
@@ -282,7 +323,7 @@ final class CustomTabBar: NSView {
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: tabHeight),
+            heightAnchor.constraint(equalToConstant: tabBarHeight),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -306,6 +347,7 @@ final class CustomTabBar: NSView {
             tv.icon = data.icon
             tv.isPinned = data.isPinned
             tv.tabDelegate = delegate
+            tv.barDelegate = self
             tv.isSelected = (i == selectedIndex)
             applyThemeToTab(tv, theme: theme)
             containerView.addSubview(tv)
@@ -347,27 +389,186 @@ final class CustomTabBar: NSView {
 
         let visibleWidth = scrollView.contentView.bounds.width
         guard visibleWidth > 0, !tabViews.isEmpty else {
-            containerView.frame = NSRect(x: 0, y: 0, width: max(1, scrollView.contentView.bounds.width), height: tabHeight)
+            containerView.frame = NSRect(x: 0, y: 0, width: max(1, scrollView.contentView.bounds.width), height: tabBarHeight)
             return
         }
 
-        let spacing: CGFloat = 1
-        let totalSpacing = CGFloat(max(0, tabViews.count - 1)) * spacing
-        let rawWidth = (visibleWidth - totalSpacing) / CGFloat(tabViews.count)
+        let availableWidth = visibleWidth - 2 * tabHorizontalInset
+        let totalSpacing = CGFloat(max(0, tabViews.count - 1)) * tabSpacing
+        let rawWidth = (availableWidth - totalSpacing) / CGFloat(tabViews.count)
         let tabWidth = max(rawWidth, tabMinWidth)
-        let totalWidth = CGFloat(tabViews.count) * tabWidth + totalSpacing
+        let totalWidth = CGFloat(tabViews.count) * tabWidth + totalSpacing + 2 * tabHorizontalInset
 
-        containerView.frame = NSRect(x: 0, y: 0, width: max(totalWidth, visibleWidth), height: tabHeight)
+        containerView.frame = NSRect(x: 0, y: 0, width: max(totalWidth, visibleWidth), height: tabBarHeight)
 
+        // Position tabs with more bottom margin (y=0 is bottom in AppKit)
+        let tabY = tabBottomPadding
         for (i, tv) in tabViews.enumerated() {
-            let x = CGFloat(i) * (tabWidth + spacing)
-            tv.frame = NSRect(x: x, y: 0, width: tabWidth, height: tabHeight)
+            let x = tabHorizontalInset + CGFloat(i) * (tabWidth + tabSpacing)
+            tv.frame = NSRect(x: x, y: tabY, width: tabWidth, height: tabItemHeight)
         }
+    }
+
+    // MARK: Drag-to-Reorder
+
+    func beginPotentialDrag(tabIndex: Int, event: NSEvent) {
+        guard tabIndex >= 0, tabIndex < tabViews.count else { return }
+
+        let tv = tabViews[tabIndex]
+        let mouseInContainer = containerView.convert(event.locationInWindow, from: nil)
+
+        dragState = DragState(
+            sourceIndex: tabIndex,
+            initialMouseX: mouseInContainer.x,
+            initialTabX: tv.frame.origin.x,
+            tabWidth: tv.frame.width,
+            currentDropIndex: tabIndex
+        )
+
+        // Immediately select the tab for click feedback.
+        delegate?.tabItemClicked(index: tabIndex)
+    }
+
+    func continueDrag(event: NSEvent) {
+        guard var state = dragState else { return }
+        let mouseInContainer = containerView.convert(event.locationInWindow, from: nil)
+        let deltaX = mouseInContainer.x - state.initialMouseX
+
+        // Check if we've passed the drag threshold
+        if !state.isDragging {
+            if abs(deltaX) < dragThreshold { return }
+            state.isDragging = true
+            dragState = state
+
+            // Elevate the dragged tab
+            let draggedTab = tabViews[state.sourceIndex]
+            draggedTab.layer?.zPosition = 10
+            draggedTab.shadow = {
+                let s = NSShadow()
+                s.shadowBlurRadius = 8
+                s.shadowOffset = NSSize(width: 0, height: -2)
+                s.shadowColor = NSColor.black.withAlphaComponent(0.3)
+                return s
+            }()
+        }
+
+        let draggedTab = tabViews[state.sourceIndex]
+
+        // Move the dragged tab to follow the cursor
+        let newX = state.initialTabX + deltaX
+        let clampedX = max(0, min(newX, containerView.bounds.width - state.tabWidth))
+        draggedTab.frame.origin.x = clampedX
+
+        // Calculate drop index from the center of the dragged tab
+        let draggedCenter = clampedX + state.tabWidth / 2
+        var dropIndex = state.sourceIndex
+        for (i, tv) in tabViews.enumerated() where i != state.sourceIndex {
+            let tabCenter = restingX(forIndex: i, excludingIndex: state.sourceIndex, state: state) + state.tabWidth / 2
+            if state.sourceIndex < i {
+                // Dragging right: shift left when we pass center
+                if draggedCenter > tabCenter { dropIndex = i }
+            } else {
+                // Dragging left: shift right when we pass center
+                if draggedCenter < tabCenter && dropIndex > i { dropIndex = i }
+            }
+        }
+
+        // Animate other tabs to shift and make room
+        if dropIndex != state.currentDropIndex {
+            state.currentDropIndex = dropIndex
+            dragState = state
+        }
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for (i, tv) in tabViews.enumerated() where i != state.sourceIndex {
+                let targetX = shiftedX(forIndex: i, dropIndex: dropIndex, state: state)
+                tv.animator().frame.origin.x = targetX
+            }
+        }
+
+        // Auto-scroll when near edges
+        let mouseInScroll = scrollView.convert(event.locationInWindow, from: nil)
+        let edgeMargin: CGFloat = 30
+        let scrollAmount: CGFloat = 10
+        var clipBounds = scrollView.contentView.bounds
+        if mouseInScroll.x < edgeMargin {
+            clipBounds.origin.x = max(0, clipBounds.origin.x - scrollAmount)
+            scrollView.contentView.setBoundsOrigin(clipBounds.origin)
+        } else if mouseInScroll.x > scrollView.bounds.width - edgeMargin {
+            let maxX = containerView.frame.width - scrollView.bounds.width
+            clipBounds.origin.x = min(maxX, clipBounds.origin.x + scrollAmount)
+            scrollView.contentView.setBoundsOrigin(clipBounds.origin)
+        }
+    }
+
+    func endDrag(event: NSEvent) {
+        guard let state = dragState else { return }
+
+        if state.isDragging {
+            let draggedTab = tabViews[state.sourceIndex]
+            draggedTab.layer?.zPosition = 0
+            draggedTab.shadow = nil
+
+            let fromIndex = state.sourceIndex
+            let toIndex = state.currentDropIndex
+
+            dragState = nil
+
+            if fromIndex != toIndex {
+                delegate?.tabItemMoved(from: fromIndex, to: toIndex)
+            } else {
+                // Animate back to resting position
+                needsLayout = true
+            }
+        } else {
+            // Below threshold — already handled as click in beginPotentialDrag.
+            dragState = nil
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        guard let state = dragState, state.isDragging else { return }
+        let draggedTab = tabViews[state.sourceIndex]
+        draggedTab.layer?.zPosition = 0
+        draggedTab.shadow = nil
+        dragState = nil
+        needsLayout = true
+    }
+
+    /// Returns the resting X position for a tab at `index`, as if the tab at
+    /// `excludingIndex` were removed from the flow.
+    private func restingX(forIndex index: Int, excludingIndex: Int, state: DragState) -> CGFloat {
+        let slot = index > excludingIndex ? index - 1 : index
+        return tabHorizontalInset + CGFloat(slot) * (state.tabWidth + tabSpacing)
+    }
+
+    /// Returns the target X for tab `index` while the tab at `sourceIndex` is
+    /// being dragged toward `dropIndex`. Non-dragged tabs fill slots in order,
+    /// skipping the gap reserved for the dragged tab.
+    private func shiftedX(forIndex index: Int, dropIndex: Int, state: DragState) -> CGFloat {
+        let src = state.sourceIndex
+
+        // Build ordered list of non-dragged tab indices.
+        var order = Array(0..<tabViews.count)
+        order.remove(at: src)
+        guard let pos = order.firstIndex(of: index) else { return 0 }
+
+        // The gap slot in the reduced array where the dragged tab will land.
+        let gapSlot = src < dropIndex ? dropIndex - 1 : dropIndex
+
+        var slot = pos
+        if slot >= gapSlot { slot += 1 }
+
+        return tabHorizontalInset + CGFloat(slot) * (state.tabWidth + tabSpacing)
     }
 
     // MARK: Private
 
     private func applyThemeToTab(_ tv: TabItemView, theme: Theme) {
+        tv.bgColor = theme.bg
+        tv.bgDarkColor = theme.bgDark
         tv.bgHighlight = theme.bgHighlight
         tv.fgColor = theme.fg
         tv.fgDarkColor = theme.fgDark
