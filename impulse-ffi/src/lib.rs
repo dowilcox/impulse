@@ -17,7 +17,10 @@ fn to_rust_str(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
-    unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(String::from)
+    unsafe { CStr::from_ptr(ptr) }
+        .to_str()
+        .ok()
+        .map(String::from)
 }
 
 fn to_c_string(s: &str) -> *mut c_char {
@@ -118,10 +121,7 @@ pub extern "C" fn impulse_get_user_login_shell_name() -> *mut c_char {
 /// Returns a JSON array of `SearchResult` objects.
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
-pub extern "C" fn impulse_search_files(
-    root: *const c_char,
-    query: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn impulse_search_files(root: *const c_char, query: *const c_char) -> *mut c_char {
     let root = match to_rust_str(root) {
         Some(s) => s,
         None => return to_c_string("[]"),
@@ -184,9 +184,7 @@ pub struct LspRegistryHandle {
 /// Returns an opaque handle. The caller must free it with
 /// `impulse_lsp_registry_free`.
 #[no_mangle]
-pub extern "C" fn impulse_lsp_registry_new(
-    root_uri: *const c_char,
-) -> *mut LspRegistryHandle {
+pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspRegistryHandle {
     let root_uri = match to_rust_str(root_uri) {
         Some(s) => s,
         None => return std::ptr::null_mut(),
@@ -234,10 +232,7 @@ pub extern "C" fn impulse_lsp_ensure_servers(
     };
 
     handle.runtime.block_on(async {
-        let clients = handle
-            .registry
-            .get_clients(&language_id, &file_uri)
-            .await;
+        let clients = handle.registry.get_clients(&language_id, &file_uri).await;
         clients.len() as i32
     })
 }
@@ -273,16 +268,15 @@ pub extern "C" fn impulse_lsp_request(
         Some(s) => s,
         None => return to_c_string("{\"error\":\"invalid method\"}"),
     };
-    let params: Option<serde_json::Value> = to_rust_str(params_json)
-        .and_then(|s| serde_json::from_str(&s).ok());
+    let params: Option<serde_json::Value> =
+        to_rust_str(params_json).and_then(|s| serde_json::from_str(&s).ok());
 
     handle.runtime.block_on(async {
         let clients = handle.registry.get_clients(&language_id, &file_uri).await;
         if let Some(client) = clients.first() {
             match client.request(&method, params).await {
                 Ok(value) => {
-                    let json = serde_json::to_string(&value)
-                        .unwrap_or_else(|_| "null".to_string());
+                    let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
                     to_c_string(&json)
                 }
                 Err(e) => to_c_string(&format!("{{\"error\":\"{}\"}}", e.replace('"', "\\\""))),
@@ -518,10 +512,7 @@ pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
 /// fields, or null on error.
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
-pub extern "C" fn impulse_git_blame(
-    file_path: *const c_char,
-    line: u32,
-) -> *mut c_char {
+pub extern "C" fn impulse_git_blame(file_path: *const c_char, line: u32) -> *mut c_char {
     let file_path = match to_rust_str(file_path) {
         Some(s) => s,
         None => return std::ptr::null_mut(),

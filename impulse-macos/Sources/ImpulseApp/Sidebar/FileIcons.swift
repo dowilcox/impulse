@@ -88,6 +88,13 @@ private let allIcons: [IconDef] = [
     // Folders
     IconDef(name: "folder", color: .cyan),
     IconDef(name: "folder-open", color: .cyan),
+    // Toolbar
+    IconDef(name: "toolbar-sidebar", color: .fg),
+    IconDef(name: "toolbar-plus", color: .fg),
+    IconDef(name: "toolbar-eye-open", color: .fg),
+    IconDef(name: "toolbar-eye-closed", color: .fg),
+    IconDef(name: "toolbar-collapse", color: .fg),
+    IconDef(name: "toolbar-refresh", color: .fg),
 ]
 
 // MARK: - Icon Name Lookup
@@ -255,6 +262,11 @@ final class IconCache {
     /// Returns the themed icon for a file or directory.
     func icon(filename: String, isDirectory: Bool, expanded: Bool) -> NSImage? {
         let name = lookupIconName(filename: filename, isDirectory: isDirectory, expanded: expanded)
+        return images[name]
+    }
+
+    /// Returns a toolbar icon by name (e.g. "toolbar-sidebar", "console", "settings").
+    func toolbarIcon(name: String) -> NSImage? {
         return images[name]
     }
 }

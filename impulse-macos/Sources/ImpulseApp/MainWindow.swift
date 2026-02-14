@@ -105,7 +105,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     private let sidebarToggleButton: PointerButton = {
         let btn = PointerButton()
-        btn.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
         btn.bezelStyle = .inline
         btn.isBordered = false
         btn.toolTip = "Toggle Sidebar"
@@ -117,7 +116,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     private let newTabButton: PointerButton = {
         let btn = PointerButton()
-        btn.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
         btn.bezelStyle = .inline
         btn.isBordered = false
         btn.toolTip = "New Terminal Tab"
@@ -159,10 +157,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Button to toggle visibility of hidden (dot) files in the file tree.
     private let toggleHiddenButton: PointerButton = {
-        let btn = PointerButton(image: NSImage(systemSymbolName: "eye.slash",
-                                                accessibilityDescription: "Toggle Hidden Files")
-                                 ?? NSImage(named: NSImage.refreshTemplateName)!,
-                                target: nil, action: nil)
+        let btn = PointerButton()
         btn.bezelStyle = .texturedRounded
         btn.isBordered = false
         btn.toolTip = "Toggle Hidden Files"
@@ -173,10 +168,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Button to collapse all expanded directories in the file tree.
     private let collapseAllButton: PointerButton = {
-        let btn = PointerButton(image: NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right",
-                                                accessibilityDescription: "Collapse All")
-                                 ?? NSImage(named: NSImage.refreshTemplateName)!,
-                                target: nil, action: nil)
+        let btn = PointerButton()
         btn.bezelStyle = .texturedRounded
         btn.isBordered = false
         btn.toolTip = "Collapse All"
@@ -293,6 +285,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
         searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
 
+        // Set toolbar button icons from shared SVG icon cache
+        sidebarToggleButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
+        newTabButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-plus")
+        toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-closed")
+        collapseAllButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-collapse")
+
         sidebarToggleButton.target = self
         sidebarToggleButton.action = #selector(toggleSidebarAction(_:))
         sidebarToggleButton.contentTintColor = theme.fgDark
@@ -328,8 +326,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         fileTreeRootPath = rootPath
         fileTreeView.showHidden = settings.sidebarShowHidden
         if settings.sidebarShowHidden {
-            toggleHiddenButton.image = NSImage(systemSymbolName: "eye",
-                                                accessibilityDescription: "Toggle Hidden Files")
+            toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-open")
         }
 
         // Open a default terminal tab.
@@ -531,9 +528,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     @objc private func toggleHiddenAction(_ sender: Any?) {
         fileTreeView.toggleHiddenFiles()
         // Update the button icon to reflect the current state.
-        let iconName = fileTreeView.showHidden ? "eye" : "eye.slash"
-        toggleHiddenButton.image = NSImage(systemSymbolName: iconName,
-                                            accessibilityDescription: "Toggle Hidden Files")
+        let svgName = fileTreeView.showHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
+        toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
         // Persist the setting.
         settings.sidebarShowHidden = fileTreeView.showHidden
         if let delegate = NSApp.delegate as? AppDelegate {
@@ -587,11 +583,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Update the sidebar toggle button icon to reflect the current state.
     private func updateSidebarToggleIcon() {
-        let symbolName = sidebarVisible ? "sidebar.left" : "sidebar.left"
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Toggle Sidebar")?
-            .withSymbolConfiguration(config)
-        sidebarToggleButton.image = image
+        sidebarToggleButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
         sidebarToggleButton.contentTintColor = sidebarVisible
             ? theme.cyan
             : theme.fgDark
@@ -1818,9 +1810,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Re-apply sidebar show-hidden preference.
         if fileTreeView.showHidden != settings.sidebarShowHidden {
             fileTreeView.showHidden = settings.sidebarShowHidden
-            let iconName = settings.sidebarShowHidden ? "eye" : "eye.slash"
-            toggleHiddenButton.image = NSImage(systemSymbolName: iconName,
-                                                accessibilityDescription: "Toggle Hidden Files")
+            let svgName = settings.sidebarShowHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
+            toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
             if !fileTreeRootPath.isEmpty {
                 fileTreeView.setRootPath(fileTreeRootPath)
             }

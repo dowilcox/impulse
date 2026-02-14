@@ -74,6 +74,14 @@ const BINARY_SVG: &str = include_str!("../../assets/icons/binary.svg");
 const FOLDER_SVG: &str = include_str!("../../assets/icons/folder.svg");
 const FOLDER_OPEN_SVG: &str = include_str!("../../assets/icons/folder-open.svg");
 
+// Toolbar
+const TOOLBAR_SIDEBAR_SVG: &str = include_str!("../../assets/icons/toolbar-sidebar.svg");
+const TOOLBAR_PLUS_SVG: &str = include_str!("../../assets/icons/toolbar-plus.svg");
+const TOOLBAR_EYE_OPEN_SVG: &str = include_str!("../../assets/icons/toolbar-eye-open.svg");
+const TOOLBAR_EYE_CLOSED_SVG: &str = include_str!("../../assets/icons/toolbar-eye-closed.svg");
+const TOOLBAR_COLLAPSE_SVG: &str = include_str!("../../assets/icons/toolbar-collapse.svg");
+const TOOLBAR_REFRESH_SVG: &str = include_str!("../../assets/icons/toolbar-refresh.svg");
+
 // ---------------------------------------------------------------------------
 // Color field — which theme color an icon uses
 // ---------------------------------------------------------------------------
@@ -380,6 +388,37 @@ const ALL_ICONS: &[IconDef] = &[
         svg: FOLDER_OPEN_SVG,
         color: ColorField::Cyan,
     },
+    // Toolbar
+    IconDef {
+        name: "toolbar-sidebar",
+        svg: TOOLBAR_SIDEBAR_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-plus",
+        svg: TOOLBAR_PLUS_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-eye-open",
+        svg: TOOLBAR_EYE_OPEN_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-eye-closed",
+        svg: TOOLBAR_EYE_CLOSED_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-collapse",
+        svg: TOOLBAR_COLLAPSE_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-refresh",
+        svg: TOOLBAR_REFRESH_SVG,
+        color: ColorField::Fg,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -575,6 +614,11 @@ impl IconCache {
 
     pub fn get(&self, filename: &str, is_dir: bool, expanded: bool) -> Option<&gdk::Texture> {
         let name = lookup_icon_name(filename, is_dir, expanded);
+        self.textures.get(name)
+    }
+
+    /// Returns a toolbar icon texture by name (e.g. "toolbar-sidebar", "console", "settings").
+    pub fn get_toolbar_icon(&self, name: &str) -> Option<&gdk::Texture> {
         self.textures.get(name)
     }
 }

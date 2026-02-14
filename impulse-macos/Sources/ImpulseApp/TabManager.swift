@@ -136,7 +136,7 @@ final class TabManager: NSObject {
     let tabBar: CustomTabBar
 
     /// Icon cache for themed file icons in tab bar.
-    private var iconCache: IconCache?
+    private(set) var iconCache: IconCache?
 
     /// The container view that hosts the active tab's view.
     let contentView: NSView
@@ -449,7 +449,7 @@ final class TabManager: NSObject {
     private func tabIcon(for tab: TabEntry) -> NSImage? {
         switch tab {
         case .terminal:
-            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+            return iconCache?.toolbarIcon(name: "console")
         case .editor(let editor):
             if let path = editor.filePath {
                 let filename = (path as NSString).lastPathComponent
@@ -458,7 +458,7 @@ final class TabManager: NSObject {
             }
             return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
         case .imagePreview:
-            return NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
+            return iconCache?.toolbarIcon(name: "image")
         }
     }
 

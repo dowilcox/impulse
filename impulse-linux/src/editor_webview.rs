@@ -267,10 +267,8 @@ impl MonacoEditorHandle {
                             language: lang,
                         };
                         if let Ok(json) = serde_json::to_string(&cmd) {
-                            let escaped =
-                                json.replace('\\', "\\\\").replace('\'', "\\'");
-                            let script =
-                                format!("impulseReceiveCommand('{}')", escaped);
+                            let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
+                            let script = format!("impulseReceiveCommand('{}')", escaped);
                             webview.evaluate_javascript(
                                 &script,
                                 None,
@@ -330,8 +328,7 @@ pub fn warm_up_editor() {
             .vexpand(true)
             .build();
 
-        webview
-            .set_background_color(&gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+        webview.set_background_color(&gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
             wk_settings.set_enable_javascript(true);
@@ -344,16 +341,15 @@ pub fn warm_up_editor() {
         let is_ready_clone = is_ready.clone();
 
         ucm.register_script_message_handler("impulse", None);
-        let signal_id =
-            ucm.connect_script_message_received(Some("impulse"), move |_ucm, value| {
-                let json_str = value.to_str().to_string();
-                if let Ok(event) = serde_json::from_str::<EditorEvent>(&json_str) {
-                    if matches!(event, EditorEvent::Ready) {
-                        is_ready_clone.set(true);
-                        log::info!("Pre-warmed editor WebView is ready");
-                    }
+        let signal_id = ucm.connect_script_message_received(Some("impulse"), move |_ucm, value| {
+            let json_str = value.to_str().to_string();
+            if let Ok(event) = serde_json::from_str::<EditorEvent>(&json_str) {
+                if matches!(event, EditorEvent::Ready) {
+                    is_ready_clone.set(true);
+                    log::info!("Pre-warmed editor WebView is ready");
                 }
-            });
+            }
+        });
 
         let uri = format!("file://{}/editor.html", monaco_dir.display());
         webview.load_uri(&uri);
@@ -372,10 +368,7 @@ pub fn warm_up_editor() {
 /// Try to claim a pre-warmed WebView. Returns `Some` only if one is ready.
 fn claim_warm_editor() -> Option<WarmWebView> {
     WARM_POOL.with(|cell| {
-        let is_ready = cell
-            .borrow()
-            .as_ref()
-            .map_or(false, |w| w.is_ready.get());
+        let is_ready = cell.borrow().as_ref().map_or(false, |w| w.is_ready.get());
         if is_ready {
             cell.borrow_mut().take()
         } else {
@@ -438,8 +431,8 @@ where
         ucm.disconnect(warm.signal_handler_id);
 
         // Update the background to match the current theme.
-        let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
-            .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+        let bg_rgba =
+            gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
         webview.set_background_color(&bg_rgba);
 
         // Create the handle with is_ready already set — Monaco is loaded.

@@ -83,24 +83,40 @@ pub fn build_sidebar(
     let show_hidden = Rc::new(RefCell::new(settings.borrow().sidebar_show_hidden));
 
     let hidden_btn = gtk4::ToggleButton::new();
-    hidden_btn.set_icon_name("view-reveal-symbolic");
     hidden_btn.set_tooltip_text(Some("Toggle Hidden Files"));
     hidden_btn.set_active(settings.borrow().sidebar_show_hidden);
     hidden_btn.set_cursor_from_name(Some("pointer"));
     hidden_btn.add_css_class("flat");
     hidden_btn.add_css_class("sidebar-toolbar-btn");
+    {
+        let cache = icon_cache.borrow();
+        let icon_name = if settings.borrow().sidebar_show_hidden {
+            "toolbar-eye-open"
+        } else {
+            "toolbar-eye-closed"
+        };
+        if let Some(texture) = cache.get_toolbar_icon(icon_name) {
+            hidden_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+        }
+    }
 
-    let refresh_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    let refresh_btn = gtk4::Button::new();
     refresh_btn.set_tooltip_text(Some("Refresh File Tree"));
     refresh_btn.set_cursor_from_name(Some("pointer"));
     refresh_btn.add_css_class("flat");
     refresh_btn.add_css_class("sidebar-toolbar-btn");
+    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("toolbar-refresh") {
+        refresh_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+    }
 
-    let collapse_btn = gtk4::Button::from_icon_name("view-list-symbolic");
+    let collapse_btn = gtk4::Button::new();
     collapse_btn.set_tooltip_text(Some("Collapse All"));
     collapse_btn.set_cursor_from_name(Some("pointer"));
     collapse_btn.add_css_class("flat");
     collapse_btn.add_css_class("sidebar-toolbar-btn");
+    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("toolbar-collapse") {
+        collapse_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+    }
 
     toolbar_box.append(&hidden_btn);
     toolbar_box.append(&refresh_btn);
@@ -731,10 +747,8 @@ pub fn build_sidebar(
     file_tree_list.add_controller(drag_source);
 
     // Accept internal moves: string paths from our DragSource
-    let drop_target_internal = gtk4::DropTarget::new(
-        glib::types::Type::STRING,
-        gtk4::gdk::DragAction::MOVE,
-    );
+    let drop_target_internal =
+        gtk4::DropTarget::new(glib::types::Type::STRING, gtk4::gdk::DragAction::MOVE);
     {
         let file_tree_list = file_tree_list.clone();
         drop_target_internal.connect_motion(move |_target, _x, y| {
@@ -948,6 +962,14 @@ pub fn build_sidebar(
             let active = btn.is_active();
             *show_hidden.borrow_mut() = active;
             settings.borrow_mut().sidebar_show_hidden = active;
+            let icon_name = if active {
+                "toolbar-eye-open"
+            } else {
+                "toolbar-eye-closed"
+            };
+            if let Some(texture) = icon_cache.borrow().get_toolbar_icon(icon_name) {
+                btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+            }
             refresh_tree(
                 &state_tree_nodes,
                 &state_file_tree_list,
@@ -1793,9 +1815,7 @@ fn perform_internal_move(source: &str, target_dir: &str) -> Result<(), String> {
         }
     }
 
-    let file_name = source_path
-        .file_name()
-        .ok_or("Invalid source path")?;
+    let file_name = source_path.file_name().ok_or("Invalid source path")?;
     let dest = target_dir_path.join(file_name);
 
     if dest.exists() {
@@ -1828,9 +1848,7 @@ fn perform_external_copy(source: &str, target_dir: &str) -> Result<(), String> {
     let source_path = Path::new(source);
     let target_dir_path = Path::new(target_dir);
 
-    let file_name = source_path
-        .file_name()
-        .ok_or("Invalid source path")?;
+    let file_name = source_path.file_name().ok_or("Invalid source path")?;
     let dest = target_dir_path.join(file_name);
 
     if dest.exists() {

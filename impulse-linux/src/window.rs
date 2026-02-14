@@ -347,7 +347,6 @@ pub fn build_window(app: &adw::Application) {
 
     // Toggle sidebar button (leftmost)
     let sidebar_btn = gtk4::ToggleButton::builder()
-        .icon_name("sidebar-show-symbolic")
         .tooltip_text("Toggle Sidebar (Ctrl+Shift+B)")
         .active(settings.borrow().sidebar_visible)
         .build();
@@ -355,13 +354,13 @@ pub fn build_window(app: &adw::Application) {
     header.pack_start(&sidebar_btn);
 
     // New tab button
-    let new_tab_btn = gtk4::Button::from_icon_name("tab-new-symbolic");
+    let new_tab_btn = gtk4::Button::new();
     new_tab_btn.set_tooltip_text(Some("New Tab (Ctrl+T)"));
     new_tab_btn.set_cursor_from_name(Some("pointer"));
     header.pack_end(&new_tab_btn);
 
     // Settings button (right side of header, click handler wired below after tab_view setup)
-    let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
+    let settings_btn = gtk4::Button::new();
     settings_btn.set_tooltip_text(Some("Settings"));
     settings_btn.set_cursor_from_name(Some("pointer"));
     header.pack_start(&settings_btn);
@@ -380,6 +379,20 @@ pub fn build_window(app: &adw::Application) {
     let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings, initial_theme);
     sidebar_widget.set_visible(settings.borrow().sidebar_visible);
     paned.set_start_child(Some(&sidebar_widget));
+
+    // Set header button icons from shared SVG icon cache
+    {
+        let cache = sidebar_state.icon_cache.borrow();
+        if let Some(t) = cache.get_toolbar_icon("toolbar-sidebar") {
+            sidebar_btn.set_child(Some(&gtk4::Image::from_paintable(Some(t))));
+        }
+        if let Some(t) = cache.get_toolbar_icon("toolbar-plus") {
+            new_tab_btn.set_child(Some(&gtk4::Image::from_paintable(Some(t))));
+        }
+        if let Some(t) = cache.get_toolbar_icon("settings") {
+            settings_btn.set_child(Some(&gtk4::Image::from_paintable(Some(t))));
+        }
+    }
 
     // Terminal search bar (hidden by default)
     let search_revealer = gtk4::Revealer::new();
@@ -482,7 +495,9 @@ pub fn build_window(app: &adw::Application) {
                     let preview = editor::create_image_preview(path);
                     let page = tab_view.append(&preview);
                     page.set_title(&filename);
-                    page.set_icon(Some(&gio::ThemedIcon::new("image-x-generic-symbolic")));
+                    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("image") {
+                        page.set_icon(Some(texture));
+                    }
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
                         preview.clone().upcast::<gtk4::Widget>(),
@@ -824,6 +839,7 @@ pub fn build_window(app: &adw::Application) {
         let settings = settings.clone();
         let copy_on_select_flag = copy_on_select_flag.clone();
         let shell_cache = shell_cache.clone();
+        let icon_cache = sidebar_state.icon_cache.clone();
         move || {
             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
             let term =
@@ -834,7 +850,9 @@ pub fn build_window(app: &adw::Application) {
             let container = terminal_container::TerminalContainer::new(&term);
             let page = tab_view.append(&container.widget);
             page.set_title(shell_cache.shell_name());
-            page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
+            if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                page.set_icon(Some(texture));
+            }
             tab_view.set_selected_page(&page);
             term.grab_focus();
         }
@@ -1207,6 +1225,7 @@ pub fn build_window(app: &adw::Application) {
                     let setup_terminal_signals = setup_terminal_signals.clone();
                     let settings = settings.clone();
                     let copy_on_select_flag = copy_on_select_flag.clone();
+                    let icon_cache = sidebar_state.icon_cache.clone();
                     custom_kb_actions.push(CustomKbAction {
                         parsed,
                         action: Rc::new(move || {
@@ -1224,7 +1243,9 @@ pub fn build_window(app: &adw::Application) {
                             let container = terminal_container::TerminalContainer::new(&term);
                             let page = tab_view.append(&container.widget);
                             page.set_title(&kb_name);
-                            page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
+                            if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                                page.set_icon(Some(texture));
+                            }
                             tab_view.set_selected_page(&page);
                             term.grab_focus();
                         }),
@@ -2142,6 +2163,7 @@ pub fn build_window(app: &adw::Application) {
             let setup_terminal_signals = setup_terminal_signals.clone();
             let settings = settings.clone();
             let copy_on_select_flag = copy_on_select_flag.clone();
+            let icon_cache = sidebar_state.icon_cache.clone();
             add_shortcut(&shortcut_controller, &accel, move || {
                 // Open a new terminal tab running the command in the active CWD
                 let cwd = get_active_cwd(&tab_view);
@@ -2158,7 +2180,9 @@ pub fn build_window(app: &adw::Application) {
                 let container = terminal_container::TerminalContainer::new(&term);
                 let page = tab_view.append(&container.widget);
                 page.set_title(&kb_name);
-                page.set_icon(Some(&gio::ThemedIcon::new("utilities-terminal-symbolic")));
+                if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                    page.set_icon(Some(texture));
+                }
                 tab_view.set_selected_page(&page);
                 term.grab_focus();
             });
