@@ -1254,6 +1254,31 @@ pub fn build_window(app: &adw::Application) {
             }
         }
 
+        // Parse split-terminal accels for capture-phase matching (VTE eats
+        // these before the Global ShortcutController can see them).
+        let capture_kb_overrides = settings.borrow().keybinding_overrides.clone();
+        let split_h_accel = keybindings::parse_accel(&keybindings::get_accel(
+            "split_horizontal",
+            &capture_kb_overrides,
+        ));
+        let split_v_accel = keybindings::parse_accel(&keybindings::get_accel(
+            "split_vertical",
+            &capture_kb_overrides,
+        ));
+        let focus_prev_accel = keybindings::parse_accel(&keybindings::get_accel(
+            "focus_prev_split",
+            &capture_kb_overrides,
+        ));
+        let focus_next_accel = keybindings::parse_accel(&keybindings::get_accel(
+            "focus_next_split",
+            &capture_kb_overrides,
+        ));
+
+        let split_setup = setup_terminal_signals.clone();
+        let split_settings = settings.clone();
+        let split_copy_flag = copy_on_select_flag.clone();
+        let split_shell_cache = shell_cache.clone();
+
         let capture_key_ctrl = gtk4::EventControllerKey::new();
         capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         capture_key_ctrl.connect_key_pressed(move |_, key, _keycode, modifiers| {
@@ -1273,6 +1298,59 @@ pub fn build_window(app: &adw::Application) {
             if ctrl && shift && (key == gtk4::gdk::Key::b || key == gtk4::gdk::Key::B) {
                 sidebar_btn_capture.set_active(!sidebar_btn_capture.is_active());
                 return gtk4::glib::Propagation::Stop;
+            }
+
+            // Split terminal keybindings (VTE eats Ctrl+Shift+E/O)
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                if terminal_container::get_active_terminal(&child).is_some() {
+                    if let Some(ref accel) = split_h_accel {
+                        if keybindings::matches_key(accel, key, modifiers) {
+                            let setup = split_setup.clone();
+                            let s = split_settings.borrow();
+                            let theme = crate::theme::get_theme(&s.color_scheme);
+                            terminal_container::split_terminal(
+                                &child,
+                                gtk4::Orientation::Horizontal,
+                                &|term| setup(term),
+                                &s,
+                                theme,
+                                split_copy_flag.clone(),
+                                &split_shell_cache,
+                            );
+                            return gtk4::glib::Propagation::Stop;
+                        }
+                    }
+                    if let Some(ref accel) = split_v_accel {
+                        if keybindings::matches_key(accel, key, modifiers) {
+                            let setup = split_setup.clone();
+                            let s = split_settings.borrow();
+                            let theme = crate::theme::get_theme(&s.color_scheme);
+                            terminal_container::split_terminal(
+                                &child,
+                                gtk4::Orientation::Vertical,
+                                &|term| setup(term),
+                                &s,
+                                theme,
+                                split_copy_flag.clone(),
+                                &split_shell_cache,
+                            );
+                            return gtk4::glib::Propagation::Stop;
+                        }
+                    }
+                    if let Some(ref accel) = focus_prev_accel {
+                        if keybindings::matches_key(accel, key, modifiers) {
+                            terminal_container::focus_prev_terminal(&child);
+                            return gtk4::glib::Propagation::Stop;
+                        }
+                    }
+                    if let Some(ref accel) = focus_next_accel {
+                        if keybindings::matches_key(accel, key, modifiers) {
+                            terminal_container::focus_next_terminal(&child);
+                            return gtk4::glib::Propagation::Stop;
+                        }
+                    }
+                }
             }
 
             if let Some(page) = tab_view.selected_page() {
