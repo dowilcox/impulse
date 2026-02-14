@@ -50,6 +50,7 @@ pub enum EditorCommand {
 #[serde(tag = "type")]
 pub enum EditorEvent {
     Ready,
+    FileOpened,
     ContentChanged {
         content: String,
         version: u32,

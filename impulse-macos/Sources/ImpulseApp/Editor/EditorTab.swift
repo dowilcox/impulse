@@ -28,6 +28,11 @@ extension Notification.Name {
     /// Posted when the editor focus state changes. The `userInfo` dictionary
     /// contains `"focused"` as a `Bool`.
     static let editorFocusChanged = Notification.Name("impulse.editorFocusChanged")
+
+    /// Posted after Monaco finishes processing an `OpenFile` command, meaning
+    /// the new model is set up and ready for decorations. The `object` is the
+    /// `EditorTab` and the `userInfo` dictionary contains `"filePath"`.
+    static let editorFileOpened = Notification.Name("impulse.editorFileOpened")
 }
 
 // MARK: - EditorTab
@@ -213,6 +218,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             if !hasQueuedOpen, let path = filePath {
                 sendCommand(.openFile(filePath: path, content: content, language: language))
             }
+
+        case .fileOpened:
+            NotificationCenter.default.post(
+                name: .editorFileOpened,
+                object: self,
+                userInfo: ["filePath": filePath ?? ""]
+            )
 
         case let .contentChanged(newContent, _):
             content = newContent

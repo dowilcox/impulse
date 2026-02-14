@@ -927,9 +927,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     if let line = notification.userInfo?["line"] as? UInt32 {
                         editor.goToPosition(line: line, column: 1)
                     }
-                    // Apply git diff decorations for the opened file.
-                    self.applyGitDiffDecorations(editor: editor)
                 }
+            }
+        }
+        // Apply git diff decorations once Monaco confirms it has processed
+        // the OpenFile command and set up the model. This avoids the race
+        // condition where decorations arrive before the model is ready.
+        nc.addObserver(forName: .editorFileOpened, object: nil, queue: .main) { [weak self] notification in
+            guard let self else { return }
+            if let editor = notification.object as? EditorTab {
+                self.applyGitDiffDecorations(editor: editor)
             }
         }
         nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) { [weak self] notification in
@@ -940,7 +947,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     if case .editor(let editor) = tab, editor.filePath == path {
                         if let content = try? String(contentsOfFile: path, encoding: .utf8) {
                             editor.openFile(path: path, content: content, language: editor.language)
-                            self.applyGitDiffDecorations(editor: editor)
                         }
                         break
                     }

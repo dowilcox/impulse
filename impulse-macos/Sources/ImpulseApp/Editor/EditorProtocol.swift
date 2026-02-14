@@ -106,6 +106,7 @@ enum EditorCommand: Encodable {
 /// and snake_case keys produced by the Monaco JavaScript layer.
 enum EditorEvent: Decodable {
     case ready
+    case fileOpened
     case contentChanged(content: String, version: UInt32)
     case cursorMoved(line: UInt32, column: UInt32)
     case saveRequested
@@ -116,6 +117,7 @@ enum EditorEvent: Decodable {
 
     private enum TypeTag: String, Decodable {
         case ready = "Ready"
+        case fileOpened = "FileOpened"
         case contentChanged = "ContentChanged"
         case cursorMoved = "CursorMoved"
         case saveRequested = "SaveRequested"
@@ -143,6 +145,9 @@ enum EditorEvent: Decodable {
         switch tag {
         case .ready:
             self = .ready
+
+        case .fileOpened:
+            self = .fileOpened
 
         case .contentChanged:
             let content = try container.decode(String.self, forKey: .content)

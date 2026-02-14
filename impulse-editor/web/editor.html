@@ -374,6 +374,7 @@
 
         // Reset undo stack by setting the model fresh
         editor.focus();
+        sendToHost({ type: "FileOpened" });
       }
 
       function handleSetTheme(cmd) {

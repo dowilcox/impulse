@@ -513,6 +513,9 @@ pub fn build_window(app: &adw::Application) {
                             move |handle, event| {
                                 match event {
                                     impulse_editor::protocol::EditorEvent::Ready => {
+                                        // No-op: initialization now happens on FileOpened
+                                    }
+                                    impulse_editor::protocol::EditorEvent::FileOpened => {
                                         // Send LSP didOpen
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path));
