@@ -378,8 +378,12 @@ final class FileTreeView: NSView {
                            message: "Enter a name for the new file:",
                            placeholder: "untitled",
                            defaultValue: "") { [weak self] name in
-            guard let self, !name.isEmpty else { return }
+            guard let self, !name.isEmpty, !name.contains("/") else { return }
             let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            // Path traversal protection: ensure result stays within the target directory.
+            let resolvedPath = (fullPath as NSString).standardizingPath
+            let resolvedDir = (dirPath as NSString).standardizingPath
+            guard resolvedPath.hasPrefix(resolvedDir) else { return }
             let fm = FileManager.default
             guard fm.createFile(atPath: fullPath, contents: nil) else {
                 NSLog("FileTreeView: failed to create file at \(fullPath)")
@@ -396,8 +400,12 @@ final class FileTreeView: NSView {
                            message: "Enter a name for the new folder:",
                            placeholder: "untitled-folder",
                            defaultValue: "") { [weak self] name in
-            guard let self, !name.isEmpty else { return }
+            guard let self, !name.isEmpty, !name.contains("/") else { return }
             let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            // Path traversal protection: ensure result stays within the target directory.
+            let resolvedPath = (fullPath as NSString).standardizingPath
+            let resolvedDir = (dirPath as NSString).standardizingPath
+            guard resolvedPath.hasPrefix(resolvedDir) else { return }
             do {
                 try FileManager.default.createDirectory(atPath: fullPath,
                                                         withIntermediateDirectories: false)
@@ -417,8 +425,12 @@ final class FileTreeView: NSView {
                            message: "Enter a new name:",
                            placeholder: oldName,
                            defaultValue: oldName) { [weak self] newName in
-            guard let self, !newName.isEmpty, newName != oldName else { return }
+            guard let self, !newName.isEmpty, newName != oldName, !newName.contains("/") else { return }
             let newPath = (parentDir as NSString).appendingPathComponent(newName)
+            // Path traversal protection: ensure result stays within the parent directory.
+            let resolvedNew = (newPath as NSString).standardizingPath
+            let resolvedParent = (parentDir as NSString).standardizingPath
+            guard resolvedNew.hasPrefix(resolvedParent) else { return }
             do {
                 try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
             } catch {

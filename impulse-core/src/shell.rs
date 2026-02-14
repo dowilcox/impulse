@@ -1,6 +1,9 @@
 use portable_pty::CommandBuilder;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
 const BASH_INTEGRATION: &str = include_str!("shell_integration/bash.sh");
 const ZSH_INTEGRATION: &str = include_str!("shell_integration/zsh.sh");
 const FISH_INTEGRATION: &str = include_str!("shell_integration/fish.sh");
@@ -64,6 +67,29 @@ pub fn get_home_directory() -> Result<String, String> {
     std::env::var("HOME").map_err(|e| format!("Failed to get HOME: {}", e))
 }
 
+/// Write a file with owner-only permissions (0600) to prevent other users
+/// from reading shell integration scripts that may reveal path information.
+#[cfg(unix)]
+fn write_secure_file(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(content.as_bytes())
+}
+
+/// Create a directory with owner-only permissions (0700).
+#[cfg(unix)]
+fn create_secure_dir(path: &std::path::Path) -> Result<(), std::io::Error> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+}
+
 /// Build the shell command with integration scripts injected.
 /// Returns the CommandBuilder and a list of temp files that must be kept alive.
 pub fn build_shell_command(
@@ -89,7 +115,7 @@ pub fn build_shell_command(
 
             let rc_path =
                 std::env::temp_dir().join(format!("impulse-bash-rc-{}", std::process::id()));
-            std::fs::write(&rc_path, rc_content)?;
+            write_secure_file(&rc_path, &rc_content)?;
             temp_files.push(rc_path.clone());
 
             let mut cmd = CommandBuilder::new(shell_path);
@@ -101,7 +127,7 @@ pub fn build_shell_command(
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
 
             let zdotdir = std::env::temp_dir().join(format!("impulse-zsh-{}", std::process::id()));
-            std::fs::create_dir_all(&zdotdir)?;
+            create_secure_dir(&zdotdir)?;
 
             let zshenv_content = format!(
                 "if [ -f \"{}/.zshenv\" ]; then\n\
@@ -110,7 +136,7 @@ pub fn build_shell_command(
                 home, home
             );
             let zshenv_path = zdotdir.join(".zshenv");
-            std::fs::write(&zshenv_path, &zshenv_content)?;
+            write_secure_file(&zshenv_path, &zshenv_content)?;
             temp_files.push(zshenv_path);
 
             let zprofile_content = format!(
@@ -120,7 +146,7 @@ pub fn build_shell_command(
                 home, home
             );
             let zprofile_path = zdotdir.join(".zprofile");
-            std::fs::write(&zprofile_path, &zprofile_content)?;
+            write_secure_file(&zprofile_path, &zprofile_content)?;
             temp_files.push(zprofile_path);
 
             let zlogin_content = format!(
@@ -130,7 +156,7 @@ pub fn build_shell_command(
                 home, home
             );
             let zlogin_path = zdotdir.join(".zlogin");
-            std::fs::write(&zlogin_path, &zlogin_content)?;
+            write_secure_file(&zlogin_path, &zlogin_content)?;
             temp_files.push(zlogin_path);
 
             let rc_content = format!(
@@ -146,7 +172,7 @@ pub fn build_shell_command(
             );
 
             let zshrc_path = zdotdir.join(".zshrc");
-            std::fs::write(&zshrc_path, rc_content)?;
+            write_secure_file(&zshrc_path, &rc_content)?;
             temp_files.push(zshrc_path);
 
             let mut cmd = CommandBuilder::new(shell_path);

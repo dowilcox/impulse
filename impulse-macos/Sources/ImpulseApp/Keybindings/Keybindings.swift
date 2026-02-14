@@ -207,6 +207,31 @@ enum Keybindings {
         ),
     ]
 
+    // MARK: Keybinding Lookup Cache
+
+    /// Cached dictionary mapping "modifierFlags.rawValue-keyEquivalent" to keybinding ID
+    /// for O(1) lookup on key events. Invalidated when overrides change.
+    private static var lookupCache: [String: String]?
+    private static var lastOverrides: [String: String]?
+
+    /// Builds or returns the cached lookup dictionary for the given overrides.
+    private static func buildLookup(overrides: [String: String]) -> [String: String] {
+        if let cache = lookupCache, lastOverrides == overrides {
+            return cache
+        }
+        var dict: [String: String] = [:]
+        for builtin in builtins {
+            let effective = getKeybinding(id: builtin.id, overrides: overrides) ?? builtin
+            let relevantMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+            let mods = effective.modifierFlags.intersection(relevantMask)
+            let key = "\(mods.rawValue)-\(effective.keyEquivalent.lowercased())"
+            dict[key] = effective.id
+        }
+        lookupCache = dict
+        lastOverrides = overrides
+        return dict
+    }
+
     // MARK: Lookup
 
     /// Returns the keybinding for the given ID, applying any user override for
@@ -388,13 +413,29 @@ enum Keybindings {
     }
 
     /// Finds the first keybinding matching the given event, with override support.
+    /// Uses a cached dictionary for O(1) lookup instead of scanning all keybindings.
     static func matchingKeybinding(for event: NSEvent, overrides: [String: String] = [:]) -> BuiltinKeybinding? {
-        for builtin in builtins {
-            let effective = getKeybinding(id: builtin.id, overrides: overrides) ?? builtin
-            if eventMatches(event, keybinding: effective) {
-                return effective
+        let relevantMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let eventMods = event.modifierFlags.intersection(relevantMask)
+        guard let chars = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+
+        let lookupKey = "\(eventMods.rawValue)-\(chars)"
+        let dict = buildLookup(overrides: overrides)
+
+        if let id = dict[lookupKey] {
+            return getKeybinding(id: id, overrides: overrides)
+        }
+
+        // Fallback: check unicode scalar values for function keys etc.
+        if chars.unicodeScalars.count == 1 {
+            for builtin in builtins {
+                let effective = getKeybinding(id: builtin.id, overrides: overrides) ?? builtin
+                if eventMatches(event, keybinding: effective) {
+                    return effective
+                }
             }
         }
+
         return nil
     }
 

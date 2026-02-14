@@ -35,6 +35,7 @@ final class SettingsWindowController: NSWindowController {
     private var settings: Settings
     private var paneCache: [String: NSView] = [:]
     private var currentPaneId: String = "editor"
+    private var saveTimer: Timer?
 
     /// The singleton preferences window. Only one is shown at a time.
     private static var shared: SettingsWindowController?
@@ -85,6 +86,12 @@ final class SettingsWindowController: NSWindowController {
     }
 
     override func close() {
+        // Flush any pending debounced save before closing.
+        if saveTimer?.isValid == true {
+            saveTimer?.invalidate()
+            saveTimer = nil
+            settings.save()
+        }
         super.close()
         SettingsWindowController.shared = nil
     }
@@ -846,11 +853,18 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func persistSettings() {
-        settings.save()
+        // Propagate in-memory changes immediately so the UI stays responsive.
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.settings = settings
         }
         NotificationCenter.default.post(name: .impulseSettingsDidChange, object: settings)
+
+        // Debounce the disk write: coalesce rapid changes (e.g. stepper clicks)
+        // into a single save 0.3 s after the last change.
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            self?.settings.save()
+        }
     }
 
     // MARK: - Editor Actions

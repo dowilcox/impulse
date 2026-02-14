@@ -152,9 +152,6 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         preferences.setValue(true, forKey: "javaScriptEnabled")
         config.preferences = preferences
 
-        // Allow file:// access for loading Monaco assets.
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-
         let wv = WKWebView(frame: bounds, configuration: config)
         wv.navigationDelegate = self
         wv.translatesAutoresizingMaskIntoConstraints = false
@@ -354,10 +351,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return
         }
 
-        // Escape single quotes and backslashes for embedding in the JS string literal.
+        // Escape characters that are special inside a JS single-quoted string literal.
         let escaped = jsonString
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\0", with: "\\0")
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
 
         let script = "impulseReceiveCommand('\(escaped)')"
         webView.evaluateJavaScript(script) { _, error in
@@ -388,14 +390,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return false
         }
 
-        do {
-            try content.write(toFile: path, atomically: true, encoding: .utf8)
-            isModified = false
-            return true
-        } catch {
-            os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
-            return false
+        let contentToSave = content
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
+                DispatchQueue.main.async {
+                    self?.isModified = false
+                }
+            } catch {
+                os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
+            }
         }
+        return true
     }
 
     /// Fetch the latest content from Monaco and then call `completion`.
@@ -419,13 +425,20 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             if let latest = result as? String {
                 self.content = latest
             }
-            do {
-                try self.content.write(toFile: path, atomically: true, encoding: .utf8)
-                self.isModified = false
-                completion(true)
-            } catch {
-                os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
-                completion(false)
+            let contentToSave = self.content
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
+                    DispatchQueue.main.async {
+                        self?.isModified = false
+                        completion(true)
+                    }
+                } catch {
+                    os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
+                    DispatchQueue.main.async {
+                        completion(false)
+                    }
+                }
             }
         }
     }

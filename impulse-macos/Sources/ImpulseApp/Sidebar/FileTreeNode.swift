@@ -114,7 +114,7 @@ final class FileTreeNode {
                                        currentDirectory: rootPath)
         guard let gitRoot = gitRootResult else { return [:] }
 
-        let statusResult = Self.shell("git", arguments: ["status", "--porcelain", "-uall"],
+        let statusResult = Self.shell("git", arguments: ["status", "--porcelain", "-u"],
                                       currentDirectory: rootPath)
         guard let output = statusResult, !output.isEmpty else { return [:] }
 
@@ -171,14 +171,30 @@ final class FileTreeNode {
     private static func applyGitStatus(_ map: [String: GitStatus],
                                        to nodes: [FileTreeNode],
                                        basePath: String) {
+        // Pre-compute directory prefixes that contain changed files for O(1) lookup.
+        var directoriesWithChanges = Set<String>()
+        for key in map.keys {
+            var path = key
+            while let range = path.range(of: "/", options: .backwards) {
+                path = String(path[..<range.lowerBound])
+                let prefix = path + "/"
+                if directoriesWithChanges.contains(prefix) { break }
+                directoriesWithChanges.insert(prefix)
+            }
+        }
+        applyGitStatusRecursive(map, to: nodes, directoriesWithChanges: directoriesWithChanges)
+    }
+
+    private static func applyGitStatusRecursive(_ map: [String: GitStatus],
+                                                to nodes: [FileTreeNode],
+                                                directoriesWithChanges: Set<String>) {
         for node in nodes {
             if let directStatus = map[node.path] {
                 node.gitStatus = directStatus
             } else if node.isDirectory {
-                // Check if any file under this directory has a status.
+                // O(1) set lookup instead of O(M) linear scan.
                 let prefix = node.path.hasSuffix("/") ? node.path : node.path + "/"
-                let hasChild = map.keys.contains(where: { $0.hasPrefix(prefix) })
-                if hasChild {
+                if directoriesWithChanges.contains(prefix) {
                     node.gitStatus = .modified
                 } else {
                     node.gitStatus = .none
@@ -188,7 +204,7 @@ final class FileTreeNode {
             }
 
             if let children = node.children {
-                applyGitStatus(map, to: children, basePath: basePath)
+                applyGitStatusRecursive(map, to: children, directoriesWithChanges: directoriesWithChanges)
             }
         }
     }

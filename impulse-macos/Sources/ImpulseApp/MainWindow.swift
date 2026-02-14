@@ -207,6 +207,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Local event monitor for custom keybinding interception.
     private var customKeybindingMonitor: Any?
 
+    /// Observer tokens from NotificationCenter, removed on window close and deinit.
+    private var notificationObservers: [Any] = []
+
+    /// Dictionary mapping file paths to open editor tabs for O(1) lookup.
+    private var editorTabsByPath: [String: EditorTab] = [:]
+
     // MARK: File Tree State
 
     /// The root path currently displayed in the file tree. Used to avoid
@@ -215,6 +221,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Cached file tree nodes keyed by root path for instant tab switching.
     private var fileTreeCache: [String: [FileTreeNode]] = [:]
+
+    /// Tracks access order for LRU eviction of fileTreeCache entries.
+    private var fileTreeCacheOrder: [String] = []
+
+    /// Maximum number of entries in the file tree cache before LRU eviction.
+    private let fileTreeCacheMaxSize = 20
 
     // MARK: Git State
 
@@ -326,10 +338,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         } else {
             rootPath = NSHomeDirectory()
         }
-        fileTreeView.setRootPath(rootPath)
-        searchPanel.setRootPath(rootPath)
+        // Dispatch the initial tree build off the main thread to avoid blocking
+        // startup with heavy filesystem + git status work.
+        let showHidden = settings.sidebarShowHidden
         fileTreeRootPath = rootPath
-        fileTreeView.showHidden = settings.sidebarShowHidden
+        searchPanel.setRootPath(rootPath)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
+            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: rootPath)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.fileTreeRootPath == rootPath else { return }
+                self.fileTreeView.updateTree(nodes: nodes, rootPath: rootPath)
+                self.fileTreeView.showHidden = showHidden
+                self.fileTreeCacheInsert(key: rootPath, nodes: nodes)
+            }
+        }
         if settings.sidebarShowHidden {
             toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-open")
                 ?? NSImage(systemSymbolName: "eye", accessibilityDescription: "Toggle Hidden Files")
@@ -345,6 +369,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    deinit {
+        lspPollTimer?.invalidate()
+        teardownCustomKeybindingMonitor()
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: - Layout
@@ -831,425 +861,540 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         tabManager.applyTheme(newTheme)
     }
 
+    // MARK: - File Tree Cache (LRU)
+
+    /// Inserts a key into the file tree cache, evicting the oldest entry if
+    /// the cache exceeds `fileTreeCacheMaxSize`.
+    private func fileTreeCacheInsert(key: String, nodes: [FileTreeNode]) {
+        // Remove existing entry from order tracking if present.
+        if let idx = fileTreeCacheOrder.firstIndex(of: key) {
+            fileTreeCacheOrder.remove(at: idx)
+        }
+        fileTreeCacheOrder.append(key)
+        fileTreeCache[key] = nodes
+
+        // Evict oldest entries if over the limit.
+        while fileTreeCacheOrder.count > fileTreeCacheMaxSize {
+            let evicted = fileTreeCacheOrder.removeFirst()
+            fileTreeCache.removeValue(forKey: evicted)
+        }
+    }
+
+    /// Touches a cache key to mark it as recently used (moves to end of order).
+    private func fileTreeCacheTouch(key: String) {
+        if let idx = fileTreeCacheOrder.firstIndex(of: key) {
+            fileTreeCacheOrder.remove(at: idx)
+            fileTreeCacheOrder.append(key)
+        }
+    }
+
+    // MARK: - Editor Tab Tracking
+
+    /// Registers an editor tab in the path-to-tab dictionary.
+    func trackEditorTab(_ editor: EditorTab, forPath path: String) {
+        editorTabsByPath[path] = editor
+    }
+
+    /// Removes an editor tab from the path-to-tab dictionary.
+    func untrackEditorTab(forPath path: String) {
+        editorTabsByPath.removeValue(forKey: path)
+    }
+
     // MARK: - Notification Observers
 
     private func setupNotificationObservers() {
         let nc = NotificationCenter.default
 
-        nc.addObserver(forName: .impulseToggleSidebar, object: nil, queue: .main) { [weak self] _ in
-            guard self?.window?.isKeyWindow == true else { return }
-            self?.toggleSidebar()
-        }
-        nc.addObserver(forName: .impulseNewTerminalTab, object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.tabManager.addTerminalTab()
-            // If a directory was specified (e.g. "Open in Terminal" from file tree),
-            // navigate the new terminal to that directory.
-            if let dir = notification.userInfo?["directory"] as? String,
-               self.tabManager.selectedIndex >= 0,
-               self.tabManager.selectedIndex < self.tabManager.tabs.count,
-               case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
-               let terminal = container.activeTerminal {
-                terminal.sendCommand("cd \(dir.replacingOccurrences(of: " ", with: "\\ "))")
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseToggleSidebar, object: nil, queue: .main) { [weak self] _ in
+                guard self?.window?.isKeyWindow == true else { return }
+                self?.toggleSidebar()
             }
-        }
-        nc.addObserver(forName: .impulseCloseTab, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            let index = self.tabManager.selectedIndex
-            guard index >= 0, index < self.tabManager.tabs.count else { return }
-            // Send LSP didClose before removing the tab.
-            if case .editor(let editor) = self.tabManager.tabs[index] {
-                self.lspDidClose(editor: editor)
-            }
-            self.tabManager.closeTab(index: index)
-        }
-        nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            // Close the window when the last tab is closed (covers tab bar X button,
-            // context menu "Close Tab", etc.).
-            if self.tabManager.tabs.isEmpty {
-                self.window?.close()
-                return
-            }
-            self.updateStatusBar()
-            // Rebuild the file tree when the active tab's directory context differs
-            // from the current root. Terminal tabs use their CWD; editor tabs use
-            // the parent directory of the open file.
-            if self.tabManager.selectedIndex >= 0,
-               self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                let tab = self.tabManager.tabs[self.tabManager.selectedIndex]
-                let dir: String?
-                switch tab {
-                case .terminal(let container):
-                    dir = container.activeTerminal?.currentWorkingDirectory
-                case .editor(let editor):
-                    // Restore the sidebar directory that was active when this
-                    // editor tab was opened, so each editor keeps its context.
-                    dir = editor.projectDirectory
-                case .imagePreview:
-                    dir = nil
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseNewTerminalTab, object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.tabManager.addTerminalTab()
+                // If a directory was specified (e.g. "Open in Terminal" from file tree),
+                // navigate the new terminal to that directory.
+                if let dir = notification.userInfo?["directory"] as? String,
+                   self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                   case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
+                   let terminal = container.activeTerminal {
+                    terminal.sendCommand("cd \(dir.replacingOccurrences(of: " ", with: "\\ "))")
                 }
-                if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
-                    // Save the current tree into the cache before switching away.
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseCloseTab, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                let index = self.tabManager.selectedIndex
+                guard index >= 0, index < self.tabManager.tabs.count else { return }
+                // Send LSP didClose before removing the tab.
+                if case .editor(let editor) = self.tabManager.tabs[index] {
+                    if let path = editor.filePath {
+                        self.untrackEditorTab(forPath: path)
+                    }
+                    self.lspDidClose(editor: editor)
+                }
+                self.tabManager.closeTab(index: index)
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                // Close the window when the last tab is closed (covers tab bar X button,
+                // context menu "Close Tab", etc.).
+                if self.tabManager.tabs.isEmpty {
+                    self.window?.close()
+                    return
+                }
+                self.updateStatusBar()
+                // Rebuild the file tree when the active tab's directory context differs
+                // from the current root. Terminal tabs use their CWD; editor tabs use
+                // the parent directory of the open file.
+                if self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count {
+                    let tab = self.tabManager.tabs[self.tabManager.selectedIndex]
+                    let dir: String?
+                    switch tab {
+                    case .terminal(let container):
+                        dir = container.activeTerminal?.currentWorkingDirectory
+                    case .editor(let editor):
+                        // Restore the sidebar directory that was active when this
+                        // editor tab was opened, so each editor keeps its context.
+                        dir = editor.projectDirectory
+                    case .imagePreview:
+                        dir = nil
+                    }
+                    if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
+                        // Save the current tree into the cache before switching away.
+                        if !self.fileTreeRootPath.isEmpty {
+                            self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
+                        }
+                        self.fileTreeRootPath = dir
+                        self.searchPanel.setRootPath(dir)
+
+                        // If we have a cached tree for this directory, show it
+                        // immediately and refresh in the background.
+                        if let cached = self.fileTreeCache[dir] {
+                            self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
+                            self.fileTreeCacheTouch(key: dir)
+                        }
+
+                        let showHidden = self.fileTreeView.showHidden
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+                            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self else { return }
+                                // Only update if we're still on this directory.
+                                guard self.fileTreeRootPath == dir else { return }
+                                self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                                self.fileTreeCacheInsert(key: dir, nodes: nodes)
+                            }
+                        }
+                    }
+                }
+                // Hide terminal search bar when switching away from a terminal tab.
+                if self.termSearchBarVisible,
+                   self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count {
+                    if case .terminal = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                        // Still on a terminal tab — keep search bar visible.
+                    } else {
+                        self.hideTerminalSearch()
+                    }
+                }
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseOpenFile, object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                if let path = notification.userInfo?["path"] as? String {
+                    self.tabManager.addEditorTab(path: path)
+                    self.lspDidOpenIfNeeded(path: path)
+                    // Navigate to specific line if provided (e.g. from search results).
+                    if self.tabManager.selectedIndex >= 0,
+                       self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                       case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                        // Track the editor tab in the path dictionary.
+                        self.trackEditorTab(editor, forPath: path)
+                        // Record the sidebar directory that was active when this file was opened.
+                        if editor.projectDirectory == nil {
+                            editor.projectDirectory = self.fileTreeRootPath
+                        }
+                        if let line = notification.userInfo?["line"] as? UInt32 {
+                            editor.goToPosition(line: line, column: 1)
+                        }
+                    }
+                }
+            }
+        )
+        // Apply git diff decorations once Monaco confirms it has processed
+        // the OpenFile command and set up the model. This avoids the race
+        // condition where decorations arrive before the model is ready.
+        notificationObservers.append(
+            nc.addObserver(forName: .editorFileOpened, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                if let editor = notification.object as? EditorTab {
+                    self.applyGitDiffDecorations(editor: editor)
+                }
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                if let path = notification.userInfo?["path"] as? String {
+                    // Find the open editor tab for this file and reload from disk
+                    // off the main thread to avoid blocking UI.
+                    if let editor = self.findEditorTab(forPath: path) {
+                        let language = editor.language
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+                            DispatchQueue.main.async { [weak editor] in
+                                guard let editor else { return }
+                                editor.openFile(path: path, content: content, language: language)
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseSplitHorizontal, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.tabManager.splitTerminalHorizontally()
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseSplitVertical, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.tabManager.splitTerminalVertically()
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFocusPrevSplit, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                guard self.tabManager.selectedIndex >= 0,
+                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                      case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+                container.focusPreviousSplit()
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFocusNextSplit, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                guard self.tabManager.selectedIndex >= 0,
+                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                      case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+                container.focusNextSplit()
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                // Switch sidebar to search mode and show it if hidden.
+                if !self.sidebarVisible {
+                    self.toggleSidebar()
+                }
+                self.searchToggleClicked(nil)
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                if let dir = notification.userInfo?["directory"] as? String {
+                    // Save current tree to cache before switching.
                     if !self.fileTreeRootPath.isEmpty {
-                        self.fileTreeCache[self.fileTreeRootPath] = self.fileTreeView.rootNodes
+                        self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
                     }
                     self.fileTreeRootPath = dir
                     self.searchPanel.setRootPath(dir)
+                    self.invalidateGitBranchCache()
+                    // Immediate UI update with no branch yet.
+                    self.statusBar.updateForTerminal(
+                        cwd: dir,
+                        gitBranch: nil,
+                        shellName: ImpulseCore.getUserLoginShellName()
+                    )
 
-                    // If we have a cached tree for this directory, show it
-                    // immediately and refresh in the background.
+                    // Show cached tree instantly if available.
                     if let cached = self.fileTreeCache[dir] {
                         self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
+                        self.fileTreeCacheTouch(key: dir)
                     }
 
+                    // Refresh from disk in the background.
                     let showHidden = self.fileTreeView.showHidden
                     DispatchQueue.global(qos: .userInitiated).async {
                         let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
                         FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
+                        let branch = ImpulseCore.gitBranch(path: dir)
                         DispatchQueue.main.async { [weak self] in
                             guard let self else { return }
-                            // Only update if we're still on this directory.
                             guard self.fileTreeRootPath == dir else { return }
                             self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
-                            self.fileTreeCache[dir] = nodes
+                            self.fileTreeCacheInsert(key: dir, nodes: nodes)
+                            self.statusBar.updateForTerminal(
+                                cwd: dir,
+                                gitBranch: branch,
+                                shellName: ImpulseCore.getUserLoginShellName()
+                            )
                         }
                     }
                 }
             }
-            // Hide terminal search bar when switching away from a terminal tab.
-            if self.termSearchBarVisible,
-               self.tabManager.selectedIndex >= 0,
-               self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                if case .terminal = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                    // Still on a terminal tab — keep search bar visible.
-                } else {
-                    self.hideTerminalSearch()
-                }
-            }
-        }
-        nc.addObserver(forName: .impulseOpenFile, object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            if let path = notification.userInfo?["path"] as? String {
-                self.tabManager.addEditorTab(path: path)
-                self.lspDidOpenIfNeeded(path: path)
-                // Navigate to specific line if provided (e.g. from search results).
-                if self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                   case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                    // Record the sidebar directory that was active when this file was opened.
-                    if editor.projectDirectory == nil {
-                        editor.projectDirectory = self.fileTreeRootPath
-                    }
-                    if let line = notification.userInfo?["line"] as? UInt32 {
-                        editor.goToPosition(line: line, column: 1)
-                    }
-                }
-            }
-        }
-        // Apply git diff decorations once Monaco confirms it has processed
-        // the OpenFile command and set up the model. This avoids the race
-        // condition where decorations arrive before the model is ready.
-        nc.addObserver(forName: .editorFileOpened, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
-            if let editor = notification.object as? EditorTab {
-                self.applyGitDiffDecorations(editor: editor)
-            }
-        }
-        nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            if let path = notification.userInfo?["path"] as? String {
-                // Find the open editor tab for this file and reload from disk.
-                for tab in self.tabManager.tabs {
-                    if case .editor(let editor) = tab, editor.filePath == path {
-                        if let content = try? String(contentsOfFile: path, encoding: .utf8) {
-                            editor.openFile(path: path, content: content, language: editor.language)
-                        }
-                        break
-                    }
-                }
-            }
-        }
-        nc.addObserver(forName: .impulseSplitHorizontal, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.tabManager.splitTerminalHorizontally()
-        }
-        nc.addObserver(forName: .impulseSplitVertical, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.tabManager.splitTerminalVertically()
-        }
-        nc.addObserver(forName: .impulseFocusPrevSplit, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            guard self.tabManager.selectedIndex >= 0,
-                  self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                  case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
-            container.focusPreviousSplit()
-        }
-        nc.addObserver(forName: .impulseFocusNextSplit, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            guard self.tabManager.selectedIndex >= 0,
-                  self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                  case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
-            container.focusNextSplit()
-        }
-        nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            // Switch sidebar to search mode and show it if hidden.
-            if !self.sidebarVisible {
-                self.toggleSidebar()
-            }
-            self.searchToggleClicked(nil)
-        }
-        nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
-            if let dir = notification.userInfo?["directory"] as? String {
-                // Save current tree to cache before switching.
-                if !self.fileTreeRootPath.isEmpty {
-                    self.fileTreeCache[self.fileTreeRootPath] = self.fileTreeView.rootNodes
-                }
-                self.fileTreeRootPath = dir
-                self.searchPanel.setRootPath(dir)
-                self.invalidateGitBranchCache()
-                // Immediate UI update with no branch yet.
-                self.statusBar.updateForTerminal(
-                    cwd: dir,
-                    gitBranch: nil,
-                    shellName: ImpulseCore.getUserLoginShellName()
-                )
-
-                // Show cached tree instantly if available.
-                if let cached = self.fileTreeCache[dir] {
-                    self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
-                }
-
-                // Refresh from disk in the background.
-                let showHidden = self.fileTreeView.showHidden
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                    FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
-                    let branch = ImpulseCore.gitBranch(path: dir)
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        guard self.fileTreeRootPath == dir else { return }
-                        self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
-                        self.fileTreeCache[dir] = nodes
-                        self.statusBar.updateForTerminal(
-                            cwd: dir,
-                            gitBranch: branch,
-                            shellName: ImpulseCore.getUserLoginShellName()
-                        )
-                    }
-                }
-            }
-        }
+        )
 
         // Command palette
-        nc.addObserver(forName: .impulseShowCommandPalette, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true, let window = self.window else { return }
-            self.commandPalette.show(relativeTo: window)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseShowCommandPalette, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true, let window = self.window else { return }
+                self.commandPalette.show(relativeTo: window)
+            }
+        )
 
         // Save file — fired from menu Cmd+S or from EditorTab's SaveRequested event
-        nc.addObserver(forName: .impulseSaveFile, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseSaveFile, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
 
-            // If the notification came from an EditorTab (Monaco Cmd+S path),
-            // save that specific editor directly — no key-window check needed
-            // because the editor itself initiated the save.
-            if let sourceEditor = notification.object as? EditorTab {
-                self.saveEditorTab(sourceEditor)
-                return
-            }
+                // If the notification came from an EditorTab (Monaco Cmd+S path),
+                // save that specific editor directly — no key-window check needed
+                // because the editor itself initiated the save.
+                if let sourceEditor = notification.object as? EditorTab {
+                    self.saveEditorTab(sourceEditor)
+                    return
+                }
 
-            // Menu path: save the currently selected editor tab.
-            guard self.window?.isKeyWindow == true else { return }
-            guard self.tabManager.selectedIndex >= 0,
-                  self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
-            if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                self.saveEditorTab(editor)
+                // Menu path: save the currently selected editor tab.
+                guard self.window?.isKeyWindow == true else { return }
+                guard self.tabManager.selectedIndex >= 0,
+                      self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
+                if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    self.saveEditorTab(editor)
+                }
             }
-        }
+        )
 
         // Find — editor: Monaco find widget; terminal: search bar toggle
-        nc.addObserver(forName: .impulseFind, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            guard self.tabManager.selectedIndex >= 0,
-                  self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
-            switch self.tabManager.tabs[self.tabManager.selectedIndex] {
-            case .editor(let editor):
-                editor.webView.evaluateJavaScript(
-                    "editor.getAction('actions.find').run()",
-                    completionHandler: nil
-                )
-            case .terminal:
-                self.toggleTerminalSearch()
-            case .imagePreview:
-                break
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFind, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                guard self.tabManager.selectedIndex >= 0,
+                      self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
+                switch self.tabManager.tabs[self.tabManager.selectedIndex] {
+                case .editor(let editor):
+                    editor.webView.evaluateJavaScript(
+                        "editor.getAction('actions.find').run()",
+                        completionHandler: nil
+                    )
+                case .terminal:
+                    self.toggleTerminalSearch()
+                case .imagePreview:
+                    break
+                }
             }
-        }
+        )
 
         // Editor cursor position tracking for status bar + blame
-        nc.addObserver(forName: .editorCursorMoved, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
-            guard let line = notification.userInfo?["line"] as? UInt32,
-                  let col = notification.userInfo?["column"] as? UInt32 else { return }
-            // Only update if the notification came from the active editor tab
-            guard self.tabManager.selectedIndex >= 0,
-                  self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                  case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex],
-                  editor === notification.object as? EditorTab else { return }
-            let filePath = editor.filePath ?? ""
-            let dir = (filePath as NSString).deletingLastPathComponent
-            let branch = dir.isEmpty ? nil : self.gitBranch(forDirectory: dir)
-            let displayLine = Int(line) + 1
-            self.statusBar.updateForEditor(
-                filePath: filePath,
-                gitBranch: branch,
-                cursorLine: displayLine,
-                cursorCol: Int(col) + 1,
-                language: editor.language,
-                tabWidth: self.settings.tabWidth,
-                useSpaces: self.settings.useSpaces
-            )
-            // Fetch blame asynchronously for the current line.
-            self.fetchBlame(filePath: filePath, line: UInt32(displayLine))
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .editorCursorMoved, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                guard let line = notification.userInfo?["line"] as? UInt32,
+                      let col = notification.userInfo?["column"] as? UInt32 else { return }
+                // Only update if the notification came from the active editor tab
+                guard self.tabManager.selectedIndex >= 0,
+                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                      case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex],
+                      editor === notification.object as? EditorTab else { return }
+                let filePath = editor.filePath ?? ""
+                let dir = (filePath as NSString).deletingLastPathComponent
+                let branch = dir.isEmpty ? nil : self.gitBranch(forDirectory: dir)
+                let displayLine = Int(line) + 1
+                self.statusBar.updateForEditor(
+                    filePath: filePath,
+                    gitBranch: branch,
+                    cursorLine: displayLine,
+                    cursorCol: Int(col) + 1,
+                    language: editor.language,
+                    tabWidth: self.settings.tabWidth,
+                    useSpaces: self.settings.useSpaces
+                )
+                // Fetch blame asynchronously for the current line.
+                self.fetchBlame(filePath: filePath, line: UInt32(displayLine))
+            }
+        )
 
         // Terminal title changed — update tab segment labels
-        nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.tabManager.refreshSegmentLabels()
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) { [weak self] _ in
+                self?.tabManager.refreshSegmentLabels()
+            }
+        )
 
         // Terminal process terminated — close the tab if it was the only terminal
-        nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
-            guard let terminalTab = notification.object as? TerminalTab else { return }
-            // Find the container that owns this terminal and check if we should close
-            for (index, tab) in self.tabManager.tabs.enumerated() {
-                if case .terminal(let container) = tab {
-                    if container.terminals.count == 1 && container.terminals.first === terminalTab {
-                        self.tabManager.closeTab(index: index)
-                        break
+        notificationObservers.append(
+            nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                guard let terminalTab = notification.object as? TerminalTab else { return }
+                // Find the container that owns this terminal and check if we should close
+                for (index, tab) in self.tabManager.tabs.enumerated() {
+                    if case .terminal(let container) = tab {
+                        if container.terminals.count == 1 && container.terminals.first === terminalTab {
+                            self.tabManager.closeTab(index: index)
+                            break
+                        }
                     }
                 }
             }
-        }
+        )
 
         // Editor content changed — refresh tab labels and notify LSP
-        nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) { [weak self] notification in
-            guard let self else { return }
-            self.tabManager.refreshSegmentLabels()
-            if let editor = notification.object as? EditorTab {
-                self.lspDidChange(editor: editor)
+        notificationObservers.append(
+            nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                self.tabManager.refreshSegmentLabels()
+                if let editor = notification.object as? EditorTab {
+                    self.lspDidChange(editor: editor)
+                }
             }
-        }
+        )
 
         // Editor focus changed — auto-save on focus loss if enabled
-        nc.addObserver(forName: .editorFocusChanged, object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.settings.autoSave else { return }
-            guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
-            guard let editor = notification.object as? EditorTab,
-                  editor.isModified else { return }
-            self.saveEditorTab(editor)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .editorFocusChanged, object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.settings.autoSave else { return }
+                guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
+                guard let editor = notification.object as? EditorTab,
+                      editor.isModified else { return }
+                self.saveEditorTab(editor)
+            }
+        )
 
         // Custom keybinding command execution
-        nc.addObserver(forName: Notification.Name("impulseCustomCommand"), object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            guard let command = notification.userInfo?["command"] as? String,
-                  !command.isEmpty else { return }
-            let args = notification.userInfo?["args"] as? [String] ?? []
-            self.executeCustomCommand(command: command, args: args)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: Notification.Name("impulseCustomCommand"), object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                guard let command = notification.userInfo?["command"] as? String,
+                      !command.isEmpty else { return }
+                let args = notification.userInfo?["args"] as? [String] ?? []
+                self.executeCustomCommand(command: command, args: args)
+            }
+        )
 
         // LSP: completion requested
-        nc.addObserver(forName: .editorCompletionRequested, object: nil, queue: .main) { [weak self] notification in
-            guard let self,
-                  let editor = notification.object as? EditorTab,
-                  let requestId = notification.userInfo?["requestId"] as? UInt64,
-                  let line = notification.userInfo?["line"] as? UInt32,
-                  let character = notification.userInfo?["character"] as? UInt32 else { return }
-            self.handleCompletionRequest(editor: editor, requestId: requestId, line: line, character: character)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .editorCompletionRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleCompletionRequest(editor: editor, requestId: requestId, line: line, character: character)
+            }
+        )
 
         // LSP: hover requested
-        nc.addObserver(forName: .editorHoverRequested, object: nil, queue: .main) { [weak self] notification in
-            guard let self,
-                  let editor = notification.object as? EditorTab,
-                  let requestId = notification.userInfo?["requestId"] as? UInt64,
-                  let line = notification.userInfo?["line"] as? UInt32,
-                  let character = notification.userInfo?["character"] as? UInt32 else { return }
-            self.handleHoverRequest(editor: editor, requestId: requestId, line: line, character: character)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .editorHoverRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleHoverRequest(editor: editor, requestId: requestId, line: line, character: character)
+            }
+        )
 
         // Go to line
-        nc.addObserver(forName: .impulseGoToLine, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.showGoToLineDialog()
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseGoToLine, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.showGoToLineDialog()
+            }
+        )
 
         // Font size
-        nc.addObserver(forName: .impulseFontIncrease, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.changeFontSize(delta: 1)
-        }
-        nc.addObserver(forName: .impulseFontDecrease, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.changeFontSize(delta: -1)
-        }
-        nc.addObserver(forName: .impulseFontReset, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            self.resetFontSize()
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFontIncrease, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.changeFontSize(delta: 1)
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFontDecrease, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.changeFontSize(delta: -1)
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseFontReset, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.resetFontSize()
+            }
+        )
 
         // Tab cycling
-        nc.addObserver(forName: .impulseNextTab, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            let count = self.tabManager.tabs.count
-            guard count > 1 else { return }
-            let next = (self.tabManager.selectedIndex + 1) % count
-            self.tabManager.selectTab(index: next)
-        }
-        nc.addObserver(forName: .impulsePrevTab, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            let count = self.tabManager.tabs.count
-            guard count > 1 else { return }
-            let prev = (self.tabManager.selectedIndex - 1 + count) % count
-            self.tabManager.selectTab(index: prev)
-        }
-        nc.addObserver(forName: .impulseSelectTab, object: nil, queue: .main) { [weak self] notification in
-            guard let self, self.window?.isKeyWindow == true else { return }
-            guard let index = notification.userInfo?["index"] as? Int else { return }
-            if index >= 0, index < self.tabManager.tabs.count {
-                self.tabManager.selectTab(index: index)
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseNextTab, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                let count = self.tabManager.tabs.count
+                guard count > 1 else { return }
+                let next = (self.tabManager.selectedIndex + 1) % count
+                self.tabManager.selectTab(index: next)
             }
-        }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulsePrevTab, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                let count = self.tabManager.tabs.count
+                guard count > 1 else { return }
+                let prev = (self.tabManager.selectedIndex - 1 + count) % count
+                self.tabManager.selectTab(index: prev)
+            }
+        )
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseSelectTab, object: nil, queue: .main) { [weak self] notification in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                guard let index = notification.userInfo?["index"] as? Int else { return }
+                if index >= 0, index < self.tabManager.tabs.count {
+                    self.tabManager.selectTab(index: index)
+                }
+            }
+        )
 
         // Settings changed (from SettingsWindow)
-        nc.addObserver(forName: .impulseSettingsDidChange, object: nil, queue: .main) { [weak self] notification in
-            guard let self, let newSettings = notification.object as? Settings else { return }
-            self.settings = newSettings
-            self.tabManager.settings = newSettings
-            self.applyAllSettings()
-            // Rebuild custom keybinding monitor so new/changed bindings take effect.
-            self.setupCustomKeybindingMonitor()
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseSettingsDidChange, object: nil, queue: .main) { [weak self] notification in
+                guard let self, let newSettings = notification.object as? Settings else { return }
+                self.settings = newSettings
+                self.tabManager.settings = newSettings
+                self.applyAllSettings()
+                // Rebuild custom keybinding monitor so new/changed bindings take effect.
+                self.setupCustomKeybindingMonitor()
+            }
+        )
 
         // LSP: go-to-definition requested
-        nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
-            guard let self,
-                  let editor = notification.object as? EditorTab,
-                  let line = notification.userInfo?["line"] as? UInt32,
-                  let character = notification.userInfo?["character"] as? UInt32 else { return }
-            self.handleDefinitionRequest(editor: editor, line: line, character: character)
-        }
+        notificationObservers.append(
+            nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleDefinitionRequest(editor: editor, line: line, character: character)
+            }
+        )
     }
 
     // MARK: - LSP Integration
 
     private func startLspPolling() {
         lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.processLspEvents()
+            self?.pollLspEventsInBackground()
         }
     }
 
@@ -1258,43 +1403,58 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         lspPollTimer = nil
     }
 
-    /// Polls for asynchronous LSP events and dispatches them to the appropriate
-    /// editor tab. Called on a 100ms timer on the main thread.
-    private func processLspEvents() {
-        while let json = core.lspPollEvent() {
-            guard let data = json.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = event["type"] as? String else { continue }
+    /// Polls for LSP events on a background queue and dispatches parsed results
+    /// back to the main thread for UI updates. Limits events per tick to avoid
+    /// unbounded processing.
+    private func pollLspEventsInBackground() {
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+            var events: [(String, [[String: Any]])] = []
+            var count = 0
+            let maxEventsPerTick = 50
+            while count < maxEventsPerTick, let json = self.core.lspPollEvent() {
+                count += 1
+                guard let data = json.data(using: .utf8),
+                      let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = event["type"] as? String else { continue }
 
-            switch type {
-            case "diagnostics":
-                guard let uri = event["uri"] as? String,
-                      let diagnosticsArray = event["diagnostics"] as? [[String: Any]] else { continue }
-
-                let filePath = uriToFilePath(uri)
-                guard let editorTab = findEditorTab(forPath: filePath) else { continue }
-
-                let markers: [MonacoDiagnostic] = diagnosticsArray.compactMap { d in
-                    guard let severity = (d["severity"] as? NSNumber)?.uint8Value,
-                          let startLine = (d["startLine"] as? NSNumber)?.uint32Value,
-                          let startColumn = (d["startColumn"] as? NSNumber)?.uint32Value,
-                          let endLine = (d["endLine"] as? NSNumber)?.uint32Value,
-                          let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
-                          let message = d["message"] as? String else { return nil }
-                    return MonacoDiagnostic(
-                        severity: diagnosticSeverityToMonaco(severity),
-                        startLine: startLine + 1,   // LSP 0-based → Monaco 1-based
-                        startColumn: startColumn + 1,
-                        endLine: endLine + 1,
-                        endColumn: endColumn + 1,
-                        message: message,
-                        source: d["source"] as? String
-                    )
+                switch type {
+                case "diagnostics":
+                    guard let uri = event["uri"] as? String,
+                          let diagnosticsArray = event["diagnostics"] as? [[String: Any]] else { continue }
+                    events.append((uri, diagnosticsArray))
+                default:
+                    break
                 }
-                editorTab.applyDiagnostics(uri: uri, markers: markers)
+            }
 
-            default:
-                break
+            guard !events.isEmpty else { return }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                for (uri, diagnosticsArray) in events {
+                    let filePath = self.uriToFilePath(uri)
+                    guard let editorTab = self.findEditorTab(forPath: filePath) else { continue }
+
+                    let markers: [MonacoDiagnostic] = diagnosticsArray.compactMap { d in
+                        guard let severity = (d["severity"] as? NSNumber)?.uint8Value,
+                              let startLine = (d["startLine"] as? NSNumber)?.uint32Value,
+                              let startColumn = (d["startColumn"] as? NSNumber)?.uint32Value,
+                              let endLine = (d["endLine"] as? NSNumber)?.uint32Value,
+                              let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
+                              let message = d["message"] as? String else { return nil }
+                        return MonacoDiagnostic(
+                            severity: diagnosticSeverityToMonaco(severity),
+                            startLine: startLine + 1,   // LSP 0-based -> Monaco 1-based
+                            startColumn: startColumn + 1,
+                            endLine: endLine + 1,
+                            endColumn: endColumn + 1,
+                            message: message,
+                            source: d["source"] as? String
+                        )
+                    }
+                    editorTab.applyDiagnostics(uri: uri, markers: markers)
+                }
             }
         }
     }
@@ -1457,6 +1617,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 if self.tabManager.selectedIndex >= 0,
                    self.tabManager.selectedIndex < self.tabManager.tabs.count,
                    case .editor(let targetEditor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    self.trackEditorTab(targetEditor, forPath: targetPath)
                     targetEditor.goToPosition(line: def.line + 1, column: def.character + 1)
                 }
             }
@@ -1567,12 +1728,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             if let fmt = formatter, !fmt.command.isEmpty {
                 self.runExternalCommand(command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent) { [weak self, weak editor] in
                     guard let self, let editor else { return }
-                    // Reload the file after formatting
-                    if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
-                       newContent != editor.content {
-                        editor.openFile(path: path, content: newContent, language: editor.language)
+                    // Reload the file after formatting off the main thread.
+                    let language = editor.language
+                    let currentContent = editor.content
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8),
+                              newContent != currentContent else {
+                            DispatchQueue.main.async { [weak self, weak editor] in
+                                guard let self, let editor else { return }
+                                self.postSaveActions(editor: editor, path: path)
+                            }
+                            return
+                        }
+                        DispatchQueue.main.async { [weak self, weak editor] in
+                            guard let self, let editor else { return }
+                            editor.openFile(path: path, content: newContent, language: language)
+                            self.postSaveActions(editor: editor, path: path)
+                        }
                     }
-                    self.postSaveActions(editor: editor, path: path)
                 }
             } else {
                 self.postSaveActions(editor: editor, path: path)
@@ -1594,11 +1767,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             guard Settings.matchesFilePattern(path, pattern: cmd.filePattern) else { continue }
             let cwd = (path as NSString).deletingLastPathComponent
             if cmd.reloadFile {
+                let language = editor.language
                 runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd) { [weak editor] in
                     guard let editor else { return }
-                    if let newContent = try? String(contentsOfFile: path, encoding: .utf8),
-                       newContent != editor.content {
-                        editor.openFile(path: path, content: newContent, language: editor.language)
+                    let currentContent = editor.content
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8),
+                              newContent != currentContent else { return }
+                        DispatchQueue.main.async { [weak editor] in
+                            guard let editor else { return }
+                            editor.openFile(path: path, content: newContent, language: language)
+                        }
                     }
                 }
             } else {
@@ -1650,7 +1829,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Executes a custom keybinding command by opening a new terminal tab
     /// with the command running in it, using the active tab's working directory.
     private func executeCustomCommand(command: String, args: [String]) {
-        let fullCommand = ([command] + args).joined(separator: " ")
+        // Shell-escape arguments that contain special characters.
+        let escapedArgs = args.map { arg -> String in
+            if arg.rangeOfCharacter(from: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-")).inverted) != nil {
+                return "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            }
+            return arg
+        }
+        let fullCommand = ([command] + escapedArgs).joined(separator: " ")
 
         // Get the CWD from the active tab (terminal CWD or editor file's parent)
         let cwd = getActiveCwd()
@@ -1940,19 +2126,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     /// Escapes a string for safe embedding in a JSON string literal.
-    private func jsonEscape(_ str: String) -> String {
-        return str
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
+    /// Uses a single-pass scanner instead of chained replacingOccurrences calls.
+    private func jsonEscape(_ s: String) -> String {
+        var result = ""
+        result.reserveCapacity(s.count)
+        for char in s {
+            switch char {
+            case "\\": result += "\\\\"
+            case "\"": result += "\\\""
+            case "\n": result += "\\n"
+            case "\r": result += "\\r"
+            case "\t": result += "\\t"
+            default:
+                if char.asciiValue.map({ $0 < 32 }) == true {
+                    result += String(format: "\\u%04x", char.asciiValue!)
+                } else {
+                    result.append(char)
+                }
+            }
+        }
+        return result
     }
 
     /// Finds the editor tab that has the given file path open.
+    /// Uses the editorTabsByPath dictionary for O(1) lookup, falling back
+    /// to a linear scan if the dictionary is out of sync.
     private func findEditorTab(forPath path: String) -> EditorTab? {
+        if let editor = editorTabsByPath[path] {
+            return editor
+        }
+        // Fallback: linear scan (keeps behavior correct if dictionary is stale).
         for tab in tabManager.tabs {
             if case .editor(let editor) = tab, editor.filePath == path {
+                // Re-track it for future lookups.
+                editorTabsByPath[path] = editor
                 return editor
             }
         }
@@ -1971,9 +2178,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         stopLspPolling()
         teardownCustomKeybindingMonitor()
 
+        // Remove all notification observers.
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        notificationObservers.removeAll()
+
         // Clean up all remaining tabs (kill terminal processes, tear down
         // editor WebViews) so resources are freed immediately.
         tabManager.cleanupAllTabs()
+
+        // Clear editor tab tracking.
+        editorTabsByPath.removeAll()
 
         // Persist sidebar state back to AppDelegate settings.
         if let delegate = NSApp.delegate as? AppDelegate {
@@ -1984,4 +2198,3 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         (NSApp.delegate as? AppDelegate)?.windowControllerDidClose(self)
     }
 }
-

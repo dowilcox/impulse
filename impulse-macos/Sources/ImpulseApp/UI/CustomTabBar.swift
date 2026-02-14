@@ -25,8 +25,18 @@ private final class TabItemView: NSView {
 
     // MARK: Data
 
-    var title: String = "" { didSet { needsDisplay = true } }
-    var icon: NSImage? { didSet { needsDisplay = true } }
+    var title: String = "" {
+        didSet {
+            if title != oldValue { invalidateDrawingCache() }
+            needsDisplay = true
+        }
+    }
+    var icon: NSImage? {
+        didSet {
+            if icon !== oldValue { invalidateIconCache() }
+            needsDisplay = true
+        }
+    }
     var isPinned: Bool = false { didSet { needsDisplay = true } }
     var index: Int = 0
     var isSelected: Bool = false { didSet { needsDisplay = true } }
@@ -51,6 +61,27 @@ private final class TabItemView: NSView {
     private let textCloseGap: CGFloat = 8
 
     private var trackingArea: NSTrackingArea?
+
+    // Cached drawing state
+    private var cachedAttributedTitle: NSAttributedString?
+    private var cachedTitleSize: NSSize?
+    private var cachedTintedIcon: NSImage?
+    private var lastTitle: String?
+    private var lastTintColor: NSColor?
+    private var lastIcon: NSImage?
+
+    private func invalidateDrawingCache() {
+        cachedAttributedTitle = nil
+        cachedTitleSize = nil
+        lastTitle = nil
+        lastTintColor = nil
+    }
+
+    private func invalidateIconCache() {
+        cachedTintedIcon = nil
+        lastIcon = nil
+        lastTintColor = nil
+    }
 
     // MARK: Init
 
@@ -87,20 +118,27 @@ private final class TabItemView: NSView {
         let textColor = isSelected ? accentColor : fgDarkColor
         let y = bounds.midY
 
-        // Measure content width (icon + gap + text) for centering
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: textColor,
-        ]
-        let str = NSAttributedString(string: title, attributes: attrs)
-        let textSize = str.size()
+        // Build or reuse cached attributed string
+        if cachedAttributedTitle == nil || lastTitle != title || lastTintColor != textColor {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: textColor,
+            ]
+            let str = NSAttributedString(string: title, attributes: attrs)
+            cachedAttributedTitle = str
+            cachedTitleSize = str.size()
+            lastTitle = title
+            lastTintColor = textColor
+        }
+
+        guard let str = cachedAttributedTitle, let textSize = cachedTitleSize else { return }
 
         let hasIcon = icon != nil
         let iconWidth = hasIcon ? (iconSize + iconTextGap) : 0
         let contentWidth = iconWidth + textSize.width
 
-        // Reserve space for close button on right when visible
-        let closeReserved: CGFloat = (isSelected || isHovered) ? (closeSize + textCloseGap + padding) : padding
+        // Always reserve space for the close button so icon+text don't shift on hover
+        let closeReserved: CGFloat = closeSize + textCloseGap + padding
         let availableWidth = bounds.width - padding - closeReserved
 
         // Center the icon+text group within the available area
@@ -122,15 +160,19 @@ private final class TabItemView: NSView {
                 height: iconSize
             )
             if icon.isTemplate {
-                let size = NSSize(width: iconSize, height: iconSize)
                 let tintColor = isSelected ? accentColor : fgDarkColor
-                let tinted = NSImage(size: size, flipped: false) { [tintColor] rect in
-                    icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                    tintColor.set()
-                    rect.fill(using: .sourceAtop)
-                    return true
+                // Reuse cached tinted icon if valid
+                if cachedTintedIcon == nil || lastIcon !== icon || lastTintColor != tintColor {
+                    let size = NSSize(width: iconSize, height: iconSize)
+                    cachedTintedIcon = NSImage(size: size, flipped: false) { [tintColor] rect in
+                        icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                        tintColor.set()
+                        rect.fill(using: .sourceAtop)
+                        return true
+                    }
+                    lastIcon = icon
                 }
-                tinted.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                cachedTintedIcon?.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             } else {
                 icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             }

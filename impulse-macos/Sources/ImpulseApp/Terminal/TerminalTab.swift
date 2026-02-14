@@ -30,6 +30,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     let terminalView: LocalProcessTerminalView
 
+    /// Cached reference to the vertical scroller to avoid subview iteration on every layout.
+    private weak var cachedScroller: NSScroller?
+
     /// Local event monitor for copy-on-select behaviour.
     private var mouseUpMonitor: Any?
 
@@ -136,11 +139,13 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         return true
     }
 
+    /// Characters considered safe for shell paths (no escaping needed).
+    private static let shellSafeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-"))
+
     /// Shell-escapes a file path for safe pasting into a terminal.
     private func shellEscape(_ path: String) -> String {
         // If the path contains no special characters, return as-is.
-        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-"))
-        if path.unicodeScalars.allSatisfy({ safeChars.contains($0) }) {
+        if path.unicodeScalars.allSatisfy({ Self.shellSafeChars.contains($0) }) {
             return path
         }
         // Otherwise, wrap in single quotes with internal single quotes escaped.
@@ -171,20 +176,18 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     }
 
     private func resizeScroller() {
-        for subview in terminalView.subviews {
-            if let scroller = subview as? NSScroller {
-                scroller.controlSize = .mini
-                let width = NSScroller.scrollerWidth(for: .mini, scrollerStyle: scroller.scrollerStyle)
-                let tvBounds = terminalView.bounds
-                scroller.frame = NSRect(
-                    x: tvBounds.maxX - width,
-                    y: tvBounds.minY,
-                    width: width,
-                    height: tvBounds.height
-                )
-                break
-            }
-        }
+        let scroller = cachedScroller ?? terminalView.subviews.compactMap { $0 as? NSScroller }.first
+        cachedScroller = scroller
+        guard let scroller else { return }
+        scroller.controlSize = .mini
+        let width = NSScroller.scrollerWidth(for: .mini, scrollerStyle: scroller.scrollerStyle)
+        let tvBounds = terminalView.bounds
+        scroller.frame = NSRect(
+            x: tvBounds.maxX - width,
+            y: tvBounds.minY,
+            width: width,
+            height: tvBounds.height
+        )
     }
 
     // MARK: Configuration

@@ -56,7 +56,6 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
         let preferences = WKPreferences()
         preferences.setValue(true, forKey: "javaScriptEnabled")
         config.preferences = preferences
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
 
         let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
         wv.setValue(false, forKey: "drawsBackground")

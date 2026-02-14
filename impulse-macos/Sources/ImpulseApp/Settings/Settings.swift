@@ -395,11 +395,23 @@ extension Settings {
     }
 
     /// Persists the current settings to disk as pretty-printed JSON.
+    /// Encoding and writing happen on a background queue to avoid blocking the
+    /// main thread. File permissions are set to 0600 (owner read/write only).
     func save() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(self) else { return }
-        try? data.write(to: Settings.settingsPath(), options: .atomic)
+        let url = Settings.settingsPath()
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try data.write(to: url, options: .atomic)
+                // Restrict permissions to owner-only (0600).
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: url.path)
+            } catch {
+                // Non-fatal: settings will be re-saved on next change.
+            }
+        }
     }
 
     /// Static variant for callers that don't hold an instance.

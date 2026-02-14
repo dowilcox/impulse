@@ -215,14 +215,27 @@ final class SearchPanel: NSView {
         let root = self.rootPath
         let caseSensitive = (self.caseSensitiveButton.state == .on)
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard self != nil else { return }
+        // Run both searches truly in parallel using a DispatchGroup
+        let group = DispatchGroup()
+        var fileResults: [SearchResult] = []
+        var contentResults: [SearchResult] = []
 
-            // Run both searches in parallel
-            let fileResults = ImpulseCore.searchFiles(root: root, query: query)
-            let contentResults = ImpulseCore.searchContent(root: root,
-                                                            query: query,
-                                                            caseSensitive: caseSensitive)
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            fileResults = ImpulseCore.searchFiles(root: root, query: query)
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            contentResults = ImpulseCore.searchContent(root: root,
+                                                        query: query,
+                                                        caseSensitive: caseSensitive)
+            group.leave()
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
 
             // Combine: file matches first, then content matches.
             // Deduplicate: if a file appears in both, keep the content result
@@ -231,24 +244,21 @@ final class SearchPanel: NSView {
             let uniqueFileResults = fileResults.filter { !contentPaths.contains($0.path) }
             let combined = uniqueFileResults + contentResults
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.results = combined
-                self.resultsTableView.reloadData()
-                if combined.isEmpty {
-                    self.statusLabel.stringValue = "No results"
-                } else {
-                    let fileCount = uniqueFileResults.count
-                    let contentCount = contentResults.count
-                    var parts: [String] = []
-                    if fileCount > 0 {
-                        parts.append("\(fileCount) \(fileCount == 1 ? "file" : "files")")
-                    }
-                    if contentCount > 0 {
-                        parts.append("\(contentCount) \(contentCount == 1 ? "match" : "matches")")
-                    }
-                    self.statusLabel.stringValue = parts.joined(separator: ", ")
+            self.results = combined
+            self.resultsTableView.reloadData()
+            if combined.isEmpty {
+                self.statusLabel.stringValue = "No results"
+            } else {
+                let fileCount = uniqueFileResults.count
+                let contentCount = contentResults.count
+                var parts: [String] = []
+                if fileCount > 0 {
+                    parts.append("\(fileCount) \(fileCount == 1 ? "file" : "files")")
                 }
+                if contentCount > 0 {
+                    parts.append("\(contentCount) \(contentCount == 1 ? "match" : "matches")")
+                }
+                self.statusLabel.stringValue = parts.joined(separator: ", ")
             }
         }
     }

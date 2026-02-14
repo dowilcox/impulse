@@ -186,19 +186,22 @@ private func lookupByFilename(_ filename: String) -> String {
 
 // MARK: - SVG Recoloring
 
+/// Pre-compiled regex for recoloring SVG fill/stroke attributes.
+private let fillRegex: NSRegularExpression = {
+    try! NSRegularExpression(pattern: ##"(fill|stroke)="#[0-9A-Fa-f]{3,8}""##)
+}()
+
 /// Replaces hex fill/stroke attribute values in an SVG string with a theme color.
 private func recolorSVG(_ svg: String, color: String) -> String {
     let colorValue = color.hasPrefix("#") ? color : "#\(color)"
     var result = svg
 
     // Replace fill="#XXXXXX" and stroke="#XXXXXX" with the theme color
-    if let regex = try? NSRegularExpression(pattern: ##"(fill|stroke)="#[0-9A-Fa-f]{3,8}""##) {
-        result = regex.stringByReplacingMatches(
-            in: result,
-            range: NSRange(result.startIndex..., in: result),
-            withTemplate: "$1=\"\(colorValue)\""
-        )
-    }
+    result = fillRegex.stringByReplacingMatches(
+        in: result,
+        range: NSRange(result.startIndex..., in: result),
+        withTemplate: "$1=\"\(colorValue)\""
+    )
     return result
 }
 

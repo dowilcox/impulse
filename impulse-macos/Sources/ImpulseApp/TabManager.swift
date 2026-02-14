@@ -129,6 +129,9 @@ final class TabManager: NSObject {
     /// Per-tab pinned state, indexed in parallel with `tabs`.
     private(set) var pinnedTabs: [Bool] = []
 
+    /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
+    private var openFilePaths: Set<String> = []
+
     /// The index of the currently selected tab, or -1 if no tabs are open.
     private(set) var selectedIndex: Int = -1
 
@@ -206,15 +209,17 @@ final class TabManager: NSObject {
     /// creating a duplicate. Image files are opened in a preview tab. Binary
     /// files (>10 MB or containing null bytes) are skipped with an alert.
     func addEditorTab(path: String) {
-        // Deduplicate: if a tab for this file already exists, select it.
-        if let existingIndex = tabs.firstIndex(where: {
-            switch $0 {
-            case .editor(let e): return e.filePath == path
-            case .imagePreview(let p, _): return p == path
-            default: return false
+        // O(1) deduplication using the openFilePaths set.
+        if openFilePaths.contains(path) {
+            if let existingIndex = tabs.firstIndex(where: {
+                switch $0 {
+                case .editor(let e): return e.filePath == path
+                case .imagePreview(let p, _): return p == path
+                default: return false
+                }
+            }) {
+                selectTab(index: existingIndex)
             }
-        }) {
-            selectTab(index: existingIndex)
             return
         }
 
@@ -235,20 +240,32 @@ final class TabManager: NSObject {
             return
         }
 
-        let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-
-        // Read the file and open it in the editor.
-        let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        // Read file content off the main thread, then create the editor tab on main.
+        let editorOptions = editorOptionsFromSettings()
+        let themeDef = theme.monacoThemeDefinition()
         let language = languageIdForPath(path)
-        editorTab.openFile(path: path, content: content, language: language)
-        editorTab.loadEditor()
 
-        // Apply editor settings (font, tab size, etc.) from the current settings.
-        editorTab.applySettings(editorOptionsFromSettings())
-        editorTab.applyTheme(theme.monacoThemeDefinition())
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
 
-        let entry = TabEntry.editor(editorTab)
-        insertTab(entry)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+
+                // Re-check deduplication in case a tab was opened while reading.
+                if self.openFilePaths.contains(path) { return }
+
+                let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+                editorTab.openFile(path: path, content: fileContent, language: language)
+                editorTab.loadEditor()
+
+                // Apply editor settings (font, tab size, etc.) from the current settings.
+                editorTab.applySettings(editorOptions)
+                editorTab.applyTheme(themeDef)
+
+                let entry = TabEntry.editor(editorTab)
+                self.insertTab(entry)
+            }
+        }
     }
 
     /// Creates an image preview tab with a scrollable NSImageView.
@@ -288,6 +305,17 @@ final class TabManager: NSObject {
     private func insertTab(_ entry: TabEntry) {
         tabs.append(entry)
         pinnedTabs.append(false)
+
+        // Track open file paths for O(1) deduplication.
+        switch entry {
+        case .editor(let e):
+            if let p = e.filePath { openFilePaths.insert(p) }
+        case .imagePreview(let p, _):
+            openFilePaths.insert(p)
+        default:
+            break
+        }
+
         rebuildSegments()
         selectTab(index: tabs.count - 1)
     }
@@ -315,6 +343,16 @@ final class TabManager: NSObject {
 
         let entry = tabs[index]
         cleanupTab(entry)
+
+        // Remove from open file paths tracking.
+        switch entry {
+        case .editor(let e):
+            if let p = e.filePath { openFilePaths.remove(p) }
+        case .imagePreview(let p, _):
+            openFilePaths.remove(p)
+        default:
+            break
+        }
 
         // Remove the tab's view from the content area if it is currently displayed.
         if index == selectedIndex {
@@ -366,7 +404,19 @@ final class TabManager: NSObject {
         // Collect indices to close in reverse order to preserve index validity.
         for i in stride(from: tabs.count - 1, through: 0, by: -1) {
             if i != keepIndex && !pinnedTabs[i] {
-                cleanupTab(tabs[i])
+                let closedEntry = tabs[i]
+                cleanupTab(closedEntry)
+
+                // Remove from open file paths tracking.
+                switch closedEntry {
+                case .editor(let e):
+                    if let p = e.filePath { openFilePaths.remove(p) }
+                case .imagePreview(let p, _):
+                    openFilePaths.remove(p)
+                default:
+                    break
+                }
+
                 tabs.remove(at: i)
                 pinnedTabs.remove(at: i)
             }

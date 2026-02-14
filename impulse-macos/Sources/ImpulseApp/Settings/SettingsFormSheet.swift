@@ -131,7 +131,7 @@ enum SettingsFormSheet {
 
 /// Mediates between the sheet's controls and the onSave callback.
 private class SheetHandler: NSObject {
-    let panel: NSPanel
+    unowned let panel: NSPanel
     weak var parent: NSWindow?
     let controls: [(String, NSView)]
     let onSave: ([String: String]) -> Void
