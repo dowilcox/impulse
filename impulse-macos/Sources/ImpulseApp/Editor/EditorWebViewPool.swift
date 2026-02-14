@@ -74,17 +74,22 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
     /// Claim the pre-warmed WebView, transferring message handler ownership.
     ///
     /// - Parameter newHandler: The `EditorTab` that will own the WebView.
+    /// - Parameter weakProxy: A `WeakScriptMessageHandler` wrapping `newHandler`
+    ///   to avoid the WKUserContentController strong-retain cycle.
     /// - Returns: A ready-to-use `WKWebView` with Monaco loaded, or `nil` if
     ///   none is available yet.
-    func claim(newHandler: WKScriptMessageHandler & WKNavigationDelegate) -> WKWebView? {
+    func claim(newHandler: WKScriptMessageHandler & WKNavigationDelegate,
+               weakProxy: WKScriptMessageHandler) -> WKWebView? {
         guard isReady, let wv = warmWebView else { return nil }
 
         warmWebView = nil
         isReady = false
 
-        // Swap the message handler from the pool proxy to the EditorTab.
+        // Swap the message handler from the pool proxy to the EditorTab's
+        // weak proxy so WKUserContentController does not strongly retain
+        // the EditorTab.
         wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
-        wv.configuration.userContentController.add(newHandler, name: "impulse")
+        wv.configuration.userContentController.add(weakProxy, name: "impulse")
         wv.navigationDelegate = newHandler
 
         os_log(.info, log: Self.log, "Claimed pre-warmed WebView")

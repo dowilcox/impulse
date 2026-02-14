@@ -65,6 +65,15 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         }
     }
 
+    // MARK: Cleanup
+
+    /// Terminate the shell process and release resources. Must be called before
+    /// the tab is removed from the view hierarchy to ensure child processes
+    /// (and any programs running inside the shell) are cleaned up.
+    func terminateProcess() {
+        terminalView.terminate()
+    }
+
     // MARK: Copy on Select
 
     /// Enables or disables the copy-on-select behaviour at runtime.
@@ -147,6 +156,20 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
+    }
+
+    // MARK: Scrollbar
+
+    /// SwiftTerm hardcodes its internal NSScroller to the `.legacy` style,
+    /// which makes the scrollbar permanently visible regardless of system
+    /// preferences. Override the style to use the user's system setting.
+    func configureScrollerStyle() {
+        for subview in terminalView.subviews {
+            if let scroller = subview as? NSScroller {
+                scroller.scrollerStyle = NSScroller.preferredScrollerStyle
+                break
+            }
+        }
     }
 
     // MARK: Configuration

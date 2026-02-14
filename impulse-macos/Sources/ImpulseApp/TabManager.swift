@@ -294,6 +294,19 @@ final class TabManager: NSObject {
 
     // MARK: - Removing Tabs
 
+    /// Release resources owned by a tab entry (kill processes, tear down
+    /// WebViews) so they don't linger after the tab is removed.
+    private func cleanupTab(_ entry: TabEntry) {
+        switch entry {
+        case .terminal(let container):
+            container.terminateAllProcesses()
+        case .editor(let editor):
+            editor.cleanup()
+        case .imagePreview:
+            break
+        }
+    }
+
     /// Closes the tab at the given index. If it is the active tab, the
     /// nearest neighbor is selected. If it was the last tab, `selectedIndex`
     /// becomes -1.
@@ -301,6 +314,7 @@ final class TabManager: NSObject {
         guard index >= 0, index < tabs.count else { return }
 
         let entry = tabs[index]
+        cleanupTab(entry)
 
         // Remove the tab's view from the content area if it is currently displayed.
         if index == selectedIndex {
@@ -320,6 +334,14 @@ final class TabManager: NSObject {
         // Select the nearest valid tab.
         let newIndex = min(index, tabs.count - 1)
         selectTab(index: newIndex)
+    }
+
+    /// Clean up all tabs (kill processes, tear down WebViews). Called when the
+    /// window closes to ensure nothing lingers.
+    func cleanupAllTabs() {
+        for tab in tabs {
+            cleanupTab(tab)
+        }
     }
 
     /// Toggles the pinned state of the tab at the given index.
@@ -344,6 +366,7 @@ final class TabManager: NSObject {
         // Collect indices to close in reverse order to preserve index validity.
         for i in stride(from: tabs.count - 1, through: 0, by: -1) {
             if i != keepIndex && !pinnedTabs[i] {
+                cleanupTab(tabs[i])
                 tabs.remove(at: i)
                 pinnedTabs.remove(at: i)
             }
@@ -450,6 +473,7 @@ final class TabManager: NSObject {
         switch tab {
         case .terminal:
             return iconCache?.toolbarIcon(name: "console")
+                ?? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
         case .editor(let editor):
             if let path = editor.filePath {
                 let filename = (path as NSString).lastPathComponent
@@ -459,6 +483,7 @@ final class TabManager: NSObject {
             return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
         case .imagePreview:
             return iconCache?.toolbarIcon(name: "image")
+                ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
         }
     }
 

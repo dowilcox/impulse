@@ -285,11 +285,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
         searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
 
-        // Set toolbar button icons from shared SVG icon cache
+        // Set toolbar button icons from shared SVG icon cache, falling back to
+        // SF Symbols if the cache hasn't loaded (e.g. missing bundle resources).
         sidebarToggleButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
+            ?? NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
         newTabButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-plus")
+            ?? NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
         toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-closed")
+            ?? NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "Toggle Hidden Files")
         collapseAllButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-collapse")
+            ?? NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Collapse All")
 
         sidebarToggleButton.target = self
         sidebarToggleButton.action = #selector(toggleSidebarAction(_:))
@@ -327,6 +332,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         fileTreeView.showHidden = settings.sidebarShowHidden
         if settings.sidebarShowHidden {
             toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-open")
+                ?? NSImage(systemSymbolName: "eye", accessibilityDescription: "Toggle Hidden Files")
         }
 
         // Open a default terminal tab.
@@ -475,11 +481,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Set initial sidebar width.
-        sidebarContainer.setFrameSize(NSSize(width: sidebarTargetWidth, height: sidebarContainer.frame.height))
-
-        // Apply initial visibility.
-        if !sidebarVisible {
+        // Set initial divider position so both the sidebar and content
+        // container get proper widths from the NSSplitView.
+        if sidebarVisible {
+            splitView.setPosition(sidebarTargetWidth, ofDividerAt: 0)
+        } else {
             splitView.setPosition(0, ofDividerAt: 0)
             sidebarContainer.isHidden = true
         }
@@ -529,7 +535,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         fileTreeView.toggleHiddenFiles()
         // Update the button icon to reflect the current state.
         let svgName = fileTreeView.showHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
+        let sfName = fileTreeView.showHidden ? "eye" : "eye.slash"
         toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
+            ?? NSImage(systemSymbolName: sfName, accessibilityDescription: "Toggle Hidden Files")
         // Persist the setting.
         settings.sidebarShowHidden = fileTreeView.showHidden
         if let delegate = NSApp.delegate as? AppDelegate {
@@ -583,7 +591,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Update the sidebar toggle button icon to reflect the current state.
     private func updateSidebarToggleIcon() {
-        sidebarToggleButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
+        let icon = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
+            ?? NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
+        icon?.isTemplate = true
+        sidebarToggleButton.image = icon
         sidebarToggleButton.contentTintColor = sidebarVisible
             ? theme.cyan
             : theme.fgDark
@@ -839,10 +850,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 self.lspDidClose(editor: editor)
             }
             self.tabManager.closeTab(index: index)
-            // Close the window when the last tab is closed.
-            if self.tabManager.tabs.isEmpty {
-                self.window?.close()
-            }
         }
         nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -1113,10 +1120,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                         break
                     }
                 }
-            }
-            // Close the window when the last tab is closed.
-            if self.tabManager.tabs.isEmpty {
-                self.window?.close()
             }
         }
 
@@ -1811,7 +1814,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         if fileTreeView.showHidden != settings.sidebarShowHidden {
             fileTreeView.showHidden = settings.sidebarShowHidden
             let svgName = settings.sidebarShowHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
+            let sfName = settings.sidebarShowHidden ? "eye" : "eye.slash"
             toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
+                ?? NSImage(systemSymbolName: sfName, accessibilityDescription: "Toggle Hidden Files")
             if !fileTreeRootPath.isEmpty {
                 fileTreeView.setRootPath(fileTreeRootPath)
             }
@@ -1953,6 +1958,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func windowWillClose(_ notification: Notification) {
         stopLspPolling()
         teardownCustomKeybindingMonitor()
+
+        // Clean up all remaining tabs (kill terminal processes, tear down
+        // editor WebViews) so resources are freed immediately.
+        tabManager.cleanupAllTabs()
 
         // Persist sidebar state back to AppDelegate settings.
         if let delegate = NSApp.delegate as? AppDelegate {

@@ -138,11 +138,21 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     // MARK: Removing Terminals
 
+    /// Terminate all shell processes in this container. Must be called before
+    /// the container is removed from the tab list to ensure child processes
+    /// are cleaned up.
+    func terminateAllProcesses() {
+        for terminal in terminals {
+            terminal.terminateProcess()
+        }
+    }
+
     /// Remove the terminal at the given index. If only one terminal remains
     /// after removal, collapse the split view back to a single terminal.
     func removeTerminal(at index: Int) {
         guard terminals.indices.contains(index) else { return }
         let terminal = terminals[index]
+        terminal.terminateProcess()
         terminals.remove(at: index)
 
         // Remove the terminal view from whatever parent it sits in.
@@ -235,6 +245,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         currentSettings = settings
         for terminal in terminals {
             terminal.configureTerminal(settings: settings, theme: currentTheme)
+            terminal.configureScrollerStyle()
         }
     }
 
@@ -262,6 +273,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     private func createTerminal() -> TerminalTab {
         let terminal = TerminalTab(frame: bounds)
         terminal.configureTerminal(settings: currentSettings, theme: currentTheme)
+        terminal.configureScrollerStyle()
         return terminal
     }
 

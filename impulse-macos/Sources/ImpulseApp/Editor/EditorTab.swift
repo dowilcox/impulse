@@ -35,6 +35,27 @@ extension Notification.Name {
     static let editorFileOpened = Notification.Name("impulse.editorFileOpened")
 }
 
+// MARK: - WeakScriptMessageHandler
+
+/// A thin proxy that prevents WKUserContentController from creating a strong
+/// retain cycle with its message handler.  WKUserContentController retains its
+/// handlers strongly; by interposing this proxy, the real handler (EditorTab)
+/// is held only weakly and can be deallocated normally.
+private class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var delegate: WKScriptMessageHandler?
+
+    init(delegate: WKScriptMessageHandler) {
+        self.delegate = delegate
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        delegate?.userContentController(userContentController, didReceive: message)
+    }
+}
+
 // MARK: - EditorTab
 
 /// Wraps a WKWebView hosting the Monaco code editor.
@@ -104,7 +125,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private func setupWebView() {
         // Try to claim a pre-warmed WebView from the pool. If available,
         // Monaco is already loaded and we can skip loadEditor() entirely.
-        if let warmed = EditorWebViewPool.shared.claim(newHandler: self) {
+        let proxy = WeakScriptMessageHandler(delegate: self)
+        if let warmed = EditorWebViewPool.shared.claim(newHandler: self, weakProxy: proxy) {
             warmed.translatesAutoresizingMaskIntoConstraints = false
             addSubview(warmed)
             NSLayoutConstraint.activate([
@@ -121,9 +143,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // Fall back to creating a new WebView.
         let config = WKWebViewConfiguration()
 
-        // Register the script message handler on the "impulse" channel.
-        // Monaco posts events via: window.webkit.messageHandlers.impulse.postMessage(json)
-        config.userContentController.add(self, name: "impulse")
+        // Register the script message handler on the "impulse" channel via
+        // a weak proxy to avoid a retain cycle (WKUserContentController
+        // retains its handlers strongly).
+        config.userContentController.add(WeakScriptMessageHandler(delegate: self), name: "impulse")
 
         let preferences = WKPreferences()
         preferences.setValue(true, forKey: "javaScriptEnabled")
@@ -524,8 +547,25 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: Cleanup
 
-    deinit {
+    /// Explicitly release resources held by the WebView. Must be called before
+    /// the tab is removed from the tab list to ensure the WKWebView and its
+    /// associated JavaScript context are torn down promptly.
+    func cleanup() {
         stopFileWatching()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
+        webView?.navigationDelegate = nil
+        webView?.stopLoading()
+        webView?.removeFromSuperview()
+        webView = nil
+    }
+
+    deinit {
+        // Belt-and-suspenders: clean up anything that wasn't already handled
+        // by an explicit cleanup() call.
+        stopFileWatching()
+        if let wv = webView {
+            wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
+            wv.navigationDelegate = nil
+        }
     }
 }
