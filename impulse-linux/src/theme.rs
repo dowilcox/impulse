@@ -491,9 +491,13 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         tabbar {{
             background-color: {bg_dark};
+            box-shadow: none;
+            border-bottom: none;
         }}
         tabbar tabbox {{
             background-color: {bg_dark};
+            box-shadow: none;
+            border-bottom: none;
         }}
         tabbar tab {{
             min-height: 32px;
