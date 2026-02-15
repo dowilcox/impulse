@@ -623,7 +623,8 @@ where
         }
         Err(e) => {
             log::error!("Failed to extract Monaco assets: {}", e);
-            let safe_error = e.to_string()
+            let safe_error = e
+                .to_string()
                 .replace('&', "&amp;")
                 .replace('<', "&lt;")
                 .replace('>', "&gt;");

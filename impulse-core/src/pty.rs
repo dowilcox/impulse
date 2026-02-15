@@ -428,9 +428,7 @@ pub fn url_decode(input: &str) -> String {
         if b == b'%' {
             let hex: Vec<u8> = chars.by_ref().take(2).copied().collect();
             if hex.len() == 2 {
-                if let Ok(decoded) =
-                    u8::from_str_radix(&String::from_utf8_lossy(&hex), 16)
-                {
+                if let Ok(decoded) = u8::from_str_radix(&String::from_utf8_lossy(&hex), 16) {
                     bytes.push(decoded);
                 } else {
                     bytes.push(b'%');
@@ -446,4 +444,170 @@ pub fn url_decode(input: &str) -> String {
     }
 
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // url_decode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn url_decode_plain_string() {
+        assert_eq!(url_decode("/home/user/project"), "/home/user/project");
+    }
+
+    #[test]
+    fn url_decode_spaces() {
+        assert_eq!(
+            url_decode("/home/user/my%20project"),
+            "/home/user/my project"
+        );
+    }
+
+    #[test]
+    fn url_decode_multibyte_utf8() {
+        // é = U+00E9 = %C3%A9 in UTF-8
+        assert_eq!(url_decode("/home/caf%C3%A9"), "/home/café");
+    }
+
+    #[test]
+    fn url_decode_invalid_hex() {
+        assert_eq!(url_decode("/home/%ZZ"), "/home/%ZZ");
+    }
+
+    #[test]
+    fn url_decode_truncated_percent() {
+        assert_eq!(url_decode("/home/%2"), "/home/%2");
+    }
+
+    #[test]
+    fn url_decode_empty() {
+        assert_eq!(url_decode(""), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // OscParser tests
+    // -----------------------------------------------------------------------
+
+    fn parse_all(parser: &mut OscParser, data: &[u8]) -> Vec<OscEvent> {
+        parser.parse(data)
+    }
+
+    #[test]
+    fn osc_parser_plain_output() {
+        let mut parser = OscParser::new();
+        let events = parse_all(&mut parser, b"hello world");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            OscEvent::Output(data) => assert_eq!(data, b"hello world"),
+            _ => panic!("Expected Output event"),
+        }
+    }
+
+    #[test]
+    fn osc_parser_command_start_bel() {
+        let mut parser = OscParser::new();
+        // ESC ] 1 3 3 ; B BEL
+        let data = b"\x1b]133;B\x07";
+        let events = parse_all(&mut parser, data);
+        assert!(events.iter().any(|e| matches!(e, OscEvent::CommandStart)));
+    }
+
+    #[test]
+    fn osc_parser_command_end_with_exit_code() {
+        let mut parser = OscParser::new();
+        // ESC ] 1 3 3 ; D ; 1 BEL  (exit code 1)
+        let data = b"\x1b]133;D;1\x07";
+        let events = parse_all(&mut parser, data);
+        assert!(events.iter().any(|e| matches!(e, OscEvent::CommandEnd(1))));
+    }
+
+    #[test]
+    fn osc_parser_command_end_default_exit_code() {
+        let mut parser = OscParser::new();
+        // ESC ] 1 3 3 ; D BEL  (no exit code => 0)
+        let data = b"\x1b]133;D\x07";
+        let events = parse_all(&mut parser, data);
+        assert!(events.iter().any(|e| matches!(e, OscEvent::CommandEnd(0))));
+    }
+
+    #[test]
+    fn osc_parser_cwd_changed() {
+        let mut parser = OscParser::new();
+        // ESC ] 7 ; file://hostname/home/user BEL
+        let data = b"\x1b]7;file://localhost/home/user\x07";
+        let events = parse_all(&mut parser, data);
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, OscEvent::CwdChanged(p) if p == "/home/user")));
+    }
+
+    #[test]
+    fn osc_parser_st_terminator() {
+        let mut parser = OscParser::new();
+        // ESC ] 1 3 3 ; B ESC \ (using ST terminator instead of BEL)
+        let data = b"\x1b]133;B\x1b\\";
+        let events = parse_all(&mut parser, data);
+        assert!(events.iter().any(|e| matches!(e, OscEvent::CommandStart)));
+    }
+
+    #[test]
+    fn osc_parser_mixed_output_and_osc() {
+        let mut parser = OscParser::new();
+        let data = b"before\x1b]133;B\x07after";
+        let events = parse_all(&mut parser, data);
+        // Should have: Output("before"), CommandStart, Output("after")
+        let mut found_before = false;
+        let mut found_command = false;
+        let mut found_after = false;
+        for e in &events {
+            match e {
+                OscEvent::Output(d) if d == b"before" => found_before = true,
+                OscEvent::CommandStart => found_command = true,
+                OscEvent::Output(d) if d == b"after" => found_after = true,
+                _ => {}
+            }
+        }
+        assert!(found_before && found_command && found_after);
+    }
+
+    #[test]
+    fn osc_parser_non_osc_escape_passthrough() {
+        let mut parser = OscParser::new();
+        // ESC [ 1 m  (SGR sequence, not OSC) should pass through
+        let data = b"\x1b[1m";
+        let events = parse_all(&mut parser, data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            OscEvent::Output(d) => assert_eq!(d, b"\x1b[1m"),
+            _ => panic!("Expected Output for non-OSC escape"),
+        }
+    }
+
+    #[test]
+    fn osc_parser_oversized_sequence_flushed() {
+        let mut parser = OscParser::new();
+        // Start an OSC sequence but make it exceed 1024 bytes
+        let mut data = vec![0x1b, b']'];
+        data.extend_from_slice(&vec![b'X'; 1030]);
+        let events = parse_all(&mut parser, &data);
+        // Should flush as output, not hang
+        assert!(events.iter().any(|e| matches!(e, OscEvent::Output(_))));
+    }
+
+    #[test]
+    fn osc_parser_split_across_chunks() {
+        let mut parser = OscParser::new();
+        // Split an OSC 133;B sequence across two parse() calls
+        let events1 = parse_all(&mut parser, b"\x1b]133");
+        let events2 = parse_all(&mut parser, b";B\x07done");
+        // The command start may be in events2
+        let all_events: Vec<_> = events1.into_iter().chain(events2).collect();
+        assert!(all_events
+            .iter()
+            .any(|e| matches!(e, OscEvent::CommandStart)));
+    }
 }

@@ -108,11 +108,7 @@ fn uri_to_file_path(uri: &str) -> Option<PathBuf> {
 }
 
 fn path_to_file_uri(path: &Path) -> Option<String> {
-    if path.is_dir() {
-        Url::from_directory_path(path).ok().map(|u| u.to_string())
-    } else {
-        Url::from_file_path(path).ok().map(|u| u.to_string())
-    }
+    crate::util::file_path_to_uri(path)
 }
 
 fn workspace_folder_name(root_uri: &str) -> String {
@@ -485,10 +481,7 @@ impl LspClient {
             // Reject absurdly large messages to prevent memory exhaustion (64 MB limit)
             const MAX_LSP_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
             if content_length > MAX_LSP_MESSAGE_SIZE {
-                log::warn!(
-                    "LSP message too large ({} bytes), skipping",
-                    content_length
-                );
+                log::warn!("LSP message too large ({} bytes), skipping", content_length);
                 // Drain the oversized body to keep the stream in sync
                 let mut remaining = content_length;
                 let mut discard_buf = vec![0u8; 8192];

@@ -67,57 +67,74 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
     Ok(entries)
 }
 
-/// Get git status for files in a directory.
+/// Get git status for files in a directory using libgit2.
 pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String>, String> {
-    use std::process::Command;
+    let dir_path = PathBuf::from(path);
+    let repo = match git2::Repository::discover(&dir_path) {
+        Ok(r) => r,
+        Err(_) => return Ok(HashMap::new()),
+    };
 
-    let git_root = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+    let repo_root = repo.workdir().ok_or("Bare repository")?.to_path_buf();
 
-    if !git_root.status.success() {
-        return Ok(HashMap::new());
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_unmodified(false);
+
+    // Restrict to the requested directory relative to the repo root.
+    if let Ok(rel) = dir_path.strip_prefix(&repo_root) {
+        let mut spec = rel.to_string_lossy().to_string();
+        if !spec.is_empty() && !spec.ends_with('/') {
+            spec.push('/');
+        }
+        opts.pathspec(&spec);
     }
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain", "-uall"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to run git status: {}", e))?;
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| format!("Failed to get git status: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut status_map = HashMap::new();
 
-    let git_root_path = PathBuf::from(String::from_utf8_lossy(&git_root.stdout).trim());
-    let dir_path = PathBuf::from(path);
+    for entry in statuses.iter() {
+        let Some(rel_path) = entry.path() else {
+            continue;
+        };
+        let abs_path = repo_root.join(rel_path);
 
-    for line in stdout.lines() {
-        if line.len() < 4 {
+        // Only include files directly within the requested directory, or
+        // directories that are children of it (for recursive status markers).
+        if !abs_path.starts_with(&dir_path) {
             continue;
         }
-        let status_chars = &line[..2];
-        let file_path = line[3..].trim();
 
-        let abs_path = git_root_path.join(file_path);
-
-        if abs_path.starts_with(&dir_path)
-            || abs_path.parent().map(|p| p == dir_path).unwrap_or(false)
-        {
-            let status = match status_chars.trim() {
-                "M" | " M" | "MM" => "M",
-                "A" | "AM" => "A",
-                "D" | " D" => "D",
-                "R" => "R",
-                "??" => "?",
-                "UU" | "AA" | "DD" => "C",
-                _ => "M",
-            };
-
-            if let Some(name) = abs_path.file_name() {
-                status_map.insert(name.to_string_lossy().to_string(), status.to_string());
+        let s = entry.status();
+        let code = if s.intersects(git2::Status::CONFLICTED) {
+            "C"
+        } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
+            if s.contains(git2::Status::INDEX_NEW) {
+                "A"
+            } else {
+                "?"
             }
+        } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+            "D"
+        } else if s.intersects(git2::Status::INDEX_RENAMED | git2::Status::WT_RENAMED) {
+            "R"
+        } else if s.intersects(
+            git2::Status::WT_MODIFIED
+                | git2::Status::INDEX_MODIFIED
+                | git2::Status::WT_TYPECHANGE
+                | git2::Status::INDEX_TYPECHANGE,
+        ) {
+            "M"
+        } else {
+            continue;
+        };
+
+        if let Some(name) = abs_path.file_name() {
+            status_map.insert(name.to_string_lossy().to_string(), code.to_string());
         }
     }
 
@@ -142,20 +159,24 @@ pub fn read_directory_with_git_status(
     Ok(entries)
 }
 
-/// Get current git branch name for a path.
+/// Get current git branch name for a path using libgit2.
 pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
-    use std::process::Command;
+    let repo = match git2::Repository::discover(path) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
 
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
 
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(Some(branch))
+    if head.is_branch() {
+        Ok(head.shorthand().map(String::from))
     } else {
-        Ok(None)
+        // Detached HEAD — return abbreviated commit hash
+        Ok(head
+            .target()
+            .map(|oid| format!("{}", &oid.to_string()[..7.min(oid.to_string().len())])))
     }
 }

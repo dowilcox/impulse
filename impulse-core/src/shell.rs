@@ -237,3 +237,64 @@ pub struct ShellSpawnConfig {
     pub command: CommandBuilder,
     pub temp_files: Vec<PathBuf>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_shell_type_bash() {
+        assert_eq!(detect_shell_type("/bin/bash"), ShellType::Bash);
+        assert_eq!(detect_shell_type("/usr/bin/bash"), ShellType::Bash);
+    }
+
+    #[test]
+    fn detect_shell_type_zsh() {
+        assert_eq!(detect_shell_type("/bin/zsh"), ShellType::Zsh);
+        assert_eq!(detect_shell_type("/usr/local/bin/zsh"), ShellType::Zsh);
+    }
+
+    #[test]
+    fn detect_shell_type_fish() {
+        assert_eq!(detect_shell_type("/usr/bin/fish"), ShellType::Fish);
+    }
+
+    #[test]
+    fn detect_shell_type_unknown_defaults_to_bash() {
+        assert_eq!(detect_shell_type("/bin/sh"), ShellType::Bash);
+        assert_eq!(detect_shell_type("/usr/bin/dash"), ShellType::Bash);
+    }
+
+    #[test]
+    fn integration_script_not_empty() {
+        assert!(!get_integration_script(&ShellType::Bash).is_empty());
+        assert!(!get_integration_script(&ShellType::Zsh).is_empty());
+        assert!(!get_integration_script(&ShellType::Fish).is_empty());
+    }
+
+    #[test]
+    fn integration_scripts_contain_osc_markers() {
+        // All integration scripts should emit OSC 133 sequences
+        let bash = get_integration_script(&ShellType::Bash);
+        assert!(bash.contains("133"));
+
+        let zsh = get_integration_script(&ShellType::Zsh);
+        assert!(zsh.contains("133"));
+
+        let fish = get_integration_script(&ShellType::Fish);
+        assert!(fish.contains("133"));
+    }
+
+    #[test]
+    fn get_default_shell_name_returns_something() {
+        let name = get_default_shell_name();
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn get_default_shell_path_returns_something() {
+        let path = get_default_shell_path();
+        assert!(!path.is_empty());
+        assert!(path.contains('/'));
+    }
+}

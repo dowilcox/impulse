@@ -3,8 +3,9 @@
 //! All functions use C strings for input/output and JSON encoding for
 //! complex types. Callers must free returned strings with `impulse_free_string`.
 //!
-//! All extern "C" functions are wrapped in `catch_unwind` to prevent Rust
+//! All extern "C" functions are wrapped in `ffi_catch` to prevent Rust
 //! panics from crossing the FFI boundary (which is undefined behavior).
+//! Panic payloads are logged before returning the fallback value.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -12,6 +13,25 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+
+/// Run `f` inside `catch_unwind`, logging the panic payload before returning the
+/// fallback value.
+fn ffi_catch<T>(fallback: T, f: impl FnOnce() -> T + std::panic::UnwindSafe) -> T {
+    match catch_unwind(f) {
+        Ok(v) => v,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic payload".to_string()
+            };
+            log::error!("FFI panic caught: {}", msg);
+            fallback
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,7 +48,15 @@ fn to_rust_str(ptr: *const c_char) -> Option<String> {
 }
 
 fn to_c_string(s: &str) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
+    match CString::new(s) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => {
+            // The string contains interior NUL bytes; strip them so the caller
+            // still receives a valid C string rather than a silent empty string.
+            let sanitized: String = s.chars().filter(|&c| c != '\0').collect();
+            CString::new(sanitized).unwrap_or_default().into_raw()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -38,13 +66,16 @@ fn to_c_string(s: &str) -> *mut c_char {
 /// Free a string previously returned by an `impulse_*` function.
 #[no_mangle]
 pub extern "C" fn impulse_free_string(s: *mut c_char) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if !s.is_null() {
-            unsafe {
-                drop(CString::from_raw(s));
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if !s.is_null() {
+                unsafe {
+                    drop(CString::from_raw(s));
+                }
             }
-        }
-    }));
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -57,13 +88,13 @@ pub extern "C" fn impulse_free_string(s: *mut c_char) {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_ensure_monaco_extracted() -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        match impulse_editor::assets::ensure_monaco_extracted() {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| match impulse_editor::assets::ensure_monaco_extracted() {
             Ok(path) => to_c_string(&path.to_string_lossy()),
             Err(e) => to_c_string(&format!("ERROR:{}", e)),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+        }),
+    )
 }
 
 /// Return the embedded editor HTML content as a static string.
@@ -72,15 +103,22 @@ pub extern "C" fn impulse_ensure_monaco_extracted() -> *mut c_char {
 /// NOT be freed.
 #[no_mangle]
 pub extern "C" fn impulse_get_editor_html() -> *const c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        static CACHED: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
-        CACHED
-            .get_or_init(|| {
-                CString::new(impulse_editor::assets::EDITOR_HTML).unwrap_or_default()
-            })
-            .as_ptr()
-    }))
-    .unwrap_or(std::ptr::null())
+    ffi_catch(
+        std::ptr::null(),
+        AssertUnwindSafe(|| {
+            static CACHED: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
+            CACHED
+                .get_or_init(|| {
+                    CString::new(impulse_editor::assets::EDITOR_HTML).unwrap_or_else(|e| {
+                        log::warn!("EDITOR_HTML contains NUL at byte {}", e.nul_position());
+                        let html = impulse_editor::assets::EDITOR_HTML;
+                        let sanitized: String = html.chars().filter(|&c| c != '\0').collect();
+                        CString::new(sanitized).unwrap_or_default()
+                    })
+                })
+                .as_ptr()
+        }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -94,17 +132,19 @@ pub extern "C" fn impulse_get_editor_html() -> *const c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_get_shell_integration_script(shell: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let shell_name = match to_rust_str(shell) {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let shell_name = match to_rust_str(shell) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
 
-        let shell_type = impulse_core::shell::detect_shell_type(&shell_name);
-        let script = impulse_core::shell::get_integration_script(&shell_type);
-        to_c_string(script)
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            let shell_type = impulse_core::shell::detect_shell_type(&shell_name);
+            let script = impulse_core::shell::get_integration_script(&shell_type);
+            to_c_string(script)
+        }),
+    )
 }
 
 /// Return the user's login shell path.
@@ -113,10 +153,10 @@ pub extern "C" fn impulse_get_shell_integration_script(shell: *const c_char) -> 
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_get_user_login_shell() -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        to_c_string(&impulse_core::shell::get_default_shell_path())
-    }))
-    .unwrap_or(std::ptr::null_mut())
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| to_c_string(&impulse_core::shell::get_default_shell_path())),
+    )
 }
 
 /// Return the user's login shell name (e.g. "fish", "zsh", "bash").
@@ -124,10 +164,10 @@ pub extern "C" fn impulse_get_user_login_shell() -> *mut c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_get_user_login_shell_name() -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        to_c_string(&impulse_core::shell::get_default_shell_name())
-    }))
-    .unwrap_or(std::ptr::null_mut())
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| to_c_string(&impulse_core::shell::get_default_shell_name())),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -140,29 +180,30 @@ pub extern "C" fn impulse_get_user_login_shell_name() -> *mut c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_search_files(root: *const c_char, query: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let root = match to_rust_str(root) {
-            Some(s) => s,
-            None => return to_c_string("[]"),
-        };
-        let query = match to_rust_str(query) {
-            Some(s) => s,
-            None => return to_c_string("[]"),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let root = match to_rust_str(root) {
+                Some(s) => s,
+                None => return to_c_string("[]"),
+            };
+            let query = match to_rust_str(query) {
+                Some(s) => s,
+                None => return to_c_string("[]"),
+            };
 
-        match impulse_core::search::search_filenames(&root, &query, 200) {
-            Ok(results) => {
-                let json =
-                    serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
-                to_c_string(&json)
+            match impulse_core::search::search_filenames(&root, &query, 200) {
+                Ok(results) => {
+                    let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+                    to_c_string(&json)
+                }
+                Err(e) => {
+                    let json = serde_json::json!({"error": e.to_string()});
+                    to_c_string(&json.to_string())
+                }
             }
-            Err(e) => {
-                let json = serde_json::json!({"error": e.to_string()});
-                to_c_string(&json.to_string())
-            }
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+        }),
+    )
 }
 
 /// Search file contents in `root` for `query`.
@@ -175,26 +216,27 @@ pub extern "C" fn impulse_search_content(
     query: *const c_char,
     case_sensitive: bool,
 ) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let root = match to_rust_str(root) {
-            Some(s) => s,
-            None => return to_c_string("[]"),
-        };
-        let query = match to_rust_str(query) {
-            Some(s) => s,
-            None => return to_c_string("[]"),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let root = match to_rust_str(root) {
+                Some(s) => s,
+                None => return to_c_string("[]"),
+            };
+            let query = match to_rust_str(query) {
+                Some(s) => s,
+                None => return to_c_string("[]"),
+            };
 
-        match impulse_core::search::search_contents(&root, &query, 500, case_sensitive) {
-            Ok(results) => {
-                let json =
-                    serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
-                to_c_string(&json)
+            match impulse_core::search::search_contents(&root, &query, 500, case_sensitive) {
+                Ok(results) => {
+                    let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+                    to_c_string(&json)
+                }
+                Err(_) => to_c_string("[]"),
             }
-            Err(_) => to_c_string("[]"),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+        }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -214,27 +256,29 @@ pub struct LspRegistryHandle {
 /// `impulse_lsp_registry_free`.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspRegistryHandle {
-    catch_unwind(AssertUnwindSafe(|| {
-        let root_uri = match to_rust_str(root_uri) {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let root_uri = match to_rust_str(root_uri) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
 
-        let runtime = match Runtime::new() {
-            Ok(rt) => Arc::new(rt),
-            Err(_) => return std::ptr::null_mut(),
-        };
+            let runtime = match Runtime::new() {
+                Ok(rt) => Arc::new(rt),
+                Err(_) => return std::ptr::null_mut(),
+            };
 
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let registry = Arc::new(impulse_core::lsp::LspRegistry::new(root_uri, event_tx));
+            let (event_tx, event_rx) = mpsc::unbounded_channel();
+            let registry = Arc::new(impulse_core::lsp::LspRegistry::new(root_uri, event_tx));
 
-        Box::into_raw(Box::new(LspRegistryHandle {
-            registry,
-            runtime,
-            event_rx: std::sync::Mutex::new(event_rx),
-        }))
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            Box::into_raw(Box::new(LspRegistryHandle {
+                registry,
+                runtime,
+                event_rx: std::sync::Mutex::new(event_rx),
+            }))
+        }),
+    )
 }
 
 /// Ensure LSP servers are running for the given language and file.
@@ -249,27 +293,29 @@ pub extern "C" fn impulse_lsp_ensure_servers(
     language_id: *const c_char,
     file_uri: *const c_char,
 ) -> i32 {
-    catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return -1;
-        }
-        let handle = unsafe { &*handle };
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return -1;
+            }
+            let handle = unsafe { &*handle };
 
-        let language_id = match to_rust_str(language_id) {
-            Some(s) => s,
-            None => return -1,
-        };
-        let file_uri = match to_rust_str(file_uri) {
-            Some(s) => s,
-            None => return -1,
-        };
+            let language_id = match to_rust_str(language_id) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let file_uri = match to_rust_str(file_uri) {
+                Some(s) => s,
+                None => return -1,
+            };
 
-        handle.runtime.block_on(async {
-            let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-            clients.len() as i32
-        })
-    }))
-    .unwrap_or(-1)
+            handle.runtime.block_on(async {
+                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
+                clients.len() as i32
+            })
+        }),
+    )
 }
 
 /// Send a JSON-RPC request to the first LSP server for the given language.
@@ -286,47 +332,49 @@ pub extern "C" fn impulse_lsp_request(
     method: *const c_char,
     params_json: *const c_char,
 ) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return to_c_string("{\"error\":\"null handle\"}");
-        }
-        let handle = unsafe { &*handle };
-
-        let language_id = match to_rust_str(language_id) {
-            Some(s) => s,
-            None => return to_c_string("{\"error\":\"invalid language_id\"}"),
-        };
-        let file_uri = match to_rust_str(file_uri) {
-            Some(s) => s,
-            None => return to_c_string("{\"error\":\"invalid file_uri\"}"),
-        };
-        let method = match to_rust_str(method) {
-            Some(s) => s,
-            None => return to_c_string("{\"error\":\"invalid method\"}"),
-        };
-        let params: Option<serde_json::Value> =
-            to_rust_str(params_json).and_then(|s| serde_json::from_str(&s).ok());
-
-        handle.runtime.block_on(async {
-            let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-            if let Some(client) = clients.first() {
-                match client.request(&method, params).await {
-                    Ok(value) => {
-                        let json = serde_json::to_string(&value)
-                            .unwrap_or_else(|_| "null".to_string());
-                        to_c_string(&json)
-                    }
-                    Err(e) => {
-                        let json = serde_json::json!({"error": e.to_string()});
-                        to_c_string(&json.to_string())
-                    }
-                }
-            } else {
-                to_c_string("{\"error\":\"no LSP client available\"}")
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return to_c_string("{\"error\":\"null handle\"}");
             }
-        })
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            let handle = unsafe { &*handle };
+
+            let language_id = match to_rust_str(language_id) {
+                Some(s) => s,
+                None => return to_c_string("{\"error\":\"invalid language_id\"}"),
+            };
+            let file_uri = match to_rust_str(file_uri) {
+                Some(s) => s,
+                None => return to_c_string("{\"error\":\"invalid file_uri\"}"),
+            };
+            let method = match to_rust_str(method) {
+                Some(s) => s,
+                None => return to_c_string("{\"error\":\"invalid method\"}"),
+            };
+            let params: Option<serde_json::Value> =
+                to_rust_str(params_json).and_then(|s| serde_json::from_str(&s).ok());
+
+            handle.runtime.block_on(async {
+                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
+                if let Some(client) = clients.first() {
+                    match client.request(&method, params).await {
+                        Ok(value) => {
+                            let json = serde_json::to_string(&value)
+                                .unwrap_or_else(|_| "null".to_string());
+                            to_c_string(&json)
+                        }
+                        Err(e) => {
+                            let json = serde_json::json!({"error": e.to_string()});
+                            to_c_string(&json.to_string())
+                        }
+                    }
+                } else {
+                    to_c_string("{\"error\":\"no LSP client available\"}")
+                }
+            })
+        }),
+    )
 }
 
 /// Send an LSP notification (no response expected).
@@ -343,41 +391,43 @@ pub extern "C" fn impulse_lsp_notify(
     method: *const c_char,
     params_json: *const c_char,
 ) -> i32 {
-    catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return -1;
-        }
-        let handle = unsafe { &*handle };
-
-        let language_id = match to_rust_str(language_id) {
-            Some(s) => s,
-            None => return -1,
-        };
-        let file_uri = match to_rust_str(file_uri) {
-            Some(s) => s,
-            None => return -1,
-        };
-        let method = match to_rust_str(method) {
-            Some(s) => s,
-            None => return -1,
-        };
-        let params: serde_json::Value = to_rust_str(params_json)
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(serde_json::Value::Null);
-
-        handle.runtime.block_on(async {
-            let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-            if let Some(client) = clients.first() {
-                match client.notify(&method, params) {
-                    Ok(()) => 0,
-                    Err(_) => -1,
-                }
-            } else {
-                -1
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return -1;
             }
-        })
-    }))
-    .unwrap_or(-1)
+            let handle = unsafe { &*handle };
+
+            let language_id = match to_rust_str(language_id) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let file_uri = match to_rust_str(file_uri) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let method = match to_rust_str(method) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let params: serde_json::Value = to_rust_str(params_json)
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null);
+
+            handle.runtime.block_on(async {
+                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
+                if let Some(client) = clients.first() {
+                    match client.notify(&method, params) {
+                        Ok(()) => 0,
+                        Err(_) => -1,
+                    }
+                } else {
+                    -1
+                }
+            })
+        }),
+    )
 }
 
 /// Poll for LSP events (diagnostics, server lifecycle).
@@ -386,118 +436,126 @@ pub extern "C" fn impulse_lsp_notify(
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_poll_event(handle: *mut LspRegistryHandle) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return std::ptr::null_mut();
-        }
-        let handle = unsafe { &*handle };
-
-        let mut rx = match handle.event_rx.lock() {
-            Ok(rx) => rx,
-            Err(_) => return std::ptr::null_mut(),
-        };
-
-        match rx.try_recv() {
-            Ok(event) => {
-                let json = match event {
-                    impulse_core::lsp::LspEvent::Diagnostics {
-                        uri,
-                        version,
-                        diagnostics,
-                    } => {
-                        let diag_json: Vec<serde_json::Value> = diagnostics
-                            .iter()
-                            .map(|d| {
-                                serde_json::json!({
-                                    "severity": d.severity.map(|s| match s {
-                                        lsp_types::DiagnosticSeverity::ERROR => 1u8,
-                                        lsp_types::DiagnosticSeverity::WARNING => 2,
-                                        lsp_types::DiagnosticSeverity::INFORMATION => 3,
-                                        lsp_types::DiagnosticSeverity::HINT => 4,
-                                        _ => 1,
-                                    }).unwrap_or(1),
-                                    "startLine": d.range.start.line,
-                                    "startColumn": d.range.start.character,
-                                    "endLine": d.range.end.line,
-                                    "endColumn": d.range.end.character,
-                                    "message": d.message,
-                                    "source": d.source,
-                                })
-                            })
-                            .collect();
-                        serde_json::json!({
-                            "type": "diagnostics",
-                            "uri": uri,
-                            "version": version,
-                            "diagnostics": diag_json,
-                        })
-                    }
-                    impulse_core::lsp::LspEvent::Initialized {
-                        client_key,
-                        server_id,
-                    } => {
-                        serde_json::json!({
-                            "type": "initialized",
-                            "clientKey": client_key,
-                            "serverId": server_id,
-                        })
-                    }
-                    impulse_core::lsp::LspEvent::ServerError {
-                        client_key,
-                        server_id,
-                        message,
-                    } => {
-                        serde_json::json!({
-                            "type": "serverError",
-                            "clientKey": client_key,
-                            "serverId": server_id,
-                            "message": message,
-                        })
-                    }
-                    impulse_core::lsp::LspEvent::ServerExited {
-                        client_key,
-                        server_id,
-                    } => {
-                        serde_json::json!({
-                            "type": "serverExited",
-                            "clientKey": client_key,
-                            "serverId": server_id,
-                        })
-                    }
-                };
-                to_c_string(&json.to_string())
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
             }
-            Err(_) => std::ptr::null_mut(),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            let handle = unsafe { &*handle };
+
+            let mut rx = match handle.event_rx.lock() {
+                Ok(rx) => rx,
+                Err(_) => return std::ptr::null_mut(),
+            };
+
+            match rx.try_recv() {
+                Ok(event) => {
+                    let json = match event {
+                        impulse_core::lsp::LspEvent::Diagnostics {
+                            uri,
+                            version,
+                            diagnostics,
+                        } => {
+                            let diag_json: Vec<serde_json::Value> = diagnostics
+                                .iter()
+                                .map(|d| {
+                                    serde_json::json!({
+                                        "severity": d.severity.map(|s| match s {
+                                            lsp_types::DiagnosticSeverity::ERROR => 1u8,
+                                            lsp_types::DiagnosticSeverity::WARNING => 2,
+                                            lsp_types::DiagnosticSeverity::INFORMATION => 3,
+                                            lsp_types::DiagnosticSeverity::HINT => 4,
+                                            _ => 1,
+                                        }).unwrap_or(1),
+                                        "startLine": d.range.start.line,
+                                        "startColumn": d.range.start.character,
+                                        "endLine": d.range.end.line,
+                                        "endColumn": d.range.end.character,
+                                        "message": d.message,
+                                        "source": d.source,
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "type": "diagnostics",
+                                "uri": uri,
+                                "version": version,
+                                "diagnostics": diag_json,
+                            })
+                        }
+                        impulse_core::lsp::LspEvent::Initialized {
+                            client_key,
+                            server_id,
+                        } => {
+                            serde_json::json!({
+                                "type": "initialized",
+                                "clientKey": client_key,
+                                "serverId": server_id,
+                            })
+                        }
+                        impulse_core::lsp::LspEvent::ServerError {
+                            client_key,
+                            server_id,
+                            message,
+                        } => {
+                            serde_json::json!({
+                                "type": "serverError",
+                                "clientKey": client_key,
+                                "serverId": server_id,
+                                "message": message,
+                            })
+                        }
+                        impulse_core::lsp::LspEvent::ServerExited {
+                            client_key,
+                            server_id,
+                        } => {
+                            serde_json::json!({
+                                "type": "serverExited",
+                                "clientKey": client_key,
+                                "serverId": server_id,
+                            })
+                        }
+                    };
+                    to_c_string(&json.to_string())
+                }
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
 }
 
 /// Shut down all LSP servers managed by this registry.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_shutdown_all(handle: *mut LspRegistryHandle) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return;
-        }
-        let handle = unsafe { &*handle };
-        handle.runtime.block_on(async {
-            handle.registry.shutdown_all().await;
-        });
-    }));
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return;
+            }
+            let handle = unsafe { &*handle };
+            handle.runtime.block_on(async {
+                handle.registry.shutdown_all().await;
+            });
+        }),
+    );
 }
 
 /// Free an LSP registry handle. Shuts down all servers first.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if !handle.is_null() {
-            let handle = unsafe { Box::from_raw(handle) };
-            handle.runtime.block_on(async {
-                handle.registry.shutdown_all().await;
-            });
-        }
-    }));
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if !handle.is_null() {
+                let handle = unsafe { Box::from_raw(handle) };
+                handle.runtime.block_on(async {
+                    handle.registry.shutdown_all().await;
+                });
+            }
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -510,9 +568,11 @@ pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_check_status() -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let statuses = impulse_core::lsp::managed_web_lsp_status();
-        let json: Vec<serde_json::Value> = statuses
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let statuses = impulse_core::lsp::managed_web_lsp_status();
+            let json: Vec<serde_json::Value> = statuses
             .iter()
             .map(|s| {
                 serde_json::json!({
@@ -522,9 +582,9 @@ pub extern "C" fn impulse_lsp_check_status() -> *mut c_char {
                 })
             })
             .collect();
-        to_c_string(&serde_json::to_string(&json).unwrap_or_else(|_| "[]".to_string()))
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            to_c_string(&serde_json::to_string(&json).unwrap_or_else(|_| "[]".to_string()))
+        }),
+    )
 }
 
 /// Install managed web LSP servers.
@@ -534,13 +594,15 @@ pub extern "C" fn impulse_lsp_check_status() -> *mut c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_lsp_install() -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        match impulse_core::lsp::install_managed_web_lsp_servers() {
-            Ok(path) => to_c_string(&path.to_string_lossy()),
-            Err(e) => to_c_string(&format!("ERROR:{}", e)),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(
+            || match impulse_core::lsp::install_managed_web_lsp_servers() {
+                Ok(path) => to_c_string(&path.to_string_lossy()),
+                Err(e) => to_c_string(&format!("ERROR:{}", e)),
+            },
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -553,18 +615,20 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let path = match to_rust_str(path) {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
 
-        match impulse_core::filesystem::get_git_branch(&path) {
-            Ok(Some(branch)) => to_c_string(&branch),
-            Ok(None) | Err(_) => std::ptr::null_mut(),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+            match impulse_core::filesystem::get_git_branch(&path) {
+                Ok(Some(branch)) => to_c_string(&branch),
+                Ok(None) | Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
 }
 
 /// Returns git blame info for a specific line in a file.
@@ -574,26 +638,28 @@ pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_git_blame(file_path: *const c_char, line: u32) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let file_path = match to_rust_str(file_path) {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let file_path = match to_rust_str(file_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
 
-        match impulse_core::git::get_line_blame(&file_path, line) {
-            Ok(info) => {
-                let json = serde_json::json!({
-                    "author": info.author,
-                    "date": info.date,
-                    "commitHash": info.commit_hash,
-                    "summary": info.summary,
-                });
-                to_c_string(&json.to_string())
+            match impulse_core::git::get_line_blame(&file_path, line) {
+                Ok(info) => {
+                    let json = serde_json::json!({
+                        "author": info.author,
+                        "date": info.date,
+                        "commitHash": info.commit_hash,
+                        "summary": info.summary,
+                    });
+                    to_c_string(&json.to_string())
+                }
+                Err(_) => std::ptr::null_mut(),
             }
-            Err(_) => std::ptr::null_mut(),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+        }),
+    )
 }
 
 /// Discard working-tree changes for a single file, restoring it to the HEAD version.
@@ -601,18 +667,20 @@ pub extern "C" fn impulse_git_blame(file_path: *const c_char, line: u32) -> *mut
 /// Returns 0 on success or -1 on error.
 #[no_mangle]
 pub extern "C" fn impulse_git_discard_changes(file_path: *const c_char) -> i32 {
-    catch_unwind(AssertUnwindSafe(|| {
-        let file_path = match to_rust_str(file_path) {
-            Some(s) => s,
-            None => return -1,
-        };
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            let file_path = match to_rust_str(file_path) {
+                Some(s) => s,
+                None => return -1,
+            };
 
-        match impulse_core::git::discard_file_changes(&file_path) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        }
-    }))
-    .unwrap_or(-1)
+            match impulse_core::git::discard_file_changes(&file_path) {
+                Ok(()) => 0,
+                Err(_) => -1,
+            }
+        }),
+    )
 }
 
 /// Computes diff markers for the given file path (comparing working copy to HEAD).
@@ -623,41 +691,42 @@ pub extern "C" fn impulse_git_discard_changes(file_path: *const c_char) -> i32 {
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
 pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let file_path = match to_rust_str(file_path) {
-            Some(s) => s,
-            None => return std::ptr::null_mut(),
-        };
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let file_path = match to_rust_str(file_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
 
-        match impulse_core::git::get_file_diff(&file_path) {
-            Ok(diff) => {
-                let mut markers: Vec<impulse_editor::protocol::DiffDecoration> = diff
-                    .changed_lines
-                    .iter()
-                    .filter_map(|(&line, status)| {
-                        let status_str = match status {
-                            impulse_core::git::DiffLineStatus::Added => "added",
-                            impulse_core::git::DiffLineStatus::Modified => "modified",
-                            impulse_core::git::DiffLineStatus::Unchanged => return None,
-                        };
-                        Some(impulse_editor::protocol::DiffDecoration {
-                            line,
-                            status: status_str.to_string(),
+            match impulse_core::git::get_file_diff(&file_path) {
+                Ok(diff) => {
+                    let mut markers: Vec<impulse_editor::protocol::DiffDecoration> = diff
+                        .changed_lines
+                        .iter()
+                        .filter_map(|(&line, status)| {
+                            let status_str = match status {
+                                impulse_core::git::DiffLineStatus::Added => "added",
+                                impulse_core::git::DiffLineStatus::Modified => "modified",
+                                impulse_core::git::DiffLineStatus::Unchanged => return None,
+                            };
+                            Some(impulse_editor::protocol::DiffDecoration {
+                                line,
+                                status: status_str.to_string(),
+                            })
                         })
-                    })
-                    .collect();
-                for &line in &diff.deleted_lines {
-                    markers.push(impulse_editor::protocol::DiffDecoration {
-                        line,
-                        status: "deleted".to_string(),
-                    });
+                        .collect();
+                    for &line in &diff.deleted_lines {
+                        markers.push(impulse_editor::protocol::DiffDecoration {
+                            line,
+                            status: "deleted".to_string(),
+                        });
+                    }
+                    let json = serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
+                    to_c_string(&json)
                 }
-                let json =
-                    serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
-                to_c_string(&json)
+                Err(_) => std::ptr::null_mut(),
             }
-            Err(_) => std::ptr::null_mut(),
-        }
-    }))
-    .unwrap_or(std::ptr::null_mut())
+        }),
+    )
 }

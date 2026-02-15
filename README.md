@@ -181,6 +181,14 @@ cargo run --release -p impulse-linux
 ./scripts/install-lsp-servers.sh
 ```
 
+## Testing
+
+```bash
+cargo test                         # Run all tests
+cargo test -p impulse-core         # Run only impulse-core tests
+cargo test -p impulse-editor       # Run only impulse-editor tests
+```
+
 ## Architecture
 
 Impulse is a Rust workspace. Platform-agnostic logic lives in shared crates, with native frontends per platform.

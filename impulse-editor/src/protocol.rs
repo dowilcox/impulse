@@ -298,3 +298,181 @@ pub fn diagnostic_severity_to_monaco(severity: u8) -> u8 {
         _ => 2, // default to Info
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_command_roundtrip_open_file() {
+        let cmd = EditorCommand::OpenFile {
+            file_path: "/tmp/test.rs".to_string(),
+            content: "fn main() {}".to_string(),
+            language: "rust".to_string(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::OpenFile {
+                file_path,
+                content,
+                language,
+            } => {
+                assert_eq!(file_path, "/tmp/test.rs");
+                assert_eq!(content, "fn main() {}");
+                assert_eq!(language, "rust");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_go_to_position() {
+        let cmd = EditorCommand::GoToPosition {
+            line: 42,
+            column: 10,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::GoToPosition { line, column } => {
+                assert_eq!(line, 42);
+                assert_eq!(column, 10);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_content_changed() {
+        let event = EditorEvent::ContentChanged {
+            content: "hello".to_string(),
+            version: 5,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::ContentChanged { content, version } => {
+                assert_eq!(content, "hello");
+                assert_eq!(version, 5);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_cursor_moved() {
+        let event = EditorEvent::CursorMoved { line: 1, column: 1 };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::CursorMoved { line, column } => {
+                assert_eq!(line, 1);
+                assert_eq!(column, 1);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_completion_requested() {
+        let event = EditorEvent::CompletionRequested {
+            request_id: 99,
+            line: 10,
+            character: 5,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::CompletionRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 99);
+                assert_eq!(line, 10);
+                assert_eq!(character, 5);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_tagged_serialization() {
+        let event = EditorEvent::Ready;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"Ready\""));
+    }
+
+    #[test]
+    fn editor_command_tagged_serialization() {
+        let cmd = EditorCommand::SetReadOnly { read_only: true };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"SetReadOnly\""));
+        assert!(json.contains("\"read_only\":true"));
+    }
+
+    #[test]
+    fn editor_options_skip_none_fields() {
+        let opts = EditorOptions {
+            font_size: Some(14),
+            font_family: None,
+            tab_size: None,
+            insert_spaces: None,
+            word_wrap: None,
+            minimap_enabled: None,
+            line_numbers: None,
+            render_whitespace: None,
+            render_line_highlight: None,
+            rulers: None,
+            sticky_scroll: None,
+            bracket_pair_colorization: None,
+            indent_guides: None,
+            font_ligatures: None,
+            folding: None,
+            scroll_beyond_last_line: None,
+            smooth_scrolling: None,
+            cursor_style: None,
+            cursor_blinking: None,
+            line_height: None,
+            auto_closing_brackets: None,
+        };
+        let json = serde_json::to_string(&opts).unwrap();
+        assert!(json.contains("\"font_size\":14"));
+        assert!(!json.contains("font_family"));
+    }
+
+    #[test]
+    fn lsp_completion_kind_to_monaco_known() {
+        assert_eq!(lsp_completion_kind_to_monaco("Method"), 0);
+        assert_eq!(lsp_completion_kind_to_monaco("Function"), 1);
+        assert_eq!(lsp_completion_kind_to_monaco("Variable"), 4);
+        assert_eq!(lsp_completion_kind_to_monaco("Keyword"), 17);
+    }
+
+    #[test]
+    fn lsp_completion_kind_to_monaco_unknown_defaults_to_text() {
+        assert_eq!(lsp_completion_kind_to_monaco("Unknown"), 18);
+    }
+
+    #[test]
+    fn diagnostic_severity_mapping() {
+        assert_eq!(diagnostic_severity_to_monaco(1), 8); // Error
+        assert_eq!(diagnostic_severity_to_monaco(2), 4); // Warning
+        assert_eq!(diagnostic_severity_to_monaco(3), 2); // Info
+        assert_eq!(diagnostic_severity_to_monaco(4), 1); // Hint
+        assert_eq!(diagnostic_severity_to_monaco(255), 2); // Unknown -> Info
+    }
+
+    #[test]
+    fn diff_decoration_roundtrip() {
+        let dec = DiffDecoration {
+            line: 42,
+            status: "added".to_string(),
+        };
+        let json = serde_json::to_string(&dec).unwrap();
+        let parsed: DiffDecoration = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.line, 42);
+        assert_eq!(parsed.status, "added");
+    }
+}

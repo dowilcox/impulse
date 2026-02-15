@@ -7,7 +7,6 @@ use vte4::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use url::Url;
 
 use crate::editor;
 use crate::keybindings;
@@ -2973,88 +2972,14 @@ fn get_active_cwd(tab_view: &adw::TabView) -> Option<String> {
     None
 }
 
-/// Convert a local path to a file:// URI.
 fn file_path_to_uri(path: &std::path::Path) -> Option<String> {
-    if path.is_dir() {
-        Url::from_directory_path(path).ok().map(|u| u.to_string())
-    } else {
-        Url::from_file_path(path).ok().map(|u| u.to_string())
-    }
+    impulse_core::util::file_path_to_uri(path)
 }
 
-/// Convert a file:// URI to a local file path.
 fn uri_to_file_path(uri: &str) -> String {
-    if let Ok(parsed) = Url::parse(uri) {
-        if parsed.scheme() == "file" {
-            if let Ok(path) = parsed.to_file_path() {
-                return path.to_string_lossy().to_string();
-            }
-
-            // Host-form file URIs (e.g. file://hostname/path) may fail
-            // to_file_path() on some platforms; fall back to URI path.
-            let decoded = url_decode(parsed.path());
-            if !decoded.is_empty() {
-                return decoded;
-            }
-        }
-    }
-
-    // Fallback for non-standard file URI strings.
-    if let Some(rest) = uri.strip_prefix("file://") {
-        if let Some(slash_idx) = rest.find('/') {
-            return url_decode(&rest[slash_idx..]);
-        }
-        return url_decode(rest);
-    }
-
-    uri.to_string()
+    impulse_core::util::uri_to_file_path(uri)
 }
 
-fn url_decode(input: &str) -> String {
-    impulse_core::pty::url_decode(input)
-}
-
-/// Determine LSP language ID from a file URI based on extension.
 fn language_from_uri(uri: &str) -> String {
-    let path = uri_to_file_path(uri);
-    let path_obj = std::path::Path::new(&path);
-    if let Some(name) = path_obj.file_name().and_then(|n| n.to_str()) {
-        if name.eq_ignore_ascii_case("dockerfile") {
-            return "dockerfile".to_string();
-        }
-    }
-    let ext = path_obj
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    match ext.as_str() {
-        "rs" => "rust".to_string(),
-        "py" | "pyi" => "python".to_string(),
-        "js" | "mjs" | "cjs" => "javascript".to_string(),
-        "jsx" => "javascriptreact".to_string(),
-        "ts" => "typescript".to_string(),
-        "tsx" => "typescriptreact".to_string(),
-        "c" | "h" => "c".to_string(),
-        "cpp" | "cxx" | "cc" | "hpp" | "hxx" => "cpp".to_string(),
-        "html" | "htm" => "html".to_string(),
-        "css" => "css".to_string(),
-        "scss" => "scss".to_string(),
-        "less" => "less".to_string(),
-        "json" => "json".to_string(),
-        "jsonc" => "jsonc".to_string(),
-        "yaml" | "yml" => "yaml".to_string(),
-        "vue" => "vue".to_string(),
-        "svelte" => "svelte".to_string(),
-        "graphql" | "gql" => "graphql".to_string(),
-        "sh" | "bash" | "zsh" | "fish" => "shellscript".to_string(),
-        "dockerfile" => "dockerfile".to_string(),
-        "go" => "go".to_string(),
-        "java" => "java".to_string(),
-        "rb" => "ruby".to_string(),
-        "lua" => "lua".to_string(),
-        "zig" => "zig".to_string(),
-        "php" => "php".to_string(),
-        _ => ext,
-    }
+    impulse_core::util::language_from_uri(uri)
 }

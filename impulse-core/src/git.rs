@@ -269,3 +269,48 @@ fn format_timestamp(timestamp: i64) -> String {
 fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_leap_year_basic() {
+        assert!(is_leap_year(2000)); // divisible by 400
+        assert!(is_leap_year(2024)); // divisible by 4
+        assert!(!is_leap_year(1900)); // divisible by 100 but not 400
+        assert!(!is_leap_year(2023)); // not divisible by 4
+    }
+
+    #[test]
+    fn format_timestamp_epoch() {
+        assert_eq!(format_timestamp(0), "1970-01-01");
+    }
+
+    #[test]
+    fn format_timestamp_known_date() {
+        // 2024-01-01 00:00:00 UTC = 1704067200
+        assert_eq!(format_timestamp(1704067200), "2024-01-01");
+    }
+
+    #[test]
+    fn format_timestamp_leap_day() {
+        // 2024-02-29 00:00:00 UTC = 1709164800
+        assert_eq!(format_timestamp(1709164800), "2024-02-29");
+    }
+
+    #[test]
+    fn format_timestamp_end_of_year() {
+        // 2023-12-31 00:00:00 UTC = 1703980800
+        assert_eq!(format_timestamp(1703980800), "2023-12-31");
+    }
+
+    #[test]
+    fn diff_line_status_serialization() {
+        let json = serde_json::to_string(&DiffLineStatus::Added).unwrap();
+        assert_eq!(json, "\"Added\"");
+
+        let json = serde_json::to_string(&DiffLineStatus::Modified).unwrap();
+        assert_eq!(json, "\"Modified\"");
+    }
+}
