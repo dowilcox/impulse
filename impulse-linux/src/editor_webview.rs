@@ -54,7 +54,7 @@ impl MonacoEditorHandle {
             }
         };
         // Escape for embedding in JS string literal
-        let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
+        let escaped = js_string_escape(&json);
         let script = format!("impulseReceiveCommand('{}')", escaped);
         self.webview.evaluate_javascript(
             &script,
@@ -175,7 +175,7 @@ impl MonacoEditorHandle {
         } else {
             vec![MonacoHoverContent {
                 value: format!("```\n{}\n```", content),
-                is_trusted: true,
+                is_trusted: false,
             }]
         };
         self.send_command(&EditorCommand::ResolveHover {
@@ -267,7 +267,7 @@ impl MonacoEditorHandle {
                             language: lang,
                         };
                         if let Ok(json) = serde_json::to_string(&cmd) {
-                            let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
+                            let escaped = js_string_escape(&json);
                             let script = format!("impulseReceiveCommand('{}')", escaped);
                             webview.evaluate_javascript(
                                 &script,
@@ -332,9 +332,10 @@ pub fn warm_up_editor() {
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
             wk_settings.set_enable_javascript(true);
-            wk_settings.set_enable_developer_extras(true);
+            if std::env::var("IMPULSE_DEVTOOLS").is_ok() {
+                wk_settings.set_enable_developer_extras(true);
+            }
             wk_settings.set_allow_file_access_from_file_urls(true);
-            wk_settings.set_allow_universal_access_from_file_urls(true);
         }
 
         let is_ready = Rc::new(Cell::new(false));
@@ -524,9 +525,10 @@ where
     // Configure WebView settings
     if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         wk_settings.set_enable_javascript(true);
-        wk_settings.set_enable_developer_extras(true);
+        if std::env::var("IMPULSE_DEVTOOLS").is_ok() {
+            wk_settings.set_enable_developer_extras(true);
+        }
         wk_settings.set_allow_file_access_from_file_urls(true);
-        wk_settings.set_allow_universal_access_from_file_urls(true);
     }
 
     // Create the handle
@@ -621,10 +623,14 @@ where
         }
         Err(e) => {
             log::error!("Failed to extract Monaco assets: {}", e);
+            let safe_error = e.to_string()
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
             let error_html = format!(
                 "<html><body style='background:#1a1b26;color:#a9b1d6;font-family:monospace;padding:2em'>\
                  <h3>Editor failed to load</h3><p>{}</p></body></html>",
-                e
+                safe_error
             );
             webview.load_html(&error_html, None);
         }
@@ -636,6 +642,32 @@ where
     glib::idle_add_local_once(|| warm_up_editor());
 
     (container, handle)
+}
+
+// ---------------------------------------------------------------------------
+// JS string escaping
+// ---------------------------------------------------------------------------
+
+/// Properly escape a string for embedding in a JavaScript single-quoted string literal.
+/// This handles backslashes, quotes, newlines, and other special characters that
+/// could break out of the string or cause injection.
+fn js_string_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            '\u{2028}' => out.push_str("\\u2028"), // line separator
+            '\u{2029}' => out.push_str("\\u2029"), // paragraph separator
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

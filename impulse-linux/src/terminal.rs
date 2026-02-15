@@ -258,8 +258,9 @@ pub fn spawn_command(
         argv.push(arg.as_str());
     }
 
-    // Inherit current environment
+    // Inherit current environment, filtering out dangerous variables
     let envv: Vec<String> = std::env::vars()
+        .filter(|(k, _)| !matches!(k.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT"))
         .map(|(k, v)| format!("{}={}", k, v))
         .collect();
     let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
@@ -292,8 +293,11 @@ fn build_spawn_params(
     let mut argv = vec![shell_path.to_string()];
     let mut envv = Vec::new();
 
-    // Inherit current environment
+    // Inherit current environment, filtering out dangerous variables
     for (key, value) in std::env::vars() {
+        if matches!(key.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT") {
+            continue;
+        }
         envv.push(format!("{}={}", key, value));
     }
 
@@ -377,10 +381,19 @@ pub fn paste_from_clipboard(terminal: &vte4::Terminal) {
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_millis();
-                let path = format!("/tmp/impulse-clipboard-{}.png", ts);
+                    .as_nanos();
+                let pid = std::process::id();
+                let path = format!("/tmp/impulse-clipboard-{}-{}.png", pid, ts);
                 match texture.save_to_png(&path) {
                     Ok(()) => {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
                         let escaped = shell_escape(&path);
                         term.feed_child(escaped.as_bytes());
                     }

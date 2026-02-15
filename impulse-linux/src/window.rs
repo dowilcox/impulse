@@ -3011,27 +3011,7 @@ fn uri_to_file_path(uri: &str) -> String {
 }
 
 fn url_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                } else {
-                    result.push('%');
-                    result.push_str(&hex);
-                }
-            } else {
-                result.push('%');
-                result.push_str(&hex);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    impulse_core::pty::url_decode(input)
 }
 
 /// Determine LSP language ID from a file URI based on extension.

@@ -139,7 +139,18 @@ fn command_looks_like_path(command: &str) -> bool {
 }
 
 fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        match path.metadata() {
+            Ok(meta) => meta.is_file() && (meta.permissions().mode() & 0o111 != 0),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
 fn find_command_in_path(command: &str) -> Option<PathBuf> {
@@ -468,6 +479,26 @@ impl LspClient {
             }
 
             if content_length == 0 {
+                continue;
+            }
+
+            // Reject absurdly large messages to prevent memory exhaustion (64 MB limit)
+            const MAX_LSP_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+            if content_length > MAX_LSP_MESSAGE_SIZE {
+                log::warn!(
+                    "LSP message too large ({} bytes), skipping",
+                    content_length
+                );
+                // Drain the oversized body to keep the stream in sync
+                let mut remaining = content_length;
+                let mut discard_buf = vec![0u8; 8192];
+                while remaining > 0 {
+                    let to_read = remaining.min(discard_buf.len());
+                    match reader.read_exact(&mut discard_buf[..to_read]).await {
+                        Ok(_) => remaining -= to_read,
+                        Err(_) => return,
+                    }
+                }
                 continue;
             }
 
@@ -880,7 +911,7 @@ impl LspConfig {
         let mut cfg = Self::default();
 
         if let Some(global_path) = global_lsp_config_path() {
-            cfg.apply_file(&global_path);
+            cfg.apply_file(&global_path, /* trusted */ true);
         }
 
         if let Some(root_path) = uri_to_file_path(fallback_root_uri) {
@@ -889,14 +920,18 @@ impl LspConfig {
                 root_path.join(".impulse-lsp.json"),
             ];
             for path in project_config_paths {
-                cfg.apply_file(&path);
+                // Project-local configs are untrusted: they cannot define new
+                // server commands, only remap language->server associations and
+                // root markers. This prevents malicious repos from executing
+                // arbitrary binaries.
+                cfg.apply_file(&path, /* trusted */ false);
             }
         }
 
         cfg
     }
 
-    fn apply_file(&mut self, path: &Path) {
+    fn apply_file(&mut self, path: &Path, trusted: bool) {
         let contents = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(_) => return,
@@ -910,10 +945,40 @@ impl LspConfig {
         };
 
         if let Some(servers) = overrides.servers {
-            self.servers.extend(servers);
+            if trusted {
+                // Global config may define arbitrary server commands
+                self.servers.extend(servers);
+            } else {
+                // Project-local configs may only override args for servers
+                // that already exist in the config, not add new commands.
+                for (id, server_cfg) in servers {
+                    if let Some(existing) = self.servers.get_mut(&id) {
+                        // Allow overriding args but NOT the command itself
+                        existing.args = server_cfg.args;
+                    } else {
+                        log::warn!(
+                            "Project LSP config tried to add unknown server '{}' — ignoring (only global config can add servers)",
+                            id
+                        );
+                    }
+                }
+            }
         }
         if let Some(language_servers) = overrides.language_servers {
-            self.language_servers.extend(language_servers);
+            if trusted {
+                self.language_servers.extend(language_servers);
+            } else {
+                // Only allow mapping to servers that already exist
+                for (lang, server_ids) in language_servers {
+                    let valid_ids: Vec<String> = server_ids
+                        .into_iter()
+                        .filter(|id| self.servers.contains_key(id))
+                        .collect();
+                    if !valid_ids.is_empty() {
+                        self.language_servers.insert(lang, valid_ids);
+                    }
+                }
+            }
         }
         if let Some(root_markers) = overrides.root_markers {
             if !root_markers.is_empty() {

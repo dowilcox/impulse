@@ -18,6 +18,8 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::backtrace::Backtrace;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 const APP_ID: &str = "dev.impulse.Impulse";
@@ -113,11 +115,17 @@ fn install_panic_hook() {
 
         if let Some(dir) = state_dir() {
             let _ = std::fs::create_dir_all(&dir);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            }
             let path = dir.join("panic.log");
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(path)
+                .mode(0o600)
+                .open(&path)
             {
                 let _ = f.write_all(msg.as_bytes());
             }

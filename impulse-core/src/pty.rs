@@ -253,6 +253,20 @@ impl PtyManager {
     }
 }
 
+impl Drop for PtyManager {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            let ids: Vec<String> = sessions.keys().cloned().collect();
+            for id in ids {
+                if let Some(mut session) = sessions.remove(&id) {
+                    let _ = session.child.kill();
+                    let _ = session.child.wait();
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OSC Escape Sequence Parser
 // ---------------------------------------------------------------------------
@@ -405,28 +419,31 @@ impl OscParser {
     }
 }
 
-fn url_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars();
+/// Decode percent-encoded URL strings, properly handling multi-byte UTF-8.
+pub fn url_decode(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut chars = input.as_bytes().iter();
 
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
+    while let Some(&b) = chars.next() {
+        if b == b'%' {
+            let hex: Vec<u8> = chars.by_ref().take(2).copied().collect();
             if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
+                if let Ok(decoded) =
+                    u8::from_str_radix(&String::from_utf8_lossy(&hex), 16)
+                {
+                    bytes.push(decoded);
                 } else {
-                    result.push('%');
-                    result.push_str(&hex);
+                    bytes.push(b'%');
+                    bytes.extend_from_slice(&hex);
                 }
             } else {
-                result.push('%');
-                result.push_str(&hex);
+                bytes.push(b'%');
+                bytes.extend_from_slice(&hex);
             }
         } else {
-            result.push(c);
+            bytes.push(b);
         }
     }
 
-    result
+    String::from_utf8_lossy(&bytes).into_owned()
 }

@@ -208,17 +208,34 @@ pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
     filename == pattern || path.ends_with(pattern)
 }
 
-fn settings_path() -> PathBuf {
-    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+fn settings_path() -> Option<PathBuf> {
+    let config_dir = dirs::config_dir()?;
     let impulse_dir = config_dir.join("impulse");
     let _ = std::fs::create_dir_all(&impulse_dir);
-    impulse_dir.join("settings.json")
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&impulse_dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Some(impulse_dir.join("settings.json"))
 }
 
 pub fn load() -> Settings {
-    let path = settings_path();
+    let path = match settings_path() {
+        Some(p) => p,
+        None => {
+            log::warn!("Cannot determine config directory; using default settings");
+            return Settings::default();
+        }
+    };
     let mut settings = match std::fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Ok(contents) => match serde_json::from_str(&contents) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to parse settings from {}: {}; using defaults", path.display(), e);
+                Settings::default()
+            }
+        },
         Err(_) => Settings::default(),
     };
     migrate_format_on_save(&mut settings);
@@ -247,8 +264,32 @@ fn migrate_format_on_save(settings: &mut Settings) {
 }
 
 pub fn save(settings: &Settings) {
-    let path = settings_path();
-    if let Ok(json) = serde_json::to_string_pretty(settings) {
-        let _ = std::fs::write(&path, json);
+    let path = match settings_path() {
+        Some(p) => p,
+        None => {
+            log::error!("Cannot determine config directory; settings will not be saved");
+            return;
+        }
+    };
+    let json = match serde_json::to_string_pretty(settings) {
+        Ok(j) => j,
+        Err(e) => {
+            log::error!("Failed to serialize settings: {}", e);
+            return;
+        }
+    };
+    // Atomic write: write to temp file, then rename
+    let tmp_path = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp_path, &json) {
+        log::error!("Failed to write settings to {}: {}", tmp_path.display(), e);
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        log::error!("Failed to rename settings file: {}", e);
     }
 }

@@ -113,20 +113,27 @@ pub fn build_shell_command(
                 user_bashrc, user_bashrc, BASH_INTEGRATION
             );
 
-            let rc_path =
-                std::env::temp_dir().join(format!("impulse-bash-rc-{}", std::process::id()));
+            let rc_path = std::env::temp_dir().join(format!(
+                "impulse-bash-rc-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4().as_simple()
+            ));
             write_secure_file(&rc_path, &rc_content)?;
             temp_files.push(rc_path.clone());
 
             let mut cmd = CommandBuilder::new(shell_path);
             cmd.arg("--rcfile");
-            cmd.arg(rc_path.to_str().unwrap_or("/tmp/impulse-bash-rc"));
+            cmd.arg(rc_path.to_string_lossy().as_ref());
             cmd
         }
         ShellType::Zsh => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
 
-            let zdotdir = std::env::temp_dir().join(format!("impulse-zsh-{}", std::process::id()));
+            let zdotdir = std::env::temp_dir().join(format!(
+                "impulse-zsh-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4().as_simple()
+            ));
             create_secure_dir(&zdotdir)?;
 
             let zshenv_content = format!(
@@ -177,7 +184,7 @@ pub fn build_shell_command(
 
             let mut cmd = CommandBuilder::new(shell_path);
             cmd.arg("--login");
-            cmd.env("ZDOTDIR", zdotdir.to_str().unwrap_or("/tmp"));
+            cmd.env("ZDOTDIR", zdotdir.to_string_lossy().as_ref());
             cmd
         }
         ShellType::Fish => {

@@ -277,6 +277,12 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let new_name = entry.text().to_string();
                     if !new_name.is_empty() && new_name != old_name {
+                        // Prevent directory traversal via path separators
+                        if new_name.contains('/') || new_name.contains("..") {
+                            log::error!("Invalid filename: must not contain '/' or '..'");
+                            dialog.close();
+                            return;
+                        }
                         let new_path = std::path::Path::new(&parent).join(&new_name);
                         if let Err(e) = std::fs::rename(&path, &new_path) {
                             log::error!("Failed to rename: {}", e);
@@ -539,6 +545,12 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let name = entry.text().to_string();
                     if !name.is_empty() {
+                        // Prevent directory traversal via path separators
+                        if name.contains('/') || name.contains("..") {
+                            log::error!("Invalid filename: must not contain '/' or '..'");
+                            dialog.close();
+                            return;
+                        }
                         let new_path = std::path::Path::new(&dir_path).join(&name);
                         if let Err(e) = std::fs::write(&new_path, "") {
                             log::error!("Failed to create file: {}", e);
@@ -632,6 +644,12 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let name = entry.text().to_string();
                     if !name.is_empty() {
+                        // Prevent directory traversal via path separators
+                        if name.contains('/') || name.contains("..") {
+                            log::error!("Invalid filename: must not contain '/' or '..'");
+                            dialog.close();
+                            return;
+                        }
                         let new_path = std::path::Path::new(&dir_path).join(&name);
                         if let Err(e) = std::fs::create_dir(&new_path) {
                             log::error!("Failed to create folder: {}", e);
@@ -1873,7 +1891,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         let entry = entry.map_err(|e| e.to_string())?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        if file_type.is_symlink() {
+            // Skip symlinks to prevent traversal attacks
+            continue;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             std::fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
