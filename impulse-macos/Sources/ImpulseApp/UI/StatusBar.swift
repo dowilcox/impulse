@@ -138,7 +138,7 @@ final class StatusBar: NSView {
         cwdLabel.stringValue = displayPath
 
         if let branch = gitBranch, !branch.isEmpty {
-            gitBranchLabel.stringValue = "\u{E0A0} \(branch)"  // Branch icon
+            gitBranchLabel.attributedStringValue = branchString(branch)
             gitBranchLabel.isHidden = false
         } else {
             gitBranchLabel.isHidden = true
@@ -168,7 +168,7 @@ final class StatusBar: NSView {
         cwdLabel.stringValue = displayPath
 
         if let branch = gitBranch, !branch.isEmpty {
-            gitBranchLabel.stringValue = "\u{E0A0} \(branch)"
+            gitBranchLabel.attributedStringValue = branchString(branch)
             gitBranchLabel.isHidden = false
         } else {
             gitBranchLabel.isHidden = true
@@ -227,5 +227,31 @@ final class StatusBar: NSView {
             return "~" + String(path.dropFirst(home.count))
         }
         return path
+    }
+
+    /// Build an attributed string with an SF Symbol branch icon and the branch name.
+    private func branchString(_ branch: String) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+
+        if let icon = NSImage(systemSymbolName: "arrow.triangle.branch",
+                              accessibilityDescription: "Git branch") {
+            let attachment = NSTextAttachment()
+            attachment.image = icon
+            // Size the icon to match the label font's cap height.
+            let fontSize = gitBranchLabel.font?.pointSize ?? 11
+            let side = fontSize
+            attachment.bounds = CGRect(x: 0, y: -1, width: side, height: side)
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(string: " "))
+        }
+
+        result.append(NSAttributedString(string: branch))
+
+        // Apply the label's current text color across the whole string.
+        if let color = gitBranchLabel.textColor {
+            result.addAttribute(.foregroundColor, value: color,
+                                range: NSRange(location: 0, length: result.length))
+        }
+        return result
     }
 }

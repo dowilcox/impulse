@@ -33,13 +33,24 @@ private final class HoverRowView: NSTableRowView {
             removeTrackingArea(existing)
         }
         let area = NSTrackingArea(
-            rect: .zero,
+            rect: bounds,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
         addTrackingArea(area)
         trackingArea = area
+
+        // When rows scroll under a stationary cursor, updateTrackingAreas is
+        // called but mouseExited may not fire. Re-check the actual position.
+        if let window = window {
+            let loc = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let nowInside = bounds.contains(loc)
+            if nowInside != isHovered {
+                isHovered = nowInside
+                needsDisplay = true
+            }
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
