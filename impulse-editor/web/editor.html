@@ -31,8 +31,10 @@
         width: 100%;
         height: 100%;
       }
-      /* Add space between line numbers/gutter and code content */
-      .monaco-editor .view-lines {
+      /* Add space between line numbers/gutter and code content.
+         Applied to .lines-content so both .view-lines (text) and
+         .view-overlays (indent/bracket guides) shift together. */
+      .monaco-editor .lines-content {
         padding-left: 8px !important;
       }
       /* Default diff gutter colors (overridden by theme) */
