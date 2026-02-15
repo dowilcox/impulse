@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use impulse_core::search::SearchResult;
 
+type ResultActivatedCallback = Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>>;
+
 fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         let msg = if let Some(s) = payload.downcast_ref::<&str>() {
@@ -27,7 +29,7 @@ pub struct ProjectSearchState {
     pub result_list: gtk4::ListBox,
     pub result_count_label: gtk4::Label,
     pub case_sensitive: Rc<RefCell<bool>>,
-    pub on_result_activated: Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>>,
+    pub on_result_activated: ResultActivatedCallback,
     pub current_results: Rc<RefCell<Vec<SearchResult>>>,
     pub current_root: Rc<RefCell<String>>,
 }
@@ -73,8 +75,7 @@ pub fn build_project_search_panel() -> ProjectSearchState {
     panel.append(&scroll);
 
     let case_sensitive: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
-    let on_result_activated: Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>> =
-        Rc::new(RefCell::new(None));
+    let on_result_activated: ResultActivatedCallback = Rc::new(RefCell::new(None));
     let current_results: Rc<RefCell<Vec<SearchResult>>> = Rc::new(RefCell::new(Vec::new()));
     let current_root: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 

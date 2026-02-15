@@ -13,6 +13,8 @@ use crate::file_icons::IconCache;
 use crate::project_search;
 use crate::settings;
 use crate::theme::ThemeColors;
+
+type EventCallback = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
 use impulse_core::filesystem::FileEntry;
 
 /// A node in the sidebar file tree, representing either a file or directory at a given depth.
@@ -137,7 +139,7 @@ pub fn build_sidebar(
 
     // --- Right-click context menu for file tree ---
     let clicked_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
-    let on_open_terminal: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
+    let on_open_terminal: EventCallback = Rc::new(RefCell::new(None));
 
     // Menu models: one for files, one for directories
     let file_menu = gio::Menu::new();
@@ -277,9 +279,10 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let new_name = entry.text().to_string();
                     if !new_name.is_empty() && new_name != old_name {
-                        // Prevent directory traversal via path separators
-                        if new_name.contains('/') || new_name.contains("..") {
-                            log::error!("Invalid filename: must not contain '/' or '..'");
+                        // Validate filename is a single valid component
+                        let path_check = Path::new(&new_name);
+                        if path_check.file_name() != Some(path_check.as_os_str()) || new_name.contains('\0') {
+                            log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
                         }
@@ -545,9 +548,10 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let name = entry.text().to_string();
                     if !name.is_empty() {
-                        // Prevent directory traversal via path separators
-                        if name.contains('/') || name.contains("..") {
-                            log::error!("Invalid filename: must not contain '/' or '..'");
+                        // Validate filename is a single valid component
+                        let path_check = Path::new(&name);
+                        if path_check.file_name() != Some(path_check.as_os_str()) || name.contains('\0') {
+                            log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
                         }
@@ -644,9 +648,10 @@ pub fn build_sidebar(
                 entry.connect_activate(move |entry| {
                     let name = entry.text().to_string();
                     if !name.is_empty() {
-                        // Prevent directory traversal via path separators
-                        if name.contains('/') || name.contains("..") {
-                            log::error!("Invalid filename: must not contain '/' or '..'");
+                        // Validate filename is a single valid component
+                        let path_check = Path::new(&name);
+                        if path_check.file_name() != Some(path_check.as_os_str()) || name.contains('\0') {
+                            log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
                         }
@@ -917,7 +922,7 @@ pub fn build_sidebar(
     sidebar.append(&toolbar_box);
     sidebar.append(&stack);
 
-    let on_file_activated: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
+    let on_file_activated: EventCallback = Rc::new(RefCell::new(None));
 
     let state = SidebarState {
         file_tree_list,
@@ -1148,8 +1153,8 @@ pub struct SidebarState {
     pub search_btn: gtk4::ToggleButton,
     pub project_search: project_search::ProjectSearchState,
     pub current_path: Rc<RefCell<String>>,
-    pub on_file_activated: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
-    pub on_open_terminal: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    pub on_file_activated: EventCallback,
+    pub on_open_terminal: EventCallback,
     pub tree_nodes: Rc<RefCell<Vec<TreeNode>>>,
     pub tab_tree_states: Rc<RefCell<HashMap<gtk4::Widget, TabTreeState>>>,
     pub active_tab: Rc<RefCell<Option<gtk4::Widget>>>,
@@ -1369,6 +1374,7 @@ impl SidebarState {
 /// Insert a newly created file or folder into the tree at the correct position.
 /// Handles both subdirectory insertion (when parent node is found and expanded)
 /// and root-level insertion (when dir_path equals the sidebar's root directory).
+#[allow(clippy::too_many_arguments)]
 fn insert_new_entry_into_tree(
     tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
     file_tree_list: &gtk4::ListBox,

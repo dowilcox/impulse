@@ -352,14 +352,29 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         // Escape characters that are special inside a JS single-quoted string literal.
-        let escaped = jsonString
+        var escaped = jsonString
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
             .replacingOccurrences(of: "\0", with: "\\0")
             .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
             .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+
+        // Escape any remaining ASCII control characters (below U+0020) that
+        // were not covered above. These are invalid inside JS string literals
+        // and could cause syntax errors or injection issues.
+        var sanitized = ""
+        sanitized.reserveCapacity(escaped.count)
+        for scalar in escaped.unicodeScalars {
+            if scalar.value < 0x20 && scalar != "\n" && scalar != "\r" && scalar != "\t" {
+                sanitized += String(format: "\\u%04x", scalar.value)
+            } else {
+                sanitized += String(scalar)
+            }
+        }
+        escaped = sanitized
 
         let script = "impulseReceiveCommand('\(escaped)')"
         webView.evaluateJavaScript(script) { _, error in
@@ -550,7 +565,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private func reloadIfUnmodified() {
         guard !isModified, let path = filePath else { return }
 
-        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        let newContent: String
+        do {
+            newContent = try String(contentsOfFile: path, encoding: .utf8)
+        } catch {
+            os_log(.error, log: Self.log, "Failed to reload file '%{public}@': %{public}@", path, error.localizedDescription)
+            return
+        }
         guard newContent != content else { return }
 
         suppressNextModify = true

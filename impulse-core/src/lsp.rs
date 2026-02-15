@@ -62,6 +62,7 @@ struct JsonRpcRequest {
 
 #[derive(Deserialize, Debug)]
 struct JsonRpcMessage {
+    // Required for JSON-RPC protocol deserialization; not read directly by Rust code.
     #[allow(dead_code)]
     jsonrpc: String,
     id: Option<serde_json::Value>,
@@ -873,7 +874,12 @@ impl LspClient {
     }
 
     pub async fn shutdown(&self) -> Result<(), String> {
-        let _ = self.request("shutdown", serde_json::Value::Null).await;
+        // Give the server 5 seconds to respond to shutdown
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.request("shutdown", serde_json::Value::Null),
+        )
+        .await;
         self.notify("exit", serde_json::Value::Null)
     }
 }

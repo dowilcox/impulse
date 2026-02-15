@@ -26,6 +26,7 @@ url = "2"
 webkit6 = "0.5"
 resvg = "0.45"
 dirs = "6"
+tempfile = "3"
 
 [package.metadata.deb]
 maintainer = "Impulse Contributors"

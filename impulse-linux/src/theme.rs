@@ -223,7 +223,10 @@ pub fn get_available_themes() -> Vec<&'static str> {
 // ---------------------------------------------------------------------------
 
 fn parse_color(hex: &str) -> gdk::RGBA {
-    gdk::RGBA::parse(hex).unwrap_or(gdk::RGBA::WHITE)
+    gdk::RGBA::parse(hex).unwrap_or_else(|_| {
+        log::warn!("Invalid color value: '{}', using fallback", hex);
+        gdk::RGBA::new(1.0, 0.0, 1.0, 1.0) // Magenta fallback makes errors visible
+    })
 }
 
 /// Generate and apply the application-wide CSS for the given theme.

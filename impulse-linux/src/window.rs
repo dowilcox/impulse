@@ -48,7 +48,7 @@ pub fn build_window(app: &adw::Application) {
 
     // --- LSP Bridge: GTK <-> Tokio ---
     // Channel for sending requests from GTK to the LSP tokio runtime
-    let (lsp_request_tx, mut lsp_request_rx) = tokio::sync::mpsc::unbounded_channel::<LspRequest>();
+    let (lsp_request_tx, mut lsp_request_rx) = tokio::sync::mpsc::channel::<LspRequest>(256);
     let lsp_request_tx = Rc::new(lsp_request_tx);
 
     // Channel for sending responses from the LSP runtime back to GTK
@@ -471,6 +471,7 @@ pub fn build_window(app: &adw::Application) {
         let latest_hover_req = latest_hover_req.clone();
         let latest_definition_req = latest_definition_req.clone();
         let icon_cache = sidebar_state.icon_cache.clone();
+        let toast_overlay_for_editor = toast_overlay.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
                 // Check if the file is already open in a tab
@@ -525,6 +526,7 @@ pub fn build_window(app: &adw::Application) {
                             let latest_hover_req = latest_hover_req.clone();
                             let latest_definition_req = latest_definition_req.clone();
                             let sidebar_state = sidebar_state_for_editor.clone();
+                            let toast_overlay = toast_overlay_for_editor.clone();
                             let path = path.to_string();
                             move |handle, event| {
                                 match event {
@@ -540,12 +542,14 @@ pub fn build_window(app: &adw::Application) {
                                         let mut versions = doc_versions.borrow_mut();
                                         let version = versions.entry(path.clone()).or_insert(0);
                                         *version += 1;
-                                        let _ = lsp_tx.send(LspRequest::DidOpen {
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::DidOpen {
                                             uri,
                                             language_id,
                                             version: *version,
                                             text: content,
-                                        });
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                         // Send initial diff decorations
                                         send_diff_decorations(handle, &path);
                                     }
@@ -573,11 +577,13 @@ pub fn build_window(app: &adw::Application) {
                                         let mut versions = doc_versions.borrow_mut();
                                         let version = versions.entry(path.clone()).or_insert(0);
                                         *version += 1;
-                                        let _ = lsp_tx.send(LspRequest::DidChange {
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::DidChange {
                                             uri,
                                             version: *version,
                                             text: content,
-                                        });
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                     }
                                     impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
                                         status_bar.borrow().update_cursor_position(line as i32 - 1, column as i32 - 1);
@@ -599,6 +605,9 @@ pub fn build_window(app: &adw::Application) {
                                         let content = handle.get_content();
                                         if let Err(e) = std::fs::write(&path, &content) {
                                             log::error!("Failed to save {}: {}", path, e);
+                                            let toast = adw::Toast::new(&format!("Error saving: {}", e));
+                                            toast.set_timeout(4);
+                                            toast_overlay.add_toast(toast);
                                         } else {
                                             handle.is_modified.set(false);
                                             // Revert tab title
@@ -616,7 +625,9 @@ pub fn build_window(app: &adw::Application) {
                                             }
                                             let uri = file_path_to_uri(std::path::Path::new(&path))
                                                 .unwrap_or_else(|| format!("file://{}", path));
-                                            let _ = lsp_tx.send(LspRequest::DidSave { uri });
+                                            if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
+                                                log::warn!("LSP request channel full, dropping request: {}", e);
+                                            }
                                             // Refresh diff decorations after save
                                             send_diff_decorations(handle, &path);
                                             // Refresh sidebar to update git status badges
@@ -625,19 +636,23 @@ pub fn build_window(app: &adw::Application) {
                                             let commands = settings.borrow().commands_on_save.clone();
                                             let save_path = path.clone();
                                             std::thread::spawn(move || {
-                                                let needs_reload = run_commands_on_save(&save_path, &commands);
-                                                if needs_reload {
-                                                    let reload_path = save_path.clone();
-                                                    gtk4::glib::MainContext::default().invoke(move || {
-                                                        if let Some(handle) = crate::editor::get_handle(&reload_path) {
-                                                            if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
-                                                                let lang = handle.language.borrow().clone();
-                                                                handle.suppress_next_modify.set(true);
-                                                                handle.open_file(&reload_path, &new_content, &lang);
-                                                                send_diff_decorations(&handle, &reload_path);
+                                                if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                                    let needs_reload = run_commands_on_save(&save_path, &commands);
+                                                    if needs_reload {
+                                                        let reload_path = save_path.clone();
+                                                        gtk4::glib::MainContext::default().invoke(move || {
+                                                            if let Some(handle) = crate::editor::get_handle(&reload_path) {
+                                                                if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
+                                                                    let lang = handle.language.borrow().clone();
+                                                                    handle.suppress_next_modify.set(true);
+                                                                    handle.open_file(&reload_path, &new_content, &lang);
+                                                                    send_diff_decorations(&handle, &reload_path);
+                                                                }
                                                             }
-                                                        }
-                                                    });
+                                                        });
+                                                    }
+                                                })) {
+                                                    log::error!("Background thread panicked: {:?}", e);
                                                 }
                                             });
                                         }
@@ -649,13 +664,15 @@ pub fn build_window(app: &adw::Application) {
                                         let seq = lsp_request_seq.get() + 1;
                                         lsp_request_seq.set(seq);
                                         latest_completion_req.borrow_mut().insert(path.clone(), seq);
-                                        let _ = lsp_tx.send(LspRequest::Completion {
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::Completion {
                                             request_id: seq,
                                             uri,
                                             version,
                                             line,
                                             character,
-                                        });
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                     }
                                     impulse_editor::protocol::EditorEvent::HoverRequested { request_id: _, line, character } => {
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
@@ -664,13 +681,15 @@ pub fn build_window(app: &adw::Application) {
                                         let seq = lsp_request_seq.get() + 1;
                                         lsp_request_seq.set(seq);
                                         latest_hover_req.borrow_mut().insert(path.clone(), seq);
-                                        let _ = lsp_tx.send(LspRequest::Hover {
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::Hover {
                                             request_id: seq,
                                             uri,
                                             version,
                                             line,
                                             character,
-                                        });
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                     }
                                     impulse_editor::protocol::EditorEvent::DefinitionRequested { line, character } => {
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
@@ -679,13 +698,15 @@ pub fn build_window(app: &adw::Application) {
                                         let seq = lsp_request_seq.get() + 1;
                                         lsp_request_seq.set(seq);
                                         latest_definition_req.borrow_mut().insert(path.clone(), seq);
-                                        let _ = lsp_tx.send(LspRequest::Definition {
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::Definition {
                                             request_id: seq,
                                             uri,
                                             version,
                                             line,
                                             character,
-                                        });
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -1704,15 +1725,19 @@ pub fn build_window(app: &adw::Application) {
 
                         let tx = lsp_install_result_tx.clone();
                         std::thread::spawn(move || {
-                            let result = impulse_core::lsp::install_managed_web_lsp_servers().map(
-                                |bin_dir| {
-                                    format!(
-                                        "Installed managed LSP servers to {}",
-                                        bin_dir.display()
-                                    )
-                                },
-                            );
-                            let _ = tx.send(result);
+                            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let result = impulse_core::lsp::install_managed_web_lsp_servers().map(
+                                    |bin_dir| {
+                                        format!(
+                                            "Installed managed LSP servers to {}",
+                                            bin_dir.display()
+                                        )
+                                    },
+                                );
+                                let _ = tx.send(result);
+                            })) {
+                                log::error!("Background thread panicked: {:?}", e);
+                            }
                         });
                     }
                 }),
@@ -1929,10 +1954,12 @@ pub fn build_window(app: &adw::Application) {
                                         .unwrap_or(&path);
                                     page.set_title(filename);
                                     // LSP: send didSave
-                                    let _ = lsp_tx.send(LspRequest::DidSave {
+                                    if let Err(e) = lsp_tx.try_send(LspRequest::DidSave {
                                         uri: file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path)),
-                                    });
+                                    }) {
+                                        log::warn!("LSP request channel full, dropping request: {}", e);
+                                    }
                                     let toast = adw::Toast::new(&format!("Saved {}", filename));
                                     toast.set_timeout(2);
                                     toast_overlay.add_toast(toast);
@@ -1940,31 +1967,35 @@ pub fn build_window(app: &adw::Application) {
                                     let commands = settings.borrow().commands_on_save.clone();
                                     let save_path = path.clone();
                                     std::thread::spawn(move || {
-                                        let needs_reload =
-                                            run_commands_on_save(&save_path, &commands);
-                                        if needs_reload {
-                                            let reload_path = save_path.clone();
-                                            gtk4::glib::MainContext::default().invoke(move || {
-                                                if let Some(handle) =
-                                                    crate::editor::get_handle(&reload_path)
-                                                {
-                                                    if let Ok(new_content) =
-                                                        std::fs::read_to_string(&reload_path)
+                                        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                            let needs_reload =
+                                                run_commands_on_save(&save_path, &commands);
+                                            if needs_reload {
+                                                let reload_path = save_path.clone();
+                                                gtk4::glib::MainContext::default().invoke(move || {
+                                                    if let Some(handle) =
+                                                        crate::editor::get_handle(&reload_path)
                                                     {
-                                                        let lang = handle.language.borrow().clone();
-                                                        handle.suppress_next_modify.set(true);
-                                                        handle.open_file(
-                                                            &reload_path,
-                                                            &new_content,
-                                                            &lang,
-                                                        );
-                                                        send_diff_decorations(
-                                                            &handle,
-                                                            &reload_path,
-                                                        );
+                                                        if let Ok(new_content) =
+                                                            std::fs::read_to_string(&reload_path)
+                                                        {
+                                                            let lang = handle.language.borrow().clone();
+                                                            handle.suppress_next_modify.set(true);
+                                                            handle.open_file(
+                                                                &reload_path,
+                                                                &new_content,
+                                                                &lang,
+                                                            );
+                                                            send_diff_decorations(
+                                                                &handle,
+                                                                &reload_path,
+                                                            );
+                                                        }
                                                     }
-                                                }
-                                            });
+                                                });
+                                            }
+                                        })) {
+                                            log::error!("Background thread panicked: {:?}", e);
                                         }
                                     });
                                 }
@@ -2165,10 +2196,8 @@ pub fn build_window(app: &adw::Application) {
         tab_view.connect_selected_page_notify(move |tv| {
             if let Some(page) = tv.selected_page() {
                 let child = page.child();
-                if editor::is_editor(&child) {
-                    if search_revealer.reveals_child() {
-                        search_revealer.set_reveal_child(false);
-                    }
+                if editor::is_editor(&child) && search_revealer.reveals_child() {
+                    search_revealer.set_reveal_child(false);
                 }
             }
         });
@@ -2335,13 +2364,25 @@ pub fn build_window(app: &adw::Application) {
         let sidebar_state = sidebar_state.clone();
         let lsp_tx = lsp_request_tx.clone();
         let create_tab_on_empty = create_tab.clone();
+        let doc_versions_for_close = lsp_doc_versions.clone();
+        let completion_req_for_close = latest_completion_req.clone();
+        let hover_req_for_close = latest_hover_req.clone();
+        let definition_req_for_close = latest_definition_req.clone();
         tab_view.connect_close_page(move |tv, page| {
             sidebar_state.remove_tab_state(&page.child());
             let child = page.child();
 
-            // Check if this is an editor tab with unsaved changes
+            // Clean up LSP tracking state for editor tabs
             if editor::is_editor(&child) {
-                if editor::is_modified(&child) {
+                let path = child.widget_name().to_string();
+                doc_versions_for_close.borrow_mut().remove(&path);
+                completion_req_for_close.borrow_mut().remove(&path);
+                hover_req_for_close.borrow_mut().remove(&path);
+                definition_req_for_close.borrow_mut().remove(&path);
+            }
+
+            // Check if this is an editor tab with unsaved changes
+            if editor::is_editor(&child) && editor::is_modified(&child) {
                     // Extract filename for the dialog message
                     let filename = std::path::Path::new(&child.widget_name().to_string())
                         .file_name()
@@ -2380,12 +2421,15 @@ pub fn build_window(app: &adw::Application) {
                                     .unwrap_or_else(|| format!("file://{}", path));
                                 if let Some(text) = editor::get_editor_text(&child) {
                                     if std::fs::write(&path, &text).is_ok() {
-                                        let _ =
-                                            lsp_tx.send(LspRequest::DidSave { uri: uri.clone() });
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri: uri.clone() }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
                                     }
                                 }
                                 editor::unregister_handle(&path);
-                                let _ = lsp_tx.send(LspRequest::DidClose { uri });
+                                if let Err(e) = lsp_tx.try_send(LspRequest::DidClose { uri }) {
+                                    log::warn!("LSP request channel full, dropping request: {}", e);
+                                }
                                 tv.close_page_finish(&page, true);
                                 let tv2 = tv.clone();
                                 let new_tab = create_tab2.clone();
@@ -2400,7 +2444,9 @@ pub fn build_window(app: &adw::Application) {
                                 editor::unregister_handle(&path);
                                 let uri = file_path_to_uri(std::path::Path::new(&path))
                                     .unwrap_or_else(|| format!("file://{}", path));
-                                let _ = lsp_tx.send(LspRequest::DidClose { uri });
+                                if let Err(e) = lsp_tx.try_send(LspRequest::DidClose { uri }) {
+                                    log::warn!("LSP request channel full, dropping request: {}", e);
+                                }
                                 tv.close_page_finish(&page, true);
                                 let tv2 = tv.clone();
                                 let new_tab = create_tab3.clone();
@@ -2420,17 +2466,18 @@ pub fn build_window(app: &adw::Application) {
                     dialog.present(Some(&window_ref));
 
                     return gtk4::glib::Propagation::Stop;
-                }
             }
 
             // Terminal tab or unmodified editor: close immediately
             if editor::is_editor(&child) {
                 let path = child.widget_name().to_string();
                 editor::unregister_handle(&path);
-                let _ = lsp_tx.send(LspRequest::DidClose {
+                if let Err(e) = lsp_tx.try_send(LspRequest::DidClose {
                     uri: file_path_to_uri(std::path::Path::new(&path))
                         .unwrap_or_else(|| format!("file://{}", path)),
-                });
+                }) {
+                    log::warn!("LSP request channel full, dropping request: {}", e);
+                }
             }
             tv.close_page_finish(page, true);
             let tv = tv.clone();
@@ -2455,7 +2502,9 @@ pub fn build_window(app: &adw::Application) {
         let lsp_tx = lsp_request_tx.clone();
         window.connect_close_request(move |window| {
             // Shutdown LSP servers
-            let _ = lsp_tx.send(LspRequest::Shutdown);
+            if let Err(e) = lsp_tx.try_send(LspRequest::Shutdown) {
+                log::warn!("LSP request channel full, dropping shutdown request: {}", e);
+            }
             // Collect open editor file paths
             let mut open_files = Vec::new();
             let n = tab_view_ref.n_pages();
@@ -2954,7 +3003,7 @@ fn get_active_cwd(tab_view: &adw::TabView) -> Option<String> {
     // Try terminal CWD first
     if let Some(term) = terminal_container::get_active_terminal(&child) {
         if let Some(uri) = term.current_directory_uri() {
-            let path = uri_to_file_path(&uri.to_string());
+            let path = uri_to_file_path(uri.as_ref());
             if !path.is_empty() {
                 return Some(path);
             }

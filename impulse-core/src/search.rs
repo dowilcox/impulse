@@ -195,6 +195,17 @@ pub fn replace_in_file(
     replacement: &str,
     case_sensitive: bool,
 ) -> Result<usize, String> {
+    // Check file size before reading
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("Failed to read metadata for '{}': {}", path, e))?;
+    if metadata.len() > 1_048_576 {
+        return Err(format!(
+            "File '{}' is too large for replacement ({} bytes, max 1MB)",
+            path,
+            metadata.len()
+        ));
+    }
+
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
 

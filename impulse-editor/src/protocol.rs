@@ -13,7 +13,7 @@ pub enum EditorCommand {
         language: String,
     },
     SetTheme {
-        theme: MonacoThemeDefinition,
+        theme: Box<MonacoThemeDefinition>,
     },
     UpdateSettings {
         options: EditorOptions,
@@ -474,5 +474,274 @@ mod tests {
         let parsed: DiffDecoration = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.line, 42);
         assert_eq!(parsed.status, "added");
+    }
+
+    #[test]
+    fn editor_command_roundtrip_set_theme() {
+        let cmd = EditorCommand::SetTheme {
+            theme: Box::new(MonacoThemeDefinition {
+                base: "vs-dark".to_string(),
+                inherit: true,
+                rules: vec![MonacoTokenRule {
+                    token: "comment".to_string(),
+                    foreground: Some("6a9955".to_string()),
+                    font_style: Some("italic".to_string()),
+                }],
+                colors: MonacoThemeColors {
+                    editor_background: "#1a1b26".to_string(),
+                    editor_foreground: "#c0caf5".to_string(),
+                    editor_line_highlight_background: "#292e42".to_string(),
+                    editor_selection_background: "#33467c".to_string(),
+                    editor_cursor_foreground: "#c0caf5".to_string(),
+                    editor_line_number_foreground: "#3b4261".to_string(),
+                    editor_line_number_active_foreground: "#737aa2".to_string(),
+                    editor_widget_background: "#1a1b26".to_string(),
+                    editor_suggest_widget_background: "#1a1b26".to_string(),
+                    editor_suggest_widget_selected_background: "#292e42".to_string(),
+                    editor_hover_widget_background: "#1a1b26".to_string(),
+                    editor_gutter_background: "#1a1b26".to_string(),
+                    minimap_background: "#1a1b26".to_string(),
+                    scrollbar_slider_background: "#3b4261".to_string(),
+                    scrollbar_slider_hover_background: "#545c7e".to_string(),
+                    diff_added_color: "#9ece6a".to_string(),
+                    diff_modified_color: "#e0af68".to_string(),
+                    diff_deleted_color: "#f7768e".to_string(),
+                },
+            }),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::SetTheme { theme } => {
+                assert_eq!(theme.base, "vs-dark");
+                assert!(theme.inherit);
+                assert_eq!(theme.rules.len(), 1);
+                assert_eq!(theme.rules[0].token, "comment");
+                assert_eq!(theme.rules[0].foreground.as_deref(), Some("6a9955"));
+                assert_eq!(theme.rules[0].font_style.as_deref(), Some("italic"));
+                assert_eq!(theme.colors.editor_background, "#1a1b26");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_update_settings() {
+        let cmd = EditorCommand::UpdateSettings {
+            options: EditorOptions {
+                font_size: Some(16),
+                font_family: Some("Fira Code".to_string()),
+                tab_size: Some(2),
+                insert_spaces: Some(true),
+                word_wrap: Some("on".to_string()),
+                minimap_enabled: None,
+                line_numbers: None,
+                render_whitespace: None,
+                render_line_highlight: None,
+                rulers: None,
+                sticky_scroll: None,
+                bracket_pair_colorization: None,
+                indent_guides: None,
+                font_ligatures: None,
+                folding: None,
+                scroll_beyond_last_line: None,
+                smooth_scrolling: None,
+                cursor_style: None,
+                cursor_blinking: None,
+                line_height: None,
+                auto_closing_brackets: None,
+            },
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::UpdateSettings { options } => {
+                assert_eq!(options.font_size, Some(16));
+                assert_eq!(options.font_family.as_deref(), Some("Fira Code"));
+                assert_eq!(options.tab_size, Some(2));
+                assert_eq!(options.insert_spaces, Some(true));
+                assert_eq!(options.word_wrap.as_deref(), Some("on"));
+                assert!(options.minimap_enabled.is_none());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_apply_diagnostics() {
+        let cmd = EditorCommand::ApplyDiagnostics {
+            uri: "file:///tmp/test.rs".to_string(),
+            markers: vec![MonacoDiagnostic {
+                severity: 1,
+                start_line: 0,
+                start_column: 5,
+                end_line: 0,
+                end_column: 10,
+                message: "unused variable".to_string(),
+                source: Some("rustc".to_string()),
+            }],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ApplyDiagnostics { uri, markers } => {
+                assert_eq!(uri, "file:///tmp/test.rs");
+                assert_eq!(markers.len(), 1);
+                assert_eq!(markers[0].severity, 1);
+                assert_eq!(markers[0].start_line, 0);
+                assert_eq!(markers[0].start_column, 5);
+                assert_eq!(markers[0].end_line, 0);
+                assert_eq!(markers[0].end_column, 10);
+                assert_eq!(markers[0].message, "unused variable");
+                assert_eq!(markers[0].source.as_deref(), Some("rustc"));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_hover() {
+        let cmd = EditorCommand::ResolveHover {
+            request_id: 42,
+            contents: vec![MonacoHoverContent {
+                value: "```rust\nfn main()\n```".to_string(),
+                is_trusted: false,
+            }],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveHover {
+                request_id,
+                contents,
+            } => {
+                assert_eq!(request_id, 42);
+                assert_eq!(contents.len(), 1);
+                assert_eq!(contents[0].value, "```rust\nfn main()\n```");
+                assert!(!contents[0].is_trusted);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_apply_diff_decorations() {
+        let cmd = EditorCommand::ApplyDiffDecorations {
+            decorations: vec![
+                DiffDecoration {
+                    line: 1,
+                    status: "added".to_string(),
+                },
+                DiffDecoration {
+                    line: 5,
+                    status: "modified".to_string(),
+                },
+                DiffDecoration {
+                    line: 10,
+                    status: "deleted".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ApplyDiffDecorations { decorations } => {
+                assert_eq!(decorations.len(), 3);
+                assert_eq!(decorations[0].line, 1);
+                assert_eq!(decorations[0].status, "added");
+                assert_eq!(decorations[1].line, 5);
+                assert_eq!(decorations[1].status, "modified");
+                assert_eq!(decorations[2].line, 10);
+                assert_eq!(decorations[2].status, "deleted");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_file_opened() {
+        let event = EditorEvent::FileOpened;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"FileOpened\""));
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::FileOpened => {}
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_save_requested() {
+        let event = EditorEvent::SaveRequested;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"SaveRequested\""));
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::SaveRequested => {}
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_hover_requested() {
+        let event = EditorEvent::HoverRequested {
+            request_id: 7,
+            line: 20,
+            character: 15,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::HoverRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 7);
+                assert_eq!(line, 20);
+                assert_eq!(character, 15);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_definition_requested() {
+        let event = EditorEvent::DefinitionRequested {
+            line: 30,
+            character: 8,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::DefinitionRequested { line, character } => {
+                assert_eq!(line, 30);
+                assert_eq!(character, 8);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_focus_changed() {
+        let event = EditorEvent::FocusChanged { focused: true };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::FocusChanged { focused } => {
+                assert!(focused);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let event2 = EditorEvent::FocusChanged { focused: false };
+        let json2 = serde_json::to_string(&event2).unwrap();
+        let parsed2: EditorEvent = serde_json::from_str(&json2).unwrap();
+        match parsed2 {
+            EditorEvent::FocusChanged { focused } => {
+                assert!(!focused);
+            }
+            _ => panic!("Wrong variant"),
+        }
     }
 }

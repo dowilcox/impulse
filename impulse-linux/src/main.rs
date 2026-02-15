@@ -118,7 +118,9 @@ fn install_panic_hook() {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+                    log::warn!("Failed to set permissions on {:?}: {}", dir, e);
+                }
             }
             let path = dir.join("panic.log");
             if let Ok(mut f) = std::fs::OpenOptions::new()

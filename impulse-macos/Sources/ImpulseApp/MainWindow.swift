@@ -1,4 +1,5 @@
 import AppKit
+import os.log
 
 // MARK: - Pointer Button
 
@@ -245,6 +246,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Tracks the latest hover request ID per URI for deduplication.
     private var latestHoverReq: [String: UInt64] = [:]
+
+    /// In-flight completion work items per URI, cancelled when a newer request arrives.
+    private var completionWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight hover work items per URI, cancelled when a newer request arrives.
+    private var hoverWorkItems: [String: DispatchWorkItem] = [:]
 
     /// Timer for polling LSP events (diagnostics, lifecycle).
     private var lspPollTimer: Timer?
@@ -1052,7 +1059,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     if let editor = self.findEditorTab(forPath: path) {
                         let language = editor.language
                         DispatchQueue.global(qos: .userInitiated).async {
-                            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+                            let content: String
+                            do {
+                                content = try String(contentsOfFile: path, encoding: .utf8)
+                            } catch {
+                                os_log(.error, "Failed to reload file '%{public}@': %{public}@",
+                                       path, error.localizedDescription)
+                                return
+                            }
                             DispatchQueue.main.async { [weak editor] in
                                 guard let editor else { return }
                                 editor.openFile(path: path, content: content, language: language)
@@ -1541,12 +1555,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         let uri = filePathToUri(path)
         latestCompletionReq[uri] = requestId
 
+        // Cancel any previous in-flight completion request for this URI.
+        completionWorkItems[uri]?.cancel()
+
         let language = editor.language
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
 
-        lspQueue.async { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard let response = self.core.lspRequest(
                 languageId: language, fileUri: uri,
@@ -1561,6 +1578,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 editor.resolveCompletions(requestId: requestId, items: items)
             }
         }
+        completionWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
     }
 
     /// Handles a hover request from the editor by forwarding it to the LSP.
@@ -1569,12 +1588,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         let uri = filePathToUri(path)
         latestHoverReq[uri] = requestId
 
+        // Cancel any previous in-flight hover request for this URI.
+        hoverWorkItems[uri]?.cancel()
+
         let language = editor.language
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
 
-        lspQueue.async { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard let response = self.core.lspRequest(
                 languageId: language, fileUri: uri,
@@ -1588,6 +1610,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 editor.resolveHover(requestId: requestId, contents: contents)
             }
         }
+        hoverWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
     }
 
     /// Handles a go-to-definition request from the editor.
@@ -1732,8 +1756,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     let language = editor.language
                     let currentContent = editor.content
                     DispatchQueue.global(qos: .userInitiated).async {
-                        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8),
-                              newContent != currentContent else {
+                        let newContent: String
+                        do {
+                            newContent = try String(contentsOfFile: path, encoding: .utf8)
+                        } catch {
+                            os_log(.error, "Failed to reload file after formatting '%{public}@': %{public}@",
+                                   path, error.localizedDescription)
+                            DispatchQueue.main.async { [weak self, weak editor] in
+                                guard let self, let editor else { return }
+                                self.postSaveActions(editor: editor, path: path)
+                            }
+                            return
+                        }
+                        guard newContent != currentContent else {
                             DispatchQueue.main.async { [weak self, weak editor] in
                                 guard let self, let editor else { return }
                                 self.postSaveActions(editor: editor, path: path)
@@ -1772,8 +1807,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     guard let editor else { return }
                     let currentContent = editor.content
                     DispatchQueue.global(qos: .userInitiated).async {
-                        guard let newContent = try? String(contentsOfFile: path, encoding: .utf8),
-                              newContent != currentContent else { return }
+                        let newContent: String
+                        do {
+                            newContent = try String(contentsOfFile: path, encoding: .utf8)
+                        } catch {
+                            os_log(.error, "Failed to reload file after command-on-save '%{public}@': %{public}@",
+                                   path, error.localizedDescription)
+                            return
+                        }
+                        guard newContent != currentContent else { return }
                         DispatchQueue.main.async { [weak editor] in
                             guard let editor else { return }
                             editor.openFile(path: path, content: newContent, language: language)

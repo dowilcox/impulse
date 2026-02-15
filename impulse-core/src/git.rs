@@ -30,6 +30,17 @@ pub struct BlameInfo {
 /// Get diff status for each line of a file (working tree vs HEAD).
 /// Returns changed lines with their status.
 pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
+    // Skip diff for files larger than 1MB
+    let metadata = std::fs::metadata(file_path).ok();
+    if let Some(meta) = metadata {
+        if meta.len() > 1_048_576 {
+            return Ok(FileDiff {
+                changed_lines: std::collections::HashMap::new(),
+                deleted_lines: Vec::new(),
+            });
+        }
+    }
+
     let path = Path::new(file_path);
     let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
 

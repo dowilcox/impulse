@@ -378,21 +378,34 @@ pub fn paste_from_clipboard(terminal: &vte4::Terminal) {
         let term = terminal.clone();
         clipboard.read_texture_async(None::<&gtk4::gio::Cancellable>, move |result| {
             if let Ok(Some(texture)) = result {
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos();
-                let pid = std::process::id();
-                let path = format!("/tmp/impulse-clipboard-{}-{}.png", pid, ts);
+                let tmp = tempfile::Builder::new()
+                    .prefix("impulse-clipboard-")
+                    .suffix(".png")
+                    .tempfile()
+                    .map_err(|e| {
+                        log::error!("Failed to create temp file: {}", e);
+                    });
+                let Ok(tmp) = tmp else { return; };
+                // Persist the temp file so wl-copy/other tools can read it asynchronously
+                let persist_path = match tmp.keep() {
+                    Ok((_file, path)) => path,
+                    Err(e) => {
+                        log::error!("Failed to persist temp file: {}", e);
+                        return;
+                    }
+                };
+                let path = persist_path.to_string_lossy().to_string();
                 match texture.save_to_png(&path) {
                     Ok(()) => {
                         #[cfg(unix)]
                         {
                             use std::os::unix::fs::PermissionsExt;
-                            let _ = std::fs::set_permissions(
+                            if let Err(e) = std::fs::set_permissions(
                                 &path,
                                 std::fs::Permissions::from_mode(0o600),
-                            );
+                            ) {
+                                log::warn!("Failed to set permissions on {}: {}", path, e);
+                            }
                         }
                         let escaped = shell_escape(&path);
                         term.feed_child(escaped.as_bytes());

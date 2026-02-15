@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 // MARK: - Sub-Types
 
@@ -387,11 +388,20 @@ extension Settings {
     /// corrupt data.
     static func load() -> Settings {
         let url = settingsPath()
-        guard let data = try? Data(contentsOf: url) else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            // File may not exist on first launch — this is expected.
             return .default
         }
-        let decoder = JSONDecoder()
-        return (try? decoder.decode(Settings.self, from: data)) ?? .default
+        do {
+            return try JSONDecoder().decode(Settings.self, from: data)
+        } catch {
+            os_log(.error, "Failed to decode settings from '%{public}@': %{public}@",
+                   url.path, error.localizedDescription)
+            return .default
+        }
     }
 
     /// Persists the current settings to disk as pretty-printed JSON.
@@ -400,7 +410,13 @@ extension Settings {
     func save() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(self) else { return }
+        let data: Data
+        do {
+            data = try encoder.encode(self)
+        } catch {
+            os_log(.error, "Failed to encode settings: %{public}@", error.localizedDescription)
+            return
+        }
         let url = Settings.settingsPath()
         DispatchQueue.global(qos: .utility).async {
             do {
@@ -409,7 +425,8 @@ extension Settings {
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: url.path)
             } catch {
-                // Non-fatal: settings will be re-saved on next change.
+                os_log(.error, "Failed to write settings to '%{public}@': %{public}@",
+                       url.path, error.localizedDescription)
             }
         }
     }

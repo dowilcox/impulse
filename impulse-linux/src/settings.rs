@@ -197,7 +197,9 @@ fn settings_path() -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&impulse_dir, std::fs::Permissions::from_mode(0o700));
+        if let Err(e) = std::fs::set_permissions(&impulse_dir, std::fs::Permissions::from_mode(0o700)) {
+            log::warn!("Failed to set permissions on {:?}: {}", impulse_dir, e);
+        }
     }
     Some(impulse_dir.join("settings.json"))
 }
@@ -273,7 +275,9 @@ pub fn save(settings: &Settings) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+        if let Err(e) = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600)) {
+            log::warn!("Failed to set permissions on {:?}: {}", tmp_path, e);
+        }
     }
     if let Err(e) = std::fs::rename(&tmp_path, &path) {
         log::error!("Failed to rename settings file: {}", e);

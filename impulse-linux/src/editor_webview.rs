@@ -65,7 +65,6 @@ impl MonacoEditorHandle {
         );
     }
 
-    #[allow(dead_code)]
     pub fn open_file(&self, file_path: &str, content: &str, language: &str) {
         *self.file_path.borrow_mut() = file_path.to_string();
         *self.cached_content.borrow_mut() = content.to_string();
@@ -191,7 +190,7 @@ impl MonacoEditorHandle {
 
     pub fn set_theme(&self, theme: &ThemeColors) {
         let definition = theme_to_monaco(theme);
-        self.send_command(&EditorCommand::SetTheme { theme: definition });
+        self.send_command(&EditorCommand::SetTheme { theme: Box::new(definition) });
     }
 
     pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
@@ -301,7 +300,7 @@ struct WarmWebView {
 }
 
 thread_local! {
-    static WARM_POOL: RefCell<Option<WarmWebView>> = RefCell::new(None);
+    static WARM_POOL: RefCell<Option<WarmWebView>> = const { RefCell::new(None) };
 }
 
 /// Pre-extract Monaco assets and start loading a WebView in the background.
@@ -369,7 +368,7 @@ pub fn warm_up_editor() {
 /// Try to claim a pre-warmed WebView. Returns `Some` only if one is ready.
 fn claim_warm_editor() -> Option<WarmWebView> {
     WARM_POOL.with(|cell| {
-        let is_ready = cell.borrow().as_ref().map_or(false, |w| w.is_ready.get());
+        let is_ready = cell.borrow().as_ref().is_some_and(|w| w.is_ready.get());
         if is_ready {
             cell.borrow_mut().take()
         } else {
@@ -465,17 +464,14 @@ where
             };
 
             // Update cached state for content/cursor events.
-            match &event {
-                EditorEvent::ContentChanged { content, version } => {
-                    *handle_for_signal.cached_content.borrow_mut() = content.clone();
-                    handle_for_signal.version.set(*version);
-                    if handle_for_signal.suppress_next_modify.get() {
-                        handle_for_signal.suppress_next_modify.set(false);
-                    } else {
-                        handle_for_signal.is_modified.set(true);
-                    }
+            if let EditorEvent::ContentChanged { content, version } = &event {
+                *handle_for_signal.cached_content.borrow_mut() = content.clone();
+                handle_for_signal.version.set(*version);
+                if handle_for_signal.suppress_next_modify.get() {
+                    handle_for_signal.suppress_next_modify.set(false);
+                } else {
+                    handle_for_signal.is_modified.set(true);
                 }
-                _ => {}
             }
 
             on_event(&handle_for_signal, event);
@@ -483,7 +479,7 @@ where
 
         // Immediately send theme, settings, and file content.
         handle.send_command(&EditorCommand::SetTheme {
-            theme: theme_to_monaco(theme),
+            theme: Box::new(theme_to_monaco(theme)),
         });
 
         let mut options = settings_to_editor_options(settings);
@@ -500,7 +496,7 @@ where
         container.append(&webview);
 
         // Start warming the next WebView.
-        glib::idle_add_local_once(|| warm_up_editor());
+        glib::idle_add_local_once(warm_up_editor);
 
         return (container, handle);
     }
@@ -579,7 +575,7 @@ where
 
                 // Set theme first
                 handle_for_signal.send_command(&EditorCommand::SetTheme {
-                    theme: initial_theme.clone(),
+                    theme: Box::new(initial_theme.clone()),
                 });
 
                 // Set settings (including indent from file detection)
@@ -598,17 +594,14 @@ where
         }
 
         // Update cached state for content/cursor events
-        match &event {
-            EditorEvent::ContentChanged { content, version } => {
-                *handle_for_signal.cached_content.borrow_mut() = content.clone();
-                handle_for_signal.version.set(*version);
-                if handle_for_signal.suppress_next_modify.get() {
-                    handle_for_signal.suppress_next_modify.set(false);
-                } else {
-                    handle_for_signal.is_modified.set(true);
-                }
+        if let EditorEvent::ContentChanged { content, version } = &event {
+            *handle_for_signal.cached_content.borrow_mut() = content.clone();
+            handle_for_signal.version.set(*version);
+            if handle_for_signal.suppress_next_modify.get() {
+                handle_for_signal.suppress_next_modify.set(false);
+            } else {
+                handle_for_signal.is_modified.set(true);
             }
-            _ => {}
         }
 
         // Forward to caller's event handler
@@ -640,7 +633,7 @@ where
     container.append(&webview);
 
     // Start warming the next WebView (for subsequent tabs).
-    glib::idle_add_local_once(|| warm_up_editor());
+    glib::idle_add_local_once(warm_up_editor);
 
     (container, handle)
 }
@@ -653,6 +646,7 @@ where
 /// This handles backslashes, quotes, newlines, and other special characters that
 /// could break out of the string or cause injection.
 fn js_string_escape(s: &str) -> String {
+    use std::fmt::Write;
     let mut out = String::with_capacity(s.len() + 16);
     for ch in s.chars() {
         match ch {
@@ -665,6 +659,9 @@ fn js_string_escape(s: &str) -> String {
             '\0' => out.push_str("\\0"),
             '\u{2028}' => out.push_str("\\u2028"), // line separator
             '\u{2029}' => out.push_str("\\u2029"), // paragraph separator
+            c if c < '\u{0020}' && c != '\n' && c != '\r' && c != '\t' => {
+                write!(out, "\\u{:04x}", c as u32).unwrap();
+            }
             c => out.push(c),
         }
     }

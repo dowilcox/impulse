@@ -177,6 +177,6 @@ pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
         // Detached HEAD — return abbreviated commit hash
         Ok(head
             .target()
-            .map(|oid| format!("{}", &oid.to_string()[..7.min(oid.to_string().len())])))
+            .map(|oid| { let s = oid.to_string(); s[..7.min(s.len())].to_string() }))
     }
 }

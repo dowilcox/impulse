@@ -804,7 +804,7 @@ final class SettingsWindowController: NSWindowController {
             // Stretch label+field rows, tables, and boxes to fill the available width
             let shouldStretch = row is NSScrollView
                 || row.identifier == Self.labelFieldRowId
-                || (row is NSBox && (row as! NSBox).boxType == .custom)
+                || (row as? NSBox)?.boxType == .custom
             if shouldStretch {
                 row.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
             }

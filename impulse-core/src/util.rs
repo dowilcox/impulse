@@ -109,6 +109,22 @@ pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
     filename == pattern || path.ends_with(pattern)
 }
 
+/// Validates that `path` is within `root` after canonicalization.
+/// Returns the canonicalized path on success, or an error if path escapes root.
+pub fn validate_path_within_root(path: &str, root: &str) -> Result<std::path::PathBuf, String> {
+    let canonical_root = std::fs::canonicalize(root)
+        .map_err(|e| format!("Failed to canonicalize root '{}': {}", root, e))?;
+    let canonical_path = std::fs::canonicalize(path)
+        .map_err(|e| format!("Failed to canonicalize path '{}': {}", path, e))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(format!(
+            "Path '{}' is outside the workspace root '{}'",
+            path, root
+        ));
+    }
+    Ok(canonical_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

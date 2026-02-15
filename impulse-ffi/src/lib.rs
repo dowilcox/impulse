@@ -6,10 +6,16 @@
 //! All extern "C" functions are wrapped in `ffi_catch` to prevent Rust
 //! panics from crossing the FFI boundary (which is undefined behavior).
 //! Panic payloads are logged before returning the fallback value.
+//!
+//! Note: `extern "C"` functions cannot be marked `unsafe` since they are
+//! called from C/Swift. Raw pointer dereferences inside `ffi_catch` are
+//! guarded by null checks.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -41,6 +47,8 @@ fn to_rust_str(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
+    // SAFETY: Caller guarantees `ptr` is a valid, null-terminated C string
+    // whose memory remains valid for the duration of this call.
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
         .ok()
@@ -51,8 +59,10 @@ fn to_c_string(s: &str) -> *mut c_char {
     match CString::new(s) {
         Ok(cs) => cs.into_raw(),
         Err(_) => {
-            // The string contains interior NUL bytes; strip them so the caller
-            // still receives a valid C string rather than a silent empty string.
+            log::warn!(
+                "String contains interior NUL bytes, sanitizing ({} chars)",
+                s.len()
+            );
             let sanitized: String = s.chars().filter(|&c| c != '\0').collect();
             CString::new(sanitized).unwrap_or_default().into_raw()
         }
@@ -70,6 +80,8 @@ pub extern "C" fn impulse_free_string(s: *mut c_char) {
         (),
         AssertUnwindSafe(|| {
             if !s.is_null() {
+                // SAFETY: `s` was previously returned by `CString::into_raw` from
+                // one of the `impulse_*` functions, so it is valid to reclaim it.
                 unsafe {
                     drop(CString::from_raw(s));
                 }
@@ -185,16 +197,23 @@ pub extern "C" fn impulse_search_files(root: *const c_char, query: *const c_char
         AssertUnwindSafe(|| {
             let root = match to_rust_str(root) {
                 Some(s) => s,
-                None => return to_c_string("[]"),
+                None => return std::ptr::null_mut(),
             };
             let query = match to_rust_str(query) {
                 Some(s) => s,
-                None => return to_c_string("[]"),
+                None => return std::ptr::null_mut(),
             };
 
             match impulse_core::search::search_filenames(&root, &query, 200) {
                 Ok(results) => {
-                    let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+                    let json = match serde_json::to_string(&results) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            serde_json::json!({"error": format!("serialization failed: {}", e)})
+                                .to_string()
+                        }
+                    };
                     to_c_string(&json)
                 }
                 Err(e) => {
@@ -221,19 +240,29 @@ pub extern "C" fn impulse_search_content(
         AssertUnwindSafe(|| {
             let root = match to_rust_str(root) {
                 Some(s) => s,
-                None => return to_c_string("[]"),
+                None => return std::ptr::null_mut(),
             };
             let query = match to_rust_str(query) {
                 Some(s) => s,
-                None => return to_c_string("[]"),
+                None => return std::ptr::null_mut(),
             };
 
             match impulse_core::search::search_contents(&root, &query, 500, case_sensitive) {
                 Ok(results) => {
-                    let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+                    let json = match serde_json::to_string(&results) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            serde_json::json!({"error": format!("serialization failed: {}", e)})
+                                .to_string()
+                        }
+                    };
                     to_c_string(&json)
                 }
-                Err(_) => to_c_string("[]"),
+                Err(e) => {
+                    let json = serde_json::json!({"error": e.to_string()});
+                    to_c_string(&json.to_string())
+                }
             }
         }),
     )
@@ -248,6 +277,7 @@ pub struct LspRegistryHandle {
     registry: Arc<impulse_core::lsp::LspRegistry>,
     runtime: Arc<Runtime>,
     event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<impulse_core::lsp::LspEvent>>,
+    freed: AtomicBool,
 }
 
 /// Create a new LSP registry for the given workspace root URI.
@@ -266,7 +296,10 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
 
             let runtime = match Runtime::new() {
                 Ok(rt) => Arc::new(rt),
-                Err(_) => return std::ptr::null_mut(),
+                Err(e) => {
+                    log::error!("Failed to create Tokio runtime for LSP: {}", e);
+                    return std::ptr::null_mut();
+                }
             };
 
             let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -276,6 +309,7 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
                 registry,
                 runtime,
                 event_rx: std::sync::Mutex::new(event_rx),
+                freed: AtomicBool::new(false),
             }))
         }),
     )
@@ -299,7 +333,13 @@ pub extern "C" fn impulse_lsp_ensure_servers(
             if handle.is_null() {
                 return -1;
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new` and has not been freed.
             let handle = unsafe { &*handle };
+            if handle.freed.load(Ordering::SeqCst) {
+                log::warn!("Attempted to use freed LSP registry handle");
+                return -1;
+            }
 
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
@@ -338,7 +378,13 @@ pub extern "C" fn impulse_lsp_request(
             if handle.is_null() {
                 return to_c_string("{\"error\":\"null handle\"}");
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new` and has not been freed.
             let handle = unsafe { &*handle };
+            if handle.freed.load(Ordering::SeqCst) {
+                log::warn!("Attempted to use freed LSP registry handle");
+                return std::ptr::null_mut();
+            }
 
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
@@ -360,8 +406,14 @@ pub extern "C" fn impulse_lsp_request(
                 if let Some(client) = clients.first() {
                     match client.request(&method, params).await {
                         Ok(value) => {
-                            let json = serde_json::to_string(&value)
-                                .unwrap_or_else(|_| "null".to_string());
+                            let json = match serde_json::to_string(&value) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    log::error!("JSON serialization failed: {}", e);
+                                    serde_json::json!({"error": format!("serialization failed: {}", e)})
+                                        .to_string()
+                                }
+                            };
                             to_c_string(&json)
                         }
                         Err(e) => {
@@ -397,7 +449,13 @@ pub extern "C" fn impulse_lsp_notify(
             if handle.is_null() {
                 return -1;
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new` and has not been freed.
             let handle = unsafe { &*handle };
+            if handle.freed.load(Ordering::SeqCst) {
+                log::warn!("Attempted to use freed LSP registry handle");
+                return -1;
+            }
 
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
@@ -442,7 +500,13 @@ pub extern "C" fn impulse_lsp_poll_event(handle: *mut LspRegistryHandle) -> *mut
             if handle.is_null() {
                 return std::ptr::null_mut();
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new` and has not been freed.
             let handle = unsafe { &*handle };
+            if handle.freed.load(Ordering::SeqCst) {
+                log::warn!("Attempted to use freed LSP registry handle");
+                return std::ptr::null_mut();
+            }
 
             let mut rx = match handle.event_rx.lock() {
                 Ok(rx) => rx,
@@ -534,7 +598,13 @@ pub extern "C" fn impulse_lsp_shutdown_all(handle: *mut LspRegistryHandle) {
             if handle.is_null() {
                 return;
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new` and has not been freed.
             let handle = unsafe { &*handle };
+            if handle.freed.load(Ordering::SeqCst) {
+                log::warn!("Attempted to use freed LSP registry handle");
+                return;
+            }
             handle.runtime.block_on(async {
                 handle.registry.shutdown_all().await;
             });
@@ -548,12 +618,24 @@ pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
     ffi_catch(
         (),
         AssertUnwindSafe(|| {
-            if !handle.is_null() {
-                let handle = unsafe { Box::from_raw(handle) };
-                handle.runtime.block_on(async {
-                    handle.registry.shutdown_all().await;
-                });
+            if handle.is_null() {
+                return;
             }
+            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
+            // `impulse_lsp_registry_new`. We check the `freed` flag atomically
+            // to prevent double-free.
+            let handle_ref = unsafe { &*handle };
+            // Prevent double-free
+            if handle_ref.freed.swap(true, Ordering::SeqCst) {
+                log::warn!("impulse_lsp_registry_free called on already-freed handle");
+                return;
+            }
+            // SAFETY: We have exclusive ownership via the `freed` flag swap above.
+            // No other call will reach `Box::from_raw` for this pointer.
+            let handle = unsafe { Box::from_raw(handle) };
+            handle.runtime.block_on(async {
+                handle.registry.shutdown_all().await;
+            });
         }),
     );
 }
@@ -582,7 +664,15 @@ pub extern "C" fn impulse_lsp_check_status() -> *mut c_char {
                 })
             })
             .collect();
-            to_c_string(&serde_json::to_string(&json).unwrap_or_else(|_| "[]".to_string()))
+            let result = match serde_json::to_string(&json) {
+                Ok(j) => j,
+                Err(e) => {
+                    log::error!("JSON serialization failed: {}", e);
+                    serde_json::json!({"error": format!("serialization failed: {}", e)})
+                        .to_string()
+                }
+            };
+            to_c_string(&result)
         }),
     )
 }
@@ -722,7 +812,14 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                             status: "deleted".to_string(),
                         });
                     }
-                    let json = serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
+                    let json = match serde_json::to_string(&markers) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            serde_json::json!({"error": format!("serialization failed: {}", e)})
+                                .to_string()
+                        }
+                    };
                     to_c_string(&json)
                 }
                 Err(_) => std::ptr::null_mut(),

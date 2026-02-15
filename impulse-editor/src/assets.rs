@@ -1,7 +1,9 @@
+use fs2::FileExt;
 use include_dir::{include_dir, Dir};
 use std::path::PathBuf;
 
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
+pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
 pub const MONACO_VERSION: &str = "0.52.2";
 
@@ -17,15 +19,30 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
         dirs::data_dir().ok_or_else(|| "Cannot determine data home directory".to_string())?;
 
     let monaco_dir = data_dir.join("impulse").join("monaco").join(MONACO_VERSION);
+
+    // Acquire exclusive lock to make check-and-extract atomic
+    let lock_path = data_dir.join("impulse").join("monaco").join(".extract.lock");
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create lock directory: {}", e))?;
+    }
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {}", e))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire extraction lock: {}", e))?;
+
     let marker = monaco_dir.join(".complete");
 
     // Check if already extracted with matching version
     if marker.is_file() {
         if let Ok(version) = std::fs::read_to_string(&marker) {
             if version.trim() == MONACO_VERSION {
-                // Always overwrite editor.html (may change between builds)
+                // Always overwrite editor.html and editor.js (may change between builds)
                 std::fs::write(monaco_dir.join("editor.html"), EDITOR_HTML)
                     .map_err(|e| format!("Failed to write editor.html: {}", e))?;
+                std::fs::write(monaco_dir.join("editor.js"), EDITOR_JS)
+                    .map_err(|e| format!("Failed to write editor.js: {}", e))?;
                 return Ok(monaco_dir);
             }
         }
@@ -47,9 +64,11 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
     // Extract all embedded files
     extract_dir_recursive(&MONACO_DIR, &monaco_dir)?;
 
-    // Write editor.html
+    // Write editor.html and editor.js
     std::fs::write(monaco_dir.join("editor.html"), EDITOR_HTML)
         .map_err(|e| format!("Failed to write editor.html: {}", e))?;
+    std::fs::write(monaco_dir.join("editor.js"), EDITOR_JS)
+        .map_err(|e| format!("Failed to write editor.js: {}", e))?;
 
     // Write completion marker last (incomplete extraction = retry next time)
     std::fs::write(&marker, MONACO_VERSION)

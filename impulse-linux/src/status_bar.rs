@@ -7,6 +7,7 @@ pub struct StatusBar {
     pub widget: gtk4::Box,
     cwd_label: gtk4::Label,
     branch_label: gtk4::Label,
+    #[allow(dead_code)] // Kept alive to maintain widget hierarchy
     shell_label: gtk4::Label,
     cursor_label: gtk4::Label,
     language_label: gtk4::Label,
@@ -101,20 +102,10 @@ impl StatusBar {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn set_shell_name(&self, name: &str) {
-        self.shell_label.set_text(name);
-    }
-
     pub fn update_cursor_position(&self, line: i32, col: i32) {
         self.cursor_label
             .set_text(&format!("Ln {}, Col {}", line + 1, col + 1));
         self.cursor_label.set_visible(true);
-    }
-
-    #[allow(dead_code)]
-    pub fn hide_cursor_position(&self) {
-        self.cursor_label.set_visible(false);
     }
 
     pub fn update_language(&self, lang: &str) {
