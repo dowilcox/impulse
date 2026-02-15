@@ -212,6 +212,9 @@ final class FileTreeView: NSView {
 
         // Batch-set up subdirectory watchers for all expanded directories.
         watchExpandedSubdirectories(rootNodes)
+
+        // Children loaded during bulk restore skipped git status — refresh now.
+        refreshGitStatus()
     }
 
     /// Accept a pre-built tree (constructed off the main thread) and update
@@ -243,6 +246,9 @@ final class FileTreeView: NSView {
 
         // Batch-set up subdirectory watchers for all expanded directories.
         watchExpandedSubdirectories(rootNodes)
+
+        // Children loaded during bulk restore skipped git status — refresh now.
+        refreshGitStatus()
     }
 
     /// Re-fetch git status for the current tree and reload visible cells to
@@ -318,6 +324,8 @@ final class FileTreeView: NSView {
                 self.isBulkRestoring = false
                 NSAnimationContext.endGrouping()
                 self.watchExpandedSubdirectories(self.rootNodes)
+                // Children loaded during bulk restore skipped git status — refresh now.
+                self.refreshGitStatus()
             }
         }
     }

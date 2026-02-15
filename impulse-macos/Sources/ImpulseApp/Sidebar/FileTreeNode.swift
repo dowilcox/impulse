@@ -112,11 +112,15 @@ final class FileTreeNode {
         // Find the git repository root.
         let gitRootResult = Self.shell("git", arguments: ["rev-parse", "--show-toplevel"],
                                        currentDirectory: rootPath)
-        guard let gitRoot = gitRootResult else { return [:] }
+        guard let gitRoot = gitRootResult else {
+            return [:]
+        }
 
         let statusResult = Self.shell("git", arguments: ["status", "--porcelain", "-u"],
                                       currentDirectory: rootPath)
-        guard let output = statusResult, !output.isEmpty else { return [:] }
+        guard let output = statusResult, !output.isEmpty else {
+            return [:]
+        }
 
         var map: [String: GitStatus] = [:]
 
@@ -226,12 +230,25 @@ final class FileTreeNode {
             try process.run()
             process.waitUntilExit()
         } catch {
+            NSLog("FileTreeNode.shell: failed to run '%@ %@': %@", command, arguments.joined(separator: " "), error.localizedDescription)
             return nil
         }
 
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else {
+            let stderrData = (process.standardError as? Pipe)?.fileHandleForReading.readDataToEndOfFile()
+            let stderrStr = stderrData.flatMap { String(data: $0, encoding: .utf8) } ?? "(no stderr)"
+            NSLog("FileTreeNode.shell: '%@ %@' exited with %d, stderr: %@", command, arguments.joined(separator: " "), process.terminationStatus, stderrStr)
+            return nil
+        }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only trim trailing whitespace/newlines. Leading whitespace is
+        // significant for commands like `git status --porcelain` where each
+        // line starts with a status character that may be a space.
+        guard var result = String(data: data, encoding: .utf8) else { return nil }
+        while result.last?.isWhitespace == true || result.last?.isNewline == true {
+            result.removeLast()
+        }
+        return result.isEmpty ? nil : result
     }
 }
