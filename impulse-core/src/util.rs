@@ -1,8 +1,29 @@
 use std::path::Path;
+use std::time::Duration;
 
 use url::Url;
 
 use crate::pty::url_decode;
+
+/// Run a blocking closure with a timeout. Returns `Err` if the operation
+/// exceeds the deadline. The closure continues running on its thread
+/// (it cannot be cancelled), but the caller is unblocked.
+pub fn run_with_timeout<T: Send + 'static>(
+    timeout: Duration,
+    label: &str,
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let label_owned = label.to_string();
+    std::thread::Builder::new()
+        .name(format!("timeout-{}", label_owned))
+        .spawn(move || {
+            let _ = tx.send(f());
+        })
+        .map_err(|e| format!("Failed to spawn timeout thread: {}", e))?;
+    rx.recv_timeout(timeout)
+        .map_err(|_| format!("{} timed out after {:?}", label, timeout))?
+}
 
 /// Convert a local path to a `file://` URI.
 pub fn file_path_to_uri(path: &Path) -> Option<String> {

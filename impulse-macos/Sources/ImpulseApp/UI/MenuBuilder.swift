@@ -114,6 +114,13 @@ enum MenuBuilder {
         closeTabItem.keyEquivalentModifierMask = [.command]
         menu.addItem(closeTabItem)
 
+        let reopenTabItem = NSMenuItem(title: "Reopen Closed Tab",
+                                       action: #selector(MenuActions.menuReopenTab(_:)),
+                                       keyEquivalent: "T")
+        reopenTabItem.target = MenuActions.shared
+        reopenTabItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(reopenTabItem)
+
         let closeWindowItem = NSMenuItem(title: "Close Window",
                                          action: #selector(NSWindow.performClose(_:)),
                                          keyEquivalent: "W")
@@ -390,6 +397,10 @@ final class MenuActions: NSObject {
 
     @objc func menuCloseTab(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseCloseTab, object: nil)
+    }
+
+    @objc func menuReopenTab(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseReopenTab, object: nil)
     }
 
     @objc func menuOpenFile(_ sender: Any?) {

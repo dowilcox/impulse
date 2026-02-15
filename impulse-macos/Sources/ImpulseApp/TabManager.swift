@@ -117,6 +117,21 @@ enum TabEntry {
     }
 }
 
+// MARK: - Closed Tab Info
+
+/// Information about a closed tab, used for the "reopen closed tab" feature.
+/// Only editor and image preview tabs are recorded (terminals cannot be reopened).
+enum ClosedTabInfo {
+    case editor(path: String)
+    case imagePreview(path: String)
+
+    var path: String {
+        switch self {
+        case .editor(let p), .imagePreview(let p): return p
+        }
+    }
+}
+
 // MARK: - Tab Manager
 
 /// Manages the collection of open tabs (terminal or editor) and the
@@ -131,6 +146,12 @@ final class TabManager: NSObject {
 
     /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
     private var openFilePaths: Set<String> = []
+
+    /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
+    private(set) var closedTabs: [ClosedTabInfo] = []
+
+    /// Maximum number of closed tabs to remember.
+    private let maxClosedTabs = 20
 
     /// The index of the currently selected tab, or -1 if no tabs are open.
     private(set) var selectedIndex: Int = -1
@@ -335,6 +356,26 @@ final class TabManager: NSObject {
         }
     }
 
+    /// Records a tab entry in the closed tabs stack for later reopening.
+    private func recordClosedTab(_ entry: TabEntry) {
+        switch entry {
+        case .editor(let e):
+            if let p = e.filePath {
+                closedTabs.append(.editor(path: p))
+                if closedTabs.count > maxClosedTabs {
+                    closedTabs.removeFirst()
+                }
+            }
+        case .imagePreview(let p, _):
+            closedTabs.append(.imagePreview(path: p))
+            if closedTabs.count > maxClosedTabs {
+                closedTabs.removeFirst()
+            }
+        case .terminal:
+            break // Terminals cannot be reopened
+        }
+    }
+
     /// Closes the tab at the given index. If it is the active tab, the
     /// nearest neighbor is selected. If it was the last tab, `selectedIndex`
     /// becomes -1.
@@ -342,6 +383,7 @@ final class TabManager: NSObject {
         guard index >= 0, index < tabs.count else { return }
 
         let entry = tabs[index]
+        recordClosedTab(entry)
         cleanupTab(entry)
 
         // Remove from open file paths tracking.
@@ -405,6 +447,7 @@ final class TabManager: NSObject {
         for i in stride(from: tabs.count - 1, through: 0, by: -1) {
             if i != keepIndex && !pinnedTabs[i] {
                 let closedEntry = tabs[i]
+                recordClosedTab(closedEntry)
                 cleanupTab(closedEntry)
 
                 // Remove from open file paths tracking.
@@ -432,6 +475,22 @@ final class TabManager: NSObject {
             let newIndex = tabs.firstIndex(where: { $0.view === keepView }) ?? 0
             selectTab(index: newIndex)
         }
+    }
+
+    // MARK: - Reopening Closed Tabs
+
+    /// Reopens the most recently closed editor or image preview tab.
+    /// Returns the file path that was reopened, or `nil` if the stack was empty
+    /// or the file no longer exists on disk.
+    @discardableResult
+    func reopenLastClosedTab() -> String? {
+        guard let info = closedTabs.popLast() else { return nil }
+        let path = info.path
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        // Use the existing addEditorTab method, which handles deduplication
+        // and image detection internally.
+        addEditorTab(path: path)
+        return path
     }
 
     // MARK: - Reordering

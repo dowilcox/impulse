@@ -70,7 +70,7 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
 /// Get git status for files in a directory using libgit2.
 pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String>, String> {
     let dir_path = PathBuf::from(path);
-    let repo = match git2::Repository::discover(&dir_path) {
+    let repo = match crate::git::open_repo(&dir_path) {
         Ok(r) => r,
         Err(_) => return Ok(HashMap::new()),
     };
@@ -161,7 +161,7 @@ pub fn read_directory_with_git_status(
 
 /// Get current git branch name for a path using libgit2.
 pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
-    let repo = match git2::Repository::discover(path) {
+    let repo = match crate::git::open_repo(std::path::Path::new(path)) {
         Ok(r) => r,
         Err(_) => return Ok(None),
     };

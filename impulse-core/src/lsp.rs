@@ -391,6 +391,7 @@ impl LspClient {
         let client_key_exit = client_key.to_string();
         let server_id_exit = server_id.to_string();
         let cmd_for_exit = command.to_string();
+        let pending_exit = pending.clone();
         tokio::spawn(async move {
             let status = child.wait().await;
             log::warn!(
@@ -399,6 +400,21 @@ impl LspClient {
                 status,
                 client_key_exit
             );
+            // Drain all pending requests so waiting callers get an error instead of hanging
+            {
+                let mut pending = pending_exit.lock().await;
+                let count = pending.len();
+                if count > 0 {
+                    log::warn!(
+                        "Draining {} pending LSP request(s) for crashed server '{}'",
+                        count,
+                        cmd_for_exit
+                    );
+                    for (_, tx) in pending.drain() {
+                        let _ = tx.send(Err("LSP server exited unexpectedly".to_string()));
+                    }
+                }
+            }
             let _ = event_tx_exit.send(LspEvent::ServerExited {
                 client_key: client_key_exit,
                 server_id: server_id_exit,
@@ -479,8 +495,8 @@ impl LspClient {
                 continue;
             }
 
-            // Reject absurdly large messages to prevent memory exhaustion (64 MB limit)
-            const MAX_LSP_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+            // Reject absurdly large messages to prevent memory exhaustion (32 MB limit)
+            const MAX_LSP_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
             if content_length > MAX_LSP_MESSAGE_SIZE {
                 log::warn!("LSP message too large ({} bytes), skipping", content_length);
                 // Drain the oversized body to keep the stream in sync
@@ -635,7 +651,15 @@ impl LspClient {
 
         self.sender.send(body).map_err(|e| e.to_string())?;
 
-        rx.await.map_err(|_| "Request cancelled".to_string())?
+        match tokio::time::timeout(Duration::from_secs(15), rx).await {
+            Ok(result) => result.map_err(|_| "Request cancelled".to_string())?,
+            Err(_) => {
+                // Remove the pending request so the oneshot sender is dropped
+                let mut pending = self.pending.lock().await;
+                pending.remove(&id);
+                Err(format!("LSP request '{}' timed out after 15s", method))
+            }
+        }
     }
 
     pub fn notify<P: Serialize>(&self, method: &str, params: P) -> Result<(), String> {
@@ -876,10 +900,17 @@ impl LspClient {
     pub async fn shutdown(&self) -> Result<(), String> {
         // Give the server 5 seconds to respond to shutdown
         let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            Duration::from_secs(5),
             self.request("shutdown", serde_json::Value::Null),
         )
         .await;
+        // Drain any remaining pending requests before sending exit
+        {
+            let mut pending = self.pending.lock().await;
+            for (_, tx) in pending.drain() {
+                let _ = tx.send(Err("LSP server shutting down".to_string()));
+            }
+        }
         self.notify("exit", serde_json::Value::Null)
     }
 }

@@ -949,6 +949,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
         notificationObservers.append(
+            nc.addObserver(forName: .impulseReopenTab, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.tabManager.reopenLastClosedTab()
+            }
+        )
+        notificationObservers.append(
             nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
                 // Close the window when the last tab is closed (covers tab bar X button,

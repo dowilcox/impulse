@@ -13,6 +13,8 @@ extension Notification.Name {
     static let impulseNewTerminalTab = Notification.Name("impulseNewTerminalTab")
     /// Requests closing the current tab in the frontmost window.
     static let impulseCloseTab = Notification.Name("impulseCloseTab")
+    /// Requests reopening the most recently closed tab.
+    static let impulseReopenTab = Notification.Name("impulseReopenTab")
     /// Requests saving the current editor tab.
     static let impulseSaveFile = Notification.Name("impulseSaveFile")
     /// Requests toggling the sidebar.

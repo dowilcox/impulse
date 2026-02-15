@@ -73,7 +73,8 @@ enum ThemeManager {
     /// Returns the list of all built-in theme names in display order.
     static func availableThemes() -> [String] {
         ["kanagawa", "rose-pine", "nord", "gruvbox", "tokyo-night",
-         "tokyo-night-storm", "catppuccin-mocha"]
+         "tokyo-night-storm", "catppuccin-mocha", "dracula",
+         "solarized-dark", "one-dark", "ayu-dark"]
     }
 
     /// Returns the theme matching `name` (case-insensitive). Falls back to Nord.
@@ -93,6 +94,14 @@ enum ThemeManager {
             return tokyoNightStorm
         case "catppuccin-mocha", "catppuccin_mocha", "catppuccinmocha":
             return catppuccinMocha
+        case "dracula":
+            return dracula
+        case "solarized-dark", "solarized_dark", "solarizeddark":
+            return solarizedDark
+        case "one-dark", "one_dark", "onedark":
+            return oneDark
+        case "ayu-dark", "ayu_dark", "ayudark":
+            return ayuDark
         default:
             return nord
         }
@@ -261,6 +270,98 @@ enum ThemeManager {
         terminalPalette: [
             "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#bac2de",
             "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#cdd6f4",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Dracula
+
+    static let dracula = Theme(
+        name: "dracula",
+        bg: NSColor(hex: "#282a36"),
+        bgDark: NSColor(hex: "#21222c"),
+        bgHighlight: NSColor(hex: "#44475a"),
+        fg: NSColor(hex: "#f8f8f2"),
+        fgDark: NSColor(hex: "#6272a4"),
+        cyan: NSColor(hex: "#8be9fd"),
+        blue: NSColor(hex: "#6272a4"),
+        green: NSColor(hex: "#50fa7b"),
+        magenta: NSColor(hex: "#ff79c6"),
+        red: NSColor(hex: "#ff5555"),
+        yellow: NSColor(hex: "#f1fa8c"),
+        orange: NSColor(hex: "#ffb86c"),
+        comment: NSColor(hex: "#6272a4"),
+        terminalPalette: [
+            "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+            "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Solarized Dark
+
+    static let solarizedDark = Theme(
+        name: "solarized-dark",
+        bg: NSColor(hex: "#002b36"),
+        bgDark: NSColor(hex: "#001e26"),
+        bgHighlight: NSColor(hex: "#073642"),
+        fg: NSColor(hex: "#839496"),
+        fgDark: NSColor(hex: "#586e75"),
+        cyan: NSColor(hex: "#2aa198"),
+        blue: NSColor(hex: "#268bd2"),
+        green: NSColor(hex: "#859900"),
+        magenta: NSColor(hex: "#d33682"),
+        red: NSColor(hex: "#dc322f"),
+        yellow: NSColor(hex: "#b58900"),
+        orange: NSColor(hex: "#cb4b16"),
+        comment: NSColor(hex: "#586e75"),
+        terminalPalette: [
+            "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+            "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: One Dark
+
+    static let oneDark = Theme(
+        name: "one-dark",
+        bg: NSColor(hex: "#282c34"),
+        bgDark: NSColor(hex: "#21252b"),
+        bgHighlight: NSColor(hex: "#2c313a"),
+        fg: NSColor(hex: "#abb2bf"),
+        fgDark: NSColor(hex: "#5c6370"),
+        cyan: NSColor(hex: "#56b6c2"),
+        blue: NSColor(hex: "#61afef"),
+        green: NSColor(hex: "#98c379"),
+        magenta: NSColor(hex: "#c678dd"),
+        red: NSColor(hex: "#e06c75"),
+        yellow: NSColor(hex: "#e5c07b"),
+        orange: NSColor(hex: "#d19a66"),
+        comment: NSColor(hex: "#5c6370"),
+        terminalPalette: [
+            "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
+            "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Ayu Dark
+
+    static let ayuDark = Theme(
+        name: "ayu-dark",
+        bg: NSColor(hex: "#0b0e14"),
+        bgDark: NSColor(hex: "#07090d"),
+        bgHighlight: NSColor(hex: "#131721"),
+        fg: NSColor(hex: "#bfbdb6"),
+        fgDark: NSColor(hex: "#565b66"),
+        cyan: NSColor(hex: "#73b8ff"),
+        blue: NSColor(hex: "#59c2ff"),
+        green: NSColor(hex: "#aad94c"),
+        magenta: NSColor(hex: "#d2a6ff"),
+        red: NSColor(hex: "#f07178"),
+        yellow: NSColor(hex: "#ffb454"),
+        orange: NSColor(hex: "#ff8f40"),
+        comment: NSColor(hex: "#565b66"),
+        terminalPalette: [
+            "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
+            "#565b66", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#ffffff",
         ].map { NSColor(hex: $0) }
     )
 }

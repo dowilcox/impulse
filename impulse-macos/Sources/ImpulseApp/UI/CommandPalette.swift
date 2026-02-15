@@ -141,6 +141,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         let actionMap: [String: Notification.Name] = [
             "new_tab":           .impulseNewTerminalTab,
             "close_tab":         .impulseCloseTab,
+            "reopen_tab":        .impulseReopenTab,
             "save":              .impulseSaveFile,
             "find":              .impulseFind,
             "toggle_sidebar":    .impulseToggleSidebar,

@@ -15,7 +15,6 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -204,7 +203,7 @@ pub extern "C" fn impulse_search_files(root: *const c_char, query: *const c_char
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::search::search_filenames(&root, &query, 200) {
+            match impulse_core::search::search_filenames(&root, &query, 200, None) {
                 Ok(results) => {
                     let json = match serde_json::to_string(&results) {
                         Ok(j) => j,
@@ -247,7 +246,7 @@ pub extern "C" fn impulse_search_content(
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::search::search_contents(&root, &query, 500, case_sensitive) {
+            match impulse_core::search::search_contents(&root, &query, 500, case_sensitive, None) {
                 Ok(results) => {
                     let json = match serde_json::to_string(&results) {
                         Ok(j) => j,
@@ -272,12 +271,54 @@ pub extern "C" fn impulse_search_content(
 // LSP management
 // ---------------------------------------------------------------------------
 
-/// Opaque handle wrapping an `LspRegistry` plus the tokio runtime it runs on.
-pub struct LspRegistryHandle {
+use std::collections::HashMap;
+use std::sync::{Mutex as StdMutex, OnceLock};
+
+/// Inner data for an LSP registry handle, stored in the global registry.
+struct LspRegistryInner {
     registry: Arc<impulse_core::lsp::LspRegistry>,
     runtime: Arc<Runtime>,
-    event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<impulse_core::lsp::LspEvent>>,
-    freed: AtomicBool,
+    event_rx: StdMutex<mpsc::UnboundedReceiver<impulse_core::lsp::LspEvent>>,
+}
+
+/// Global registry mapping handle addresses to their inner data.
+/// This eliminates raw pointer dereference — we only use the pointer as an opaque key.
+fn lsp_handle_registry() -> &'static StdMutex<HashMap<usize, Arc<LspRegistryInner>>> {
+    static REGISTRY: OnceLock<StdMutex<HashMap<usize, Arc<LspRegistryInner>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+/// Look up a handle in the global registry and run `f` with the inner data.
+/// Returns `default` if the handle is null, freed, or the registry lock is poisoned.
+fn with_lsp_handle<T>(
+    handle: *mut LspRegistryHandle,
+    default: T,
+    f: impl FnOnce(&LspRegistryInner) -> T,
+) -> T {
+    if handle.is_null() {
+        return default;
+    }
+    let key = handle as usize;
+    let guard = match lsp_handle_registry().lock() {
+        Ok(g) => g,
+        Err(_) => return default,
+    };
+    match guard.get(&key) {
+        Some(inner) => {
+            let inner = Arc::clone(inner);
+            drop(guard); // Release lock before calling f
+            f(&inner)
+        }
+        None => {
+            log::warn!("Attempted to use invalid or freed LSP registry handle");
+            default
+        }
+    }
+}
+
+/// Opaque handle token for the C API. Never dereferenced — only used as a key.
+pub struct LspRegistryHandle {
+    _private: (),
 }
 
 /// Create a new LSP registry for the given workspace root URI.
@@ -305,12 +346,18 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
             let (event_tx, event_rx) = mpsc::unbounded_channel();
             let registry = Arc::new(impulse_core::lsp::LspRegistry::new(root_uri, event_tx));
 
-            Box::into_raw(Box::new(LspRegistryHandle {
+            let inner = Arc::new(LspRegistryInner {
                 registry,
                 runtime,
-                event_rx: std::sync::Mutex::new(event_rx),
-                freed: AtomicBool::new(false),
-            }))
+                event_rx: StdMutex::new(event_rx),
+            });
+
+            // Allocate a stable address to use as an opaque handle key
+            let handle = Box::into_raw(Box::new(LspRegistryHandle { _private: () }));
+            if let Ok(mut reg) = lsp_handle_registry().lock() {
+                reg.insert(handle as usize, inner);
+            }
+            handle
         }),
     )
 }
@@ -330,17 +377,6 @@ pub extern "C" fn impulse_lsp_ensure_servers(
     ffi_catch(
         -1,
         AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return -1;
-            }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new` and has not been freed.
-            let handle = unsafe { &*handle };
-            if handle.freed.load(Ordering::SeqCst) {
-                log::warn!("Attempted to use freed LSP registry handle");
-                return -1;
-            }
-
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
                 None => return -1,
@@ -350,9 +386,11 @@ pub extern "C" fn impulse_lsp_ensure_servers(
                 None => return -1,
             };
 
-            handle.runtime.block_on(async {
-                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-                clients.len() as i32
+            with_lsp_handle(handle, -1, |inner| {
+                inner.runtime.block_on(async {
+                    let clients = inner.registry.get_clients(&language_id, &file_uri).await;
+                    clients.len() as i32
+                })
             })
         }),
     )
@@ -375,17 +413,6 @@ pub extern "C" fn impulse_lsp_request(
     ffi_catch(
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return to_c_string("{\"error\":\"null handle\"}");
-            }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new` and has not been freed.
-            let handle = unsafe { &*handle };
-            if handle.freed.load(Ordering::SeqCst) {
-                log::warn!("Attempted to use freed LSP registry handle");
-                return std::ptr::null_mut();
-            }
-
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
                 None => return to_c_string("{\"error\":\"invalid language_id\"}"),
@@ -401,29 +428,31 @@ pub extern "C" fn impulse_lsp_request(
             let params: Option<serde_json::Value> =
                 to_rust_str(params_json).and_then(|s| serde_json::from_str(&s).ok());
 
-            handle.runtime.block_on(async {
-                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-                if let Some(client) = clients.first() {
-                    match client.request(&method, params).await {
-                        Ok(value) => {
-                            let json = match serde_json::to_string(&value) {
-                                Ok(j) => j,
-                                Err(e) => {
-                                    log::error!("JSON serialization failed: {}", e);
-                                    serde_json::json!({"error": format!("serialization failed: {}", e)})
-                                        .to_string()
-                                }
-                            };
-                            to_c_string(&json)
+            with_lsp_handle(handle, to_c_string("{\"error\":\"invalid handle\"}"), |inner| {
+                inner.runtime.block_on(async {
+                    let clients = inner.registry.get_clients(&language_id, &file_uri).await;
+                    if let Some(client) = clients.first() {
+                        match client.request(&method, params).await {
+                            Ok(value) => {
+                                let json = match serde_json::to_string(&value) {
+                                    Ok(j) => j,
+                                    Err(e) => {
+                                        log::error!("JSON serialization failed: {}", e);
+                                        serde_json::json!({"error": format!("serialization failed: {}", e)})
+                                            .to_string()
+                                    }
+                                };
+                                to_c_string(&json)
+                            }
+                            Err(e) => {
+                                let json = serde_json::json!({"error": e.to_string()});
+                                to_c_string(&json.to_string())
+                            }
                         }
-                        Err(e) => {
-                            let json = serde_json::json!({"error": e.to_string()});
-                            to_c_string(&json.to_string())
-                        }
+                    } else {
+                        to_c_string("{\"error\":\"no LSP client available\"}")
                     }
-                } else {
-                    to_c_string("{\"error\":\"no LSP client available\"}")
-                }
+                })
             })
         }),
     )
@@ -446,17 +475,6 @@ pub extern "C" fn impulse_lsp_notify(
     ffi_catch(
         -1,
         AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return -1;
-            }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new` and has not been freed.
-            let handle = unsafe { &*handle };
-            if handle.freed.load(Ordering::SeqCst) {
-                log::warn!("Attempted to use freed LSP registry handle");
-                return -1;
-            }
-
             let language_id = match to_rust_str(language_id) {
                 Some(s) => s,
                 None => return -1,
@@ -473,16 +491,18 @@ pub extern "C" fn impulse_lsp_notify(
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::Value::Null);
 
-            handle.runtime.block_on(async {
-                let clients = handle.registry.get_clients(&language_id, &file_uri).await;
-                if let Some(client) = clients.first() {
-                    match client.notify(&method, params) {
-                        Ok(()) => 0,
-                        Err(_) => -1,
+            with_lsp_handle(handle, -1, |inner| {
+                inner.runtime.block_on(async {
+                    let clients = inner.registry.get_clients(&language_id, &file_uri).await;
+                    if let Some(client) = clients.first() {
+                        match client.notify(&method, params) {
+                            Ok(()) => 0,
+                            Err(_) => -1,
+                        }
+                    } else {
+                        -1
                     }
-                } else {
-                    -1
-                }
+                })
             })
         }),
     )
@@ -497,94 +517,85 @@ pub extern "C" fn impulse_lsp_poll_event(handle: *mut LspRegistryHandle) -> *mut
     ffi_catch(
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return std::ptr::null_mut();
-            }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new` and has not been freed.
-            let handle = unsafe { &*handle };
-            if handle.freed.load(Ordering::SeqCst) {
-                log::warn!("Attempted to use freed LSP registry handle");
-                return std::ptr::null_mut();
-            }
+            with_lsp_handle(handle, std::ptr::null_mut(), |inner| {
+                let mut rx = match inner.event_rx.lock() {
+                    Ok(rx) => rx,
+                    Err(_) => return std::ptr::null_mut(),
+                };
 
-            let mut rx = match handle.event_rx.lock() {
-                Ok(rx) => rx,
-                Err(_) => return std::ptr::null_mut(),
-            };
-
-            match rx.try_recv() {
-                Ok(event) => {
-                    let json = match event {
-                        impulse_core::lsp::LspEvent::Diagnostics {
-                            uri,
-                            version,
-                            diagnostics,
-                        } => {
-                            let diag_json: Vec<serde_json::Value> = diagnostics
-                                .iter()
-                                .map(|d| {
-                                    serde_json::json!({
-                                        "severity": d.severity.map(|s| match s {
-                                            lsp_types::DiagnosticSeverity::ERROR => 1u8,
-                                            lsp_types::DiagnosticSeverity::WARNING => 2,
-                                            lsp_types::DiagnosticSeverity::INFORMATION => 3,
-                                            lsp_types::DiagnosticSeverity::HINT => 4,
-                                            _ => 1,
-                                        }).unwrap_or(1),
-                                        "startLine": d.range.start.line,
-                                        "startColumn": d.range.start.character,
-                                        "endLine": d.range.end.line,
-                                        "endColumn": d.range.end.character,
-                                        "message": d.message,
-                                        "source": d.source,
+                match rx.try_recv() {
+                    Ok(event) => {
+                        let json = match event {
+                            impulse_core::lsp::LspEvent::Diagnostics {
+                                uri,
+                                version,
+                                diagnostics,
+                            } => {
+                                let diag_json: Vec<serde_json::Value> = diagnostics
+                                    .iter()
+                                    .map(|d| {
+                                        serde_json::json!({
+                                            "severity": d.severity.map(|s| match s {
+                                                lsp_types::DiagnosticSeverity::ERROR => 1u8,
+                                                lsp_types::DiagnosticSeverity::WARNING => 2,
+                                                lsp_types::DiagnosticSeverity::INFORMATION => 3,
+                                                lsp_types::DiagnosticSeverity::HINT => 4,
+                                                _ => 1,
+                                            }).unwrap_or(1),
+                                            "startLine": d.range.start.line,
+                                            "startColumn": d.range.start.character,
+                                            "endLine": d.range.end.line,
+                                            "endColumn": d.range.end.character,
+                                            "message": d.message,
+                                            "source": d.source,
+                                        })
                                     })
+                                    .collect();
+                                serde_json::json!({
+                                    "type": "diagnostics",
+                                    "uri": uri,
+                                    "version": version,
+                                    "diagnostics": diag_json,
                                 })
-                                .collect();
-                            serde_json::json!({
-                                "type": "diagnostics",
-                                "uri": uri,
-                                "version": version,
-                                "diagnostics": diag_json,
-                            })
-                        }
-                        impulse_core::lsp::LspEvent::Initialized {
-                            client_key,
-                            server_id,
-                        } => {
-                            serde_json::json!({
-                                "type": "initialized",
-                                "clientKey": client_key,
-                                "serverId": server_id,
-                            })
-                        }
-                        impulse_core::lsp::LspEvent::ServerError {
-                            client_key,
-                            server_id,
-                            message,
-                        } => {
-                            serde_json::json!({
-                                "type": "serverError",
-                                "clientKey": client_key,
-                                "serverId": server_id,
-                                "message": message,
-                            })
-                        }
-                        impulse_core::lsp::LspEvent::ServerExited {
-                            client_key,
-                            server_id,
-                        } => {
-                            serde_json::json!({
-                                "type": "serverExited",
-                                "clientKey": client_key,
-                                "serverId": server_id,
-                            })
-                        }
-                    };
-                    to_c_string(&json.to_string())
+                            }
+                            impulse_core::lsp::LspEvent::Initialized {
+                                client_key,
+                                server_id,
+                            } => {
+                                serde_json::json!({
+                                    "type": "initialized",
+                                    "clientKey": client_key,
+                                    "serverId": server_id,
+                                })
+                            }
+                            impulse_core::lsp::LspEvent::ServerError {
+                                client_key,
+                                server_id,
+                                message,
+                            } => {
+                                serde_json::json!({
+                                    "type": "serverError",
+                                    "clientKey": client_key,
+                                    "serverId": server_id,
+                                    "message": message,
+                                })
+                            }
+                            impulse_core::lsp::LspEvent::ServerExited {
+                                client_key,
+                                server_id,
+                            } => {
+                                serde_json::json!({
+                                    "type": "serverExited",
+                                    "clientKey": client_key,
+                                    "serverId": server_id,
+                                })
+                            }
+                        };
+                        to_c_string(&json.to_string())
+                    }
+                    Err(_) => std::ptr::null_mut(),
                 }
-                Err(_) => std::ptr::null_mut(),
-            }
+            })
         }),
     )
 }
@@ -595,18 +606,10 @@ pub extern "C" fn impulse_lsp_shutdown_all(handle: *mut LspRegistryHandle) {
     ffi_catch(
         (),
         AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return;
-            }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new` and has not been freed.
-            let handle = unsafe { &*handle };
-            if handle.freed.load(Ordering::SeqCst) {
-                log::warn!("Attempted to use freed LSP registry handle");
-                return;
-            }
-            handle.runtime.block_on(async {
-                handle.registry.shutdown_all().await;
+            with_lsp_handle(handle, (), |inner| {
+                inner.runtime.block_on(async {
+                    inner.registry.shutdown_all().await;
+                });
             });
         }),
     );
@@ -621,21 +624,29 @@ pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
             if handle.is_null() {
                 return;
             }
-            // SAFETY: Caller guarantees `handle` is a valid pointer returned by
-            // `impulse_lsp_registry_new`. We check the `freed` flag atomically
-            // to prevent double-free.
-            let handle_ref = unsafe { &*handle };
-            // Prevent double-free
-            if handle_ref.freed.swap(true, Ordering::SeqCst) {
+            let key = handle as usize;
+            // Remove from registry — the Arc<Inner> keeps data alive if another
+            // thread is currently using it via with_lsp_handle.
+            let inner = {
+                let mut reg = match lsp_handle_registry().lock() {
+                    Ok(r) => r,
+                    Err(_) => return,
+                };
+                reg.remove(&key)
+            };
+            if let Some(inner) = inner {
+                inner.runtime.block_on(async {
+                    inner.registry.shutdown_all().await;
+                });
+            } else {
                 log::warn!("impulse_lsp_registry_free called on already-freed handle");
-                return;
             }
-            // SAFETY: We have exclusive ownership via the `freed` flag swap above.
-            // No other call will reach `Box::from_raw` for this pointer.
-            let handle = unsafe { Box::from_raw(handle) };
-            handle.runtime.block_on(async {
-                handle.registry.shutdown_all().await;
-            });
+            // Free the opaque handle allocation
+            // SAFETY: `handle` was allocated by `Box::into_raw` in `impulse_lsp_registry_new`.
+            // The registry removal above ensures this only happens once per handle.
+            unsafe {
+                drop(Box::from_raw(handle));
+            }
         }),
     );
 }
@@ -736,16 +747,23 @@ pub extern "C" fn impulse_git_blame(file_path: *const c_char, line: u32) -> *mut
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::git::get_line_blame(&file_path, line) {
-                Ok(info) => {
-                    let json = serde_json::json!({
-                        "author": info.author,
-                        "date": info.date,
-                        "commitHash": info.commit_hash,
-                        "summary": info.summary,
-                    });
-                    to_c_string(&json.to_string())
-                }
+            let result = impulse_core::util::run_with_timeout(
+                std::time::Duration::from_secs(10),
+                "git blame",
+                move || {
+                    impulse_core::git::get_line_blame(&file_path, line).map(|info| {
+                        serde_json::json!({
+                            "author": info.author,
+                            "date": info.date,
+                            "commitHash": info.commit_hash,
+                            "summary": info.summary,
+                        })
+                        .to_string()
+                    })
+                },
+            );
+            match result {
+                Ok(json) => to_c_string(&json),
                 Err(_) => std::ptr::null_mut(),
             }
         }),
@@ -789,8 +807,11 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::git::get_file_diff(&file_path) {
-                Ok(diff) => {
+            let result = impulse_core::util::run_with_timeout(
+                std::time::Duration::from_secs(10),
+                "git diff",
+                move || {
+                    let diff = impulse_core::git::get_file_diff(&file_path)?;
                     let mut markers: Vec<impulse_editor::protocol::DiffDecoration> = diff
                         .changed_lines
                         .iter()
@@ -812,16 +833,12 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                             status: "deleted".to_string(),
                         });
                     }
-                    let json = match serde_json::to_string(&markers) {
-                        Ok(j) => j,
-                        Err(e) => {
-                            log::error!("JSON serialization failed: {}", e);
-                            serde_json::json!({"error": format!("serialization failed: {}", e)})
-                                .to_string()
-                        }
-                    };
-                    to_c_string(&json)
-                }
+                    serde_json::to_string(&markers)
+                        .map_err(|e| format!("serialization failed: {}", e))
+                },
+            );
+            match result {
+                Ok(json) => to_c_string(&json),
                 Err(_) => std::ptr::null_mut(),
             }
         }),

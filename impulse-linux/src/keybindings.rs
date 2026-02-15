@@ -23,6 +23,12 @@ pub const BUILTIN_KEYBINDINGS: &[BuiltinKeybinding] = &[
         default_accel: "<Ctrl>w",
     },
     BuiltinKeybinding {
+        id: "reopen_tab",
+        description: "Reopen Closed Tab",
+        category: "Tabs",
+        default_accel: "<Ctrl><Shift>t",
+    },
+    BuiltinKeybinding {
         id: "next_tab",
         description: "Next Tab",
         category: "Tabs",

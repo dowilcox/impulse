@@ -73,7 +73,19 @@ pub fn is_editor(widget: &gtk4::Widget) -> bool {
     if let Some(bx) = widget.downcast_ref::<gtk4::Box>() {
         let name = bx.widget_name();
         let name_str = name.as_str();
-        !name_str.is_empty() && name_str != "GtkBox" && name_str.contains('/')
+        !name_str.is_empty()
+            && name_str != "GtkBox"
+            && name_str.contains('/')
+            && !bx.has_css_class("image-preview")
+    } else {
+        false
+    }
+}
+
+/// Check if a widget is an image preview container.
+pub fn is_image_preview(widget: &gtk4::Widget) -> bool {
+    if let Some(bx) = widget.downcast_ref::<gtk4::Box>() {
+        bx.has_css_class("image-preview")
     } else {
         false
     }

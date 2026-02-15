@@ -41,6 +41,14 @@ enum Keybindings {
             modifierFlags: [.command]
         ),
         BuiltinKeybinding(
+            id: "reopen_tab",
+            description: "Reopen Closed Tab",
+            category: "Tabs",
+            defaultShortcut: "Cmd+Shift+T",
+            keyEquivalent: "T",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "next_tab",
             description: "Next Tab",
             category: "Tabs",

@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct SearchResult {
@@ -16,10 +17,12 @@ pub struct SearchResult {
 }
 
 /// Search for files by name pattern (substring matching, case-insensitive).
+/// If `cancel` is provided and set to `true`, the search stops early and returns partial results.
 pub fn search_filenames(
     root: &str,
     query: &str,
     limit: usize,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Vec<SearchResult>, String> {
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
@@ -35,6 +38,10 @@ pub fn search_filenames(
 
     for entry in walker {
         if results.len() >= limit {
+            break;
+        }
+
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             break;
         }
 
@@ -66,11 +73,13 @@ pub fn search_filenames(
 }
 
 /// Search file contents for a text pattern.
+/// If `cancel` is provided and set to `true`, the search stops early and returns partial results.
 pub fn search_contents(
     root: &str,
     query: &str,
     limit: usize,
     case_sensitive: bool,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Vec<SearchResult>, String> {
     let query_match = if case_sensitive {
         query.to_string()
@@ -91,6 +100,10 @@ pub fn search_contents(
 
     for entry in walker {
         if results.len() >= limit {
+            break;
+        }
+
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             break;
         }
 
@@ -160,25 +173,28 @@ pub fn search_contents(
 }
 
 /// Search files by name, content, or both.
+/// If `cancel` is provided and set to `true`, the search stops early and returns partial results.
 pub fn search(
     root: &str,
     query: &str,
     search_type: &str,
     case_sensitive: bool,
     limit: usize,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Vec<SearchResult>, String> {
     if query.is_empty() {
         return Ok(Vec::new());
     }
 
     match search_type {
-        "filename" => search_filenames(root, query, limit),
-        "content" => search_contents(root, query, limit, case_sensitive),
+        "filename" => search_filenames(root, query, limit, cancel),
+        "content" => search_contents(root, query, limit, case_sensitive, cancel),
         "both" => {
-            let mut results = search_filenames(root, query, limit)?;
+            let mut results = search_filenames(root, query, limit, cancel)?;
             let remaining = limit.saturating_sub(results.len());
             if remaining > 0 {
-                let content_results = search_contents(root, query, remaining, case_sensitive)?;
+                let content_results =
+                    search_contents(root, query, remaining, case_sensitive, cancel)?;
                 results.extend(content_results);
             }
             Ok(results)

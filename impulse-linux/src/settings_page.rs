@@ -1060,6 +1060,10 @@ pub fn show_settings_window(
         "Tokyo Night",
         "Tokyo Night Storm",
         "Catppuccin Mocha",
+        "Dracula",
+        "Solarized Dark",
+        "One Dark",
+        "Ayu Dark",
     ];
     let available_themes = theme::get_available_themes();
     let theme_model = gtk4::StringList::new(&theme_labels);

@@ -131,7 +131,7 @@ pub fn build_project_search_panel() -> ProjectSearchState {
                             let r = root.clone();
                             let cs = case_sensitive;
                             let results = gio::spawn_blocking(move || {
-                                impulse_core::search::search_contents(&r, &q, 500, cs)
+                                impulse_core::search::search_contents(&r, &q, 500, cs, None)
                             })
                             .await;
                             match results {

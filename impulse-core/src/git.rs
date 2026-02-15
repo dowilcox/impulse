@@ -1,5 +1,52 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// Cache mapping directory paths to their discovered git repo root.
+/// This avoids repeated `Repository::discover()` calls which walk up the
+/// directory tree on every invocation.
+static REPO_ROOT_CACHE: std::sync::LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Open a git repository for the given path, using a cached repo-root lookup.
+/// Falls back to `Repository::discover()` on cache miss and caches the result.
+pub fn open_repo(path: &Path) -> Result<git2::Repository, String> {
+    // Try parent directory for files (most lookups are for files, not directories)
+    let lookup_dir = if path.is_file() {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+
+    // Check cache
+    if let Ok(cache) = REPO_ROOT_CACHE.lock() {
+        if let Some(root) = cache.get(lookup_dir) {
+            if let Ok(repo) = git2::Repository::open(root) {
+                return Ok(repo);
+            }
+            // Root no longer valid, fall through to re-discover
+        }
+    }
+
+    // Discover and cache
+    let repo =
+        git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let root = repo
+        .workdir()
+        .ok_or("Bare repository")?
+        .to_path_buf();
+
+    if let Ok(mut cache) = REPO_ROOT_CACHE.lock() {
+        cache.insert(lookup_dir.to_path_buf(), root);
+        // Simple eviction: clear when cache gets too large
+        if cache.len() > 200 {
+            cache.clear();
+        }
+    }
+
+    Ok(repo)
+}
 
 /// Status of a line relative to HEAD.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -42,14 +89,14 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     }
 
     let path = Path::new(file_path);
-    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let repo = open_repo(path)?;
 
     let head = match repo.head() {
         Ok(head) => head,
         Err(_) => {
             // No HEAD (empty repo) -- all lines are added
             return Ok(FileDiff {
-                changed_lines: std::collections::HashMap::new(),
+                changed_lines: HashMap::new(),
                 deleted_lines: Vec::new(),
             });
         }
@@ -70,7 +117,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
         .diff_tree_to_workdir(Some(&head_tree), Some(&mut diff_opts))
         .map_err(|e| format!("Diff failed: {}", e))?;
 
-    let mut changed_lines = std::collections::HashMap::new();
+    let mut changed_lines = HashMap::new();
 
     diff.foreach(
         &mut |_, _| true,
@@ -180,7 +227,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
 /// For untracked files this is a no-op (returns Ok).
 pub fn discard_file_changes(file_path: &str) -> Result<(), String> {
     let path = Path::new(file_path);
-    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let repo = open_repo(path)?;
     let repo_root = repo.workdir().ok_or("Bare repository")?;
     let rel_path = path
         .strip_prefix(repo_root)
@@ -197,7 +244,7 @@ pub fn discard_file_changes(file_path: &str) -> Result<(), String> {
 /// line is 1-based.
 pub fn get_line_blame(file_path: &str, line: u32) -> Result<BlameInfo, String> {
     let path = Path::new(file_path);
-    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let repo = open_repo(path)?;
 
     let repo_root = repo.workdir().ok_or("Bare repository")?;
     let rel_path = path

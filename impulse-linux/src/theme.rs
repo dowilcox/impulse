@@ -187,6 +187,90 @@ pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
     ],
 };
 
+/// Dracula — iconic purple-tinted dark theme with vibrant accents.
+pub static DRACULA: ThemeColors = ThemeColors {
+    bg: "#282a36",
+    bg_dark: "#21222c",
+    bg_highlight: "#44475a",
+    fg: "#f8f8f2",
+    fg_dark: "#6272a4",
+    cyan: "#8be9fd",
+    blue: "#6272a4",
+    green: "#50fa7b",
+    magenta: "#ff79c6",
+    red: "#ff5555",
+    yellow: "#f1fa8c",
+    orange: "#ffb86c",
+    comment: "#6272a4",
+    terminal_palette: [
+        "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+        "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+    ],
+};
+
+/// Solarized Dark — precision-engineered palette with balanced contrast.
+pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
+    bg: "#002b36",
+    bg_dark: "#001e26",
+    bg_highlight: "#073642",
+    fg: "#839496",
+    fg_dark: "#586e75",
+    cyan: "#2aa198",
+    blue: "#268bd2",
+    green: "#859900",
+    magenta: "#d33682",
+    red: "#dc322f",
+    yellow: "#b58900",
+    orange: "#cb4b16",
+    comment: "#586e75",
+    terminal_palette: [
+        "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+        "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+    ],
+};
+
+/// One Dark — Atom-inspired balanced dark theme.
+pub static ONE_DARK: ThemeColors = ThemeColors {
+    bg: "#282c34",
+    bg_dark: "#21252b",
+    bg_highlight: "#2c313a",
+    fg: "#abb2bf",
+    fg_dark: "#5c6370",
+    cyan: "#56b6c2",
+    blue: "#61afef",
+    green: "#98c379",
+    magenta: "#c678dd",
+    red: "#e06c75",
+    yellow: "#e5c07b",
+    orange: "#d19a66",
+    comment: "#5c6370",
+    terminal_palette: [
+        "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
+        "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+    ],
+};
+
+/// Ayu Dark — minimal dark theme with warm accent colors.
+pub static AYU_DARK: ThemeColors = ThemeColors {
+    bg: "#0b0e14",
+    bg_dark: "#07090d",
+    bg_highlight: "#131721",
+    fg: "#bfbdb6",
+    fg_dark: "#565b66",
+    cyan: "#73b8ff",
+    blue: "#59c2ff",
+    green: "#aad94c",
+    magenta: "#d2a6ff",
+    red: "#f07178",
+    yellow: "#ffb454",
+    orange: "#ff8f40",
+    comment: "#565b66",
+    terminal_palette: [
+        "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
+        "#565b66", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#ffffff",
+    ],
+};
+
 // ---------------------------------------------------------------------------
 // Theme lookup helpers
 // ---------------------------------------------------------------------------
@@ -201,6 +285,10 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
         "tokyo-night" | "tokyo_night" | "tokyonight" => &TOKYO_NIGHT,
         "tokyo-night-storm" | "tokyo_night_storm" | "tokyonightstorm" => &TOKYO_NIGHT_STORM,
         "catppuccin-mocha" | "catppuccin_mocha" | "catppuccinmocha" => &CATPPUCCIN_MOCHA,
+        "dracula" => &DRACULA,
+        "solarized-dark" | "solarized_dark" | "solarizeddark" => &SOLARIZED_DARK,
+        "one-dark" | "one_dark" | "onedark" => &ONE_DARK,
+        "ayu-dark" | "ayu_dark" | "ayudark" => &AYU_DARK,
         _ => &NORD,
     }
 }
@@ -215,6 +303,10 @@ pub fn get_available_themes() -> Vec<&'static str> {
         "tokyo-night",
         "tokyo-night-storm",
         "catppuccin-mocha",
+        "dracula",
+        "solarized-dark",
+        "one-dark",
+        "ayu-dark",
     ]
 }
 

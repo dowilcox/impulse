@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -49,6 +50,7 @@ pub struct PtySession {
 /// Manages all PTY sessions.
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, PtySession>>>,
+    stop_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Default for PtyManager {
@@ -61,6 +63,7 @@ impl PtyManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            stop_flags: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -107,12 +110,19 @@ impl PtyManager {
 
         sender.send(PtyMessage::ShellReady);
 
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let thread_stop_flag = Arc::clone(&stop_flag);
+
         let session_id = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             let mut parser = OscParser::new();
 
             loop {
+                if thread_stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
@@ -185,6 +195,11 @@ impl PtyManager {
             .map_err(|e| format!("Lock poisoned: {}", e))?
             .insert(id.clone(), session);
 
+        self.stop_flags
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?
+            .insert(id.clone(), stop_flag);
+
         Ok(id)
     }
 
@@ -238,6 +253,13 @@ impl PtyManager {
 
     /// Close and clean up a PTY session.
     pub fn close_session(&self, id: &str) -> Result<(), String> {
+        // Signal the reader thread to stop before killing the child
+        if let Ok(mut flags) = self.stop_flags.lock() {
+            if let Some(flag) = flags.remove(id) {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+
         let mut sessions = self
             .sessions
             .lock()
@@ -255,6 +277,13 @@ impl PtyManager {
 
 impl Drop for PtyManager {
     fn drop(&mut self) {
+        // Signal all reader threads to stop
+        if let Ok(flags) = self.stop_flags.lock() {
+            for flag in flags.values() {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+
         if let Ok(mut sessions) = self.sessions.lock() {
             let ids: Vec<String> = sessions.keys().cloned().collect();
             for id in ids {
