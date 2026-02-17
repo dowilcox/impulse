@@ -8,6 +8,7 @@ private extension NSToolbarItem.Identifier {
     static let appearance = NSToolbarItem.Identifier("appearance")
     static let automation = NSToolbarItem.Identifier("automation")
     static let keybindings = NSToolbarItem.Identifier("keybindings")
+    static let languageServers = NSToolbarItem.Identifier("languageServers")
 }
 
 // MARK: - Pane Metadata
@@ -24,6 +25,7 @@ private let allPanes: [PaneInfo] = [
     PaneInfo(id: .appearance, label: "Appearance", icon: "paintpalette"),
     PaneInfo(id: .automation, label: "Automation", icon: "gearshape.2"),
     PaneInfo(id: .keybindings, label: "Keybindings", icon: "keyboard"),
+    PaneInfo(id: .languageServers, label: "Language Servers", icon: "server.rack"),
 ]
 
 // MARK: - Settings Window Controller
@@ -36,6 +38,7 @@ final class SettingsWindowController: NSWindowController {
     private var paneCache: [String: NSView] = [:]
     private var currentPaneId: String = "editor"
     private var saveTimer: Timer?
+    private var managedLspStatuses: [[String: Any]] = []
 
     /// The singleton preferences window. Only one is shown at a time.
     private static var shared: SettingsWindowController?
@@ -111,8 +114,9 @@ final class SettingsWindowController: NSWindowController {
             case "terminal":    paneView = makeTerminalPane()
             case "appearance":  paneView = makeAppearancePane()
             case "automation":  paneView = makeAutomationPane()
-            case "keybindings": paneView = makeKeybindingsPane()
-            default:            paneView = makeEditorPane()
+            case "keybindings":     paneView = makeKeybindingsPane()
+            case "languageServers": paneView = makeLanguageServersPane()
+            default:                paneView = makeEditorPane()
             }
             paneCache[identifier] = paneView
         }
@@ -733,6 +737,159 @@ final class SettingsWindowController: NSWindowController {
         return wrapInScrollView(stack)
     }
 
+    // MARK: - Language Servers Pane
+
+    private func makeLanguageServersPane() -> NSView {
+        // Refresh data
+        managedLspStatuses = ImpulseCore.lspCheckStatus()
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+
+        // -- npm Section --
+
+        let npmAvailable = ImpulseCore.npmIsAvailable()
+        let npmLabel = NSTextField(labelWithString:
+            npmAvailable ? "npm is available" : "npm not found — install Node.js to manage web language servers")
+        npmLabel.font = NSFont.systemFont(ofSize: 13)
+        npmLabel.textColor = npmAvailable ? .systemGreen : .systemOrange
+        npmLabel.isBezeled = false
+        npmLabel.drawsBackground = false
+        npmLabel.isEditable = false
+
+        addSection(to: stack, title: "npm", rows: [npmLabel], addSeparator: false)
+
+        // -- Managed Web Language Servers Section --
+
+        let lspScrollView = NSScrollView()
+        lspScrollView.translatesAutoresizingMaskIntoConstraints = false
+        lspScrollView.hasVerticalScroller = true
+        lspScrollView.borderType = .bezelBorder
+
+        let lspTable = NSTableView()
+        lspTable.tag = 700
+        lspTable.headerView = NSTableHeaderView()
+        lspTable.usesAlternatingRowBackgroundColors = true
+
+        let serverCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lsp_server"))
+        serverCol.title = "Server"
+        serverCol.width = 200
+        lspTable.addTableColumn(serverCol)
+
+        let statusCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lsp_status"))
+        statusCol.title = "Status"
+        statusCol.width = 80
+        lspTable.addTableColumn(statusCol)
+
+        let pathCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lsp_path"))
+        pathCol.title = "Path"
+        pathCol.width = 250
+        lspTable.addTableColumn(pathCol)
+
+        lspTable.delegate = self
+        lspTable.dataSource = self
+        lspTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        lspScrollView.documentView = lspTable
+
+        lspScrollView.heightAnchor.constraint(equalToConstant: 200).isActive = true
+
+        let installButton = NSButton(title: "Install All", target: self,
+                                      action: #selector(installWebLspServers(_:)))
+        installButton.tag = 701
+        if !npmAvailable {
+            installButton.isEnabled = false
+            installButton.toolTip = "npm is not available"
+        }
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.identifier = NSUserInterfaceItemIdentifier("lspInstallSpinner")
+
+        let buttonRow = NSStackView(views: [installButton, spinner])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+
+        addSection(to: stack, title: "Managed Web Language Servers",
+                   subtitle: "Installed and managed by Impulse via npm.",
+                   rows: [lspScrollView, buttonRow])
+
+        // -- System Language Servers Section --
+
+        let systemStatuses = ImpulseCore.systemLspStatus()
+        var systemRows: [NSView] = []
+        for status in systemStatuses {
+            let command = status["command"] as? String ?? "?"
+            let installed = status["installed"] as? Bool ?? false
+            let resolvedPath = status["resolvedPath"] as? String
+
+            let label = NSTextField(labelWithString:
+                installed ? "\(command) — \(resolvedPath ?? "")" : "\(command) — Not found in PATH")
+            label.font = NSFont.systemFont(ofSize: 13)
+            label.textColor = installed ? .labelColor : .secondaryLabelColor
+            label.isBezeled = false
+            label.drawsBackground = false
+            label.isEditable = false
+            systemRows.append(label)
+        }
+
+        addSection(to: stack, title: "System Language Servers",
+                   subtitle: "Install these via your system package manager.",
+                   rows: systemRows)
+
+        return wrapInScrollView(stack)
+    }
+
+    @objc private func installWebLspServers(_ sender: NSButton) {
+        sender.isEnabled = false
+
+        func findSpinner(in view: NSView) -> NSProgressIndicator? {
+            if let pi = view as? NSProgressIndicator,
+               pi.identifier == NSUserInterfaceItemIdentifier("lspInstallSpinner") { return pi }
+            for sub in view.subviews {
+                if let found = findSpinner(in: sub) { return found }
+            }
+            return nil
+        }
+
+        if let content = window?.contentView,
+           let spinner = findSpinner(in: content) {
+            spinner.startAnimation(nil)
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = ImpulseCore.lspInstall()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                if let content = self.window?.contentView,
+                   let spinner = findSpinner(in: content) {
+                    spinner.stopAnimation(nil)
+                }
+
+                let alert = NSAlert()
+                switch result {
+                case .success:
+                    alert.messageText = "Installation Complete"
+                    alert.informativeText = "Managed web language servers have been installed successfully."
+                    alert.alertStyle = .informational
+                case .failure(let error):
+                    alert.messageText = "Installation Failed"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                }
+                alert.runModal()
+
+                // Invalidate pane cache so it rebuilds with fresh status
+                self.paneCache.removeValue(forKey: "languageServers")
+                self.switchToPane("languageServers", animated: false)
+            }
+        }
+    }
+
     // MARK: - Layout Helpers
 
     private func makeLabel(_ text: String) -> NSTextField {
@@ -1338,6 +1495,7 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         case 500: return Keybindings.builtins.count
         case 501: return settings.customKeybindings.count
         case 600: return settings.fileTypeOverrides.count
+        case 700: return managedLspStatuses.count
         default:  return 0
         }
     }
@@ -1408,6 +1566,21 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 if let s = fto.useSpaces { cell.stringValue = s ? "Yes" : "No" }
                 else { cell.stringValue = "-" }
             case "fto_formatter":  cell.stringValue = fto.formatOnSave?.command ?? "-"
+            default: break
+            }
+
+        case 700:
+            guard row < managedLspStatuses.count else { break }
+            let status = managedLspStatuses[row]
+            let command = status["command"] as? String ?? "?"
+            let installed = status["installed"] as? Bool ?? false
+            let resolvedPath = status["resolvedPath"] as? String
+            switch identifier.rawValue {
+            case "lsp_server": cell.stringValue = command
+            case "lsp_status":
+                cell.stringValue = installed ? "Installed" : "Not installed"
+                cell.textColor = installed ? .systemGreen : .secondaryLabelColor
+            case "lsp_path":   cell.stringValue = resolvedPath ?? "-"
             default: break
             }
 

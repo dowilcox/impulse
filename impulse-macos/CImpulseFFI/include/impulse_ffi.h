@@ -35,6 +35,8 @@ void impulse_lsp_registry_free(LspRegistryHandle *handle);
 // Managed LSP installation
 char *impulse_lsp_check_status(void);
 char *impulse_lsp_install(void);
+bool impulse_npm_is_available(void);
+char *impulse_system_lsp_status(void);
 
 // Git
 char *impulse_git_branch(const char *path);

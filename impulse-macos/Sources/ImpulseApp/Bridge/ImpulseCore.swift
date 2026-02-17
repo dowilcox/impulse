@@ -385,6 +385,26 @@ final class ImpulseCore {
         return .success(str)
     }
 
+    /// Returns whether npm is available on the system PATH.
+    static func npmIsAvailable() -> Bool {
+        impulse_npm_is_available()
+    }
+
+    /// Returns the installation status of system (non-managed) LSP servers
+    /// as an array of dictionaries with `command`, `installed`, and
+    /// `resolvedPath` keys.
+    static func systemLspStatus() -> [[String: Any]] {
+        guard let raw = impulse_system_lsp_status() else { return [] }
+        let json = String(cString: raw)
+        impulse_free_string(raw)
+
+        guard let data = json.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return array
+    }
+
     /// Instance wrapper for `lspCheckStatus`.
     func lspCheckStatus() -> String? {
         let statuses = ImpulseCore.lspCheckStatus()

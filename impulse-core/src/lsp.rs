@@ -120,7 +120,24 @@ fn workspace_folder_name(root_uri: &str) -> String {
 }
 
 pub fn managed_lsp_root_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("impulse").join("lsp"))
+    // On macOS, dirs::data_dir() returns ~/Library/Application Support, but the
+    // install script uses the XDG convention (~/.local/share). Check the XDG
+    // location first so both conventions work, then fall back to the platform
+    // native location.
+    let xdg = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")))
+        .map(|d| d.join("impulse").join("lsp"));
+    let native = dirs::data_dir().map(|dir| dir.join("impulse").join("lsp"));
+
+    // Prefer whichever location actually has an installation.
+    for candidate in xdg.iter().chain(native.iter()) {
+        if candidate.join("node_modules").is_dir() {
+            return Some(candidate.clone());
+        }
+    }
+    // Nothing installed yet — return the native path for future installs.
+    native.or(xdg)
 }
 
 pub fn managed_lsp_bin_dir() -> Option<PathBuf> {
@@ -193,7 +210,7 @@ fn missing_command_message(server_id: &str, command: &str) -> String {
     }
 }
 
-fn npm_is_available() -> bool {
+pub fn npm_is_available() -> bool {
     StdCommand::new("npm")
         .arg("--version")
         .stdout(std::process::Stdio::null())
@@ -266,6 +283,22 @@ pub fn managed_web_lsp_status() -> Vec<LspCommandStatus> {
         .collect()
 }
 
+const SYSTEM_LSP_SERVERS: &[(&str, &str)] = &[
+    ("rust-analyzer", "rust-analyzer"),
+    ("pyright", "pyright-langserver"),
+    ("clangd", "clangd"),
+];
+
+pub fn system_lsp_status() -> Vec<LspCommandStatus> {
+    SYSTEM_LSP_SERVERS
+        .iter()
+        .map(|(id, cmd)| LspCommandStatus {
+            command: (*id).to_string(),
+            resolved_path: find_command_in_path(cmd),
+        })
+        .collect()
+}
+
 fn send_jsonrpc_result(
     sender: &mpsc::UnboundedSender<Vec<u8>>,
     id: serde_json::Value,
@@ -318,6 +351,7 @@ impl LspClient {
         server_id: &str,
         client_key: &str,
         event_tx: mpsc::UnboundedSender<LspEvent>,
+        initialization_options: Option<serde_json::Value>,
     ) -> Result<Self, String> {
         log::info!(
             "LSP: starting server '{}' with args {:?} for server_id '{}', root_uri={}, key={}",
@@ -431,7 +465,7 @@ impl LspClient {
             server_id: server_id.to_string(),
         };
 
-        client.initialize(root_uri).await?;
+        client.initialize(root_uri, initialization_options).await?;
         log::info!(
             "LSP: server '{}' initialized successfully for key={}",
             command,
@@ -572,7 +606,8 @@ impl LspClient {
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.len())
                     .unwrap_or(0);
-                let result = serde_json::Value::Array(vec![serde_json::Value::Null; count]);
+                let result =
+                    serde_json::Value::Array(vec![serde_json::json!({}); count]);
                 send_jsonrpc_result(sender, id, result);
             }
             "window/workDoneProgress/create" => {
@@ -673,7 +708,11 @@ impl LspClient {
     }
 
     #[allow(deprecated)]
-    async fn initialize(&self, root_uri: &str) -> Result<(), String> {
+    async fn initialize(
+        &self,
+        root_uri: &str,
+        initialization_options: Option<serde_json::Value>,
+    ) -> Result<(), String> {
         let workspace_folders = Some(vec![lsp_types::WorkspaceFolder {
             uri: parse_uri(root_uri)?,
             name: workspace_folder_name(root_uri),
@@ -689,6 +728,12 @@ impl LspClient {
                     ..Default::default()
                 }),
                 text_document: Some(lsp_types::TextDocumentClientCapabilities {
+                    synchronization: Some(lsp_types::TextDocumentSyncClientCapabilities {
+                        did_save: Some(true),
+                        will_save: Some(false),
+                        will_save_wait_until: Some(false),
+                        dynamic_registration: Some(false),
+                    }),
                     completion: Some(lsp_types::CompletionClientCapabilities {
                         completion_item: Some(lsp_types::CompletionItemCapability {
                             snippet_support: Some(true),
@@ -717,10 +762,50 @@ impl LspClient {
                         link_support: Some(true),
                         ..Default::default()
                     }),
+                    declaration: Some(lsp_types::GotoCapability {
+                        link_support: Some(true),
+                        ..Default::default()
+                    }),
+                    type_definition: Some(lsp_types::GotoCapability {
+                        link_support: Some(true),
+                        ..Default::default()
+                    }),
+                    implementation: Some(lsp_types::GotoCapability {
+                        link_support: Some(true),
+                        ..Default::default()
+                    }),
+                    references: Some(Default::default()),
+                    rename: Some(lsp_types::RenameClientCapabilities {
+                        prepare_support: Some(true),
+                        ..Default::default()
+                    }),
+                    signature_help: Some(lsp_types::SignatureHelpClientCapabilities {
+                        signature_information: Some(lsp_types::SignatureInformationSettings {
+                            documentation_format: Some(vec![
+                                lsp_types::MarkupKind::PlainText,
+                                lsp_types::MarkupKind::Markdown,
+                            ]),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    code_action: Some(lsp_types::CodeActionClientCapabilities {
+                        code_action_literal_support: Some(lsp_types::CodeActionLiteralSupport {
+                            code_action_kind: lsp_types::CodeActionKindLiteralSupport {
+                                value_set: vec![
+                                    "quickfix".into(),
+                                    "refactor".into(),
+                                    "source".into(),
+                                ],
+                            },
+                        }),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 ..Default::default()
             },
+            initialization_options,
             client_info: Some(lsp_types::ClientInfo {
                 name: "Impulse".to_string(),
                 version: Some("0.1.0".to_string()),
@@ -915,11 +1000,39 @@ impl LspClient {
     }
 }
 
+/// Returns hardcoded default initialization options for known LSP servers
+/// that require them for proper operation.
+fn get_default_init_options(server_id: &str) -> Option<serde_json::Value> {
+    match server_id {
+        "intelephense" => {
+            let storage_path = managed_lsp_root_dir()
+                .unwrap_or_else(|| {
+                    dirs::data_dir()
+                        .unwrap_or_else(|| PathBuf::from("/tmp"))
+                        .join("impulse")
+                        .join("lsp")
+                })
+                .join("intelephense");
+            let storage = storage_path.to_string_lossy().to_string();
+            Some(serde_json::json!({
+                "storagePath": storage,
+                "globalStoragePath": storage,
+            }))
+        }
+        "vscode-eslint-language-server" => Some(serde_json::json!({
+            "validate": "probe",
+        })),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LspServerConfig {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub initialization_options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1039,6 +1152,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "rust-analyzer".into(),
                 args: vec![],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1046,6 +1160,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "pyright-langserver".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1053,6 +1168,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "clangd".into(),
                 args: vec![],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1060,6 +1176,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "typescript-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1067,6 +1184,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "intelephense".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1074,6 +1192,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "vscode-html-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1081,6 +1200,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "vscode-css-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1088,6 +1208,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "vscode-json-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1095,6 +1216,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "vscode-eslint-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1102,6 +1224,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "tailwindcss-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1109,6 +1232,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "vue-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1116,6 +1240,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "svelteserver".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1123,6 +1248,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "graphql-lsp".into(),
                 args: vec!["server".into(), "-m".into(), "stream".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1130,6 +1256,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "emmet-ls".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1137,6 +1264,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "yaml-language-server".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1144,6 +1272,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "docker-langserver".into(),
                 args: vec!["--stdio".into()],
+                initialization_options: None,
             },
         );
         servers.insert(
@@ -1151,6 +1280,7 @@ impl Default for LspConfig {
             LspServerConfig {
                 command: "bash-language-server".into(),
                 args: vec!["start".into()],
+                initialization_options: None,
             },
         );
 
@@ -1420,6 +1550,11 @@ impl LspRegistry {
         };
         let resolved_command = resolved_command.to_string_lossy().to_string();
 
+        let init_options = server_config
+            .initialization_options
+            .clone()
+            .or_else(|| get_default_init_options(server_id));
+
         match LspClient::start(
             &resolved_command,
             &server_config.args,
@@ -1427,6 +1562,7 @@ impl LspRegistry {
             server_id,
             &client_key,
             self.event_tx.clone(),
+            init_options,
         )
         .await
         {

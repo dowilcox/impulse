@@ -706,6 +706,46 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
     )
 }
 
+/// Check whether npm is available on the system PATH.
+#[no_mangle]
+pub extern "C" fn impulse_npm_is_available() -> bool {
+    impulse_core::lsp::npm_is_available()
+}
+
+/// Check the installation status of system (non-managed) LSP servers.
+///
+/// Returns a JSON array of objects with `command`, `installed`, and
+/// `resolvedPath` fields.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_system_lsp_status() -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let statuses = impulse_core::lsp::system_lsp_status();
+            let json: Vec<serde_json::Value> = statuses
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "command": s.command,
+                    "installed": s.resolved_path.is_some(),
+                    "resolvedPath": s.resolved_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                })
+            })
+            .collect();
+            let result = match serde_json::to_string(&json) {
+                Ok(j) => j,
+                Err(e) => {
+                    log::error!("JSON serialization failed: {}", e);
+                    serde_json::json!({"error": format!("serialization failed: {}", e)})
+                        .to_string()
+                }
+            };
+            to_c_string(&result)
+        }),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Git
 // ---------------------------------------------------------------------------

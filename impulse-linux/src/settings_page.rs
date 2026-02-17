@@ -1198,6 +1198,173 @@ pub fn show_settings_window(
 
     preferences_window.add(&keybindings_page);
 
+    // ── Page 6: Language Servers ────────────────────────────────────────
+    let lsp_page = adw::PreferencesPage::new();
+    lsp_page.set_title("Language Servers");
+    lsp_page.set_icon_name(Some("network-server-symbolic"));
+
+    // -- npm status group --
+    let npm_group = adw::PreferencesGroup::new();
+    npm_group.set_title("npm");
+    let npm_row = adw::ActionRow::new();
+    if impulse_core::lsp::npm_is_available() {
+        npm_row.set_title("npm");
+        npm_row.set_subtitle("Available");
+        let icon = gtk4::Image::from_icon_name("emblem-ok-symbolic");
+        icon.set_valign(gtk4::Align::Center);
+        npm_row.add_suffix(&icon);
+    } else {
+        npm_row.set_title("npm");
+        npm_row.set_subtitle("Not found — install Node.js to manage web language servers");
+        let icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+        icon.set_valign(gtk4::Align::Center);
+        npm_row.add_suffix(&icon);
+    }
+    npm_group.add(&npm_row);
+    lsp_page.add(&npm_group);
+
+    // -- Managed Web Language Servers group --
+    let managed_group = adw::PreferencesGroup::new();
+    managed_group.set_title("Managed Web Language Servers");
+    managed_group.set_description(Some("Installed and managed by Impulse via npm."));
+
+    // Helper: rebuild managed server rows from fresh data
+    fn rebuild_managed_lsp_rows(group: &adw::PreferencesGroup, tracked: &Rc<RefCell<Vec<gtk4::Widget>>>) {
+        let mut rows = tracked.borrow_mut();
+        for row in rows.drain(..) {
+            group.remove(&row);
+        }
+        let statuses = impulse_core::lsp::managed_web_lsp_status();
+        for status in &statuses {
+            let row = adw::ActionRow::new();
+            row.set_title(&status.command);
+            if let Some(ref path) = status.resolved_path {
+                row.set_subtitle(&path.to_string_lossy());
+                let icon = gtk4::Image::from_icon_name("emblem-ok-symbolic");
+                icon.set_valign(gtk4::Align::Center);
+                row.add_suffix(&icon);
+            } else {
+                row.set_subtitle("Not installed");
+                let icon = gtk4::Image::from_icon_name("window-close-symbolic");
+                icon.set_valign(gtk4::Align::Center);
+                row.add_suffix(&icon);
+            }
+            group.add(&row);
+            rows.push(row.upcast());
+        }
+    }
+
+    let tracked_managed: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    rebuild_managed_lsp_rows(&managed_group, &tracked_managed);
+
+    // Install button row
+    let install_row = adw::ActionRow::new();
+    install_row.set_title("Install All Web Language Servers");
+    install_row.set_subtitle("Downloads and installs via npm");
+
+    let install_spinner = gtk4::Spinner::new();
+    install_spinner.set_visible(false);
+    install_spinner.set_valign(gtk4::Align::Center);
+
+    let install_button = gtk4::Button::with_label("Install");
+    install_button.set_valign(gtk4::Align::Center);
+    install_button.add_css_class("suggested-action");
+    if !impulse_core::lsp::npm_is_available() {
+        install_button.set_sensitive(false);
+        install_button.set_tooltip_text(Some("npm is not available"));
+    }
+
+    install_row.add_suffix(&install_spinner);
+    install_row.add_suffix(&install_button);
+    managed_group.add(&install_row);
+
+    {
+        let managed_group = managed_group.clone();
+        let tracked_managed = Rc::clone(&tracked_managed);
+        let install_spinner = install_spinner.clone();
+        let install_button = install_button.clone();
+        let preferences_window_weak = preferences_window.downgrade();
+        install_button.connect_clicked(move |btn| {
+            btn.set_sensitive(false);
+            install_spinner.set_visible(true);
+            install_spinner.set_spinning(true);
+
+            let (tx, rx) = std::sync::mpsc::channel::<Result<std::path::PathBuf, String>>();
+
+            std::thread::spawn(move || {
+                let result = impulse_core::lsp::install_managed_web_lsp_servers();
+                let _ = tx.send(result);
+            });
+
+            let managed_group = managed_group.clone();
+            let tracked_managed = Rc::clone(&tracked_managed);
+            let install_spinner = install_spinner.clone();
+            let btn = btn.clone();
+            let preferences_window_weak = preferences_window_weak.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                match rx.try_recv() {
+                    Ok(result) => {
+                        install_spinner.set_spinning(false);
+                        install_spinner.set_visible(false);
+                        btn.set_sensitive(true);
+
+                        rebuild_managed_lsp_rows(&managed_group, &tracked_managed);
+
+                        if let Some(win) = preferences_window_weak.upgrade() {
+                            let toast = match result {
+                                Ok(_) => adw::Toast::new("Language servers installed successfully"),
+                                Err(ref e) => adw::Toast::new(&format!("Install failed: {e}")),
+                            };
+                            win.add_toast(toast);
+                        }
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        if preferences_window_weak.upgrade().is_none() {
+                            return glib::ControlFlow::Break;
+                        }
+                        glib::ControlFlow::Continue
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        install_spinner.set_spinning(false);
+                        install_spinner.set_visible(false);
+                        btn.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                }
+            });
+        });
+    }
+
+    lsp_page.add(&managed_group);
+
+    // -- System Language Servers group --
+    let system_group = adw::PreferencesGroup::new();
+    system_group.set_title("System Language Servers");
+    system_group.set_description(Some("Install these via your system package manager."));
+
+    let system_statuses = impulse_core::lsp::system_lsp_status();
+    for status in &system_statuses {
+        let row = adw::ActionRow::new();
+        row.set_title(&status.command);
+        if let Some(ref path) = status.resolved_path {
+            row.set_subtitle(&path.to_string_lossy());
+            let icon = gtk4::Image::from_icon_name("emblem-ok-symbolic");
+            icon.set_valign(gtk4::Align::Center);
+            row.add_suffix(&icon);
+        } else {
+            row.set_subtitle("Not found in PATH");
+            let icon = gtk4::Image::from_icon_name("window-close-symbolic");
+            icon.set_valign(gtk4::Align::Center);
+            row.add_suffix(&icon);
+        }
+        system_group.add(&row);
+    }
+
+    lsp_page.add(&system_group);
+
+    preferences_window.add(&lsp_page);
+
     preferences_window.present();
 }
 
