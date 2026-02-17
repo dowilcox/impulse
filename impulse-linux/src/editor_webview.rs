@@ -35,7 +35,7 @@ pub struct MonacoEditorHandle {
     /// Position to navigate to once the editor becomes ready (for cross-file go-to-definition).
     pending_position: Cell<Option<(u32, u32)>>,
     /// Keeps the file watcher alive. Dropping this stops watching.
-    _file_watcher: RefCell<Option<notify::RecommendedWatcher>>,
+    _file_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Source ID for the file watcher's polling timer.
     _file_watcher_timer: RefCell<Option<glib::SourceId>>,
 }
@@ -211,6 +211,25 @@ impl MonacoEditorHandle {
 
     pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
         self.send_command(&EditorCommand::ApplyDiffDecorations { decorations });
+    }
+
+    /// Release resources held by this editor handle. Must be called before the
+    /// tab is removed to break the reference cycle between the GLib timer, the
+    /// WebView, and the signal closures that hold `Rc<MonacoEditorHandle>`.
+    pub fn cleanup(&self) {
+        // Cancel the file-watcher polling timer. This frees the timer closure,
+        // which drops its WebView clone, which in turn allows the WebView (and
+        // its signal closures holding Rc<Self>) to be deallocated.
+        if let Some(id) = self._file_watcher_timer.borrow_mut().take() {
+            id.remove();
+        }
+        // Drop the filesystem watcher (closes the inotify fd).
+        self._file_watcher.borrow_mut().take();
+        // Unregister the JS→Rust message handler so the UCM signal closure
+        // (which holds an Rc<Self>) is disconnected.
+        if let Some(ucm) = self.webview.user_content_manager() {
+            ucm.unregister_script_message_handler("impulse", None);
+        }
     }
 
     /// Set up a filesystem watcher that reloads the editor content when the file
@@ -496,7 +515,7 @@ where
             suppress_next_modify: Rc::new(Cell::new(false)),
             pending_position: Cell::new(None),
             indent_info: RefCell::new(indent_info),
-            _file_watcher: RefCell::new(None),
+            _file_watcher: Rc::new(RefCell::new(None)),
             _file_watcher_timer: RefCell::new(None),
         });
 
@@ -589,7 +608,7 @@ where
         suppress_next_modify: Rc::new(Cell::new(false)),
         pending_position: Cell::new(None),
         indent_info: RefCell::new(indent_info),
-        _file_watcher: RefCell::new(None),
+        _file_watcher: Rc::new(RefCell::new(None)),
         _file_watcher_timer: RefCell::new(None),
     });
 

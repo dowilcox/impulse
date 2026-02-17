@@ -21,7 +21,9 @@ pub fn register_handle(file_path: &str, handle: Rc<MonacoEditorHandle>) {
 }
 
 pub fn unregister_handle(file_path: &str) {
-    HANDLES.with(|h| h.borrow_mut().remove(file_path));
+    if let Some(handle) = HANDLES.with(|h| h.borrow_mut().remove(file_path)) {
+        handle.cleanup();
+    }
 }
 
 pub fn get_handle(file_path: &str) -> Option<Rc<MonacoEditorHandle>> {
