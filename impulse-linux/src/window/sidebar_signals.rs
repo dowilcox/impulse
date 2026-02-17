@@ -11,7 +11,7 @@ use crate::lsp_completion::LspRequest;
 use crate::sidebar;
 use crate::terminal_container;
 
-use super::{file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui, send_diff_decorations};
+use super::{file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui, send_diff_decorations, uri_to_file_path};
 
 /// Wire up sidebar file activation, project search result activation,
 /// and "Open in Terminal" context menu callbacks.
@@ -108,6 +108,8 @@ pub(super) fn wire_sidebar_signals(
                                         // No-op: initialization now happens on FileOpened
                                     }
                                     impulse_editor::protocol::EditorEvent::FileOpened => {
+                                        // Flush any pending go-to-position from cross-file navigation.
+                                        handle.flush_pending_position();
                                         // Send LSP didOpen
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path));
@@ -265,7 +267,7 @@ pub(super) fn wire_sidebar_signals(
                                             log::warn!("LSP request channel full, dropping request: {}", e);
                                         }
                                     }
-                                    impulse_editor::protocol::EditorEvent::DefinitionRequested { line, character } => {
+                                    impulse_editor::protocol::EditorEvent::DefinitionRequested { request_id: _, line, character } => {
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path));
                                         let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
@@ -280,6 +282,23 @@ pub(super) fn wire_sidebar_signals(
                                             character,
                                         }) {
                                             log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::OpenFileRequested { uri, line, character } => {
+                                        let file_path = uri_to_file_path(&uri);
+                                        if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                            cb(&file_path);
+                                        }
+                                        // Navigate to position once the tab is created
+                                        let n = tab_view.n_pages();
+                                        for i in 0..n {
+                                            let page = tab_view.nth_page(i);
+                                            let child = page.child();
+                                            if child.widget_name().as_str() == file_path {
+                                                editor::go_to_position(&child, line + 1, character + 1);
+                                                tab_view.set_selected_page(&page);
+                                                break;
+                                            }
                                         }
                                     }
                                     _ => {}

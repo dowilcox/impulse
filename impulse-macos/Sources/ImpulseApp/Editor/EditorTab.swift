@@ -25,6 +25,9 @@ extension Notification.Name {
     /// dictionary contains `"line"` and `"character"`.
     static let editorDefinitionRequested = Notification.Name("impulse.editorDefinitionRequested")
 
+    /// Posted when Monaco wants to open a different file (cross-file definition).
+    static let editorOpenFileRequested = Notification.Name("impulse.editorOpenFileRequested")
+
     /// Posted when the editor focus state changes. The `userInfo` dictionary
     /// contains `"focused"` as a `Bool`.
     static let editorFocusChanged = Notification.Name("impulse.editorFocusChanged")
@@ -293,11 +296,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 ]
             )
 
-        case let .definitionRequested(line, character):
+        case let .definitionRequested(requestId, line, character):
             NotificationCenter.default.post(
                 name: .editorDefinitionRequested,
                 object: self,
-                userInfo: ["line": line, "character": character]
+                userInfo: ["requestId": requestId, "line": line, "character": character]
+            )
+
+        case let .openFileRequested(uri, line, character):
+            NotificationCenter.default.post(
+                name: .editorOpenFileRequested,
+                object: self,
+                userInfo: ["uri": uri, "line": line, "character": character]
             )
 
         case let .focusChanged(focused):
@@ -466,6 +476,11 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Apply editor settings (font, tab size, etc.).
     func applySettings(_ options: EditorOptions) {
         sendCommand(.updateSettings(options: options))
+    }
+
+    /// Resolve a pending definition request. Pass nil uri for "not found".
+    func resolveDefinition(requestId: UInt64, uri: String?, line: UInt32?, column: UInt32?) {
+        sendCommand(.resolveDefinition(requestId: requestId, uri: uri, line: line, column: column))
     }
 
     /// Navigate the editor cursor to the given line and column.

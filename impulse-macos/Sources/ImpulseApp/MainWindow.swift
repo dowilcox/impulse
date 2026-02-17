@@ -1073,6 +1073,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .editorFileOpened, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
                 if let editor = notification.object as? EditorTab {
+                    // Send LSP didOpen now that the tab and Monaco model are ready.
+                    if let path = editor.filePath {
+                        self.lspDidOpenIfNeeded(path: path)
+                    }
                     self.applyGitDiffDecorations(editor: editor)
                 }
             }
@@ -1436,9 +1440,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
                       let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
-                self.handleDefinitionRequest(editor: editor, line: line, character: character)
+                self.handleDefinitionRequest(editor: editor, requestId: requestId, line: line, character: character)
+            }
+        )
+
+        // Monaco: cross-file navigation (fired by registerEditorOpener on actual click)
+        notificationObservers.append(
+            nc.addObserver(forName: .editorOpenFileRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let uri = notification.userInfo?["uri"] as? String,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleOpenFileRequested(uri: uri, line: line, character: character)
             }
         )
     }
@@ -1516,10 +1532,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     private func lspDidOpenIfNeeded(path: String) {
         let uri = filePathToUri(path)
         guard !lspOpenFiles.contains(uri) else { return }
+
+        guard let editorTab = findEditorTab(forPath: path) else {
+            // Tab not created yet (async). didOpen will be sent when the
+            // editor fires FileOpened via the notification observer.
+            return
+        }
         lspOpenFiles.insert(uri)
         lspDocVersions[uri] = 1
 
-        guard let editorTab = findEditorTab(forPath: path) else { return }
         let language = editorTab.language
         let content = editorTab.content
 
@@ -1654,8 +1675,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     /// Handles a go-to-definition request from the editor.
-    private func handleDefinitionRequest(editor: EditorTab, line: UInt32, character: UInt32) {
-        guard let path = editor.filePath else { return }
+    ///
+    /// This is called on Cmd+hover (to show the underline) AND on Cmd+click.
+    /// We only resolve the Monaco promise here — actual navigation for
+    /// cross-file definitions happens via ``handleOpenFileRequested`` when
+    /// Monaco's editor opener fires on click.
+    private func handleDefinitionRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else {
+            editor.resolveDefinition(requestId: requestId, uri: nil, line: nil, column: nil)
+            return
+        }
         let uri = filePathToUri(path)
         let language = editor.language
         let params = """
@@ -1667,23 +1696,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             guard let response = self.core.lspRequest(
                 languageId: language, fileUri: uri,
                 method: "textDocument/definition", paramsJson: params
-            ) else { return }
-
-            guard let def = self.parseDefinitionResponse(response) else { return }
-            let targetPath = self.uriToFilePath(def.uri)
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.tabManager.addEditorTab(path: targetPath)
-                self.lspDidOpenIfNeeded(path: targetPath)
-                // Navigate to the definition position (convert 0-based to 1-based).
-                if self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                   case .editor(let targetEditor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                    self.trackEditorTab(targetEditor, forPath: targetPath)
-                    targetEditor.goToPosition(line: def.line + 1, column: def.character + 1)
-                }
+            ) else {
+                DispatchQueue.main.async { editor.resolveDefinition(requestId: requestId, uri: nil, line: nil, column: nil) }
+                return
             }
+
+            guard let def = self.parseDefinitionResponse(response) else {
+                DispatchQueue.main.async { editor.resolveDefinition(requestId: requestId, uri: nil, line: nil, column: nil) }
+                return
+            }
+
+            DispatchQueue.main.async {
+                // Resolve the Monaco promise with the definition location.
+                // Monaco shows an underline on hover and navigates on click.
+                // Same-file: Monaco navigates directly.
+                // Cross-file: Monaco calls registerEditorOpener → OpenFileRequested.
+                editor.resolveDefinition(requestId: requestId, uri: def.uri, line: def.line, column: def.character)
+            }
+        }
+    }
+
+    /// Handles Monaco's request to open a different file (cross-file go-to-definition).
+    /// Fired by registerEditorOpener when the user actually Cmd+clicks.
+    private func handleOpenFileRequested(uri: String, line: UInt32, character: UInt32) {
+        let targetPath = uriToFilePath(uri)
+        tabManager.addEditorTab(
+            path: targetPath,
+            goToLine: line + 1,
+            goToColumn: character + 1
+        )
+        lspDidOpenIfNeeded(path: targetPath)
+        if tabManager.selectedIndex >= 0,
+           tabManager.selectedIndex < tabManager.tabs.count,
+           case .editor(let targetEditor) = tabManager.tabs[tabManager.selectedIndex] {
+            trackEditorTab(targetEditor, forPath: targetPath)
         }
     }
 

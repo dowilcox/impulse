@@ -23,6 +23,7 @@ let currentFilePath = "";
 let requestSeq = 0;
 const pendingCompletions = new Map();
 const pendingHovers = new Map();
+const pendingDefinitions = new Map();
 let contentChangeTimer = null;
 let contentVersion = 0;
 let currentDiffDecorations = [];
@@ -68,8 +69,7 @@ require(["vs/editor/editor.main"], function () {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     fontSize: 14,
-    fontFamily:
-      "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
     fontLigatures: true,
     renderWhitespace: "selection",
     bracketPairColorization: { enabled: true },
@@ -87,6 +87,9 @@ require(["vs/editor/editor.main"], function () {
       shareSuggestSelections: true,
     },
     hover: { delay: 300 },
+    // Use Alt for multi-cursor so Cmd+click (macOS) / Ctrl+click (Linux)
+    // triggers go-to-definition instead of adding a cursor.
+    multiCursorModifier: "alt",
     folding: true,
     foldingStrategy: "auto",
     showFoldingControls: "mouseover",
@@ -131,24 +134,21 @@ require(["vs/editor/editor.main"], function () {
   });
 
   // --- Ctrl+S keybinding ---
-  editor.addCommand(
-    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-    function () {
-      // Flush any pending debounced content change so the host has the
-      // latest content before we request a save.
-      if (contentChangeTimer) {
-        clearTimeout(contentChangeTimer);
-        contentChangeTimer = null;
-        contentVersion++;
-        sendToHost({
-          type: "ContentChanged",
-          content: editor.getValue(),
-          version: contentVersion,
-        });
-      }
-      sendToHost({ type: "SaveRequested" });
-    },
-  );
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
+    // Flush any pending debounced content change so the host has the
+    // latest content before we request a save.
+    if (contentChangeTimer) {
+      clearTimeout(contentChangeTimer);
+      contentChangeTimer = null;
+      contentVersion++;
+      sendToHost({
+        type: "ContentChanged",
+        content: editor.getValue(),
+        version: contentVersion,
+      });
+    }
+    sendToHost({ type: "SaveRequested" });
+  });
 
   // --- Register LSP Completion Provider ---
   monaco.languages.registerCompletionItemProvider("*", {
@@ -198,12 +198,48 @@ require(["vs/editor/editor.main"], function () {
   // --- Register LSP Definition Provider ---
   monaco.languages.registerDefinitionProvider("*", {
     provideDefinition: function (model, position) {
+      var id = ++requestSeq;
       sendToHost({
         type: "DefinitionRequested",
+        request_id: id,
         line: position.lineNumber - 1,
         character: position.column - 1,
       });
-      return null;
+      return new Promise(function (resolve) {
+        pendingDefinitions.set(id, resolve);
+        setTimeout(function () {
+          if (pendingDefinitions.has(id)) {
+            pendingDefinitions.delete(id);
+            resolve(null);
+          }
+        }, 5000);
+      });
+    },
+  });
+
+  // --- Cross-file go-to-definition ---
+  // Monaco calls this when Cmd+click resolves to a definition in a different
+  // file URI. We forward the request to the host to open the target file.
+  monaco.editor.registerEditorOpener({
+    openCodeEditor: function (source, resource, selectionOrPosition) {
+      var line = 0;
+      var column = 0;
+      if (selectionOrPosition) {
+        if (typeof selectionOrPosition.lineNumber === "number") {
+          line = selectionOrPosition.lineNumber - 1;
+          column = (selectionOrPosition.column || 1) - 1;
+        } else if (typeof selectionOrPosition.startLineNumber === "number") {
+          line = selectionOrPosition.startLineNumber - 1;
+          column = (selectionOrPosition.startColumn || 1) - 1;
+        }
+      }
+      sendToHost({
+        type: "OpenFileRequested",
+        uri: resource.toString(),
+        line: line,
+        character: column,
+      });
+      return true;
     },
   });
 
@@ -248,6 +284,9 @@ window.impulseReceiveCommand = function (jsonString) {
       case "ResolveHover":
         handleResolveHover(cmd);
         break;
+      case "ResolveDefinition":
+        handleResolveDefinition(cmd);
+        break;
       case "GoToPosition":
         handleGoToPosition(cmd);
         break;
@@ -279,11 +318,7 @@ function handleOpenFile(cmd) {
   }
 
   const uri = monaco.Uri.file(currentFilePath);
-  currentModel = monaco.editor.createModel(
-    cmd.content || "",
-    language,
-    uri,
-  );
+  currentModel = monaco.editor.createModel(cmd.content || "", language, uri);
   editor.setModel(currentModel);
   contentVersion = 0;
 
@@ -317,8 +352,7 @@ function handleUpdateSettings(cmd) {
   if (opts.font_size != null) update.fontSize = opts.font_size;
   if (opts.font_family != null) update.fontFamily = opts.font_family;
   if (opts.tab_size != null) update.tabSize = opts.tab_size;
-  if (opts.insert_spaces != null)
-    update.insertSpaces = opts.insert_spaces;
+  if (opts.insert_spaces != null) update.insertSpaces = opts.insert_spaces;
   if (opts.word_wrap != null) update.wordWrap = opts.word_wrap;
   if (opts.minimap_enabled != null)
     update.minimap = { enabled: opts.minimap_enabled };
@@ -336,8 +370,7 @@ function handleUpdateSettings(cmd) {
     };
   if (opts.indent_guides != null)
     update.guides = { indentation: opts.indent_guides };
-  if (opts.font_ligatures != null)
-    update.fontLigatures = opts.font_ligatures;
+  if (opts.font_ligatures != null) update.fontLigatures = opts.font_ligatures;
   if (opts.folding != null) update.folding = opts.folding;
   if (opts.scroll_beyond_last_line != null)
     update.scrollBeyondLastLine = opts.scroll_beyond_last_line;
@@ -352,10 +385,7 @@ function handleUpdateSettings(cmd) {
   editor.updateOptions(update);
 
   // Also update model options if tab settings changed
-  if (
-    currentModel &&
-    (opts.tab_size != null || opts.insert_spaces != null)
-  ) {
+  if (currentModel && (opts.tab_size != null || opts.insert_spaces != null)) {
     currentModel.updateOptions({
       tabSize: opts.tab_size || currentModel.getOptions().tabSize,
       insertSpaces:
@@ -405,10 +435,7 @@ function handleResolveCompletions(cmd) {
         endColumn: item.range.end_column + 1,
       };
     }
-    if (
-      item.additional_text_edits &&
-      item.additional_text_edits.length > 0
-    ) {
+    if (item.additional_text_edits && item.additional_text_edits.length > 0) {
       suggestion.additionalTextEdits = item.additional_text_edits.map(
         function (edit) {
           return {
@@ -442,6 +469,29 @@ function handleResolveHover(cmd) {
     resolve(null);
   } else {
     resolve({ contents: contents });
+  }
+}
+
+function handleResolveDefinition(cmd) {
+  var resolve = pendingDefinitions.get(cmd.request_id);
+  if (!resolve) return;
+  pendingDefinitions.delete(cmd.request_id);
+
+  if (cmd.uri && cmd.line != null && cmd.column != null) {
+    // Return a Location so Monaco can show the underline link on Cmd+hover.
+    // For same-file definitions Monaco navigates directly; for cross-file
+    // definitions the host handles navigation via the DefinitionRequested flow.
+    resolve({
+      uri: monaco.Uri.parse(cmd.uri),
+      range: {
+        startLineNumber: cmd.line + 1,
+        startColumn: cmd.column + 1,
+        endLineNumber: cmd.line + 1,
+        endColumn: cmd.column + 1,
+      },
+    });
+  } else {
+    resolve(null);
   }
 }
 

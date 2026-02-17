@@ -229,7 +229,7 @@ final class TabManager: NSObject {
     /// If a tab for the same file is already open, it is selected instead of
     /// creating a duplicate. Image files are opened in a preview tab. Binary
     /// files (>10 MB or containing null bytes) are skipped with an alert.
-    func addEditorTab(path: String) {
+    func addEditorTab(path: String, goToLine: UInt32? = nil, goToColumn: UInt32? = nil) {
         // O(1) deduplication using the openFilePaths set.
         if openFilePaths.contains(path) {
             if let existingIndex = tabs.firstIndex(where: {
@@ -240,6 +240,11 @@ final class TabManager: NSObject {
                 }
             }) {
                 selectTab(index: existingIndex)
+                // Navigate to position in the already-open editor.
+                if let line = goToLine, let column = goToColumn,
+                   case .editor(let editor) = tabs[existingIndex] {
+                    editor.goToPosition(line: line, column: column)
+                }
             }
             return
         }
@@ -282,6 +287,11 @@ final class TabManager: NSObject {
                 // Apply editor settings (font, tab size, etc.) from the current settings.
                 editorTab.applySettings(editorOptions)
                 editorTab.applyTheme(themeDef)
+
+                // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
+                if let line = goToLine, let column = goToColumn {
+                    editorTab.goToPosition(line: line, column: column)
+                }
 
                 let entry = TabEntry.editor(editorTab)
                 self.insertTab(entry)

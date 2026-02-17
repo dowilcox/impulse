@@ -32,6 +32,8 @@ pub struct MonacoEditorHandle {
     /// When true, the next ContentChanged event will not mark the file as modified.
     /// Used when reloading file content externally (e.g. discard changes).
     pub suppress_next_modify: Rc<Cell<bool>>,
+    /// Position to navigate to once the editor becomes ready (for cross-file go-to-definition).
+    pending_position: Cell<Option<(u32, u32)>>,
     /// Keeps the file watcher alive. Dropping this stops watching.
     _file_watcher: RefCell<Option<notify::RecommendedWatcher>>,
     /// Source ID for the file watcher's polling timer.
@@ -85,7 +87,18 @@ impl MonacoEditorHandle {
     }
 
     pub fn go_to_position(&self, line: u32, column: u32) {
+        if !self.is_ready.get() {
+            self.pending_position.set(Some((line, column)));
+            return;
+        }
         self.send_command(&EditorCommand::GoToPosition { line, column });
+    }
+
+    /// Sends any queued go-to-position command (set while the editor wasn't ready).
+    pub fn flush_pending_position(&self) {
+        if let Some((line, column)) = self.pending_position.take() {
+            self.send_command(&EditorCommand::GoToPosition { line, column });
+        }
     }
 
     pub fn apply_diagnostics(&self, diagnostics: &[DiagnosticInfo]) {
@@ -481,6 +494,7 @@ where
             language: RefCell::new(language.to_string()),
             version: Rc::new(Cell::new(0)),
             suppress_next_modify: Rc::new(Cell::new(false)),
+            pending_position: Cell::new(None),
             indent_info: RefCell::new(indent_info),
             _file_watcher: RefCell::new(None),
             _file_watcher_timer: RefCell::new(None),
@@ -573,6 +587,7 @@ where
         language: RefCell::new(language.to_string()),
         version: Rc::new(Cell::new(0)),
         suppress_next_modify: Rc::new(Cell::new(false)),
+        pending_position: Cell::new(None),
         indent_info: RefCell::new(indent_info),
         _file_watcher: RefCell::new(None),
         _file_watcher_timer: RefCell::new(None),

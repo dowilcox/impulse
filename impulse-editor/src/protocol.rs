@@ -30,6 +30,13 @@ pub enum EditorCommand {
         request_id: u64,
         contents: Vec<MonacoHoverContent>,
     },
+    ResolveDefinition {
+        request_id: u64,
+        /// None means "no definition found". Some means navigate to this location.
+        uri: Option<String>,
+        line: Option<u32>,
+        column: Option<u32>,
+    },
     GoToPosition {
         line: u32,
         column: u32,
@@ -71,6 +78,15 @@ pub enum EditorEvent {
         character: u32,
     },
     DefinitionRequested {
+        request_id: u64,
+        line: u32,
+        character: u32,
+    },
+    /// Fired when Monaco wants to open a different file (e.g. cross-file
+    /// go-to-definition via Cmd+click). The host should open the file and
+    /// navigate to the given position.
+    OpenFileRequested {
+        uri: String,
         line: u32,
         character: u32,
     },
@@ -708,13 +724,19 @@ mod tests {
     #[test]
     fn editor_event_roundtrip_definition_requested() {
         let event = EditorEvent::DefinitionRequested {
+            request_id: 7,
             line: 30,
             character: 8,
         };
         let json = serde_json::to_string(&event).unwrap();
         let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
         match parsed {
-            EditorEvent::DefinitionRequested { line, character } => {
+            EditorEvent::DefinitionRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 7);
                 assert_eq!(line, 30);
                 assert_eq!(character, 8);
             }

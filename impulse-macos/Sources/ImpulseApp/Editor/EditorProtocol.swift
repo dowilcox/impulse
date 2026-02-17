@@ -13,6 +13,7 @@ enum EditorCommand: Encodable {
     case applyDiagnostics(uri: String, markers: [MonacoDiagnostic])
     case resolveCompletions(requestId: UInt64, items: [MonacoCompletionItem])
     case resolveHover(requestId: UInt64, contents: [MonacoHoverContent])
+    case resolveDefinition(requestId: UInt64, uri: String?, line: UInt32?, column: UInt32?)
     case goToPosition(line: UInt32, column: UInt32)
     case setReadOnly(readOnly: Bool)
     case applyDiffDecorations(decorations: [DiffDecoration])
@@ -26,6 +27,7 @@ enum EditorCommand: Encodable {
         case applyDiagnostics = "ApplyDiagnostics"
         case resolveCompletions = "ResolveCompletions"
         case resolveHover = "ResolveHover"
+        case resolveDefinition = "ResolveDefinition"
         case goToPosition = "GoToPosition"
         case setReadOnly = "SetReadOnly"
         case applyDiffDecorations = "ApplyDiffDecorations"
@@ -82,6 +84,13 @@ enum EditorCommand: Encodable {
             try container.encode(requestId, forKey: .requestId)
             try container.encode(contents, forKey: .contents)
 
+        case let .resolveDefinition(requestId, uri, line, column):
+            try container.encode(TypeTag.resolveDefinition, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encodeIfPresent(uri, forKey: .uri)
+            try container.encodeIfPresent(line, forKey: .line)
+            try container.encodeIfPresent(column, forKey: .column)
+
         case let .goToPosition(line, column):
             try container.encode(TypeTag.goToPosition, forKey: .type)
             try container.encode(line, forKey: .line)
@@ -112,7 +121,8 @@ enum EditorEvent: Decodable {
     case saveRequested
     case completionRequested(requestId: UInt64, line: UInt32, character: UInt32)
     case hoverRequested(requestId: UInt64, line: UInt32, character: UInt32)
-    case definitionRequested(line: UInt32, character: UInt32)
+    case definitionRequested(requestId: UInt64, line: UInt32, character: UInt32)
+    case openFileRequested(uri: String, line: UInt32, character: UInt32)
     case focusChanged(focused: Bool)
 
     private enum TypeTag: String, Decodable {
@@ -124,6 +134,7 @@ enum EditorEvent: Decodable {
         case completionRequested = "CompletionRequested"
         case hoverRequested = "HoverRequested"
         case definitionRequested = "DefinitionRequested"
+        case openFileRequested = "OpenFileRequested"
         case focusChanged = "FocusChanged"
     }
 
@@ -135,6 +146,7 @@ enum EditorEvent: Decodable {
         case column
         case character
         case requestId = "request_id"
+        case uri
         case focused
     }
 
@@ -175,9 +187,16 @@ enum EditorEvent: Decodable {
             self = .hoverRequested(requestId: requestId, line: line, character: character)
 
         case .definitionRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
             let line = try container.decode(UInt32.self, forKey: .line)
             let character = try container.decode(UInt32.self, forKey: .character)
-            self = .definitionRequested(line: line, character: character)
+            self = .definitionRequested(requestId: requestId, line: line, character: character)
+
+        case .openFileRequested:
+            let uri = try container.decode(String.self, forKey: .uri)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            let character = try container.decode(UInt32.self, forKey: .character)
+            self = .openFileRequested(uri: uri, line: line, character: character)
 
         case .focusChanged:
             let focused = try container.decode(Bool.self, forKey: .focused)
