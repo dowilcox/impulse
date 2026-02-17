@@ -76,6 +76,13 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// the tab is removed from the view hierarchy to ensure child processes
     /// (and any programs running inside the shell) are cleaned up.
     func terminateProcess() {
+        // Kill the entire process group so child processes (lazygit, vim, etc.)
+        // are terminated, not just the shell. SwiftTerm's terminate() only sends
+        // SIGTERM to the shell PID.
+        let pid = terminalView.process?.shellPid ?? 0
+        if pid > 0 {
+            killpg(pid, SIGHUP)
+        }
         terminalView.terminate()
     }
 
