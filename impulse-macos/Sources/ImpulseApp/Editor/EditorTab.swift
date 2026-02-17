@@ -572,11 +572,19 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             os_log(.error, log: Self.log, "Failed to reload file '%{public}@': %{public}@", path, error.localizedDescription)
             return
         }
-        guard newContent != content else { return }
+        guard newContent != content else {
+            // Content unchanged but the inode may have been replaced (atomic write).
+            // Restart the watcher so the fd tracks the current inode.
+            startFileWatching()
+            return
+        }
 
         suppressNextModify = true
         content = newContent
         sendCommand(.openFile(filePath: path, content: newContent, language: language))
+        // Restart the watcher: after an atomic write (temp → rename) the old fd
+        // points to a stale inode.  Re-opening gives us the new one.
+        startFileWatching()
     }
 
     // MARK: Cleanup

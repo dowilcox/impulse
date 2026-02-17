@@ -1209,6 +1209,9 @@ impl SidebarState {
 
     /// Set up a filesystem watcher for the given directory.
     /// Events are debounced and forwarded to the GTK main loop to trigger tree refresh.
+    // TODO: Watch .git/index for staging/commit changes (see macOS FileTreeView.startGitIndexWatcher).
+    // TODO: Add periodic git status polling to catch file-content edits that directory watchers miss
+    //       (see macOS FileTreeView.pollGitStatus).
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 

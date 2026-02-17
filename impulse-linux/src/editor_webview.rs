@@ -199,6 +199,9 @@ impl MonacoEditorHandle {
 
     /// Set up a filesystem watcher that reloads the editor content when the file
     /// is modified externally (only if there are no unsaved changes).
+    // TODO: Restart the watcher after a successful reload to handle atomic writes
+    //       (temp → rename) that leave the old fd pointing at a stale inode
+    //       (see macOS EditorTab.reloadIfUnmodified).
     pub fn setup_file_watcher(&self) {
         use notify::{RecursiveMode, Watcher};
 
