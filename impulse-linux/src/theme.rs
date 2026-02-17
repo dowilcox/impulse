@@ -386,7 +386,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {green};
         }}
         .git-untracked {{
-            color: {comment};
+            color: {green};
         }}
         .git-deleted {{
             color: {red};
@@ -404,7 +404,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {green};
         }}
         .file-entry-git-untracked {{
-            color: {comment};
+            color: {green};
         }}
         .file-entry-git-deleted {{
             color: {red};

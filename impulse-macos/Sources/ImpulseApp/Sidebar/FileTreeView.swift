@@ -1268,7 +1268,7 @@ extension FileTreeView: NSOutlineViewDelegate {
         case .none:       return .labelColor
         case .modified:   return NSColor.systemYellow
         case .added:      return NSColor.systemGreen
-        case .untracked:  return NSColor.secondaryLabelColor
+        case .untracked:  return NSColor.systemGreen
         case .deleted:    return NSColor.systemRed
         case .renamed:    return NSColor.systemBlue
         case .conflict:   return NSColor.systemOrange
