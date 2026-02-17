@@ -200,7 +200,7 @@ final class TabManager: NSObject {
     /// Creates a new terminal tab (wrapped in a TerminalContainer for split
     /// support) and makes it active.
     func addTerminalTab(directory: String? = nil) {
-        let dir = directory ?? settings.lastDirectory
+        let dir = directory ?? NSHomeDirectory()
         let termSettings = TerminalSettings(
             terminalFontSize: settings.terminalFontSize,
             terminalFontFamily: settings.terminalFontFamily,
@@ -407,7 +407,7 @@ final class TabManager: NSObject {
 
         if tabs.isEmpty {
             selectedIndex = -1
-            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: nil)
+            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
             return
         }
 
@@ -469,7 +469,7 @@ final class TabManager: NSObject {
 
         if tabs.isEmpty {
             selectedIndex = -1
-            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: nil)
+            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
         } else {
             // Find the kept tab's new index.
             let newIndex = tabs.firstIndex(where: { $0.view === keepView }) ?? 0
@@ -546,7 +546,30 @@ final class TabManager: NSObject {
         ])
         entry.focus()
 
-        NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: nil)
+        NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+    }
+
+    // MARK: - Ownership Queries
+
+    /// Returns `true` if this TabManager owns the given terminal (i.e. it lives
+    /// in one of our terminal containers).
+    func ownsTerminal(_ terminal: TerminalTab) -> Bool {
+        for tab in tabs {
+            if case .terminal(let container) = tab {
+                if container.terminals.contains(where: { $0 === terminal }) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// Returns `true` if this TabManager owns the given editor tab.
+    func ownsEditor(_ editor: EditorTab) -> Bool {
+        return tabs.contains {
+            if case .editor(let e) = $0 { return e === editor }
+            return false
+        }
     }
 
     // MARK: - Terminal Splitting

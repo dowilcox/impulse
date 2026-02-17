@@ -338,13 +338,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         searchPanel.applyTheme(theme)
 
         // Set initial root path for the file tree and search panel.
-        let rootPath: String
-        if !settings.lastDirectory.isEmpty,
-           FileManager.default.fileExists(atPath: settings.lastDirectory) {
-            rootPath = settings.lastDirectory
-        } else {
-            rootPath = NSHomeDirectory()
-        }
+        // Always start at home; the sidebar will update once the terminal's CWD
+        // is detected via OSC 7.
+        let rootPath = NSHomeDirectory()
         // Dispatch the initial tree build off the main thread to avoid blocking
         // startup with heavy filesystem + git status work.
         let showHidden = settings.sidebarShowHidden
@@ -955,7 +951,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
         notificationObservers.append(
-            nc.addObserver(forName: .impulseActiveTabDidChange, object: nil, queue: .main) { [weak self] _ in
+            nc.addObserver(forName: .impulseActiveTabDidChange, object: self.tabManager, queue: .main) { [weak self] _ in
                 guard let self else { return }
                 // Close the window when the last tab is closed (covers tab bar X button,
                 // context menu "Close Tab", etc.).
@@ -1125,6 +1121,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
+                guard let terminal = notification.object as? TerminalTab,
+                      self.tabManager.ownsTerminal(terminal) else { return }
                 if let dir = notification.userInfo?["directory"] as? String {
                     // Save current tree to cache before switching.
                     if !self.fileTreeRootPath.isEmpty {
@@ -1250,8 +1248,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         // Terminal title changed — update tab segment labels
         notificationObservers.append(
-            nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) { [weak self] _ in
-                self?.tabManager.refreshSegmentLabels()
+            nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                guard let terminal = notification.object as? TerminalTab,
+                      self.tabManager.ownsTerminal(terminal) else { return }
+                self.tabManager.refreshSegmentLabels()
             }
         )
 
@@ -1259,7 +1260,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
-                guard let terminalTab = notification.object as? TerminalTab else { return }
+                guard let terminalTab = notification.object as? TerminalTab,
+                      self.tabManager.ownsTerminal(terminalTab) else { return }
                 // Find the container that owns this terminal and check if we should close
                 for (index, tab) in self.tabManager.tabs.enumerated() {
                     if case .terminal(let container) = tab {
@@ -1276,10 +1278,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
+                guard let editor = notification.object as? EditorTab,
+                      self.tabManager.ownsEditor(editor) else { return }
                 self.tabManager.refreshSegmentLabels()
-                if let editor = notification.object as? EditorTab {
-                    self.lspDidChange(editor: editor)
-                }
+                self.lspDidChange(editor: editor)
             }
         )
 
@@ -1287,9 +1289,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .editorFocusChanged, object: nil, queue: .main) { [weak self] notification in
                 guard let self, self.settings.autoSave else { return }
-                guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
                 guard let editor = notification.object as? EditorTab,
-                      editor.isModified else { return }
+                      self.tabManager.ownsEditor(editor) else { return }
+                guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
+                guard editor.isModified else { return }
                 self.saveEditorTab(editor)
             }
         )
