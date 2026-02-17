@@ -159,6 +159,79 @@ pub fn focus_next_terminal(container: &gtk4::Widget) {
     terminals[next_idx].grab_focus();
 }
 
+/// Remove a single terminal from a split layout.  If the terminal is inside a
+/// `Paned`, the sibling pane is promoted into the `Paned`'s parent, effectively
+/// collapsing one level of splitting.  Returns `true` if the pane was removed.
+pub fn remove_terminal(container: &gtk4::Widget, terminal: &vte4::Terminal) -> bool {
+    // Terminal → wrapper Box → Paned.
+    let wrapper = match terminal.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    let paned_widget = match wrapper.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    let paned = match paned_widget.downcast_ref::<gtk4::Paned>() {
+        Some(p) => p,
+        None => return false, // not in a split
+    };
+
+    // Identify the sibling (the other child of the Paned).
+    let start = paned.start_child();
+    let end = paned.end_child();
+    let is_start = start.as_ref() == Some(&wrapper);
+    let sibling = if is_start {
+        end.clone()
+    } else {
+        start.clone()
+    };
+    let sibling = match sibling {
+        Some(s) => s,
+        None => return false,
+    };
+
+    // Detach both children from the Paned.
+    paned.set_start_child(gtk4::Widget::NONE);
+    paned.set_end_child(gtk4::Widget::NONE);
+
+    // The Paned lives inside a parent Box (from TerminalContainer or a
+    // higher-level split wrapper).
+    let parent = match paned_widget.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    if let Some(parent_box) = parent.downcast_ref::<gtk4::Box>() {
+        parent_box.remove(&paned_widget);
+        // Move the sibling's children into parent_box so we don't accumulate
+        // extra wrapper Box layers.
+        if let Some(sib_box) = sibling.downcast_ref::<gtk4::Box>() {
+            while let Some(child) = sib_box.first_child() {
+                sib_box.remove(&child);
+                parent_box.append(&child);
+            }
+        } else {
+            parent_box.append(&sibling);
+        }
+    } else if let Some(parent_paned) = parent.downcast_ref::<gtk4::Paned>() {
+        // The Paned is itself nested inside another Paned.
+        let is_start_of_parent =
+            parent_paned.start_child().as_ref() == Some(&paned_widget);
+        if is_start_of_parent {
+            parent_paned.set_start_child(Some(&sibling));
+        } else {
+            parent_paned.set_end_child(Some(&sibling));
+        }
+    }
+
+    // Focus a remaining terminal.
+    if let Some(term) = find_first_terminal(container) {
+        term.grab_focus();
+    }
+
+    true
+}
+
 /// Focus the previous terminal in the current tab's split layout.
 pub fn focus_prev_terminal(container: &gtk4::Widget) {
     let terminals = collect_terminals(container);

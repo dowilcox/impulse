@@ -1281,19 +1281,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
 
-        // Terminal process terminated — close the tab if it was the only terminal
+        // Terminal process terminated — close the tab or remove the split pane
         notificationObservers.append(
             nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
                 guard let terminalTab = notification.object as? TerminalTab,
                       self.tabManager.ownsTerminal(terminalTab) else { return }
-                // Find the container that owns this terminal and check if we should close
                 for (index, tab) in self.tabManager.tabs.enumerated() {
                     if case .terminal(let container) = tab {
-                        if container.terminals.count == 1 && container.terminals.first === terminalTab {
-                            self.tabManager.closeTab(index: index)
-                            break
+                        guard let termIndex = container.terminals.firstIndex(where: { $0 === terminalTab }) else {
+                            continue
                         }
+                        if container.terminals.count == 1 {
+                            self.tabManager.closeTab(index: index)
+                        } else {
+                            container.removeTerminal(at: termIndex)
+                            self.tabManager.refreshSegmentLabels()
+                        }
+                        break
                     }
                 }
             }

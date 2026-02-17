@@ -77,18 +77,27 @@ pub(super) fn make_setup_terminal_signals(
             });
         }
 
-        // Connect child-exited to close the tab
+        // Connect child-exited to close the tab or remove the split pane
         {
             let tab_view = tab_view.clone();
             let term_clone = term.clone();
             term.connect_child_exited(move |_terminal, _status| {
                 run_guarded_ui("terminal-child-exited", || {
-                    // Find and close the tab page containing this terminal
                     let n = tab_view.n_pages();
                     for i in 0..n {
                         let page = tab_view.nth_page(i);
                         if term_clone.is_ancestor(&page.child()) {
-                            tab_view.close_page(&page);
+                            let container = page.child();
+                            let terminals =
+                                crate::terminal_container::collect_terminals(&container);
+                            if terminals.len() <= 1 {
+                                tab_view.close_page(&page);
+                            } else {
+                                crate::terminal_container::remove_terminal(
+                                    &container,
+                                    &term_clone,
+                                );
+                            }
                             break;
                         }
                     }
