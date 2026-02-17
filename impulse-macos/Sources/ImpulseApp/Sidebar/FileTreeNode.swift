@@ -100,7 +100,7 @@ final class FileTreeNode {
     /// Call on the root-level array via the static variant below.
     static func refreshGitStatus(nodes: [FileTreeNode], rootPath: String) {
         let statusMap = Self.fetchGitStatus(rootPath: rootPath)
-        guard !statusMap.isEmpty else { return }
+        // Always apply — an empty map correctly clears all statuses to .none.
         Self.applyGitStatus(statusMap, to: nodes, basePath: rootPath)
     }
 

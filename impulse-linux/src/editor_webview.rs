@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::mpsc as std_mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use gtk4::glib;
@@ -190,7 +191,9 @@ impl MonacoEditorHandle {
 
     pub fn set_theme(&self, theme: &ThemeColors) {
         let definition = theme_to_monaco(theme);
-        self.send_command(&EditorCommand::SetTheme { theme: Box::new(definition) });
+        self.send_command(&EditorCommand::SetTheme {
+            theme: Box::new(definition),
+        });
     }
 
     pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
@@ -199,9 +202,8 @@ impl MonacoEditorHandle {
 
     /// Set up a filesystem watcher that reloads the editor content when the file
     /// is modified externally (only if there are no unsaved changes).
-    // TODO: Restart the watcher after a successful reload to handle atomic writes
-    //       (temp → rename) that leave the old fd pointing at a stale inode
-    //       (see macOS EditorTab.reloadIfUnmodified).
+    /// Also handles atomic writes (temp → rename) by matching Create/Modify/Rename
+    /// events and restarting the watcher after a successful reload.
     pub fn setup_file_watcher(&self) {
         use notify::{RecursiveMode, Watcher};
 
@@ -215,16 +217,21 @@ impl MonacoEditorHandle {
             id.remove();
         }
 
-        let (tx, rx) = std_mpsc::channel::<()>();
+        // Use a shared AtomicBool so the watcher can be restarted (after
+        // atomic writes) while the timer keeps polling the same flag.
+        let changed = Arc::new(AtomicBool::new(false));
+        let changed_for_watcher = changed.clone();
 
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
                     if matches!(
                         event.kind,
-                        notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
+                        notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(_)
+                            | notify::EventKind::Remove(_)
                     ) {
-                        let _ = tx.send(());
+                        changed_for_watcher.store(true, Ordering::Relaxed);
                     }
                 }
             }) {
@@ -250,35 +257,61 @@ impl MonacoEditorHandle {
         let language = self.language.clone();
         let webview = self.webview.clone();
         let is_ready = self.is_ready.clone();
+        let watcher_cell = self._file_watcher.clone();
 
         let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
-            let mut has_event = false;
-            while rx.try_recv().is_ok() {
-                has_event = true;
+            if !changed.swap(false, Ordering::Relaxed) {
+                return glib::ControlFlow::Continue;
             }
-            if has_event && !is_modified.get() && is_ready.get() {
-                let fp = file_path_cell.borrow().clone();
-                if let Ok(new_content) = std::fs::read_to_string(&fp) {
-                    if new_content != *cached_content.borrow() {
-                        *cached_content.borrow_mut() = new_content.clone();
-                        suppress_next_modify.set(true);
-                        let lang = language.borrow().clone();
-                        let cmd = EditorCommand::OpenFile {
-                            file_path: fp,
-                            content: new_content,
-                            language: lang,
-                        };
-                        if let Ok(json) = serde_json::to_string(&cmd) {
-                            let escaped = js_string_escape(&json);
-                            let script = format!("impulseReceiveCommand('{}')", escaped);
-                            webview.evaluate_javascript(
-                                &script,
-                                None,
-                                None,
-                                None::<&gtk4::gio::Cancellable>,
-                                |_| {},
-                            );
+            if is_modified.get() || !is_ready.get() {
+                return glib::ControlFlow::Continue;
+            }
+            let fp = file_path_cell.borrow().clone();
+            if let Ok(new_content) = std::fs::read_to_string(&fp) {
+                if new_content != *cached_content.borrow() {
+                    *cached_content.borrow_mut() = new_content.clone();
+                    suppress_next_modify.set(true);
+                    let lang = language.borrow().clone();
+                    let cmd = EditorCommand::OpenFile {
+                        file_path: fp.clone(),
+                        content: new_content,
+                        language: lang,
+                    };
+                    if let Ok(json) = serde_json::to_string(&cmd) {
+                        let escaped = js_string_escape(&json);
+                        let script = format!("impulseReceiveCommand('{}')", escaped);
+                        webview.evaluate_javascript(
+                            &script,
+                            None,
+                            None,
+                            None::<&gtk4::gio::Cancellable>,
+                            |_| {},
+                        );
+                    }
+                }
+                // Restart watcher: after an atomic write the inotify watch may
+                // be on a stale inode. Create a new watcher writing to the same
+                // `changed` flag so this timer picks up future events.
+                let changed_restart = changed.clone();
+                if let Ok(mut new_watcher) =
+                    notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                        if let Ok(event) = res {
+                            if matches!(
+                                event.kind,
+                                notify::EventKind::Create(_)
+                                    | notify::EventKind::Modify(_)
+                                    | notify::EventKind::Remove(_)
+                            ) {
+                                changed_restart.store(true, Ordering::Relaxed);
+                            }
                         }
+                    })
+                {
+                    if new_watcher
+                        .watch(std::path::Path::new(&fp), RecursiveMode::NonRecursive)
+                        .is_ok()
+                    {
+                        *watcher_cell.borrow_mut() = Some(new_watcher);
                     }
                 }
             }

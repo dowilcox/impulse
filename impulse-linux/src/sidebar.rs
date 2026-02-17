@@ -2,7 +2,7 @@ use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -281,7 +281,9 @@ pub fn build_sidebar(
                     if !new_name.is_empty() && new_name != old_name {
                         // Validate filename is a single valid component
                         let path_check = Path::new(&new_name);
-                        if path_check.file_name() != Some(path_check.as_os_str()) || new_name.contains('\0') {
+                        if path_check.file_name() != Some(path_check.as_os_str())
+                            || new_name.contains('\0')
+                        {
                             log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
@@ -550,7 +552,9 @@ pub fn build_sidebar(
                     if !name.is_empty() {
                         // Validate filename is a single valid component
                         let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str()) || name.contains('\0') {
+                        if path_check.file_name() != Some(path_check.as_os_str())
+                            || name.contains('\0')
+                        {
                             log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
@@ -650,7 +654,9 @@ pub fn build_sidebar(
                     if !name.is_empty() {
                         // Validate filename is a single valid component
                         let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str()) || name.contains('\0') {
+                        if path_check.file_name() != Some(path_check.as_os_str())
+                            || name.contains('\0')
+                        {
                             log::error!("Invalid filename: must be a single filename component");
                             dialog.close();
                             return;
@@ -940,6 +946,11 @@ pub fn build_sidebar(
         #[allow(clippy::arc_with_non_send_sync)]
         _watcher: Rc::new(RefCell::new(None)),
         _watcher_timer: Rc::new(RefCell::new(None)),
+        #[allow(clippy::arc_with_non_send_sync)]
+        _git_index_watcher: Rc::new(RefCell::new(None)),
+        _git_index_timer: Rc::new(RefCell::new(None)),
+        _git_status_timer: Rc::new(RefCell::new(None)),
+        _last_git_status_hash: Rc::new(Cell::new(0)),
     };
 
     // Wire up toolbar buttons
@@ -1164,6 +1175,14 @@ pub struct SidebarState {
     _watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Source ID for the watcher's polling timer, so we can cancel it on re-watch.
     _watcher_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    /// Keeps the .git/index watcher alive.
+    _git_index_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
+    /// Source ID for the .git/index watcher's polling timer.
+    _git_index_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    /// Source ID for the periodic git status polling timer.
+    _git_status_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    /// Hash of the last `git status --porcelain` output, to avoid redundant refreshes.
+    _last_git_status_hash: Rc<Cell<u64>>,
 }
 
 impl SidebarState {
@@ -1209,9 +1228,7 @@ impl SidebarState {
 
     /// Set up a filesystem watcher for the given directory.
     /// Events are debounced and forwarded to the GTK main loop to trigger tree refresh.
-    // TODO: Watch .git/index for staging/commit changes (see macOS FileTreeView.startGitIndexWatcher).
-    // TODO: Add periodic git status polling to catch file-content edits that directory watchers miss
-    //       (see macOS FileTreeView.pollGitStatus).
+    /// Also starts a .git/index watcher and periodic git status polling.
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
@@ -1287,6 +1304,159 @@ impl SidebarState {
 
         *self._watcher.borrow_mut() = Some(watcher);
         *self._watcher_timer.borrow_mut() = Some(timer_id);
+
+        // Start .git/index watcher and periodic git status polling.
+        self.setup_git_index_watcher(path);
+        self.setup_git_status_timer(path);
+    }
+
+    /// Watch `.git/index` for staging/commit/reset/checkout changes.
+    fn setup_git_index_watcher(&self, path: &str) {
+        use notify::{RecursiveMode, Watcher};
+
+        // Stop any previous git index watcher.
+        if let Some(id) = self._git_index_timer.borrow_mut().take() {
+            id.remove();
+        }
+        *self._git_index_watcher.borrow_mut() = None;
+
+        // Find the git repo root.
+        let git_root = match std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(path)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => return,
+        };
+
+        let index_path = format!("{}/.git/index", git_root);
+        if !Path::new(&index_path).exists() {
+            return;
+        }
+
+        let (tx, rx) = std_mpsc::channel::<()>();
+
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    if matches!(
+                        event.kind,
+                        notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(_)
+                            | notify::EventKind::Remove(_)
+                    ) {
+                        let _ = tx.send(());
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::warn!("Failed to create git index watcher: {}", e);
+                    return;
+                }
+            };
+
+        if let Err(e) = watcher.watch(Path::new(&index_path), RecursiveMode::NonRecursive) {
+            log::warn!("Failed to watch .git/index: {}", e);
+            return;
+        }
+
+        // Debounced poll: when .git/index changes, refresh the tree.
+        let tree_nodes = self.tree_nodes.clone();
+        let file_tree_list = self.file_tree_list.clone();
+        let file_tree_scroll = self.file_tree_scroll.clone();
+        let current_path = self.current_path.clone();
+        let show_hidden = self.show_hidden.clone();
+        let icon_cache = self.icon_cache.clone();
+
+        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
+            let mut has_event = false;
+            while rx.try_recv().is_ok() {
+                has_event = true;
+            }
+            if has_event {
+                refresh_tree(
+                    &tree_nodes,
+                    &file_tree_list,
+                    &file_tree_scroll,
+                    &current_path,
+                    *show_hidden.borrow(),
+                    icon_cache.clone(),
+                );
+            }
+            glib::ControlFlow::Continue
+        });
+
+        *self._git_index_watcher.borrow_mut() = Some(watcher);
+        *self._git_index_timer.borrow_mut() = Some(timer_id);
+    }
+
+    /// Start a periodic timer that polls `git status --porcelain -u` every 2 seconds.
+    /// Only triggers a tree refresh when the output hash changes.
+    fn setup_git_status_timer(&self, path: &str) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Stop any previous timer.
+        if let Some(id) = self._git_status_timer.borrow_mut().take() {
+            id.remove();
+        }
+        self._last_git_status_hash.set(0);
+
+        let root = path.to_string();
+        let tree_nodes = self.tree_nodes.clone();
+        let file_tree_list = self.file_tree_list.clone();
+        let file_tree_scroll = self.file_tree_scroll.clone();
+        let current_path = self.current_path.clone();
+        let show_hidden = self.show_hidden.clone();
+        let icon_cache = self.icon_cache.clone();
+        let last_hash = self._last_git_status_hash.clone();
+
+        let timer_id = glib::timeout_add_local(Duration::from_secs(2), move || {
+            let root = root.clone();
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list = file_tree_list.clone();
+            let file_tree_scroll = file_tree_scroll.clone();
+            let current_path = current_path.clone();
+            let show_hidden = show_hidden.clone();
+            let icon_cache = icon_cache.clone();
+            let last_hash = last_hash.clone();
+
+            glib::spawn_future_local(async move {
+                let root_clone = root.clone();
+                let result = gio::spawn_blocking(move || {
+                    std::process::Command::new("git")
+                        .args(["status", "--porcelain", "-u"])
+                        .current_dir(&root_clone)
+                        .output()
+                })
+                .await;
+
+                if let Ok(Ok(output)) = result {
+                    let mut hasher = DefaultHasher::new();
+                    output.stdout.hash(&mut hasher);
+                    let hash = hasher.finish();
+
+                    if hash != last_hash.get() {
+                        last_hash.set(hash);
+                        refresh_tree(
+                            &tree_nodes,
+                            &file_tree_list,
+                            &file_tree_scroll,
+                            &current_path,
+                            *show_hidden.borrow(),
+                            icon_cache.clone(),
+                        );
+                    }
+                }
+            });
+            glib::ControlFlow::Continue
+        });
+
+        *self._git_status_timer.borrow_mut() = Some(timer_id);
     }
 
     /// Save the current tree state for the active tab.

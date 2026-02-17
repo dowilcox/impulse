@@ -840,6 +840,7 @@ final class FileTreeView: NSView {
         guard !rootPath.isEmpty else { return }
         let root = rootPath
         let nodes = rootNodes
+        let previousHash = lastGitStatusHash
         DispatchQueue.global(qos: .utility).async { [weak self] in
             // Quick hash of porcelain output to avoid unnecessary tree walks.
             let pipe = Pipe()
@@ -854,16 +855,14 @@ final class FileTreeView: NSView {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let hash = data.hashValue
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                guard hash != self.lastGitStatusHash else { return }
-                self.lastGitStatusHash = hash
-            }
+            guard hash != previousHash else { return }
 
             // Hash changed — do the full status refresh.
             FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: root)
             DispatchQueue.main.async { [weak self] in
-                self?.reloadVisibleRows()
+                guard let self else { return }
+                self.lastGitStatusHash = hash
+                self.reloadVisibleRows()
             }
         }
     }
