@@ -105,7 +105,7 @@ private final class TabItemView: NSView {
         // Background color
         let fillColor: NSColor
         if isSelected {
-            fillColor = bgColor        // theme.bg — visual continuity with content
+            fillColor = bgHighlight     // same as hover for visual consistency
         } else if isHovered {
             fillColor = bgHighlight     // theme.bgHighlight
         } else {
@@ -327,8 +327,8 @@ final class CustomTabBar: NSView {
     private var selectedIndex: Int = -1
     private var currentTheme: Theme?
 
-    private let tabBarHeight: CGFloat = 44
-    private let tabItemHeight: CGFloat = 30
+    private let tabBarHeight: CGFloat = 48
+    private let tabItemHeight: CGFloat = 34
     private let tabMinWidth: CGFloat = 120
     private let tabTopPadding: CGFloat = 4
     private let tabBottomPadding: CGFloat = 10

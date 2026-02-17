@@ -11,6 +11,26 @@ private final class PointerButton: NSButton {
     }
 }
 
+// MARK: - Double-Click-to-Zoom Window
+
+/// NSWindow subclass that restores double-click-to-zoom/minimize behavior
+/// when using a transparent, hidden-title titlebar with fullSizeContentView.
+private final class ImpulseWindow: NSWindow {
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        guard event.clickCount == 2 else { return }
+        // Only act on clicks in the titlebar region (above contentLayoutRect).
+        let location = event.locationInWindow
+        guard location.y > contentLayoutRect.maxY else { return }
+        let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
+        switch action {
+        case "Minimize": miniaturize(nil)
+        case "Maximize": zoom(nil)
+        default: break
+        }
+    }
+}
+
 // MARK: - Sidebar Toggle Button
 
 /// Custom toggle button for the sidebar Files/Search mode switch.
@@ -111,7 +131,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         btn.toolTip = "Toggle Sidebar"
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.imageScaling = .scaleProportionallyDown
-        btn.setContentHuggingPriority(.required, for: .horizontal)
+        btn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        btn.setContentHuggingPriority(.defaultLow, for: .vertical)
+        btn.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = 6
         return btn
     }()
 
@@ -274,7 +298,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         self.fileTreeView = FileTreeView()
         self.searchPanel = SearchPanel()
 
-        let window = NSWindow(
+        let window = ImpulseWindow(
             contentRect: NSRect(
                 x: 0, y: 0,
                 width: CGFloat(settings.windowWidth),
@@ -489,15 +513,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             tabBarContainer.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
             tabBarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             tabBarContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            tabBarContainer.heightAnchor.constraint(equalToConstant: 44),
+            tabBarContainer.heightAnchor.constraint(equalToConstant: 48),
 
-            // Sidebar toggle: left side, vertically aligned with tab items
-            // Tab items are 30px tall at y=10 (bottom padding) inside the 44px bar,
-            // so their visual center is 25px from the bottom.
+            // Sidebar toggle: left side, same height as tab items (34px)
             sidebarToggleButton.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 8),
-            sidebarToggleButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -11),
-            sidebarToggleButton.widthAnchor.constraint(equalToConstant: 28),
-            sidebarToggleButton.heightAnchor.constraint(equalToConstant: 28),
+            sidebarToggleButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -10),
+            sidebarToggleButton.widthAnchor.constraint(equalToConstant: 34),
+            sidebarToggleButton.heightAnchor.constraint(equalToConstant: 34),
 
             // Tab strip: fills between sidebar toggle and + button
             tabSegment.leadingAnchor.constraint(equalTo: sidebarToggleButton.trailingAnchor, constant: 6),
@@ -507,7 +529,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
             // New tab button: right side, vertically aligned with tab items
             newTabButton.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor, constant: -8),
-            newTabButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -11),
+            newTabButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -13),
             newTabButton.widthAnchor.constraint(equalToConstant: 28),
             newTabButton.heightAnchor.constraint(equalToConstant: 28),
 
@@ -643,6 +665,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         sidebarToggleButton.contentTintColor = sidebarVisible
             ? theme.cyan
             : theme.fgDark
+        sidebarToggleButton.layer?.backgroundColor = sidebarVisible
+            ? theme.bgHighlight.cgColor
+            : NSColor.clear.cgColor
     }
 
     // MARK: - Custom Keybinding Monitor
