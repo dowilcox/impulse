@@ -198,12 +198,11 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES}"
 # Copy binary
 cp "${SWIFT_BIN}" "${MACOS_DIR}/Impulse"
 
-# Copy SwiftPM bundle resources (Monaco assets, etc.)
-# The auto-generated Bundle.module accessor looks at Bundle.main.bundleURL which,
-# for a .app bundle, is the .app root directory — NOT Contents/MacOS/.
+# Copy SwiftPM bundle resources (Monaco assets, icons, etc.)
+# Place in Contents/Resources/ — the standard macOS location for app resources.
 BUNDLE_RESOURCES="impulse-macos/.build/release/ImpulseApp_ImpulseApp.bundle"
 if [[ -d "${BUNDLE_RESOURCES}" ]]; then
-    cp -r "${BUNDLE_RESOURCES}" "${APP_DIR}/"
+    cp -r "${BUNDLE_RESOURCES}" "${RESOURCES}/"
 fi
 
 # Generate Info.plist
@@ -285,8 +284,8 @@ if [[ "${SIGN}" == true ]]; then
     # The SwiftPM resource bundle is a flat directory with a .bundle extension.
     # codesign treats it as a nested bundle but rejects it because it lacks an
     # Info.plist. Add a minimal one so it can be signed properly inside-out.
-    if [[ -d "${APP_DIR}/ImpulseApp_ImpulseApp.bundle" ]]; then
-        cat > "${APP_DIR}/ImpulseApp_ImpulseApp.bundle/Info.plist" << 'RPLIST'
+    if [[ -d "${RESOURCES}/ImpulseApp_ImpulseApp.bundle" ]]; then
+        cat > "${RESOURCES}/ImpulseApp_ImpulseApp.bundle/Info.plist" << 'RPLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -307,7 +306,7 @@ RPLIST
         codesign --force \
             --sign "${IMPULSE_SIGN_IDENTITY}" \
             --timestamp \
-            "${APP_DIR}/ImpulseApp_ImpulseApp.bundle"
+            "${RESOURCES}/ImpulseApp_ImpulseApp.bundle"
     fi
 
     # Sign the app bundle (inside-out: resource bundle first, then the .app)

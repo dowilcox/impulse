@@ -230,7 +230,7 @@ final class IconCache {
 
     /// Loads raw SVG strings from the bundle resource directory.
     private func loadSVGs() {
-        guard let iconsURL = Bundle.module.url(forResource: "icons", withExtension: nil) else {
+        guard let iconsURL = Bundle.appResources.url(forResource: "icons", withExtension: nil) else {
             NSLog("IconCache: icons resource directory not found in bundle")
             return
         }
