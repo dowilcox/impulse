@@ -331,6 +331,10 @@ pub fn build_window(app: &adw::Application) {
         Rc::new(RefCell::new(std::collections::HashMap::new()));
     let latest_definition_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
         Rc::new(RefCell::new(std::collections::HashMap::new()));
+    // Maps internal LSP seq → Monaco's request_id for definition requests,
+    // so we can resolve the correct Monaco promise when the LSP responds.
+    let definition_monaco_ids: Rc<RefCell<std::collections::HashMap<u64, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
     let lsp_error_toast_dedupe: Rc<RefCell<HashSet<String>>> =
         Rc::new(RefCell::new(HashSet::new()));
     let (lsp_install_result_tx, lsp_install_result_rx) =
@@ -348,6 +352,7 @@ pub fn build_window(app: &adw::Application) {
 
     // Header bar with tab bar
     let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
     let tab_bar = adw::TabBar::new();
     let tab_view = adw::TabView::new();
     tab_bar.set_view(Some(&tab_view));
@@ -484,6 +489,7 @@ pub fn build_window(app: &adw::Application) {
         &latest_completion_req,
         &latest_hover_req,
         &latest_definition_req,
+        &definition_monaco_ids,
         &toast_overlay,
     );
 
@@ -539,6 +545,7 @@ pub fn build_window(app: &adw::Application) {
         &latest_completion_req,
         &latest_hover_req,
         &latest_definition_req,
+        &definition_monaco_ids,
         &toast_overlay,
         &lsp_error_toast_dedupe,
         &lsp_install_result_rx,

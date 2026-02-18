@@ -229,17 +229,19 @@ pub(super) fn setup_lsp_response_polling(
     latest_completion_req: &Rc<RefCell<HashMap<String, u64>>>,
     latest_hover_req: &Rc<RefCell<HashMap<String, u64>>>,
     latest_definition_req: &Rc<RefCell<HashMap<String, u64>>>,
+    definition_monaco_ids: &Rc<RefCell<HashMap<u64, u64>>>,
     toast_overlay: &adw::ToastOverlay,
     lsp_error_toast_dedupe: &Rc<RefCell<HashSet<String>>>,
     lsp_install_result_rx: &Rc<RefCell<std::sync::mpsc::Receiver<Result<String, String>>>>,
 ) {
     let tab_view = tab_view.clone();
-    let sidebar_state = sidebar_state.clone();
+    let _sidebar_state = sidebar_state.clone();
     let lsp_gtk_rx = lsp_gtk_rx.clone();
     let doc_versions = lsp_doc_versions.clone();
     let latest_completion_req = latest_completion_req.clone();
     let latest_hover_req = latest_hover_req.clone();
     let latest_definition_req = latest_definition_req.clone();
+    let definition_monaco_ids = definition_monaco_ids.clone();
     let toast_overlay = toast_overlay.clone();
     let lsp_error_toast_dedupe = lsp_error_toast_dedupe.clone();
     let lsp_install_result_rx = lsp_install_result_rx.clone();
@@ -308,36 +310,23 @@ pub(super) fn setup_lsp_response_polling(
                         if current_version != source_version {
                             continue;
                         }
-                        if let Some(page) = tab_view.selected_page() {
-                            if page.child().widget_name().as_str() != source_path {
-                                continue;
-                            }
-                        }
 
-                        let file_path = uri_to_file_path(&uri);
-                        let is_same_file = file_path == source_path;
-
-                        if is_same_file {
-                            // Same-file navigation: just move the cursor
-                            if let Some(page) = tab_view.selected_page() {
-                                let child = page.child();
-                                editor::go_to_position(&child, line + 1, character + 1);
-                            }
-                        } else {
-                            // Cross-file navigation: open the target file, then jump
-                            if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref()
-                            {
-                                cb(&file_path);
-                            }
-                            let n = tab_view.n_pages();
-                            for i in 0..n {
-                                let page = tab_view.nth_page(i);
-                                let child = page.child();
-                                if child.widget_name().as_str() == file_path {
-                                    editor::go_to_position(&child, line + 1, character + 1);
-                                    tab_view.set_selected_page(&page);
-                                    break;
-                                }
+                        // Look up Monaco's original request_id and resolve the
+                        // pending definition promise. Monaco shows an underline
+                        // on hover; actual navigation happens on Ctrl+click
+                        // (same-file: Monaco navigates directly; cross-file:
+                        // Monaco fires OpenFileRequested via registerEditorOpener).
+                        let monaco_id = definition_monaco_ids
+                            .borrow_mut()
+                            .remove(&request_id);
+                        if let Some(monaco_id) = monaco_id {
+                            if let Some(handle) = editor::get_handle(&source_path) {
+                                handle.send_resolve_definition(
+                                    monaco_id,
+                                    Some(uri),
+                                    Some(line),
+                                    Some(character),
+                                );
                             }
                         }
                     }

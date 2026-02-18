@@ -26,6 +26,7 @@ pub(super) fn wire_sidebar_signals(
     latest_completion_req: &Rc<RefCell<HashMap<String, u64>>>,
     latest_hover_req: &Rc<RefCell<HashMap<String, u64>>>,
     latest_definition_req: &Rc<RefCell<HashMap<String, u64>>>,
+    definition_monaco_ids: &Rc<RefCell<HashMap<u64, u64>>>,
     toast_overlay: &adw::ToastOverlay,
 ) {
     // Wire up file activation to open in editor tab
@@ -44,6 +45,7 @@ pub(super) fn wire_sidebar_signals(
         let latest_completion_req = latest_completion_req.clone();
         let latest_hover_req = latest_hover_req.clone();
         let latest_definition_req = latest_definition_req.clone();
+        let definition_monaco_ids = definition_monaco_ids.clone();
         let icon_cache = sidebar_state.icon_cache.clone();
         let toast_overlay_for_editor = toast_overlay.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
@@ -99,6 +101,7 @@ pub(super) fn wire_sidebar_signals(
                             let latest_completion_req = latest_completion_req.clone();
                             let latest_hover_req = latest_hover_req.clone();
                             let latest_definition_req = latest_definition_req.clone();
+                            let definition_monaco_ids = definition_monaco_ids.clone();
                             let sidebar_state = sidebar_state_for_editor.clone();
                             let toast_overlay = toast_overlay_for_editor.clone();
                             let path = path.to_string();
@@ -267,13 +270,14 @@ pub(super) fn wire_sidebar_signals(
                                             log::warn!("LSP request channel full, dropping request: {}", e);
                                         }
                                     }
-                                    impulse_editor::protocol::EditorEvent::DefinitionRequested { request_id: _, line, character } => {
+                                    impulse_editor::protocol::EditorEvent::DefinitionRequested { request_id: monaco_id, line, character } => {
                                         let uri = file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path));
                                         let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
                                         let seq = lsp_request_seq.get() + 1;
                                         lsp_request_seq.set(seq);
                                         latest_definition_req.borrow_mut().insert(path.clone(), seq);
+                                        definition_monaco_ids.borrow_mut().insert(seq, monaco_id);
                                         if let Err(e) = lsp_tx.try_send(LspRequest::Definition {
                                             request_id: seq,
                                             uri,

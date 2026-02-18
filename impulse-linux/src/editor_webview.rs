@@ -213,6 +213,23 @@ impl MonacoEditorHandle {
         self.send_command(&EditorCommand::ApplyDiffDecorations { decorations });
     }
 
+    /// Resolve a pending definition request in Monaco. Monaco will show an
+    /// underline on hover and navigate on Ctrl+click.
+    pub fn send_resolve_definition(
+        &self,
+        request_id: u64,
+        uri: Option<String>,
+        line: Option<u32>,
+        column: Option<u32>,
+    ) {
+        self.send_command(&EditorCommand::ResolveDefinition {
+            request_id,
+            uri,
+            line,
+            column,
+        });
+    }
+
     /// Release resources held by this editor handle. Must be called before the
     /// tab is removed to break the reference cycle between the GLib timer, the
     /// WebView, and the signal closures that hold `Rc<MonacoEditorHandle>`.

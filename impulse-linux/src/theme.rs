@@ -485,19 +485,44 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         /* --- Header bar --- */
         headerbar {{
             background-color: {bg_dark};
-            border-bottom: 1px solid {bg_highlight};
+            border: none;
+            border-image: none;
             box-shadow: none;
+            outline: none;
+            margin: 0;
             min-height: 38px;
+        }}
+        headerbar:backdrop {{
+            border: none;
+            border-image: none;
+            box-shadow: none;
+            outline: none;
+            margin: 0;
+        }}
+        headerbar button {{
+            color: {fg_dark};
+        }}
+        headerbar button:hover {{
+            color: {cyan};
+            background-color: {bg_highlight};
         }}
         tabbar {{
             background-color: {bg_dark};
             box-shadow: none;
-            border-bottom: none;
+            border: none;
+            border-image: none;
+        }}
+        tabbar revealer > box {{
+            box-shadow: none;
+            border: none;
+            border-image: none;
+            padding: 0;
         }}
         tabbar tabbox {{
             background-color: {bg_dark};
             box-shadow: none;
-            border-bottom: none;
+            border: none;
+            border-image: none;
         }}
         tabbar tab {{
             min-height: 32px;
@@ -521,15 +546,17 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 13px;
             font-weight: 500;
         }}
-        headerbar button {{
-            color: {fg_dark};
-        }}
-        headerbar button:hover {{
-            color: {cyan};
-            background-color: {bg_highlight};
-        }}
-        window.background {{
+        window, window.csd, window.background {{
             background-color: {bg};
+            border: none;
+            border-image: none;
+            box-shadow: none;
+            outline: none;
+        }}
+        window > dialog-host > widget > widget > toastoverlay > box {{
+            border: none;
+            box-shadow: none;
+            outline: none;
         }}
         /* --- Quick open --- */
         .quick-open {{
@@ -659,7 +686,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("Could not get default display"),
         &provider,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        gtk4::STYLE_PROVIDER_PRIORITY_USER,
     );
     provider
 }

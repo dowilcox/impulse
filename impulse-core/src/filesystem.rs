@@ -133,8 +133,23 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
             continue;
         };
 
-        if let Some(name) = abs_path.file_name() {
-            status_map.insert(name.to_string_lossy().to_string(), code.to_string());
+        // Compute path relative to the requested directory so we can
+        // distinguish direct children from files in subdirectories.
+        let rel = match abs_path.strip_prefix(&dir_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let components: Vec<_> = rel.components().collect();
+        if components.len() == 1 {
+            // File is directly in this directory — use its exact status.
+            if let Some(name) = abs_path.file_name() {
+                status_map.insert(name.to_string_lossy().to_string(), code.to_string());
+            }
+        } else if components.len() > 1 {
+            // File is in a subdirectory — mark the immediate child
+            // directory as modified so it shows as changed in the tree.
+            let dir_name = components[0].as_os_str().to_string_lossy().to_string();
+            status_map.entry(dir_name).or_insert_with(|| "M".to_string());
         }
     }
 
