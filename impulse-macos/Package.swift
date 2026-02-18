@@ -27,13 +27,10 @@ let package = Package(
             ],
             linkerSettings: [
                 .unsafeFlags(["-L", "../target/release"]),
-                .unsafeFlags(["-L", "/opt/homebrew/opt/openssl@3/lib"]),
                 .linkedLibrary("impulse_ffi"),
                 .linkedLibrary("resolv"),
                 .linkedLibrary("z"),
                 .linkedLibrary("iconv"),
-                .linkedLibrary("ssl"),
-                .linkedLibrary("crypto"),
                 .linkedFramework("Security"),
             ]
         ),
