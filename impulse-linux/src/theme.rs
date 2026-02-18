@@ -485,19 +485,8 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         /* --- Header bar --- */
         headerbar {{
             background-color: {bg_dark};
-            border: none;
-            border-image: none;
             box-shadow: none;
-            outline: none;
-            margin: 0;
             min-height: 38px;
-        }}
-        headerbar:backdrop {{
-            border: none;
-            border-image: none;
-            box-shadow: none;
-            outline: none;
-            margin: 0;
         }}
         headerbar button {{
             color: {fg_dark};
@@ -508,21 +497,13 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         tabbar {{
             background-color: {bg_dark};
-            box-shadow: none;
-            border: none;
-            border-image: none;
         }}
         tabbar revealer > box {{
             box-shadow: none;
-            border: none;
-            border-image: none;
             padding: 0;
         }}
         tabbar tabbox {{
             background-color: {bg_dark};
-            box-shadow: none;
-            border: none;
-            border-image: none;
         }}
         tabbar tab {{
             min-height: 32px;
@@ -546,17 +527,8 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 13px;
             font-weight: 500;
         }}
-        window, window.csd, window.background {{
+        window.background {{
             background-color: {bg};
-            border: none;
-            border-image: none;
-            box-shadow: none;
-            outline: none;
-        }}
-        window > dialog-host > widget > widget > toastoverlay > box {{
-            border: none;
-            box-shadow: none;
-            outline: none;
         }}
         /* --- Quick open --- */
         .quick-open {{

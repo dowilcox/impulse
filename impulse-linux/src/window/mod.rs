@@ -352,7 +352,6 @@ pub fn build_window(app: &adw::Application) {
 
     // Header bar with tab bar
     let header = adw::HeaderBar::new();
-    header.add_css_class("flat");
     let tab_bar = adw::TabBar::new();
     let tab_view = adw::TabView::new();
     tab_bar.set_view(Some(&tab_view));
