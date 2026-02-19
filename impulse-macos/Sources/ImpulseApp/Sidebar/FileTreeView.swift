@@ -750,39 +750,53 @@ final class FileTreeView: NSView {
         stopGitIndexWatcher()
         guard !rootPath.isEmpty else { return }
 
-        // Locate the git repo root.
-        let pipe = Pipe()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["rev-parse", "--show-toplevel"]
-        proc.currentDirectoryURL = URL(fileURLWithPath: rootPath)
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do { try proc.run() } catch { return }
-        proc.waitUntilExit()
-        guard proc.terminationStatus == 0 else { return }
-        let gitRoot = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !gitRoot.isEmpty else { return }
+        let currentRootPath = rootPath
 
-        let indexPath = (gitRoot as NSString).appendingPathComponent(".git/index")
-        let fd = open(indexPath, O_EVTONLY)
-        guard fd >= 0 else { return }
-        gitIndexDescriptor = fd
+        // Run git rev-parse on a background thread to avoid blocking the main
+        // thread.  Calling `waitUntilExit` on the main thread pumps the run
+        // loop, which can trigger NSOutlineView layout while the tree data is
+        // still being updated — leading to index-out-of-range crashes.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let pipe = Pipe()
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            proc.arguments = ["rev-parse", "--show-toplevel"]
+            proc.currentDirectoryURL = URL(fileURLWithPath: currentRootPath)
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+            do { try proc.run() } catch { return }
+            proc.waitUntilExit()
+            guard proc.terminationStatus == 0 else { return }
+            let gitRoot = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !gitRoot.isEmpty else { return }
 
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .rename, .delete],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            self?.handleGitIndexEvent()
+            let indexPath = (gitRoot as NSString).appendingPathComponent(".git/index")
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // If the root changed while we were resolving, bail out.
+                guard self.rootPath == currentRootPath else { return }
+
+                let fd = open(indexPath, O_EVTONLY)
+                guard fd >= 0 else { return }
+                self.gitIndexDescriptor = fd
+
+                let source = DispatchSource.makeFileSystemObjectSource(
+                    fileDescriptor: fd,
+                    eventMask: [.write, .rename, .delete],
+                    queue: .main
+                )
+                source.setEventHandler { [weak self] in
+                    self?.handleGitIndexEvent()
+                }
+                source.setCancelHandler { [fd] in
+                    close(fd)
+                }
+                self.gitIndexSource = source
+                source.resume()
+            }
         }
-        source.setCancelHandler { [fd] in
-            close(fd)
-        }
-        gitIndexSource = source
-        source.resume()
     }
 
     private func stopGitIndexWatcher() {
@@ -976,9 +990,23 @@ extension FileTreeView: NSOutlineViewDataSource {
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if let node = item as? FileTreeNode, let children = node.children {
-            return children[index]
+            if index < children.count {
+                return children[index]
+            }
+            // Stale outline view state — schedule a reload and return a
+            // placeholder so we don't crash.
+            DispatchQueue.main.async { [weak outlineView] in
+                outlineView?.reloadData()
+            }
+            return FileTreeNode(name: "", path: "", isDirectory: false)
         }
-        return rootNodes[index]
+        if index < rootNodes.count {
+            return rootNodes[index]
+        }
+        DispatchQueue.main.async { [weak outlineView] in
+            outlineView?.reloadData()
+        }
+        return FileTreeNode(name: "", path: "", isDirectory: false)
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
