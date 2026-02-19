@@ -39,6 +39,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
+    /// Temp files/directories created for shell integration (cleaned up in deinit).
+    private var shellIntegrationTempPaths: [URL] = []
+
 
     // MARK: Initializer
 
@@ -67,6 +70,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     deinit {
         if let monitor = mouseUpMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        for path in shellIntegrationTempPaths {
+            try? FileManager.default.removeItem(at: path)
         }
     }
 
@@ -279,7 +285,8 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
         var args: [String] = []
 
-        // Add shell integration where possible
+        // Add shell integration (OSC 7 CWD tracking, OSC 133 command boundaries).
+        // Each shell type requires a different injection method.
         let shellType = shellName.lowercased()
         if shellType == "fish" {
             if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
@@ -288,7 +295,67 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 args.append("--login")
             }
         } else if shellType == "zsh" {
-            args.append("--login")
+            // Zsh requires a ZDOTDIR trick: create a temp directory with wrapper
+            // rc files that source the user's originals then inject integration.
+            if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
+                let home = NSHomeDirectory()
+                let zdotdir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("impulse-zsh-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
+                do {
+                    try FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
+                    shellIntegrationTempPaths.append(zdotdir)
+
+                    let zshenv = "if [ -f '\(home)/.zshenv' ]; then\n    source '\(home)/.zshenv'\nfi\n"
+                    try zshenv.write(to: zdotdir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
+
+                    let zprofile = "if [ -f '\(home)/.zprofile' ]; then\n    source '\(home)/.zprofile'\nfi\n"
+                    try zprofile.write(to: zdotdir.appendingPathComponent(".zprofile"), atomically: true, encoding: .utf8)
+
+                    let zlogin = "if [ -f '\(home)/.zlogin' ]; then\n    source '\(home)/.zlogin'\nfi\n"
+                    try zlogin.write(to: zdotdir.appendingPathComponent(".zlogin"), atomically: true, encoding: .utf8)
+
+                    let zshrc = """
+                        export ZDOTDIR='\(home)'
+                        if [ -f '\(home)/.zshrc' ]; then
+                            source '\(home)/.zshrc'
+                        fi
+                        \(script)
+                        """
+                    try zshrc.write(to: zdotdir.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+
+                    environment.append("ZDOTDIR=\(zdotdir.path)")
+                    args.append("--login")
+                } catch {
+                    // Fall back to plain login shell if temp files fail
+                    args.append("--login")
+                }
+            } else {
+                args.append("--login")
+            }
+        } else if shellType == "bash" {
+            // Bash supports --rcfile to inject a custom rc that sources the
+            // user's .bashrc then appends integration.
+            if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
+                let home = NSHomeDirectory()
+                let rcPath = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("impulse-bash-rc-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
+                let rcContent = """
+                    if [ -f '\(home)/.bashrc' ]; then
+                        source '\(home)/.bashrc'
+                    fi
+                    \(script)
+                    """
+                do {
+                    try rcContent.write(to: rcPath, atomically: true, encoding: .utf8)
+                    shellIntegrationTempPaths.append(rcPath)
+                    args.append(contentsOf: ["--rcfile", rcPath.path])
+                } catch {
+                    // Fall back to plain login shell
+                    args.append("--login")
+                }
+            } else {
+                args.append("--login")
+            }
         }
 
         let workingDir = initialDirectory ?? currentWorkingDirectory
