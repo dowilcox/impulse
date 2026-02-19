@@ -50,13 +50,13 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     // MARK: Splitting
 
-    /// Split the current layout horizontally, placing terminals side by side.
+    /// Split with a vertical divider, placing terminals side by side.
     @discardableResult
     func splitVertically() -> TerminalTab {
         return performSplit(isVertical: true)
     }
 
-    /// Split the current layout vertically, stacking terminals top and bottom.
+    /// Split with a horizontal divider, stacking terminals top and bottom.
     @discardableResult
     func splitHorizontally() -> TerminalTab {
         return performSplit(isVertical: false)

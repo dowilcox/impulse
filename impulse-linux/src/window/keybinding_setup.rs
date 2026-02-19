@@ -150,7 +150,7 @@ pub(super) fn setup_capture_phase_keys(
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         terminal_container::split_terminal(
                             &child,
-                            gtk4::Orientation::Horizontal,
+                            gtk4::Orientation::Vertical,
                             &|term| setup(term),
                             &s,
                             theme,
@@ -167,7 +167,7 @@ pub(super) fn setup_capture_phase_keys(
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         terminal_container::split_terminal(
                             &child,
-                            gtk4::Orientation::Vertical,
+                            gtk4::Orientation::Horizontal,
                             &|term| setup(term),
                             &s,
                             theme,
@@ -602,7 +602,7 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
-    // Ctrl+Shift+E: Split terminal horizontally (side by side)
+    // Ctrl+Shift+E: Split terminal horizontally (top/bottom)
     {
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
@@ -620,7 +620,7 @@ pub(super) fn setup_shortcut_controller(
                     let theme = crate::theme::get_theme(&s.color_scheme);
                     terminal_container::split_terminal(
                         &child,
-                        gtk4::Orientation::Horizontal,
+                        gtk4::Orientation::Vertical,
                         &|term| {
                             setup(term);
                         },
@@ -634,7 +634,7 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
-    // Ctrl+Shift+O: Split terminal vertically (top/bottom)
+    // Ctrl+Shift+O: Split terminal vertically (side by side)
     {
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
@@ -652,7 +652,7 @@ pub(super) fn setup_shortcut_controller(
                     let theme = crate::theme::get_theme(&s.color_scheme);
                     terminal_container::split_terminal(
                         &child,
-                        gtk4::Orientation::Vertical,
+                        gtk4::Orientation::Horizontal,
                         &|term| {
                             setup(term);
                         },
