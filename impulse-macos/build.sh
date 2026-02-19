@@ -72,6 +72,13 @@ if ! command -v swift >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ "${CREATE_DMG}" == true ]]; then
+    if ! command -v create-dmg >/dev/null 2>&1; then
+        echo "ERROR: create-dmg not found. Install it with: brew install create-dmg" >&2
+        exit 1
+    fi
+fi
+
 # ── Signing preflight ────────────────────────────────────────────────
 
 if [[ "${SIGN}" == true ]]; then
@@ -330,20 +337,52 @@ if [[ "${CREATE_DMG}" == true ]]; then
 
     DMG_NAME="Impulse-${VERSION}.dmg"
     DMG_PATH="dist/${DMG_NAME}"
-    DMG_STAGING=$(mktemp -d)
 
-    cp -r "${APP_DIR}" "${DMG_STAGING}/"
+    # Convert background SVG to PNG for the DMG window background
+    DMG_BG_SVG="assets/dmg-background.svg"
+    DMG_BG_PNG=""
+    if [[ -f "${DMG_BG_SVG}" ]] && command -v rsvg-convert >/dev/null 2>&1; then
+        DMG_BG_PNG=$(mktemp /tmp/dmg-background-XXXXXX.png)
+        rsvg-convert -w 660 -h 400 "${DMG_BG_SVG}" -o "${DMG_BG_PNG}" 2>/dev/null || {
+            echo "    Note: Could not convert DMG background SVG to PNG, continuing without background"
+            DMG_BG_PNG=""
+        }
+    elif [[ -f "${DMG_BG_SVG}" ]]; then
+        echo "    Note: rsvg-convert not found, DMG will have no custom background"
+    fi
 
-    # Create a symlink to /Applications for drag-to-install.
-    ln -s /Applications "${DMG_STAGING}/Applications"
+    # Remove any previous DMG at this path (create-dmg won't overwrite)
+    rm -f "${DMG_PATH}"
 
-    # Create the DMG.
-    hdiutil create -volname "Impulse" \
-        -srcfolder "${DMG_STAGING}" \
-        -ov -format UDZO \
-        "${DMG_PATH}"
+    # Build create-dmg arguments
+    DMG_ARGS=(
+        --volname "Impulse"
+        --window-size 660 400
+        --window-pos 200 120
+        --icon-size 100
+        --icon "Impulse.app" 180 200
+        --app-drop-link 480 200
+        --hide-extension "Impulse.app"
+        --format UDZO
+        --no-internet-enable
+    )
 
-    rm -rf "${DMG_STAGING}"
+    # Add volume icon if AppIcon.icns was generated
+    if [[ -f "${RESOURCES}/AppIcon.icns" ]]; then
+        DMG_ARGS+=(--volicon "${RESOURCES}/AppIcon.icns")
+    fi
+
+    # Add background image if available
+    if [[ -n "${DMG_BG_PNG}" && -f "${DMG_BG_PNG}" ]]; then
+        DMG_ARGS+=(--background "${DMG_BG_PNG}")
+    fi
+
+    create-dmg "${DMG_ARGS[@]}" "${DMG_PATH}" "${APP_DIR}"
+
+    # Clean up temp background PNG
+    if [[ -n "${DMG_BG_PNG}" ]]; then
+        rm -f "${DMG_BG_PNG}"
+    fi
 
     # Sign the DMG if signing is enabled
     if [[ "${SIGN}" == true ]]; then
