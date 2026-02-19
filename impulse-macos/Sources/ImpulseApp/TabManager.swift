@@ -747,7 +747,7 @@ final class TabManager: NSObject {
         case "py", "pyi": return "python"
         case "js", "mjs", "cjs", "jsx": return "javascript"
         case "ts", "mts", "cts", "tsx": return "typescript"
-        case "c": return "c"
+        case "c": return "cpp"
         case "cpp", "cc", "cxx", "hxx", "hh": return "cpp"
         case "h", "hpp": return "cpp"
         case "go": return "go"

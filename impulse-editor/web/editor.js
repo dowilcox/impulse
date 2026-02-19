@@ -61,6 +61,45 @@ require(["vs/editor/editor.main"], function () {
   document.getElementById("loading").style.display = "none";
   document.getElementById("container").style.display = "block";
 
+  // ---------------------------------------------------------------------------
+  // Register JSON/JSONC Monarch tokenizer (the vendored Monaco bundle lacks one)
+  // ---------------------------------------------------------------------------
+  monaco.languages.setMonarchTokensProvider("json", {
+    tokenPostfix: ".json",
+    keywords: ["true", "false", "null"],
+    tokenizer: {
+      root: [
+        // Whitespace & comments (JSONC)
+        [/\/\/.*$/, "comment"],
+        [/\/\*/, "comment", "@comment"],
+        { include: "@whitespace" },
+        // Object key (string before colon)
+        [/"(?:[^"\\]|\\.)*"(?=\s*:)/, "string.key"],
+        // String value
+        [/"/, "string", "@string"],
+        // Numbers
+        [/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/, "number"],
+        // Keywords
+        [/\b(?:true|false|null)\b/, "keyword.constant"],
+        // Delimiters
+        [/[{}[\]]/, "delimiter.bracket"],
+        [/[,:]/, "delimiter"],
+      ],
+      string: [
+        [/\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/, "string.escape"],
+        [/\\./, "string.escape.invalid"],
+        [/[^"\\]+/, "string"],
+        [/"/, "string", "@pop"],
+      ],
+      comment: [
+        [/[^/*]+/, "comment"],
+        [/\*\//, "comment", "@pop"],
+        [/./, "comment"],
+      ],
+      whitespace: [[/\s+/, ""]],
+    },
+  });
+
   editor = monaco.editor.create(document.getElementById("container"), {
     value: "",
     language: "plaintext",

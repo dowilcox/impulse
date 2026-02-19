@@ -28,6 +28,9 @@ resvg = "0.45"
 dirs = "6"
 tempfile = "3"
 
+[features]
+dev = []
+
 [package.metadata.deb]
 maintainer = "Impulse Contributors"
 section = "devel"
