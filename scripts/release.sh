@@ -103,6 +103,8 @@ if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
     fi
 fi
 
+# Clean dist/ so stale artifacts from previous releases are never uploaded.
+rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 DIST_FILES=()
 

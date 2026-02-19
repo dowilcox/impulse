@@ -153,28 +153,64 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates w
 
 **CRITICAL: All releases MUST go through `scripts/release.sh`. Never manually run `gh release create`, `gh release upload`, `git tag`, or version-bump Cargo.toml files. The release script handles all of this correctly and consistently.**
 
-The release script (`scripts/release.sh`) performs the following steps:
+### What the release script does
+
+Every invocation of `scripts/release.sh <version>` performs these steps:
 
 1. Bumps the version in all four `Cargo.toml` files and updates `Cargo.lock`
-2. Commits the version bump and creates an annotated git tag (`vX.Y.Z`)
-3. Builds platform-appropriate packages (Linux: `.deb`/`.rpm`/`.pkg.tar.zst`, macOS: `.app`/`.dmg`)
-4. Generates SHA256 checksums for all artifacts
-5. With `--push`: pushes the tag, creates the GitHub release, and uploads all artifacts
+2. Commits the version bump and creates an annotated git tag (`vX.Y.Z`) — skipped if the tag already exists, or if `--macos-only`/`--linux-only` is passed
+3. **Cleans `dist/`** to remove stale artifacts from previous releases
+4. Builds platform-appropriate packages (Linux: `.deb`/`.rpm`/`.pkg.tar.zst`, macOS: signed+notarized `.app`/`.dmg`)
+5. Generates SHA256 checksums for all artifacts in `dist/`
+6. **Only with `--push`:** pushes the commit + tag to GitHub, then creates the GitHub release (or uploads to it if it already exists) with everything in `dist/`
 
-### Release commands
+**Important:** `--push` is additive — it does the full build first, then pushes. If the GitHub release already exists (e.g., created from another machine), it uploads artifacts with `--clobber` instead of failing.
+
+### Flags
+
+| Flag                  | Version bump & tag | Builds           | Pushes to GitHub |
+| --------------------- | ------------------ | ---------------- | ---------------- |
+| _(none)_              | Yes                | Current platform | No               |
+| `--push`              | Yes                | Current platform | Yes              |
+| `--macos-only`        | No                 | macOS only       | No               |
+| `--linux-only`        | No                 | Linux only       | No               |
+| `--macos-only --push` | No                 | macOS only       | Yes              |
+| `--linux-only --push` | No                 | Linux only       | Yes              |
+
+### Single-platform release (simplest)
+
+If you only need to release from one machine:
 
 ```bash
-# Standard release (current platform, no push):
-./scripts/release.sh 0.8.0
+./scripts/release.sh 0.8.0 --push
+```
 
-# Cross-platform workflow:
-# 1. On Linux:  ./scripts/release.sh 0.8.0              # tag + build Linux packages
-# 2. On macOS:  ./scripts/release.sh 0.8.0 --macos-only # build macOS .app/.dmg (skips tagging)
-# 3. On either: ./scripts/release.sh 0.8.0 --push       # push tag + create GitHub release + upload all dist/ artifacts
+This bumps versions, tags, builds for the current platform, pushes, and creates the GitHub release in one step.
 
-# Platform-specific builds (skip tagging):
-./scripts/release.sh 0.8.0 --macos-only   # macOS artifacts only
-./scripts/release.sh 0.8.0 --linux-only   # Linux artifacts only
+### Cross-platform release
+
+Releases need artifacts from both macOS and Linux. The first platform creates the tag and GitHub release; the second platform builds its artifacts and uploads them to the existing release.
+
+**Starting from macOS (recommended — signing/notarization is slow):**
+
+```bash
+# 1. On macOS — bump version, tag, build + sign + notarize, push + create release:
+./scripts/release.sh 0.8.0 --push
+
+# 2. On Linux — pull the tag, build Linux packages, upload to existing release:
+git pull origin main
+./scripts/release.sh 0.8.0 --linux-only --push
+```
+
+**Starting from Linux:**
+
+```bash
+# 1. On Linux — bump version, tag, build Linux packages, push + create release:
+./scripts/release.sh 0.8.0 --push
+
+# 2. On macOS — pull the tag, build + sign + notarize, upload to existing release:
+git pull origin main
+./scripts/release.sh 0.8.0 --macos-only --push
 ```
 
 ### What NOT to do for releases
