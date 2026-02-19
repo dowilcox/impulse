@@ -22,9 +22,6 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
-#[cfg(feature = "dev")]
-const APP_ID: &str = "dev.impulse.Impulse.Dev";
-#[cfg(not(feature = "dev"))]
 const APP_ID: &str = "dev.impulse.Impulse";
 
 enum StartupMode {

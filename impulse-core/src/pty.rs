@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Instant;
 
 use portable_pty::{native_pty_system, Child, MasterPty, PtySize};
@@ -190,25 +192,16 @@ impl PtyManager {
             shell_type,
         };
 
-        self.sessions
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?
-            .insert(id.clone(), session);
+        self.sessions.lock().insert(id.clone(), session);
 
-        self.stop_flags
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?
-            .insert(id.clone(), stop_flag);
+        self.stop_flags.lock().insert(id.clone(), stop_flag);
 
         Ok(id)
     }
 
     /// Write data to a PTY session's stdin.
     pub fn write_to(&self, id: &str, data: &[u8]) -> Result<(), String> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut sessions = self.sessions.lock();
 
         let session = sessions
             .get_mut(id)
@@ -229,10 +222,7 @@ impl PtyManager {
 
     /// Resize a PTY session.
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        let sessions = self.sessions.lock();
 
         let session = sessions
             .get(id)
@@ -254,16 +244,14 @@ impl PtyManager {
     /// Close and clean up a PTY session.
     pub fn close_session(&self, id: &str) -> Result<(), String> {
         // Signal the reader thread to stop before killing the child
-        if let Ok(mut flags) = self.stop_flags.lock() {
+        {
+            let mut flags = self.stop_flags.lock();
             if let Some(flag) = flags.remove(id) {
                 flag.store(true, Ordering::Relaxed);
             }
         }
 
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut sessions = self.sessions.lock();
 
         if let Some(mut session) = sessions.remove(id) {
             let _ = session.child.kill();
@@ -278,19 +266,18 @@ impl PtyManager {
 impl Drop for PtyManager {
     fn drop(&mut self) {
         // Signal all reader threads to stop
-        if let Ok(flags) = self.stop_flags.lock() {
-            for flag in flags.values() {
-                flag.store(true, Ordering::Relaxed);
-            }
+        let flags = self.stop_flags.lock();
+        for flag in flags.values() {
+            flag.store(true, Ordering::Relaxed);
         }
+        drop(flags);
 
-        if let Ok(mut sessions) = self.sessions.lock() {
-            let ids: Vec<String> = sessions.keys().cloned().collect();
-            for id in ids {
-                if let Some(mut session) = sessions.remove(&id) {
-                    let _ = session.child.kill();
-                    let _ = session.child.wait();
-                }
+        let mut sessions = self.sessions.lock();
+        let ids: Vec<String> = sessions.keys().cloned().collect();
+        for id in ids {
+            if let Some(mut session) = sessions.remove(&id) {
+                let _ = session.child.kill();
+                let _ = session.child.wait();
             }
         }
     }
@@ -421,15 +408,14 @@ impl OscParser {
 
     fn parse_osc_133(&self, payload: &str) -> Option<OscEvent> {
         match payload.chars().next()? {
-            'A' => Some(OscEvent::Output(Vec::new())),
+            'A' => None,
             'B' => Some(OscEvent::CommandStart),
-            'C' => Some(OscEvent::Output(Vec::new())),
+            'C' => None,
             'D' => {
-                let exit_code = if payload.len() > 2 {
-                    payload[2..].parse::<i32>().unwrap_or(0)
-                } else {
-                    0
-                };
+                let exit_code = payload
+                    .get(2..)
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(0);
                 Some(OscEvent::CommandEnd(exit_code))
             }
             _ => None,

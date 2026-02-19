@@ -343,6 +343,22 @@ pub struct LspClient {
     server_id: String,
 }
 
+fn lsp_request_timeout(method: &str) -> Duration {
+    match method {
+        "textDocument/completion" => Duration::from_secs(5),
+        "textDocument/hover" => Duration::from_secs(5),
+        "textDocument/signatureHelp" => Duration::from_secs(5),
+        "textDocument/definition" | "textDocument/declaration"
+        | "textDocument/typeDefinition" | "textDocument/implementation"
+        | "textDocument/references" => Duration::from_secs(15),
+        "textDocument/rename" | "textDocument/prepareRename" => Duration::from_secs(15),
+        "textDocument/codeAction" => Duration::from_secs(10),
+        "initialize" => Duration::from_secs(30),
+        "shutdown" => Duration::from_secs(5),
+        _ => Duration::from_secs(15),
+    }
+}
+
 impl LspClient {
     pub async fn start(
         command: &str,
@@ -650,7 +666,14 @@ impl LspClient {
                     }
                 }
             }
-            "window/logMessage" | "window/showMessage" | "$/logTrace" | "$/progress" => {}
+            "window/logMessage" | "window/showMessage" => {
+                if let Some(ref params) = params {
+                    if let Some(msg) = params.get("message").and_then(|v| v.as_str()) {
+                        log::debug!("LSP [{}]: {}", method, msg);
+                    }
+                }
+            }
+            "$/logTrace" | "$/progress" => {}
             _ => {
                 log::debug!("Unhandled LSP notification: {}", method);
             }
@@ -686,13 +709,14 @@ impl LspClient {
 
         self.sender.send(body).map_err(|e| e.to_string())?;
 
-        match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        let timeout = lsp_request_timeout(method);
+        match tokio::time::timeout(timeout, rx).await {
             Ok(result) => result.map_err(|_| "Request cancelled".to_string())?,
             Err(_) => {
                 // Remove the pending request so the oneshot sender is dropped
                 let mut pending = self.pending.lock().await;
                 pending.remove(&id);
-                Err(format!("LSP request '{}' timed out after 15s", method))
+                Err(format!("LSP request '{}' timed out after {}s", method, timeout.as_secs()))
             }
         }
     }

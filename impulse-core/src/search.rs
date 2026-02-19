@@ -1,4 +1,5 @@
 use ignore::WalkBuilder;
+use regex::RegexBuilder;
 use serde::Serialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
@@ -229,52 +230,12 @@ pub fn replace_in_file(
         let count = content.matches(search).count();
         (content.replace(search, replacement), count)
     } else {
-        let mut result = String::with_capacity(content.len());
-        let mut count = 0usize;
-        let search_lower = search.to_lowercase();
-        let search_lower_len = search_lower.len();
-        let mut byte_offset = 0usize;
-        while byte_offset < content.len() {
-            let remaining = &content[byte_offset..];
-            let remaining_lower = remaining.to_lowercase();
-            if let Some(lower_pos) = remaining_lower.find(&search_lower) {
-                // Map position in lowercased string back to original by
-                // walking characters in lockstep.
-                let mut orig_pos = 0usize;
-                let mut lower_walked = 0usize;
-                let mut orig_chars = remaining.chars();
-                let mut lower_chars = remaining_lower.chars();
-                while lower_walked < lower_pos {
-                    if let (Some(oc), Some(lc)) = (orig_chars.next(), lower_chars.next()) {
-                        orig_pos += oc.len_utf8();
-                        lower_walked += lc.len_utf8();
-                    } else {
-                        break;
-                    }
-                }
-                // Find the end of the match in the original string
-                let mut match_end = orig_pos;
-                let mut match_lower_len = 0usize;
-                let mut match_chars = remaining[orig_pos..].chars();
-                let mut match_lower_chars = remaining_lower[lower_pos..].chars();
-                while match_lower_len < search_lower_len {
-                    if let (Some(oc), Some(lc)) = (match_chars.next(), match_lower_chars.next()) {
-                        match_end += oc.len_utf8();
-                        match_lower_len += lc.len_utf8();
-                    } else {
-                        break;
-                    }
-                }
-                result.push_str(&remaining[..orig_pos]);
-                result.push_str(replacement);
-                byte_offset += match_end;
-                count += 1;
-            } else {
-                result.push_str(remaining);
-                break;
-            }
-        }
-        (result, count)
+        let re = RegexBuilder::new(&regex::escape(search))
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("Invalid search pattern: {}", e))?;
+        let count = re.find_iter(&content).count();
+        (re.replace_all(&content, replacement).into_owned(), count)
     };
 
     if count > 0 {

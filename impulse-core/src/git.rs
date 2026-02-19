@@ -1,13 +1,15 @@
+use lru::LruCache;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 /// Cache mapping directory paths to their discovered git repo root.
 /// This avoids repeated `Repository::discover()` calls which walk up the
 /// directory tree on every invocation.
-static REPO_ROOT_CACHE: std::sync::LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static REPO_ROOT_CACHE: std::sync::LazyLock<Mutex<LruCache<PathBuf, PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(64).unwrap())));
 
 /// Open a git repository for the given path, using a cached repo-root lookup.
 /// Falls back to `Repository::discover()` on cache miss and caches the result.
@@ -19,9 +21,12 @@ pub fn open_repo(path: &Path) -> Result<git2::Repository, String> {
         path
     };
 
+    let lookup_dir_buf = lookup_dir.to_path_buf();
+
     // Check cache
-    if let Ok(cache) = REPO_ROOT_CACHE.lock() {
-        if let Some(root) = cache.get(lookup_dir) {
+    {
+        let mut cache = REPO_ROOT_CACHE.lock();
+        if let Some(root) = cache.get(&lookup_dir_buf) {
             if let Ok(repo) = git2::Repository::open(root) {
                 return Ok(repo);
             }
@@ -37,12 +42,9 @@ pub fn open_repo(path: &Path) -> Result<git2::Repository, String> {
         .ok_or("Bare repository")?
         .to_path_buf();
 
-    if let Ok(mut cache) = REPO_ROOT_CACHE.lock() {
-        cache.insert(lookup_dir.to_path_buf(), root);
-        // Simple eviction: clear when cache gets too large
-        if cache.len() > 200 {
-            cache.clear();
-        }
+    {
+        let mut cache = REPO_ROOT_CACHE.lock();
+        cache.put(lookup_dir_buf, root);
     }
 
     Ok(repo)
