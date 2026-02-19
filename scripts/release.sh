@@ -90,7 +90,7 @@ if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
     fi
     # Commit version bump if anything changed
     if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-        git add -A
+        git add impulse-core/Cargo.toml impulse-editor/Cargo.toml impulse-linux/Cargo.toml impulse-ffi/Cargo.toml Cargo.lock
         git commit -m "Release ${TAG}"
     fi
 
@@ -202,12 +202,10 @@ if [[ ${#DIST_FILES[@]} -gt 0 ]]; then
     cd "$DIST_DIR"
     # Use shasum on macOS, sha256sum on Linux
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "${DIST_FILES[@]}" >> "SHA256SUMS"
+        sha256sum "${DIST_FILES[@]}" > "SHA256SUMS"
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "${DIST_FILES[@]}" >> "SHA256SUMS"
+        shasum -a 256 "${DIST_FILES[@]}" > "SHA256SUMS"
     fi
-    # Deduplicate checksums file (in case of repeated runs)
-    sort -u -o "SHA256SUMS" "SHA256SUMS"
     cd "$PROJECT_ROOT"
 fi
 

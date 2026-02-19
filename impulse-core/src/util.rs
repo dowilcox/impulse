@@ -127,7 +127,7 @@ pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    filename == pattern || path.ends_with(pattern)
+    filename == pattern
 }
 
 /// Validates that `path` is within `root` after canonicalization.

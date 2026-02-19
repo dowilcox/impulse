@@ -247,18 +247,25 @@ pub fn replace_in_file(
 }
 
 /// Replace all occurrences of `search` with `replacement` across multiple files.
-/// Returns the total number of replacements made.
+/// Each file path is validated to be within `root` before modification.
+/// Returns a list of (path, result) pairs so callers can see per-file outcomes.
 pub fn replace_in_files(
     paths: &[String],
     search: &str,
     replacement: &str,
     case_sensitive: bool,
-) -> Result<usize, String> {
-    let mut total = 0;
-    for path in paths {
-        total += replace_in_file(path, search, replacement, case_sensitive)?;
-    }
-    Ok(total)
+    root: &str,
+) -> Vec<(String, Result<usize, String>)> {
+    paths
+        .iter()
+        .map(|path| {
+            let result = match crate::util::validate_path_within_root(path, root) {
+                Ok(_) => replace_in_file(path, search, replacement, case_sensitive),
+                Err(e) => Err(e),
+            };
+            (path.clone(), result)
+        })
+        .collect()
 }
 
 fn is_likely_binary(path: &Path) -> bool {

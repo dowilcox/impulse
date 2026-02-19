@@ -378,11 +378,30 @@ extension Settings {
         ).first!
         let dir = appSupport.appendingPathComponent("impulse", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Set restrictive permissions on settings directory
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: dir.path
+        )
         return dir.appendingPathComponent("settings.json")
     }
 
     /// Convenience alias used by existing code.
     static var filePath: URL { settingsPath() }
+
+    /// Clamp numeric settings to safe ranges to prevent crashes or resource
+    /// exhaustion from malformed settings files.
+    mutating func validate() {
+        fontSize = max(6, min(72, fontSize))
+        tabWidth = max(1, min(16, tabWidth))
+        terminalFontSize = max(6, min(72, terminalFontSize))
+        terminalScrollback = max(100, min(1_000_000, terminalScrollback))
+        sidebarWidth = max(100, min(1000, sidebarWidth))
+        rightMarginPosition = max(1, min(500, rightMarginPosition))
+        editorLineHeight = max(0, min(100, editorLineHeight))
+        windowWidth = max(400, min(10000, windowWidth))
+        windowHeight = max(300, min(10000, windowHeight))
+    }
 
     /// Loads settings from disk, falling back to defaults for any missing or
     /// corrupt data.
@@ -396,7 +415,9 @@ extension Settings {
             return .default
         }
         do {
-            return try JSONDecoder().decode(Settings.self, from: data)
+            var settings = try JSONDecoder().decode(Settings.self, from: data)
+            settings.validate()
+            return settings
         } catch {
             os_log(.error, "Failed to decode settings from '%{public}@': %{public}@",
                    url.path, error.localizedDescription)
@@ -443,7 +464,7 @@ extension Settings {
     /// Check whether a file path matches a glob-like pattern.
     ///
     /// Supports `"*"` (match all), `"*.ext"` (extension match), and exact
-    /// filename suffix matching.
+    /// filename matching.
     static func matchesFilePattern(_ path: String, pattern: String) -> Bool {
         if pattern == "*" { return true }
         if pattern.hasPrefix("*.") {
@@ -452,6 +473,6 @@ extension Settings {
             return fileExt.caseInsensitiveCompare(extPattern) == .orderedSame
         }
         let filename = (path as NSString).lastPathComponent
-        return filename == pattern || path.hasSuffix(pattern)
+        return filename == pattern
     }
 }

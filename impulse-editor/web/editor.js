@@ -45,11 +45,11 @@ window.MonacoEnvironment = {
     var workerUrl = baseUri + "vs/base/worker/workerMain.js";
     var blob = new Blob(
       [
-        "self.MonacoEnvironment={baseUrl:'" +
-          baseUri +
-          "'};importScripts('" +
-          workerUrl +
-          "');",
+        "self.MonacoEnvironment={baseUrl:" +
+          JSON.stringify(baseUri) +
+          "};importScripts(" +
+          JSON.stringify(workerUrl) +
+          ");",
       ],
       { type: "application/javascript" },
     );
@@ -572,11 +572,19 @@ function handleApplyDiffDecorations(cmd) {
   );
 }
 
+function isValidCssColor(c) {
+  return typeof c === "string" && /^#[0-9a-fA-F]{3,8}$/.test(c);
+}
+
 function updateDiffGutterColors(colors) {
   var addedColor = colors["impulse.diffAddedColor"];
   var modifiedColor = colors["impulse.diffModifiedColor"];
   var deletedColor = colors["impulse.diffDeletedColor"];
   if (!addedColor && !modifiedColor && !deletedColor) return;
+
+  var safeAdded = isValidCssColor(addedColor) ? addedColor : "#9ece6a";
+  var safeModified = isValidCssColor(modifiedColor) ? modifiedColor : "#e0af68";
+  var safeDeleted = isValidCssColor(deletedColor) ? deletedColor : "#f7768e";
 
   var styleId = "impulse-diff-gutter-style";
   var existing = document.getElementById(styleId);
@@ -586,13 +594,13 @@ function updateDiffGutterColors(colors) {
   style.id = styleId;
   style.textContent =
     ".diff-gutter-added { background: " +
-    (addedColor || "#9ece6a") +
+    safeAdded +
     "; }" +
     ".diff-gutter-modified { background: " +
-    (modifiedColor || "#e0af68") +
+    safeModified +
     "; }" +
     ".diff-gutter-deleted { background: " +
-    (deletedColor || "#f7768e") +
+    safeDeleted +
     "; }";
   document.head.appendChild(style);
 }

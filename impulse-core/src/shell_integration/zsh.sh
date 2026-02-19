@@ -2,7 +2,7 @@
 __impulse_precmd() {
     local exit_code=$?
     printf '\e]133;D;%d\a' "$exit_code"
-    printf '\e]7;file://%s%s\a' "$(hostname)" "$PWD"
+    printf '\e]7;file://%s%s\a' "$HOST" "$PWD"
     printf '\e]133;A\a'
 }
 __impulse_preexec() {

@@ -427,7 +427,13 @@ impl OscParser {
             if let Some(slash_idx) = rest.find('/') {
                 let path = &rest[slash_idx..];
                 let decoded = url_decode(path);
-                return Some(OscEvent::CwdChanged(decoded));
+                // Validate: must be absolute, no null bytes, must exist
+                if decoded.starts_with('/')
+                    && !decoded.contains('\0')
+                    && std::path::Path::new(&decoded).is_dir()
+                {
+                    return Some(OscEvent::CwdChanged(decoded));
+                }
             }
         }
         None
@@ -458,6 +464,7 @@ pub fn url_decode(input: &str) -> String {
         }
     }
 
+    bytes.retain(|&b| b != 0);
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -552,12 +559,12 @@ mod tests {
     #[test]
     fn osc_parser_cwd_changed() {
         let mut parser = OscParser::new();
-        // ESC ] 7 ; file://hostname/home/user BEL
-        let data = b"\x1b]7;file://localhost/home/user\x07";
+        // ESC ] 7 ; file://hostname/tmp BEL  (use /tmp which always exists)
+        let data = b"\x1b]7;file://localhost/tmp\x07";
         let events = parse_all(&mut parser, data);
         assert!(events
             .iter()
-            .any(|e| matches!(e, OscEvent::CwdChanged(p) if p == "/home/user")));
+            .any(|e| matches!(e, OscEvent::CwdChanged(p) if p == "/tmp")));
     }
 
     #[test]

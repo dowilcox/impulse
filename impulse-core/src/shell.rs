@@ -105,8 +105,8 @@ pub fn build_shell_command(
 
             let rc_content = format!(
                 "# Source user's bashrc\n\
-                 if [ -f \"{}\" ]; then\n\
-                     source \"{}\"\n\
+                 if [ -f '{}' ]; then\n\
+                     source '{}'\n\
                  fi\n\
                  # Impulse shell integration\n\
                  {}\n",
@@ -137,30 +137,30 @@ pub fn build_shell_command(
             create_secure_dir(&zdotdir)?;
 
             let zshenv_content = format!(
-                "if [ -f \"{}/.zshenv\" ]; then\n\
-                     source \"{}/.zshenv\"\n\
+                "if [ -f '{0}/.zshenv' ]; then\n\
+                     source '{0}/.zshenv'\n\
                  fi\n",
-                home, home
+                home
             );
             let zshenv_path = zdotdir.join(".zshenv");
             write_secure_file(&zshenv_path, &zshenv_content)?;
             temp_files.push(zshenv_path);
 
             let zprofile_content = format!(
-                "if [ -f \"{}/.zprofile\" ]; then\n\
-                     source \"{}/.zprofile\"\n\
+                "if [ -f '{0}/.zprofile' ]; then\n\
+                     source '{0}/.zprofile'\n\
                  fi\n",
-                home, home
+                home
             );
             let zprofile_path = zdotdir.join(".zprofile");
             write_secure_file(&zprofile_path, &zprofile_content)?;
             temp_files.push(zprofile_path);
 
             let zlogin_content = format!(
-                "if [ -f \"{}/.zlogin\" ]; then\n\
-                     source \"{}/.zlogin\"\n\
+                "if [ -f '{0}/.zlogin' ]; then\n\
+                     source '{0}/.zlogin'\n\
                  fi\n",
-                home, home
+                home
             );
             let zlogin_path = zdotdir.join(".zlogin");
             write_secure_file(&zlogin_path, &zlogin_content)?;
@@ -168,14 +168,14 @@ pub fn build_shell_command(
 
             let rc_content = format!(
                 "# Restore original ZDOTDIR\n\
-                 export ZDOTDIR=\"{}\"\n\
+                 export ZDOTDIR='{0}'\n\
                  # Source user's zshrc\n\
-                 if [ -f \"{}/.zshrc\" ]; then\n\
-                     source \"{}/.zshrc\"\n\
+                 if [ -f '{0}/.zshrc' ]; then\n\
+                     source '{0}/.zshrc'\n\
                  fi\n\
                  # Impulse shell integration\n\
-                 {}\n",
-                home, home, home, ZSH_INTEGRATION
+                 {1}\n",
+                home, ZSH_INTEGRATION
             );
 
             let zshrc_path = zdotdir.join(".zshrc");
@@ -197,8 +197,11 @@ pub fn build_shell_command(
     };
 
     cmd.env("TERM_PROGRAM", "Impulse");
-    cmd.env("TERM_PROGRAM_VERSION", "0.1.0");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     cmd.env("TERM", "xterm-256color");
+    cmd.env_remove("LD_PRELOAD");
+    cmd.env_remove("LD_LIBRARY_PATH");
+    cmd.env_remove("LD_AUDIT");
 
     Ok((cmd, temp_files))
 }

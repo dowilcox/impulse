@@ -416,10 +416,10 @@ pub fn warm_up_editor() {
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
             wk_settings.set_enable_javascript(true);
-            if std::env::var("IMPULSE_DEVTOOLS").is_ok() {
+            if std::env::var("IMPULSE_DEVTOOLS").ok().is_some_and(|v| v == "1") {
                 wk_settings.set_enable_developer_extras(true);
             }
-            wk_settings.set_allow_file_access_from_file_urls(true);
+            wk_settings.set_allow_file_access_from_file_urls(false);
         }
 
         let is_ready = Rc::new(Cell::new(false));
@@ -607,10 +607,10 @@ where
     // Configure WebView settings
     if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         wk_settings.set_enable_javascript(true);
-        if std::env::var("IMPULSE_DEVTOOLS").is_ok() {
+        if std::env::var("IMPULSE_DEVTOOLS").ok().is_some_and(|v| v == "1") {
             wk_settings.set_enable_developer_extras(true);
         }
-        wk_settings.set_allow_file_access_from_file_urls(true);
+        wk_settings.set_allow_file_access_from_file_urls(false);
     }
 
     // Create the handle

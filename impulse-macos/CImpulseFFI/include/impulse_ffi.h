@@ -42,6 +42,6 @@ char *impulse_system_lsp_status(void);
 char *impulse_git_branch(const char *path);
 char *impulse_git_diff_markers(const char *file_path);
 char *impulse_git_blame(const char *file_path, uint32_t line);
-int32_t impulse_git_discard_changes(const char *file_path);
+int32_t impulse_git_discard_changes(const char *file_path, const char *workspace_root);
 
 #endif

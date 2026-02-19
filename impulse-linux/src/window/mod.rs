@@ -1080,7 +1080,7 @@ fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave])
         if crate::settings::matches_file_pattern(path, &cmd.file_pattern) {
             let mut command = std::process::Command::new(&cmd.command);
             command.args(&cmd.args);
-            command.arg(path);
+            command.arg("--").arg(path);
             match command.output() {
                 Ok(output) => {
                     if !output.status.success() {

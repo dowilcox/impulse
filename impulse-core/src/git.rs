@@ -227,7 +227,13 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
 
 /// Discard working-tree changes for a single file, restoring it to the HEAD version.
 /// For untracked files this is a no-op (returns Ok).
-pub fn discard_file_changes(file_path: &str) -> Result<(), String> {
+/// `workspace_root` is used to validate that the file is within the workspace.
+pub fn discard_file_changes(file_path: &str, workspace_root: &str) -> Result<(), String> {
+    // Validate file is within workspace
+    if let Err(e) = crate::util::validate_path_within_root(file_path, workspace_root) {
+        return Err(format!("Cannot discard changes: {}", e));
+    }
+
     let path = Path::new(file_path);
     let repo = open_repo(path)?;
     let repo_root = repo.workdir().ok_or("Bare repository")?;

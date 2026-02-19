@@ -419,18 +419,24 @@ impl LspClient {
             let cmd_name = command.to_string();
             let key = client_key.to_string();
             tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
+                // Limit total stderr to 10MB to prevent memory exhaustion
+                let limited = stderr.take(10 * 1024 * 1024);
+                let reader = BufReader::new(limited);
+                let mut lines = reader.lines();
                 loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            let trimmed = line.trim();
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            let display = if line.len() > 8192 {
+                                &line[..8192]
+                            } else {
+                                &line
+                            };
+                            let trimmed = display.trim();
                             if !trimmed.is_empty() {
                                 log::warn!("LSP stderr [{}:{}]: {}", cmd_name, key, trimmed);
                             }
                         }
+                        Ok(None) => break,
                         Err(_) => break,
                     }
                 }
@@ -522,14 +528,27 @@ impl LspClient {
         loop {
             let mut header_line = String::new();
             let mut content_length: usize = 0;
+            let mut header_count: u32 = 0;
             loop {
                 header_line.clear();
                 match reader.read_line(&mut header_line).await {
                     Ok(0) => return,
                     Ok(_) => {
+                        if header_line.len() > 8192 {
+                            log::warn!(
+                                "LSP header line too long ({} bytes), dropping connection",
+                                header_line.len()
+                            );
+                            return;
+                        }
                         let trimmed = header_line.trim();
                         if trimmed.is_empty() {
                             break;
+                        }
+                        header_count += 1;
+                        if header_count > 32 {
+                            log::warn!("Too many LSP headers, dropping connection");
+                            return;
                         }
                         if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
                             if let Ok(len) = len_str.parse::<usize>() {
@@ -655,9 +674,20 @@ impl LspClient {
         match method {
             "textDocument/publishDiagnostics" => {
                 if let Some(params) = params {
-                    if let Ok(diag_params) =
+                    if let Ok(mut diag_params) =
                         serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(params)
                     {
+                        // Cap diagnostics to prevent memory exhaustion from malicious servers
+                        const MAX_DIAGNOSTICS: usize = 1000;
+                        if diag_params.diagnostics.len() > MAX_DIAGNOSTICS {
+                            log::warn!(
+                                "Truncating diagnostics for {} from {} to {}",
+                                diag_params.uri.as_str(),
+                                diag_params.diagnostics.len(),
+                                MAX_DIAGNOSTICS
+                            );
+                            diag_params.diagnostics.truncate(MAX_DIAGNOSTICS);
+                        }
                         let _ = event_tx.send(LspEvent::Diagnostics {
                             uri: diag_params.uri.to_string(),
                             version: diag_params.version,
@@ -832,7 +862,7 @@ impl LspClient {
             initialization_options,
             client_info: Some(lsp_types::ClientInfo {
                 name: "Impulse".to_string(),
-                version: Some("0.1.0".to_string()),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             ..Default::default()
         };
@@ -1116,18 +1146,14 @@ impl LspConfig {
                 // Global config may define arbitrary server commands
                 self.servers.extend(servers);
             } else {
-                // Project-local configs may only override args for servers
-                // that already exist in the config, not add new commands.
-                for (id, server_cfg) in servers {
-                    if let Some(existing) = self.servers.get_mut(&id) {
-                        // Allow overriding args but NOT the command itself
-                        existing.args = server_cfg.args;
-                    } else {
-                        log::warn!(
-                            "Project LSP config tried to add unknown server '{}' — ignoring (only global config can add servers)",
-                            id
-                        );
-                    }
+                // Project-local configs are untrusted and cannot modify server
+                // configuration (neither command nor args) to prevent argument
+                // injection attacks.
+                for id in servers.keys() {
+                    log::warn!(
+                        "Project LSP config tried to configure server '{}' — ignoring (only global config can modify servers)",
+                        id
+                    );
                 }
             }
         }
@@ -1148,8 +1174,17 @@ impl LspConfig {
             }
         }
         if let Some(root_markers) = overrides.root_markers {
-            if !root_markers.is_empty() {
-                self.root_markers = root_markers;
+            let valid_markers: Vec<String> = root_markers
+                .into_iter()
+                .filter(|m| {
+                    !m.is_empty()
+                        && !m.contains('/')
+                        && !m.contains('\\')
+                        && !m.contains("..")
+                })
+                .collect();
+            if !valid_markers.is_empty() {
+                self.root_markers = valid_markers;
             }
         }
     }

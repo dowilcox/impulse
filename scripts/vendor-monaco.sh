@@ -5,6 +5,9 @@
 set -euo pipefail
 
 MONACO_VERSION="0.52.2"
+# SHA256 hash of the npm tarball for integrity verification.
+# To update: download the tarball manually and run `sha256sum monaco.tgz`.
+MONACO_SHA256=""
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENDOR_DIR="$PROJECT_ROOT/impulse-editor/vendor/monaco"
@@ -19,6 +22,19 @@ trap 'rm -rf "$TMPDIR"' EXIT
 echo "Downloading monaco-editor@${MONACO_VERSION}..."
 curl -sL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" \
     -o "$TMPDIR/monaco.tgz"
+
+# Verify download integrity
+if [ -n "$MONACO_SHA256" ]; then
+    echo "Verifying download integrity..."
+    echo "${MONACO_SHA256}  ${TMPDIR}/monaco.tgz" | sha256sum -c - || {
+        echo "ERROR: Monaco download checksum verification failed!"
+        echo "The downloaded file may be corrupted or tampered with."
+        exit 1
+    }
+else
+    echo "WARNING: No SHA256 checksum configured. Skipping integrity verification."
+    echo "To enable, set MONACO_SHA256 at the top of this script."
+fi
 
 # Extract tarball
 echo "Extracting..."

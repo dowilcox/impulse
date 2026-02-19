@@ -182,8 +182,9 @@ pub fn build_sidebar(
         open_action.connect_activate(move |_, _| {
             let path = clicked_path.borrow().clone();
             if !path.is_empty() {
-                let uri = format!("file://{}", path);
-                let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+                let file = gio::File::for_path(&path);
+                let uri = file.uri();
+                let _ = gio::AppInfo::launch_default_for_uri(uri.as_str(), None::<&gio::AppLaunchContext>);
             }
         });
     }
@@ -460,7 +461,7 @@ pub fn build_sidebar(
                     return;
                 }
 
-                match impulse_core::git::discard_file_changes(&path) {
+                match impulse_core::git::discard_file_changes(&path, &current_path.borrow()) {
                     Ok(()) => {
                         // Reload the file in the editor if it's open
                         if let Some(handle) = crate::editor::get_handle(&path) {

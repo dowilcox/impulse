@@ -1719,6 +1719,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Handles Monaco's request to open a different file (cross-file go-to-definition).
     /// Fired by registerEditorOpener when the user actually Cmd+clicks.
     private func handleOpenFileRequested(uri: String, line: UInt32, character: UInt32) {
+        // Only open file:// URIs or plain paths (no scheme)
+        guard uri.hasPrefix("file://") || !uri.contains("://") else {
+            NSLog("Blocked opening non-file URI: \(uri)")
+            return
+        }
         let targetPath = uriToFilePath(uri)
         tabManager.addEditorTab(
             path: targetPath,
@@ -1772,13 +1777,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
               let contents = response["contents"] else { return [] }
 
         if let markup = contents as? [String: Any], let value = markup["value"] as? String {
-            return [MonacoHoverContent(value: value, isTrusted: true)]
+            return [MonacoHoverContent(value: value, isTrusted: false)]
         } else if let str = contents as? String {
-            return [MonacoHoverContent(value: str, isTrusted: true)]
+            return [MonacoHoverContent(value: str, isTrusted: false)]
         } else if let array = contents as? [[String: Any]] {
             return array.compactMap { item in
                 guard let value = item["value"] as? String else { return nil }
-                return MonacoHoverContent(value: value, isTrusted: true)
+                return MonacoHoverContent(value: value, isTrusted: false)
             }
         }
         return []
@@ -1963,7 +1968,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
             return arg
         }
-        let fullCommand = ([command] + escapedArgs).joined(separator: " ")
+        let escapedCommand: String
+        if command.rangeOfCharacter(from: CharacterSet.alphanumerics
+            .union(CharacterSet(charactersIn: "/_.-")).inverted) != nil {
+            escapedCommand = "'" + command.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        } else {
+            escapedCommand = command
+        }
+        let fullCommand = ([escapedCommand] + escapedArgs).joined(separator: " ")
 
         // Get the CWD from the active tab (terminal CWD or editor file's parent)
         let cwd = getActiveCwd()

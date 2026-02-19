@@ -532,7 +532,7 @@ final class FileTreeView: NSView {
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        if ImpulseCore.gitDiscardChanges(filePath: node.path) {
+        if ImpulseCore.gitDiscardChanges(filePath: node.path, workspaceRoot: rootPath) {
             // Notify any open editor tab to reload from disk.
             NotificationCenter.default.post(
                 name: .impulseReloadEditorFile,

@@ -258,9 +258,12 @@ pub fn spawn_command(
         argv.push(arg.as_str());
     }
 
-    // Inherit current environment, filtering out dangerous variables
+    // Inherit current environment, filtering out dangerous linker
+    // environment variables to prevent library injection in child processes
     let envv: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !matches!(k.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT"))
+        .filter(|(k, _)| {
+            !matches!(k.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT" | "LD_DEBUG" | "LD_PROFILE" | "LD_DYNAMIC_WEAK" | "LD_BIND_NOW")
+        })
         .map(|(k, v)| format!("{}={}", k, v))
         .collect();
     let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
@@ -293,9 +296,10 @@ fn build_spawn_params(
     let mut argv = vec![shell_path.to_string()];
     let mut envv = Vec::new();
 
-    // Inherit current environment, filtering out dangerous variables
+    // Inherit current environment, filtering out dangerous linker
+    // environment variables to prevent library injection in child processes
     for (key, value) in std::env::vars() {
-        if matches!(key.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT") {
+        if matches!(key.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT" | "LD_DEBUG" | "LD_PROFILE" | "LD_DYNAMIC_WEAK" | "LD_BIND_NOW") {
             continue;
         }
         envv.push(format!("{}={}", key, value));

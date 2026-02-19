@@ -272,24 +272,29 @@ pub extern "C" fn impulse_search_content(
 // ---------------------------------------------------------------------------
 
 use std::collections::HashMap;
-use std::sync::{Mutex as StdMutex, OnceLock};
+use std::sync::OnceLock;
+
+/// Maximum number of LSP events buffered in the bounded forwarding channel.
+const LSP_EVENT_CHANNEL_CAPACITY: usize = 10_000;
 
 /// Inner data for an LSP registry handle, stored in the global registry.
 struct LspRegistryInner {
     registry: Arc<impulse_core::lsp::LspRegistry>,
     runtime: Arc<Runtime>,
-    event_rx: StdMutex<mpsc::UnboundedReceiver<impulse_core::lsp::LspEvent>>,
+    event_rx: parking_lot::Mutex<mpsc::Receiver<impulse_core::lsp::LspEvent>>,
 }
 
 /// Global registry mapping handle addresses to their inner data.
 /// This eliminates raw pointer dereference — we only use the pointer as an opaque key.
-fn lsp_handle_registry() -> &'static StdMutex<HashMap<usize, Arc<LspRegistryInner>>> {
-    static REGISTRY: OnceLock<StdMutex<HashMap<usize, Arc<LspRegistryInner>>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| StdMutex::new(HashMap::new()))
+/// Uses `parking_lot::Mutex` to avoid mutex poisoning issues.
+fn lsp_handle_registry() -> &'static parking_lot::Mutex<HashMap<usize, Arc<LspRegistryInner>>> {
+    static REGISTRY: OnceLock<parking_lot::Mutex<HashMap<usize, Arc<LspRegistryInner>>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| parking_lot::Mutex::new(HashMap::new()))
 }
 
 /// Look up a handle in the global registry and run `f` with the inner data.
-/// Returns `default` if the handle is null, freed, or the registry lock is poisoned.
+/// Returns `default` if the handle is null or freed.
 fn with_lsp_handle<T>(
     handle: *mut LspRegistryHandle,
     default: T,
@@ -299,10 +304,7 @@ fn with_lsp_handle<T>(
         return default;
     }
     let key = handle as usize;
-    let guard = match lsp_handle_registry().lock() {
-        Ok(g) => g,
-        Err(_) => return default,
-    };
+    let guard = lsp_handle_registry().lock();
     match guard.get(&key) {
         Some(inner) => {
             let inner = Arc::clone(inner);
@@ -343,20 +345,40 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
                 }
             };
 
-            let (event_tx, event_rx) = mpsc::unbounded_channel();
+            let (event_tx, mut unbounded_rx) = mpsc::unbounded_channel();
             let registry = Arc::new(impulse_core::lsp::LspRegistry::new(root_uri, event_tx));
+
+            // Create a bounded channel and spawn a forwarding task that bridges
+            // the unbounded channel (required by LspRegistry) to a bounded one.
+            // Events are dropped with a warning if the bounded channel is full.
+            let (bounded_tx, bounded_rx) = mpsc::channel(LSP_EVENT_CHANNEL_CAPACITY);
+            runtime.spawn(async move {
+                while let Some(event) = unbounded_rx.recv().await {
+                    match bounded_tx.try_send(event) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            log::warn!(
+                                "LSP event channel full ({} capacity), dropping event",
+                                LSP_EVENT_CHANNEL_CAPACITY
+                            );
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            // Receiver was dropped; stop forwarding.
+                            break;
+                        }
+                    }
+                }
+            });
 
             let inner = Arc::new(LspRegistryInner {
                 registry,
                 runtime,
-                event_rx: StdMutex::new(event_rx),
+                event_rx: parking_lot::Mutex::new(bounded_rx),
             });
 
             // Allocate a stable address to use as an opaque handle key
             let handle = Box::into_raw(Box::new(LspRegistryHandle { _private: () }));
-            if let Ok(mut reg) = lsp_handle_registry().lock() {
-                reg.insert(handle as usize, inner);
-            }
+            lsp_handle_registry().lock().insert(handle as usize, inner);
             handle
         }),
     )
@@ -518,10 +540,7 @@ pub extern "C" fn impulse_lsp_poll_event(handle: *mut LspRegistryHandle) -> *mut
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
             with_lsp_handle(handle, std::ptr::null_mut(), |inner| {
-                let mut rx = match inner.event_rx.lock() {
-                    Ok(rx) => rx,
-                    Err(_) => return std::ptr::null_mut(),
-                };
+                let mut rx = inner.event_rx.lock();
 
                 match rx.try_recv() {
                     Ok(event) => {
@@ -628,10 +647,7 @@ pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
             // Remove from registry — the Arc<Inner> keeps data alive if another
             // thread is currently using it via with_lsp_handle.
             let inner = {
-                let mut reg = match lsp_handle_registry().lock() {
-                    Ok(r) => r,
-                    Err(_) => return,
-                };
+                let mut reg = lsp_handle_registry().lock();
                 reg.remove(&key)
             };
             if let Some(inner) = inner {
@@ -640,6 +656,7 @@ pub extern "C" fn impulse_lsp_registry_free(handle: *mut LspRegistryHandle) {
                 });
             } else {
                 log::warn!("impulse_lsp_registry_free called on already-freed handle");
+                return; // Don't double-free
             }
             // Free the opaque handle allocation
             // SAFETY: `handle` was allocated by `Box::into_raw` in `impulse_lsp_registry_new`.
@@ -811,10 +828,14 @@ pub extern "C" fn impulse_git_blame(file_path: *const c_char, line: u32) -> *mut
 }
 
 /// Discard working-tree changes for a single file, restoring it to the HEAD version.
+/// `workspace_root` is used to validate that the file is within the workspace.
 ///
 /// Returns 0 on success or -1 on error.
 #[no_mangle]
-pub extern "C" fn impulse_git_discard_changes(file_path: *const c_char) -> i32 {
+pub extern "C" fn impulse_git_discard_changes(
+    file_path: *const c_char,
+    workspace_root: *const c_char,
+) -> i32 {
     ffi_catch(
         -1,
         AssertUnwindSafe(|| {
@@ -822,8 +843,12 @@ pub extern "C" fn impulse_git_discard_changes(file_path: *const c_char) -> i32 {
                 Some(s) => s,
                 None => return -1,
             };
+            let workspace_root = match to_rust_str(workspace_root) {
+                Some(s) => s,
+                None => return -1,
+            };
 
-            match impulse_core::git::discard_file_changes(&file_path) {
+            match impulse_core::git::discard_file_changes(&file_path, &workspace_root) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }

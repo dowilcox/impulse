@@ -227,6 +227,18 @@ pub fn load() -> Settings {
         Err(_) => Settings::default(),
     };
     migrate_format_on_save(&mut settings);
+
+    // Validate/clamp settings values for safety
+    settings.font_size = settings.font_size.clamp(6, 72);
+    settings.terminal_font_size = settings.terminal_font_size.clamp(6, 72);
+    if settings.terminal_scrollback > 1_000_000 {
+        settings.terminal_scrollback = 1_000_000;
+    }
+    settings.tab_width = settings.tab_width.clamp(1, 16);
+    settings.right_margin_position = settings.right_margin_position.clamp(1, 500);
+    settings.sidebar_width = settings.sidebar_width.clamp(100, 1000);
+    settings.editor_line_height = settings.editor_line_height.min(100);
+
     settings
 }
 
@@ -266,17 +278,26 @@ pub fn save(settings: &Settings) {
             return;
         }
     };
-    // Atomic write: write to temp file, then rename
+    // Atomic write: write to temp file with restrictive permissions, then rename
     let tmp_path = path.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp_path, &json) {
-        log::error!("Failed to write settings to {}: {}", tmp_path.display(), e);
-        return;
-    }
-    #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600)) {
-            log::warn!("Failed to set permissions on {:?}: {}", tmp_path, e);
+        use std::io::Write;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = match opts.open(&tmp_path) {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("Failed to write settings to {}: {}", tmp_path.display(), e);
+                return;
+            }
+        };
+        if let Err(e) = file.write_all(json.as_bytes()) {
+            log::error!("Failed to write settings to {}: {}", tmp_path.display(), e);
+            return;
         }
     }
     if let Err(e) = std::fs::rename(&tmp_path, &path) {

@@ -257,12 +257,23 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             "COLORTERM=truecolor",
         ]
 
+        // Dangerous linker/loader environment variables that could be used for
+        // library injection attacks. Filter these out of the inherited environment.
+        let dangerousEnvKeys: Set<String> = [
+            "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH",
+            "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG",
+            "LD_PROFILE", "LD_DYNAMIC_WEAK", "LD_BIND_NOW"
+        ]
+
         // Inherit the current process environment
         for (key, value) in ProcessInfo.processInfo.environment {
             // Skip keys we set explicitly
             if key == "TERM" || key == "TERM_PROGRAM" || key == "COLORTERM" {
                 continue
             }
+            // Skip dangerous linker/loader variables
+            if dangerousEnvKeys.contains(key) { continue }
             environment.append("\(key)=\(value)")
         }
 

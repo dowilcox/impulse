@@ -30,20 +30,19 @@ echo "Installing Impulse managed web LSP servers into ${LSP_ROOT} ..."
 
 npm install \
   --prefix "${LSP_ROOT}" \
-  --no-audit \
   --no-fund \
-  typescript \
-  typescript-language-server \
-  intelephense \
-  vscode-langservers-extracted \
-  @tailwindcss/language-server \
-  @vue/language-server \
-  svelte-language-server \
-  graphql-language-service-cli \
-  emmet-ls \
-  yaml-language-server \
-  dockerfile-language-server-nodejs \
-  bash-language-server
+  typescript@5.7.3 \
+  typescript-language-server@4.3.3 \
+  intelephense@1.12.6 \
+  vscode-langservers-extracted@4.10.0 \
+  @tailwindcss/language-server@0.14.14 \
+  @vue/language-server@2.2.0 \
+  svelte-language-server@0.17.7 \
+  graphql-language-service-cli@3.4.1 \
+  emmet-ls@0.7.1 \
+  yaml-language-server@1.15.0 \
+  dockerfile-language-server-nodejs@0.13.0 \
+  bash-language-server@5.4.3
 
 echo
 echo "LSP servers installed."

@@ -336,6 +336,20 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         os_log(.error, log: Self.log, "Monaco WebView navigation failed: %{public}@", error.localizedDescription)
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        // Only allow file:// navigations (Monaco assets) and about:blank
+        if url.scheme == "file" || url.scheme == "about" {
+            decisionHandler(.allow)
+        } else {
+            os_log(.info, log: Self.log, "Blocked navigation to non-file URL: %{public}@", url.absoluteString)
+            decisionHandler(.cancel)
+        }
+    }
+
     // MARK: Command Sending
 
     /// Send a command to the Monaco editor.

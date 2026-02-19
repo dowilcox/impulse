@@ -61,6 +61,13 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
     std::fs::create_dir_all(&monaco_dir)
         .map_err(|e| format!("Failed to create Monaco directory: {}", e))?;
 
+    // Restrict directory permissions to owner-only on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&monaco_dir, std::fs::Permissions::from_mode(0o700));
+    }
+
     // Extract all embedded files
     extract_dir_recursive(&MONACO_DIR, &monaco_dir)?;
 
