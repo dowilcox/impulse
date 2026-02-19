@@ -12,14 +12,16 @@ Impulse is a terminal-first development environment built with Rust. It combines
 
 ## Build & Development Commands
 
+**Note:** `cargo build` (all workspace members) only works on Linux where GTK4 libraries are available. On macOS, build specific crates or use the macOS build script.
+
 ```bash
 # Rust workspace (impulse-core, impulse-editor, impulse-linux, impulse-ffi)
-cargo build                        # Build all workspace members
-cargo build -p impulse-core        # Build only the core library
-cargo build -p impulse-editor      # Build only the editor crate
-cargo build -p impulse-linux       # Build only the Linux frontend
-cargo build -p impulse-ffi         # Build only the FFI static library (for macOS)
-cargo run -p impulse-linux         # Run the Linux app
+cargo build                        # Build all workspace members (Linux only — needs GTK4)
+cargo build -p impulse-core        # Build only the core library (cross-platform)
+cargo build -p impulse-editor      # Build only the editor crate (cross-platform)
+cargo build -p impulse-linux       # Build only the Linux frontend (Linux only)
+cargo build -p impulse-ffi         # Build only the FFI static library (cross-platform)
+cargo run -p impulse-linux         # Run the Linux app (Linux only)
 cargo check                        # Type-check without full compilation
 cargo fmt                          # Format all code
 cargo clippy                       # Lint
@@ -32,6 +34,13 @@ cargo test -p impulse-core         # Test only the core crate
 ./impulse-macos/build.sh --sign    # Build + codesign with Developer ID
 ./impulse-macos/build.sh --sign --notarize --dmg  # Full release build
 ```
+
+### Platform-aware build verification
+
+When verifying builds, use the right commands for the current platform:
+
+- **On macOS:** Build cross-platform crates with `cargo build -p impulse-core -p impulse-editor -p impulse-ffi`, run tests with `cargo test -p impulse-core -p impulse-editor -p impulse-ffi`, and build the macOS app with `./impulse-macos/build.sh`. Do NOT attempt `cargo build -p impulse-linux` or `cargo check -p impulse-linux` — it will fail due to missing GTK4 system libraries.
+- **On Linux:** `cargo build` works for all Cargo workspace members. The macOS frontend (`impulse-macos`) cannot be built on Linux.
 
 ## Architecture
 
@@ -47,7 +56,7 @@ Platform-agnostic backend logic.
 - **git.rs** — Git operations: branch detection, diff computation for gutter markers.
 - **lsp.rs** — LSP client management: spawning language servers, JSON-RPC communication, managed web LSP installation/status.
 - **search.rs** — File name and content search using the `ignore` crate for gitignore-aware walking.
-- **shell_integration/*.sh** — Shell scripts emitting OSC 133 and OSC 7 escape sequences.
+- **shell_integration/\*.sh** — Shell scripts emitting OSC 133 and OSC 7 escape sequences.
 
 ### impulse-editor (library, Monaco assets)
 
@@ -119,23 +128,62 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates w
 
 ### What belongs where
 
-| Logic | Crate |
-|-------|-------|
-| PTY management, shell detection, OSC parsing | `impulse-core` |
-| Filesystem listing, git status, search | `impulse-core` |
-| LSP client, JSON-RPC, server management | `impulse-core` |
-| Monaco assets, editor HTML, WebView protocol | `impulse-editor` |
-| C FFI wrappers for macOS Swift frontend | `impulse-ffi` |
-| Window management, tab UI, native widgets | `impulse-linux` or `impulse-macos` |
-| Terminal widget creation and configuration | `impulse-linux` or `impulse-macos` |
-| Keybinding registration and UI | `impulse-linux` or `impulse-macos` |
-| Theme/styling | `impulse-linux` or `impulse-macos` |
+| Logic                                        | Crate                              |
+| -------------------------------------------- | ---------------------------------- |
+| PTY management, shell detection, OSC parsing | `impulse-core`                     |
+| Filesystem listing, git status, search       | `impulse-core`                     |
+| LSP client, JSON-RPC, server management      | `impulse-core`                     |
+| Monaco assets, editor HTML, WebView protocol | `impulse-editor`                   |
+| C FFI wrappers for macOS Swift frontend      | `impulse-ffi`                      |
+| Window management, tab UI, native widgets    | `impulse-linux` or `impulse-macos` |
+| Terminal widget creation and configuration   | `impulse-linux` or `impulse-macos` |
+| Keybinding registration and UI               | `impulse-linux` or `impulse-macos` |
+| Theme/styling                                | `impulse-linux` or `impulse-macos` |
 
 ## Scripts
 
+**IMPORTANT: Always use the existing scripts for their intended tasks. Do NOT manually replicate what a script does with ad-hoc commands.**
+
+- **scripts/release.sh** — The **only** way to create releases. Handles version bumping, git tagging, building, packaging, checksum generation, and GitHub release creation. See the "Release Process" section below for details.
 - **scripts/install-lsp-servers.sh** — Installs managed web LSP servers (typescript-language-server, etc.) to `~/.local/share/impulse/lsp/`. Invoked via `--install-lsp-servers` CLI flag.
 - **scripts/vendor-monaco.sh** — Downloads and vendors Monaco Editor into `impulse-editor/vendor/monaco/`. Run once or when upgrading Monaco.
-- **scripts/release.sh** — Cross-platform release script. Tags a release, builds, and produces distribution packages. Run on Linux for .deb/.rpm/.pkg.tar.zst, on macOS for .app/.dmg. Usage: `./scripts/release.sh 0.4.0 [--push] [--macos-only] [--linux-only]`.
+- **impulse-macos/build.sh** — Builds the macOS `.app` bundle. Handles compiling `impulse-ffi`, copying Monaco assets, building Swift, creating the `.app` bundle, and optionally signing/notarizing/creating a `.dmg`. Called by `scripts/release.sh` during macOS releases — do NOT replicate its steps manually.
+
+## Release Process
+
+**CRITICAL: All releases MUST go through `scripts/release.sh`. Never manually run `gh release create`, `gh release upload`, `git tag`, or version-bump Cargo.toml files. The release script handles all of this correctly and consistently.**
+
+The release script (`scripts/release.sh`) performs the following steps:
+
+1. Bumps the version in all four `Cargo.toml` files and updates `Cargo.lock`
+2. Commits the version bump and creates an annotated git tag (`vX.Y.Z`)
+3. Builds platform-appropriate packages (Linux: `.deb`/`.rpm`/`.pkg.tar.zst`, macOS: `.app`/`.dmg`)
+4. Generates SHA256 checksums for all artifacts
+5. With `--push`: pushes the tag, creates the GitHub release, and uploads all artifacts
+
+### Release commands
+
+```bash
+# Standard release (current platform, no push):
+./scripts/release.sh 0.8.0
+
+# Cross-platform workflow:
+# 1. On Linux:  ./scripts/release.sh 0.8.0              # tag + build Linux packages
+# 2. On macOS:  ./scripts/release.sh 0.8.0 --macos-only # build macOS .app/.dmg (skips tagging)
+# 3. On either: ./scripts/release.sh 0.8.0 --push       # push tag + create GitHub release + upload all dist/ artifacts
+
+# Platform-specific builds (skip tagging):
+./scripts/release.sh 0.8.0 --macos-only   # macOS artifacts only
+./scripts/release.sh 0.8.0 --linux-only   # Linux artifacts only
+```
+
+### What NOT to do for releases
+
+- Do NOT run `gh release create` or `gh release upload` directly — use `./scripts/release.sh <version> --push`
+- Do NOT manually edit version numbers in `Cargo.toml` files — the release script handles this
+- Do NOT manually create git tags — the release script creates annotated tags
+- Do NOT manually run `./impulse-macos/build.sh --sign --notarize --dmg` for releases — `scripts/release.sh` calls it with the correct flags
+- Do NOT manually compute or upload checksums — the release script generates `SHA256SUMS`
 
 ## Project Directories
 
