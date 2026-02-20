@@ -2,33 +2,28 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use vte4::prelude::*;
 
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use crate::editor;
 use crate::lsp_completion::LspRequest;
-use crate::sidebar;
 use crate::terminal_container;
 
 use super::{file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui, send_diff_decorations, uri_to_file_path};
 
 /// Wire up sidebar file activation, project search result activation,
 /// and "Open in Terminal" context menu callbacks.
-pub(super) fn wire_sidebar_signals(
-    sidebar_state: &Rc<sidebar::SidebarState>,
-    tab_view: &adw::TabView,
-    status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
-    settings: &Rc<RefCell<crate::settings::Settings>>,
-    lsp_request_tx: &Rc<tokio::sync::mpsc::Sender<LspRequest>>,
-    lsp_doc_versions: &Rc<RefCell<HashMap<String, i32>>>,
-    lsp_request_seq: &Rc<Cell<u64>>,
-    latest_completion_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_hover_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_definition_req: &Rc<RefCell<HashMap<String, u64>>>,
-    definition_monaco_ids: &Rc<RefCell<HashMap<u64, u64>>>,
-    toast_overlay: &adw::ToastOverlay,
-) {
+pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
+    let sidebar_state = &ctx.sidebar_state;
+    let tab_view = &ctx.tab_view;
+    let status_bar = &ctx.status_bar;
+    let settings = &ctx.settings;
+    let lsp_request_tx = &ctx.lsp.request_tx;
+    let lsp_doc_versions = &ctx.lsp.doc_versions;
+    let lsp_request_seq = &ctx.lsp.request_seq;
+    let latest_completion_req = &ctx.lsp.latest_completion_req;
+    let latest_hover_req = &ctx.lsp.latest_hover_req;
+    let latest_definition_req = &ctx.lsp.latest_definition_req;
+    let definition_monaco_ids = &ctx.lsp.definition_monaco_ids;
+    let toast_overlay = &ctx.toast_overlay;
+
     // Wire up file activation to open in editor tab
     {
         let tab_view = tab_view.clone();

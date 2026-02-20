@@ -2,13 +2,12 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use vte4::prelude::*;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::editor;
 use crate::keybindings;
 use crate::lsp_completion::LspRequest;
-use crate::sidebar;
 use crate::terminal;
 use crate::terminal_container;
 
@@ -25,18 +24,18 @@ use super::{
 /// Ctrl+Shift+V (paste), Ctrl+W (close tab), Ctrl+T (new tab), and
 /// Ctrl+1-9 (switch tab).
 pub(super) fn setup_capture_phase_keys(
-    window: &adw::ApplicationWindow,
-    tab_view: &adw::TabView,
+    ctx: &super::context::WindowContext,
     sidebar_btn: &gtk4::ToggleButton,
-    settings: &Rc<RefCell<crate::settings::Settings>>,
     setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
     copy_on_select_flag: &Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
-    sidebar_state: &Rc<sidebar::SidebarState>,
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
 ) {
-    let tab_view = tab_view.clone();
+    let window = &ctx.window;
+    let settings = &ctx.settings;
+    let sidebar_state = &ctx.sidebar_state;
+    let tab_view = ctx.tab_view.clone();
     let create_tab_capture = create_tab.clone();
     let sidebar_btn_capture = sidebar_btn.clone();
     let reopen_tab_capture = reopen_tab.clone();
@@ -260,19 +259,15 @@ pub(super) fn setup_capture_phase_keys(
 }
 
 /// Build and register the global ShortcutController with all keyboard shortcuts.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn setup_shortcut_controller(
-    window: &adw::ApplicationWindow,
+    ctx: &super::context::WindowContext,
     app: &adw::Application,
-    tab_view: &adw::TabView,
     sidebar_btn: &gtk4::ToggleButton,
-    settings: &Rc<RefCell<crate::settings::Settings>>,
     setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
     copy_on_select_flag: &Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
-    sidebar_state: &Rc<sidebar::SidebarState>,
     font_size: &Rc<Cell<i32>>,
-    toast_overlay: &adw::ToastOverlay,
-    lsp_request_tx: &Rc<tokio::sync::mpsc::Sender<LspRequest>>,
     open_settings: &Rc<dyn Fn()>,
     search_revealer: &gtk4::Revealer,
     find_entry: &gtk4::SearchEntry,
@@ -280,6 +275,12 @@ pub(super) fn setup_shortcut_controller(
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
 ) {
+    let window = &ctx.window;
+    let tab_view = &ctx.tab_view;
+    let sidebar_state = &ctx.sidebar_state;
+    let settings = &ctx.settings;
+    let toast_overlay = &ctx.toast_overlay;
+    let lsp_request_tx = &ctx.lsp.request_tx;
     let shortcut_controller = gtk4::ShortcutController::new();
     shortcut_controller.set_scope(gtk4::ShortcutScope::Global);
     let kb_overrides = settings.borrow().keybinding_overrides.clone();

@@ -1,13 +1,5 @@
 import AppKit
 
-// MARK: - Notifications
-
-extension Notification.Name {
-    /// Posted when the user selects a file in the file tree. The `userInfo`
-    /// dictionary contains `"path"` (String) and optionally `"line"` (Int).
-    static let impulseOpenFile = Notification.Name("dev.impulse.openFile")
-}
-
 // MARK: - Pointer Outline View
 
 /// NSOutlineView subclass that shows a pointing hand cursor over rows.

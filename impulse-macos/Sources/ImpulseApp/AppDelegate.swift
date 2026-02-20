@@ -1,57 +1,5 @@
 import AppKit
 
-// MARK: - Notification Names
-
-extension Notification.Name {
-    /// Posted when the application-wide color theme changes.
-    static let impulseThemeDidChange = Notification.Name("impulseThemeDidChange")
-    /// Posted when the active tab changes (used by status bar).
-    static let impulseActiveTabDidChange = Notification.Name("impulseActiveTabDidChange")
-    /// Posted when settings are changed (e.g. from the settings window).
-    static let impulseSettingsDidChange = Notification.Name("impulseSettingsDidChange")
-    /// Requests a new terminal tab in the frontmost window.
-    static let impulseNewTerminalTab = Notification.Name("impulseNewTerminalTab")
-    /// Requests closing the current tab in the frontmost window.
-    static let impulseCloseTab = Notification.Name("impulseCloseTab")
-    /// Requests reopening the most recently closed tab.
-    static let impulseReopenTab = Notification.Name("impulseReopenTab")
-    /// Requests saving the current editor tab.
-    static let impulseSaveFile = Notification.Name("impulseSaveFile")
-    /// Requests toggling the sidebar.
-    static let impulseToggleSidebar = Notification.Name("impulseToggleSidebar")
-    /// Requests showing the command palette.
-    static let impulseShowCommandPalette = Notification.Name("impulseShowCommandPalette")
-    /// Requests project-wide find.
-    static let impulseFindInProject = Notification.Name("impulseFindInProject")
-    /// Requests splitting the terminal horizontally.
-    static let impulseSplitHorizontal = Notification.Name("impulseSplitHorizontal")
-    /// Requests splitting the terminal vertically.
-    static let impulseSplitVertical = Notification.Name("impulseSplitVertical")
-    /// Requests toggling find in the terminal or editor.
-    static let impulseFind = Notification.Name("impulseFind")
-    /// Requests showing the go-to-line dialog.
-    static let impulseGoToLine = Notification.Name("impulseGoToLine")
-    /// Requests increasing the editor and terminal font size.
-    static let impulseFontIncrease = Notification.Name("impulseFontIncrease")
-    /// Requests decreasing the editor and terminal font size.
-    static let impulseFontDecrease = Notification.Name("impulseFontDecrease")
-    /// Requests resetting the editor and terminal font size to defaults.
-    static let impulseFontReset = Notification.Name("impulseFontReset")
-    /// Requests switching to the next tab.
-    static let impulseNextTab = Notification.Name("impulseNextTab")
-    /// Requests switching to the previous tab.
-    static let impulsePrevTab = Notification.Name("impulsePrevTab")
-    /// Requests switching to a specific tab by index (0-based in userInfo "index").
-    static let impulseSelectTab = Notification.Name("impulseSelectTab")
-    /// Requests reloading an editor tab from disk (e.g. after discarding git changes).
-    /// The `userInfo` dictionary contains `"path"` (String).
-    static let impulseReloadEditorFile = Notification.Name("impulseReloadEditorFile")
-    /// Requests moving focus to the previous terminal split pane.
-    static let impulseFocusPrevSplit = Notification.Name("impulseFocusPrevSplit")
-    /// Requests moving focus to the next terminal split pane.
-    static let impulseFocusNextSplit = Notification.Name("impulseFocusNextSplit")
-}
-
 // MARK: - AppDelegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

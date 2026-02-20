@@ -6,20 +6,9 @@ use std::rc::Rc;
 
 use impulse_core::search::SearchResult;
 
-type ResultActivatedCallback = Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>>;
+use crate::window::run_guarded_ui;
 
-fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
-    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
-            *s
-        } else if let Some(s) = payload.downcast_ref::<String>() {
-            s.as_str()
-        } else {
-            "non-string panic payload"
-        };
-        log::error!("UI callback panic in '{}': {}", label, msg);
-    }
-}
+type ResultActivatedCallback = Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>>;
 
 /// State for the project-wide search panel, used to wire callbacks from window.rs.
 #[allow(dead_code)]

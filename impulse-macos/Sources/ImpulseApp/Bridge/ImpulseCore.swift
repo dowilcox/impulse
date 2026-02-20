@@ -159,6 +159,18 @@ final class ImpulseCore {
         return consumeCString(impulse_git_branch(path))
     }
 
+    /// Returns git status for files in a directory as a dictionary mapping
+    /// filenames to status codes (e.g. `["file.rs": "M", "new.txt": "?"]`).
+    ///
+    /// Uses libgit2 via impulse-core instead of shelling out to `git status`.
+    /// Returns an empty dictionary if the path is not in a git repo.
+    static func gitStatusForDirectory(path: String) -> [String: String] {
+        guard let json = consumeCString(impulse_git_status_for_directory(path)) else { return [:] }
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+        return dict
+    }
+
     /// Returns git blame info for a specific 1-based line in a file.
     ///
     /// - Parameters:

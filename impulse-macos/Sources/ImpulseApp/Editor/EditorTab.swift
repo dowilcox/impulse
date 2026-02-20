@@ -2,42 +2,6 @@ import AppKit
 import WebKit
 import os.log
 
-// MARK: - Notifications
-
-extension Notification.Name {
-    /// Posted when the cursor position changes. The `userInfo` dictionary contains
-    /// `"line"` and `"column"` as `UInt32` values.
-    static let editorCursorMoved = Notification.Name("impulse.editorCursorMoved")
-
-    /// Posted when the editor content is modified. The `userInfo` dictionary contains
-    /// `"filePath"` as a `String`.
-    static let editorContentChanged = Notification.Name("impulse.editorContentChanged")
-
-    /// Posted when a completion request is received from Monaco. The `userInfo`
-    /// dictionary contains `"requestId"`, `"line"`, and `"character"`.
-    static let editorCompletionRequested = Notification.Name("impulse.editorCompletionRequested")
-
-    /// Posted when a hover request is received from Monaco. The `userInfo`
-    /// dictionary contains `"requestId"`, `"line"`, and `"character"`.
-    static let editorHoverRequested = Notification.Name("impulse.editorHoverRequested")
-
-    /// Posted when a go-to-definition request is received. The `userInfo`
-    /// dictionary contains `"line"` and `"character"`.
-    static let editorDefinitionRequested = Notification.Name("impulse.editorDefinitionRequested")
-
-    /// Posted when Monaco wants to open a different file (cross-file definition).
-    static let editorOpenFileRequested = Notification.Name("impulse.editorOpenFileRequested")
-
-    /// Posted when the editor focus state changes. The `userInfo` dictionary
-    /// contains `"focused"` as a `Bool`.
-    static let editorFocusChanged = Notification.Name("impulse.editorFocusChanged")
-
-    /// Posted after Monaco finishes processing an `OpenFile` command, meaning
-    /// the new model is set up and ready for decorations. The `object` is the
-    /// `EditorTab` and the `userInfo` dictionary contains `"filePath"`.
-    static let editorFileOpened = Notification.Name("impulse.editorFileOpened")
-}
-
 // MARK: - WeakScriptMessageHandler
 
 /// A thin proxy that prevents WKUserContentController from creating a strong

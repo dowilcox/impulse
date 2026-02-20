@@ -1,14 +1,6 @@
 import AppKit
 import SwiftTerm
 
-// MARK: - Notifications
-
-extension Notification.Name {
-    static let terminalTitleChanged = Notification.Name("impulse.terminalTitleChanged")
-    static let terminalCwdChanged = Notification.Name("impulse.terminalCwdChanged")
-    static let terminalProcessTerminated = Notification.Name("impulse.terminalProcessTerminated")
-}
-
 // MARK: - TerminalTab
 
 /// Wraps a SwiftTerm `LocalProcessTerminalView` for use as a single terminal tab

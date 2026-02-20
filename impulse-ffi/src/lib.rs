@@ -856,6 +856,41 @@ pub extern "C" fn impulse_git_discard_changes(
     )
 }
 
+/// Returns git status for files in a directory as a JSON object mapping
+/// filenames to status codes (e.g. `{"file.rs": "M", "new.txt": "?"}`).
+///
+/// Status codes: "M" (modified), "A" (added), "?" (untracked), "D" (deleted),
+/// "R" (renamed), "C" (conflicted).
+///
+/// Returns null on error (e.g. not a git repo).
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_status_for_directory(path: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            match impulse_core::filesystem::get_git_status_for_directory(&path) {
+                Ok(status_map) => {
+                    let json = match serde_json::to_string(&status_map) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            return std::ptr::null_mut();
+                        }
+                    };
+                    to_c_string(&json)
+                }
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
 /// Computes diff markers for the given file path (comparing working copy to HEAD).
 ///
 /// Returns a JSON array of objects with `"line"` (1-based u32) and `"status"`

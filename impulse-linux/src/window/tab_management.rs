@@ -5,7 +5,6 @@ use libadwaita::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::editor;
@@ -222,28 +221,20 @@ pub(super) fn setup_tab_context_menu(
 
 /// Poll LSP responses on the GTK main loop and dispatch them.
 pub(super) fn setup_lsp_response_polling(
-    tab_view: &adw::TabView,
-    sidebar_state: &Rc<sidebar::SidebarState>,
+    ctx: &super::context::WindowContext,
     lsp_gtk_rx: &Rc<RefCell<std::sync::mpsc::Receiver<LspResponse>>>,
-    lsp_doc_versions: &Rc<RefCell<HashMap<String, i32>>>,
-    latest_completion_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_hover_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_definition_req: &Rc<RefCell<HashMap<String, u64>>>,
-    definition_monaco_ids: &Rc<RefCell<HashMap<u64, u64>>>,
-    toast_overlay: &adw::ToastOverlay,
-    lsp_error_toast_dedupe: &Rc<RefCell<HashSet<String>>>,
     lsp_install_result_rx: &Rc<RefCell<std::sync::mpsc::Receiver<Result<String, String>>>>,
 ) {
-    let tab_view = tab_view.clone();
-    let _sidebar_state = sidebar_state.clone();
+    let tab_view = ctx.tab_view.clone();
+    let _sidebar_state = ctx.sidebar_state.clone();
     let lsp_gtk_rx = lsp_gtk_rx.clone();
-    let doc_versions = lsp_doc_versions.clone();
-    let latest_completion_req = latest_completion_req.clone();
-    let latest_hover_req = latest_hover_req.clone();
-    let latest_definition_req = latest_definition_req.clone();
-    let definition_monaco_ids = definition_monaco_ids.clone();
-    let toast_overlay = toast_overlay.clone();
-    let lsp_error_toast_dedupe = lsp_error_toast_dedupe.clone();
+    let doc_versions = ctx.lsp.doc_versions.clone();
+    let latest_completion_req = ctx.lsp.latest_completion_req.clone();
+    let latest_hover_req = ctx.lsp.latest_hover_req.clone();
+    let latest_definition_req = ctx.lsp.latest_definition_req.clone();
+    let definition_monaco_ids = ctx.lsp.definition_monaco_ids.clone();
+    let toast_overlay = ctx.toast_overlay.clone();
+    let lsp_error_toast_dedupe = ctx.lsp.error_toast_dedupe.clone();
     let lsp_install_result_rx = lsp_install_result_rx.clone();
     gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
         run_guarded_ui("lsp-gtk-poll", || {
@@ -512,27 +503,20 @@ pub(super) fn setup_tab_switch_handler(
 /// Connect the close-page signal to handle unsaved editor changes and
 /// open a new terminal when the last tab is closed.
 pub(super) fn setup_tab_close_handler(
-    tab_view: &adw::TabView,
-    window: &adw::ApplicationWindow,
-    sidebar_state: &Rc<sidebar::SidebarState>,
-    lsp_request_tx: &Rc<tokio::sync::mpsc::Sender<LspRequest>>,
-    lsp_doc_versions: &Rc<RefCell<HashMap<String, i32>>>,
-    latest_completion_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_hover_req: &Rc<RefCell<HashMap<String, u64>>>,
-    latest_definition_req: &Rc<RefCell<HashMap<String, u64>>>,
+    ctx: &super::context::WindowContext,
     create_tab: &(impl Fn() + Clone + 'static),
     closed_tabs: &Rc<RefCell<Vec<ClosedTab>>>,
 ) {
-    let window_ref = window.clone();
-    let sidebar_state = sidebar_state.clone();
-    let lsp_tx = lsp_request_tx.clone();
+    let window_ref = ctx.window.clone();
+    let sidebar_state = ctx.sidebar_state.clone();
+    let lsp_tx = ctx.lsp.request_tx.clone();
     let create_tab_on_empty = create_tab.clone();
-    let doc_versions_for_close = lsp_doc_versions.clone();
-    let completion_req_for_close = latest_completion_req.clone();
-    let hover_req_for_close = latest_hover_req.clone();
-    let definition_req_for_close = latest_definition_req.clone();
+    let doc_versions_for_close = ctx.lsp.doc_versions.clone();
+    let completion_req_for_close = ctx.lsp.latest_completion_req.clone();
+    let hover_req_for_close = ctx.lsp.latest_hover_req.clone();
+    let definition_req_for_close = ctx.lsp.latest_definition_req.clone();
     let closed_tabs_for_close = closed_tabs.clone();
-    tab_view.connect_close_page(move |tv, page| {
+    ctx.tab_view.connect_close_page(move |tv, page| {
         sidebar_state.remove_tab_state(&page.child());
         let child = page.child();
 

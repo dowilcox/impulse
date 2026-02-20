@@ -106,67 +106,29 @@ final class FileTreeNode {
 
     // MARK: Private Helpers
 
-    /// Parse `git status --porcelain` output into a dictionary mapping absolute
-    /// file paths to their `GitStatus` value.
+    /// Fetch git status for files in the directory at `rootPath` using the
+    /// impulse-core FFI bridge (libgit2), avoiding the overhead and parsing
+    /// fragility of shelling out to `git status --porcelain`.
     private static func fetchGitStatus(rootPath: String) -> [String: GitStatus] {
-        // Find the git repository root.
-        let gitRootResult = Self.shell("git", arguments: ["rev-parse", "--show-toplevel"],
-                                       currentDirectory: rootPath)
-        guard let gitRoot = gitRootResult else {
-            return [:]
-        }
-
-        let statusResult = Self.shell("git", arguments: ["status", "--porcelain", "-u"],
-                                      currentDirectory: rootPath)
-        guard let output = statusResult, !output.isEmpty else {
-            return [:]
-        }
+        let raw = ImpulseCore.gitStatusForDirectory(path: rootPath)
+        guard !raw.isEmpty else { return [:] }
 
         var map: [String: GitStatus] = [:]
-
-        for line in output.components(separatedBy: "\n") {
-            guard line.count >= 4 else { continue }
-
-            let statusChars = String(line.prefix(2)).trimmingCharacters(in: .whitespaces)
-            let relativePath = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-
-            // Handle renames: "R  old -> new"
-            let effectivePath: String
-            if let arrowRange = relativePath.range(of: " -> ") {
-                effectivePath = String(relativePath[arrowRange.upperBound...])
-            } else {
-                effectivePath = relativePath
-            }
-
-            let absPath = (gitRoot as NSString).appendingPathComponent(effectivePath)
-
+        for (name, code) in raw {
             let status: GitStatus
-            switch statusChars {
-            case "M", "MM", "AM":
-                // "AM" means added then modified in working tree; show as modified
-                if statusChars == "AM" {
-                    status = .added
-                } else {
-                    status = .modified
-                }
-            case "A":
-                status = .added
-            case "D", "DD":
-                status = .deleted
-            case "R":
-                status = .renamed
-            case "??":
-                status = .untracked
-            case "UU", "AA":
-                status = .conflict
-            default:
-                // Best-effort: any other index/working-tree change is treated as modified.
-                status = .modified
+            switch code {
+            case "M":  status = .modified
+            case "A":  status = .added
+            case "D":  status = .deleted
+            case "R":  status = .renamed
+            case "C":  status = .conflict
+            case "?":  status = .untracked
+            default:   status = .modified
             }
-
+            // The FFI returns filenames (not full paths), so reconstruct the absolute path.
+            let absPath = (rootPath as NSString).appendingPathComponent(name)
             map[absPath] = status
         }
-
         return map
     }
 
@@ -213,42 +175,4 @@ final class FileTreeNode {
         }
     }
 
-    /// Run a command synchronously and return trimmed stdout, or nil on failure.
-    private static func shell(_ command: String,
-                              arguments: [String],
-                              currentDirectory: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [command] + arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory)
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            NSLog("FileTreeNode.shell: failed to run '%@ %@': %@", command, arguments.joined(separator: " "), error.localizedDescription)
-            return nil
-        }
-
-        guard process.terminationStatus == 0 else {
-            let stderrData = (process.standardError as? Pipe)?.fileHandleForReading.readDataToEndOfFile()
-            let stderrStr = stderrData.flatMap { String(data: $0, encoding: .utf8) } ?? "(no stderr)"
-            NSLog("FileTreeNode.shell: '%@ %@' exited with %d, stderr: %@", command, arguments.joined(separator: " "), process.terminationStatus, stderrStr)
-            return nil
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        // Only trim trailing whitespace/newlines. Leading whitespace is
-        // significant for commands like `git status --porcelain` where each
-        // line starts with a status character that may be a space.
-        guard var result = String(data: data, encoding: .utf8) else { return nil }
-        while result.last?.isWhitespace == true || result.last?.isNewline == true {
-            result.removeLast()
-        }
-        return result.isEmpty ? nil : result
-    }
 }

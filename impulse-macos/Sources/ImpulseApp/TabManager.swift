@@ -169,6 +169,12 @@ final class TabManager: NSObject {
     private var theme: Theme
     private let core: ImpulseCore
 
+    /// Optional callback invoked instead of directly closing a tab. When set,
+    /// `closeTabFromMenu` and `closeOtherTabsFromMenu` delegate to this
+    /// handler so the caller (MainWindowController) can show a save
+    /// confirmation dialog for unsaved editor tabs.
+    var tabCloseHandler: ((Int) -> Void)?
+
     /// Returns a `TabInfo` snapshot for the currently active tab, or `nil` if
     /// no tabs are open.
     var activeTabInfo: TabInfo? {
@@ -682,7 +688,11 @@ final class TabManager: NSObject {
     }
 
     @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
-        closeTab(index: sender.tag)
+        if let handler = tabCloseHandler {
+            handler(sender.tag)
+        } else {
+            closeTab(index: sender.tag)
+        }
     }
 
     @objc private func pinTabFromMenu(_ sender: NSMenuItem) {
@@ -826,7 +836,11 @@ extension TabManager: CustomTabBarDelegate {
     }
 
     func tabItemCloseClicked(index: Int) {
-        closeTab(index: index)
+        if let handler = tabCloseHandler {
+            handler(index)
+        } else {
+            closeTab(index: index)
+        }
     }
 
     func tabItemContextMenu(index: Int) -> NSMenu? {
