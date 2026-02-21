@@ -260,6 +260,226 @@ extension MainWindowController {
         }
     }
 
+    /// Handles a formatting request from the editor by forwarding it to the LSP.
+    func handleFormattingRequest(editor: EditorTab, requestId: UInt64, tabSize: UInt32, insertSpaces: Bool) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestFormattingReq[uri] = requestId
+
+        formattingWorkItems[uri]?.cancel()
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"options":{"tabSize":\(tabSize),"insertSpaces":\(insertSpaces)}}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/formatting", paramsJson: params
+            ) else { return }
+
+            let edits = self.parseFormattingResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestFormattingReq[uri] == requestId else { return }
+                editor.resolveFormatting(requestId: requestId, edits: edits)
+            }
+        }
+        formattingWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
+    /// Handles a signature help request from the editor by forwarding it to the LSP.
+    func handleSignatureHelpRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestSignatureHelpReq[uri] = requestId
+
+        signatureHelpWorkItems[uri]?.cancel()
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/signatureHelp", paramsJson: params
+            ) else { return }
+
+            let signatureHelp = self.parseSignatureHelpResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestSignatureHelpReq[uri] == requestId else { return }
+                editor.resolveSignatureHelp(requestId: requestId, signatureHelp: signatureHelp)
+            }
+        }
+        signatureHelpWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
+    /// Handles a references request from the editor by forwarding it to the LSP.
+    func handleReferencesRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestReferencesReq[uri] = requestId
+
+        referencesWorkItems[uri]?.cancel()
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"context":{"includeDeclaration":true}}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/references", paramsJson: params
+            ) else { return }
+
+            let locations = self.parseReferencesResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestReferencesReq[uri] == requestId else { return }
+                editor.resolveReferences(requestId: requestId, locations: locations)
+            }
+        }
+        referencesWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
+    /// Handles a code action request from the editor by forwarding it to the LSP.
+    func handleCodeActionRequest(editor: EditorTab, requestId: UInt64, startLine: UInt32, startColumn: UInt32, endLine: UInt32, endColumn: UInt32, diagnostics: [[String: Any]]) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestCodeActionReq[uri] = requestId
+
+        codeActionWorkItems[uri]?.cancel()
+
+        let language = editor.language
+
+        // Build diagnostics JSON array from the Monaco diagnostics passed through.
+        // Monaco diagnostics are 1-based; LSP expects 0-based, so subtract 1.
+        var diagJsonParts: [String] = []
+        for d in diagnostics {
+            guard let startL = (d["startLine"] as? NSNumber)?.uint32Value,
+                  let startC = (d["startColumn"] as? NSNumber)?.uint32Value,
+                  let endL = (d["endLine"] as? NSNumber)?.uint32Value,
+                  let endC = (d["endColumn"] as? NSNumber)?.uint32Value,
+                  let message = d["message"] as? String else { continue }
+            let severity = (d["severity"] as? NSNumber)?.uint8Value ?? 1
+            // Convert Monaco severity back to LSP severity
+            let lspSeverity: UInt8
+            switch severity {
+            case 8: lspSeverity = 1  // Error
+            case 4: lspSeverity = 2  // Warning
+            case 2: lspSeverity = 3  // Information
+            case 1: lspSeverity = 4  // Hint
+            default: lspSeverity = 1
+            }
+            let source = d["source"] as? String
+            var diagJson = """
+            {"range":{"start":{"line":\(startL - 1),"character":\(startC - 1)},"end":{"line":\(endL - 1),"character":\(endC - 1)}},"severity":\(lspSeverity),"message":"\(jsonEscape(message))"
+            """
+            if let src = source {
+                diagJson += ",\"source\":\"\(jsonEscape(src))\""
+            }
+            diagJson += "}"
+            diagJsonParts.append(diagJson)
+        }
+        let diagArray = "[\(diagJsonParts.joined(separator: ","))]"
+
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"range":{"start":{"line":\(startLine),"character":\(startColumn)},"end":{"line":\(endLine),"character":\(endColumn)}},"context":{"diagnostics":\(diagArray)}}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/codeAction", paramsJson: params
+            ) else { return }
+
+            let actions = self.parseCodeActionResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestCodeActionReq[uri] == requestId else { return }
+                editor.resolveCodeActions(requestId: requestId, actions: actions)
+            }
+        }
+        codeActionWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
+    /// Handles a rename request from the editor by forwarding it to the LSP.
+    func handleRenameRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32, newName: String) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+        latestRenameReq[uri] = requestId
+
+        renameWorkItems[uri]?.cancel()
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"newName":"\(jsonEscape(newName))"}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/rename", paramsJson: params
+            ) else { return }
+
+            let edits = self.parseRenameResponse(response)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.latestRenameReq[uri] == requestId else { return }
+                editor.resolveRename(requestId: requestId, edits: edits)
+            }
+        }
+        renameWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
+    /// Handles a prepare rename request from the editor by forwarding it to the LSP.
+    func handlePrepareRenameRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
+        guard let path = editor.filePath else { return }
+        let uri = filePathToUri(path)
+
+        prepareRenameWorkItems[uri]?.cancel()
+
+        let language = editor.language
+        let params = """
+        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
+        """
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let response = self.core.lspRequest(
+                languageId: language, fileUri: uri,
+                method: "textDocument/prepareRename", paramsJson: params
+            ) else {
+                DispatchQueue.main.async {
+                    editor.resolvePrepareRename(requestId: requestId, range: nil, placeholder: nil)
+                }
+                return
+            }
+
+            let result = self.parsePrepareRenameResponse(response)
+            DispatchQueue.main.async {
+                editor.resolvePrepareRename(requestId: requestId, range: result?.range, placeholder: result?.placeholder)
+            }
+        }
+        prepareRenameWorkItems[uri] = workItem
+        lspQueue.async(execute: workItem)
+    }
+
     /// Handles Monaco's request to open a different file (cross-file go-to-definition).
     /// Fired by registerEditorOpener when the user actually Cmd+clicks.
     func handleOpenFileRequested(uri: String, line: UInt32, character: UInt32) {
@@ -363,6 +583,271 @@ extension MainWindowController {
               let line = (start["line"] as? NSNumber)?.uint32Value,
               let character = (start["character"] as? NSNumber)?.uint32Value else { return nil }
         return (uri: uri, line: line, character: character)
+    }
+
+    private func parseFormattingResponse(_ json: String) -> [MonacoTextEdit] {
+        guard let data = json.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        return array.compactMap { item in
+            guard let range = item["range"] as? [String: Any],
+                  let start = range["start"] as? [String: Any],
+                  let end = range["end"] as? [String: Any],
+                  let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                  let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                  let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                  let endChar = (end["character"] as? NSNumber)?.uint32Value,
+                  let newText = item["newText"] as? String else { return nil }
+            return MonacoTextEdit(
+                range: MonacoRange(
+                    startLine: startLine,
+                    startColumn: startChar,
+                    endLine: endLine,
+                    endColumn: endChar
+                ),
+                text: newText
+            )
+        }
+    }
+
+    private func parseSignatureHelpResponse(_ json: String) -> MonacoSignatureHelp? {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let signatures = response["signatures"] as? [[String: Any]],
+              !signatures.isEmpty else { return nil }
+
+        let activeSignature = (response["activeSignature"] as? NSNumber)?.uint32Value ?? 0
+        let activeParameter = (response["activeParameter"] as? NSNumber)?.uint32Value ?? 0
+
+        let sigs: [MonacoSignatureInfo] = signatures.compactMap { sig in
+            guard let label = sig["label"] as? String else { return nil }
+            let doc: String?
+            if let markup = sig["documentation"] as? [String: Any] {
+                doc = markup["value"] as? String
+            } else {
+                doc = sig["documentation"] as? String
+            }
+            let params: [MonacoParameterInfo] = (sig["parameters"] as? [[String: Any]])?.compactMap { p in
+                let pLabel: String
+                if let labelStr = p["label"] as? String {
+                    pLabel = labelStr
+                } else {
+                    pLabel = ""
+                }
+                let pDoc: String?
+                if let markup = p["documentation"] as? [String: Any] {
+                    pDoc = markup["value"] as? String
+                } else {
+                    pDoc = p["documentation"] as? String
+                }
+                return MonacoParameterInfo(label: pLabel, documentation: pDoc)
+            } ?? []
+            return MonacoSignatureInfo(label: label, documentation: doc, parameters: params)
+        }
+
+        return MonacoSignatureHelp(signatures: sigs, activeSignature: activeSignature, activeParameter: activeParameter)
+    }
+
+    private func parseReferencesResponse(_ json: String) -> [MonacoLocation] {
+        guard let data = json.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        return array.compactMap { item in
+            guard let uri = item["uri"] as? String,
+                  let range = item["range"] as? [String: Any],
+                  let start = range["start"] as? [String: Any],
+                  let end = range["end"] as? [String: Any],
+                  let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                  let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                  let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                  let endChar = (end["character"] as? NSNumber)?.uint32Value else { return nil }
+            return MonacoLocation(
+                uri: uri,
+                range: MonacoRange(
+                    startLine: startLine,
+                    startColumn: startChar,
+                    endLine: endLine,
+                    endColumn: endChar
+                )
+            )
+        }
+    }
+
+    private func parseCodeActionResponse(_ json: String) -> [MonacoCodeAction] {
+        guard let data = json.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        return array.compactMap { item in
+            // Only handle CodeAction objects (with a title), not Command objects.
+            guard let title = item["title"] as? String else { return nil }
+            let kind = item["kind"] as? String
+            let isPreferred = (item["isPreferred"] as? NSNumber)?.boolValue ?? false
+
+            var edits: [MonacoWorkspaceTextEdit] = []
+            if let edit = item["edit"] as? [String: Any],
+               let changes = edit["changes"] as? [String: [[String: Any]]] {
+                for (changeUri, textEdits) in changes {
+                    for te in textEdits {
+                        guard let range = te["range"] as? [String: Any],
+                              let start = range["start"] as? [String: Any],
+                              let end = range["end"] as? [String: Any],
+                              let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                              let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                              let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                              let endChar = (end["character"] as? NSNumber)?.uint32Value,
+                              let newText = te["newText"] as? String else { continue }
+                        edits.append(MonacoWorkspaceTextEdit(
+                            uri: changeUri,
+                            range: MonacoRange(
+                                startLine: startLine,
+                                startColumn: startChar,
+                                endLine: endLine,
+                                endColumn: endChar
+                            ),
+                            text: newText
+                        ))
+                    }
+                }
+            }
+            // Also handle documentChanges format.
+            if edits.isEmpty, let docChanges = (item["edit"] as? [String: Any])?["documentChanges"] as? [[String: Any]] {
+                for change in docChanges {
+                    guard let textDoc = change["textDocument"] as? [String: Any],
+                          let changeUri = textDoc["uri"] as? String,
+                          let textEdits = change["edits"] as? [[String: Any]] else { continue }
+                    for te in textEdits {
+                        guard let range = te["range"] as? [String: Any],
+                              let start = range["start"] as? [String: Any],
+                              let end = range["end"] as? [String: Any],
+                              let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                              let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                              let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                              let endChar = (end["character"] as? NSNumber)?.uint32Value,
+                              let newText = te["newText"] as? String else { continue }
+                        edits.append(MonacoWorkspaceTextEdit(
+                            uri: changeUri,
+                            range: MonacoRange(
+                                startLine: startLine,
+                                startColumn: startChar,
+                                endLine: endLine,
+                                endColumn: endChar
+                            ),
+                            text: newText
+                        ))
+                    }
+                }
+            }
+
+            return MonacoCodeAction(title: title, kind: kind, edits: edits, isPreferred: isPreferred)
+        }
+    }
+
+    private func parseRenameResponse(_ json: String) -> [MonacoWorkspaceTextEdit] {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+
+        var edits: [MonacoWorkspaceTextEdit] = []
+
+        // Handle WorkspaceEdit.changes format.
+        if let changes = response["changes"] as? [String: [[String: Any]]] {
+            for (changeUri, textEdits) in changes {
+                for te in textEdits {
+                    guard let range = te["range"] as? [String: Any],
+                          let start = range["start"] as? [String: Any],
+                          let end = range["end"] as? [String: Any],
+                          let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                          let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                          let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                          let endChar = (end["character"] as? NSNumber)?.uint32Value,
+                          let newText = te["newText"] as? String else { continue }
+                    edits.append(MonacoWorkspaceTextEdit(
+                        uri: changeUri,
+                        range: MonacoRange(
+                            startLine: startLine,
+                            startColumn: startChar,
+                            endLine: endLine,
+                            endColumn: endChar
+                        ),
+                        text: newText
+                    ))
+                }
+            }
+        }
+
+        // Also handle documentChanges format.
+        if edits.isEmpty, let docChanges = response["documentChanges"] as? [[String: Any]] {
+            for change in docChanges {
+                guard let textDoc = change["textDocument"] as? [String: Any],
+                      let changeUri = textDoc["uri"] as? String,
+                      let textEdits = change["edits"] as? [[String: Any]] else { continue }
+                for te in textEdits {
+                    guard let range = te["range"] as? [String: Any],
+                          let start = range["start"] as? [String: Any],
+                          let end = range["end"] as? [String: Any],
+                          let startLine = (start["line"] as? NSNumber)?.uint32Value,
+                          let startChar = (start["character"] as? NSNumber)?.uint32Value,
+                          let endLine = (end["line"] as? NSNumber)?.uint32Value,
+                          let endChar = (end["character"] as? NSNumber)?.uint32Value,
+                          let newText = te["newText"] as? String else { continue }
+                    edits.append(MonacoWorkspaceTextEdit(
+                        uri: changeUri,
+                        range: MonacoRange(
+                            startLine: startLine,
+                            startColumn: startChar,
+                            endLine: endLine,
+                            endColumn: endChar
+                        ),
+                        text: newText
+                    ))
+                }
+            }
+        }
+
+        return edits
+    }
+
+    private func parsePrepareRenameResponse(_ json: String) -> (range: MonacoRange, placeholder: String)? {
+        guard let data = json.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) else { return nil }
+
+        // Format 1: { range: {...}, placeholder: "..." }
+        if let obj = response as? [String: Any],
+           let placeholder = obj["placeholder"] as? String,
+           let range = obj["range"] as? [String: Any],
+           let start = range["start"] as? [String: Any],
+           let end = range["end"] as? [String: Any],
+           let startLine = (start["line"] as? NSNumber)?.uint32Value,
+           let startChar = (start["character"] as? NSNumber)?.uint32Value,
+           let endLine = (end["line"] as? NSNumber)?.uint32Value,
+           let endChar = (end["character"] as? NSNumber)?.uint32Value {
+            return (
+                range: MonacoRange(startLine: startLine, startColumn: startChar, endLine: endLine, endColumn: endChar),
+                placeholder: placeholder
+            )
+        }
+
+        // Format 2: plain Range { start: {...}, end: {...} }
+        if let obj = response as? [String: Any],
+           let start = obj["start"] as? [String: Any],
+           let end = obj["end"] as? [String: Any],
+           let startLine = (start["line"] as? NSNumber)?.uint32Value,
+           let startChar = (start["character"] as? NSNumber)?.uint32Value,
+           let endLine = (end["line"] as? NSNumber)?.uint32Value,
+           let endChar = (end["character"] as? NSNumber)?.uint32Value {
+            return (
+                range: MonacoRange(startLine: startLine, startColumn: startChar, endLine: endLine, endColumn: endChar),
+                placeholder: ""
+            )
+        }
+
+        // Format 3: { defaultBehavior: true } — server supports rename but no range info
+        if let obj = response as? [String: Any],
+           let defaultBehavior = obj["defaultBehavior"] as? Bool,
+           defaultBehavior {
+            return nil
+        }
+
+        return nil
     }
 
     // MARK: LSP Helpers

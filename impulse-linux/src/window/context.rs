@@ -22,6 +22,11 @@ pub(crate) struct LspState {
     pub latest_definition_req: Rc<RefCell<HashMap<String, u64>>>,
     pub definition_monaco_ids: Rc<RefCell<HashMap<u64, u64>>>,
     pub error_toast_dedupe: Rc<RefCell<HashSet<String>>>,
+    pub latest_formatting_req: Rc<RefCell<HashMap<String, u64>>>,
+    pub latest_signature_help_req: Rc<RefCell<HashMap<String, u64>>>,
+    pub latest_references_req: Rc<RefCell<HashMap<String, u64>>>,
+    pub latest_code_action_req: Rc<RefCell<HashMap<String, u64>>>,
+    pub latest_rename_req: Rc<RefCell<HashMap<String, u64>>>,
 }
 
 /// Terminal session state shared across keybinding closures.

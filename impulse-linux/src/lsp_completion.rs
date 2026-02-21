@@ -38,6 +38,52 @@ pub enum LspRequest {
     DidClose {
         uri: String,
     },
+    Formatting {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        tab_size: u32,
+        insert_spaces: bool,
+    },
+    SignatureHelp {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        line: u32,
+        character: u32,
+    },
+    References {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        line: u32,
+        character: u32,
+    },
+    CodeAction {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        start_line: u32,
+        start_column: u32,
+        end_line: u32,
+        end_column: u32,
+        diagnostics: Vec<DiagnosticInfo>,
+    },
+    Rename {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        line: u32,
+        character: u32,
+        new_name: String,
+    },
+    PrepareRename {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        line: u32,
+        character: u32,
+    },
     Shutdown,
 }
 
@@ -81,6 +127,43 @@ pub enum LspResponse {
         client_key: String,
         server_id: String,
     },
+    FormattingResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        edits: Vec<TextEditInfo>,
+    },
+    SignatureHelpResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        signature_help: Option<SignatureHelpInfo>,
+    },
+    ReferencesResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        locations: Vec<LocationInfo>,
+    },
+    CodeActionResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        actions: Vec<CodeActionInfo>,
+    },
+    RenameResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        edits: Vec<WorkspaceTextEditInfo>,
+    },
+    PrepareRenameResult {
+        request_id: u64,
+        uri: String,
+        version: i32,
+        range: Option<RangeInfo>,
+        placeholder: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -119,4 +202,59 @@ pub struct CompletionInfo {
     pub text_edit: Option<TextEditInfo>,
     pub additional_text_edits: Vec<TextEditInfo>,
     pub kind: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignatureHelpInfo {
+    pub signatures: Vec<SignatureInfo>,
+    pub active_signature: u32,
+    pub active_parameter: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignatureInfo {
+    pub label: String,
+    pub documentation: Option<String>,
+    pub parameters: Vec<ParameterInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParameterInfo {
+    pub label: String,
+    pub documentation: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocationInfo {
+    pub uri: String,
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodeActionInfo {
+    pub title: String,
+    pub kind: Option<String>,
+    pub edits: Vec<WorkspaceTextEditInfo>,
+    pub is_preferred: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceTextEditInfo {
+    pub uri: String,
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RangeInfo {
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
 }

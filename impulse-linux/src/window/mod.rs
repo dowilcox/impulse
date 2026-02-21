@@ -316,6 +316,304 @@ pub fn build_window(app: &adw::Application) {
                                 }
                             }
                         }
+                        LspRequest::Formatting {
+                            request_id,
+                            uri,
+                            version,
+                            tab_size,
+                            insert_spaces,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(edits) = client.formatting(&uri, tab_size, insert_spaces).await {
+                                    let infos = edits
+                                        .into_iter()
+                                        .map(|e| crate::lsp_completion::TextEditInfo {
+                                            start_line: e.range.start.line,
+                                            start_character: e.range.start.character,
+                                            end_line: e.range.end.line,
+                                            end_character: e.range.end.character,
+                                            new_text: e.new_text,
+                                        })
+                                        .collect();
+                                    let _ = gtk_tx.send(LspResponse::FormattingResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        edits: infos,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        LspRequest::SignatureHelp {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(result) = client.signature_help(&uri, line, character).await {
+                                    let info = result.map(|sh| {
+                                        crate::lsp_completion::SignatureHelpInfo {
+                                            active_signature: sh.active_signature.unwrap_or(0),
+                                            active_parameter: sh.active_parameter.unwrap_or(0),
+                                            signatures: sh.signatures.into_iter().map(|sig| {
+                                                let params = sig.parameters.unwrap_or_default().into_iter().map(|p| {
+                                                    let label = match p.label {
+                                                        lsp_types::ParameterLabel::Simple(s) => s,
+                                                        lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
+                                                            sig.label.get(start as usize..end as usize)
+                                                                .unwrap_or("")
+                                                                .to_string()
+                                                        }
+                                                    };
+                                                    let doc = p.documentation.map(|d| match d {
+                                                        lsp_types::Documentation::String(s) => s,
+                                                        lsp_types::Documentation::MarkupContent(m) => m.value,
+                                                    });
+                                                    crate::lsp_completion::ParameterInfo { label, documentation: doc }
+                                                }).collect();
+                                                let doc = sig.documentation.map(|d| match d {
+                                                    lsp_types::Documentation::String(s) => s,
+                                                    lsp_types::Documentation::MarkupContent(m) => m.value,
+                                                });
+                                                crate::lsp_completion::SignatureInfo {
+                                                    label: sig.label,
+                                                    documentation: doc,
+                                                    parameters: params,
+                                                }
+                                            }).collect(),
+                                        }
+                                    });
+                                    let _ = gtk_tx.send(LspResponse::SignatureHelpResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        signature_help: info,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        LspRequest::References {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(locs) = client.references(&uri, line, character).await {
+                                    let infos = locs
+                                        .into_iter()
+                                        .map(|l| crate::lsp_completion::LocationInfo {
+                                            uri: l.uri.to_string(),
+                                            start_line: l.range.start.line,
+                                            start_character: l.range.start.character,
+                                            end_line: l.range.end.line,
+                                            end_character: l.range.end.character,
+                                        })
+                                        .collect();
+                                    let _ = gtk_tx.send(LspResponse::ReferencesResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        locations: infos,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        LspRequest::CodeAction {
+                            request_id,
+                            uri,
+                            version,
+                            start_line,
+                            start_column,
+                            end_line,
+                            end_column,
+                            diagnostics,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            // Convert DiagnosticInfo to lsp_types::Diagnostic
+                            let lsp_diags: Vec<lsp_types::Diagnostic> = diagnostics
+                                .into_iter()
+                                .map(|d| lsp_types::Diagnostic {
+                                    range: lsp_types::Range {
+                                        start: lsp_types::Position {
+                                            line: d.line,
+                                            character: d.character,
+                                        },
+                                        end: lsp_types::Position {
+                                            line: d.end_line,
+                                            character: d.end_character,
+                                        },
+                                    },
+                                    severity: Some(match d.severity {
+                                        crate::lsp_completion::DiagnosticSeverity::Error => {
+                                            lsp_types::DiagnosticSeverity::ERROR
+                                        }
+                                        crate::lsp_completion::DiagnosticSeverity::Warning => {
+                                            lsp_types::DiagnosticSeverity::WARNING
+                                        }
+                                        crate::lsp_completion::DiagnosticSeverity::Information => {
+                                            lsp_types::DiagnosticSeverity::INFORMATION
+                                        }
+                                        crate::lsp_completion::DiagnosticSeverity::Hint => {
+                                            lsp_types::DiagnosticSeverity::HINT
+                                        }
+                                    }),
+                                    message: d.message,
+                                    ..Default::default()
+                                })
+                                .collect();
+                            for client in clients {
+                                if let Ok(actions) = client
+                                    .code_action(
+                                        &uri, start_line, start_column, end_line, end_column,
+                                        lsp_diags.clone(),
+                                    )
+                                    .await
+                                {
+                                    let infos = actions
+                                        .into_iter()
+                                        .filter_map(|a| match a {
+                                            lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                                                let edits = ca
+                                                    .edit
+                                                    .and_then(|we| we.changes)
+                                                    .into_iter()
+                                                    .flat_map(|changes| {
+                                                        changes.into_iter().flat_map(|(u, edits)| {
+                                                            let uri_str = u.to_string();
+                                                            edits.into_iter().map(move |e| {
+                                                                crate::lsp_completion::WorkspaceTextEditInfo {
+                                                                    uri: uri_str.clone(),
+                                                                    start_line: e.range.start.line,
+                                                                    start_character: e.range.start.character,
+                                                                    end_line: e.range.end.line,
+                                                                    end_character: e.range.end.character,
+                                                                    new_text: e.new_text,
+                                                                }
+                                                            })
+                                                        })
+                                                    })
+                                                    .collect();
+                                                Some(crate::lsp_completion::CodeActionInfo {
+                                                    title: ca.title,
+                                                    kind: ca.kind.map(|k| k.as_str().to_string()),
+                                                    edits,
+                                                    is_preferred: ca.is_preferred.unwrap_or(false),
+                                                })
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect();
+                                    let _ = gtk_tx.send(LspResponse::CodeActionResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        actions: infos,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        LspRequest::Rename {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                            new_name,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(Some(we)) = client.rename(&uri, line, character, &new_name).await {
+                                    let edits: Vec<crate::lsp_completion::WorkspaceTextEditInfo> = we
+                                        .changes
+                                        .into_iter()
+                                        .flat_map(|changes| {
+                                            changes.into_iter().flat_map(|(u, edits)| {
+                                                let uri_str = u.to_string();
+                                                edits.into_iter().map(move |e| {
+                                                    crate::lsp_completion::WorkspaceTextEditInfo {
+                                                        uri: uri_str.clone(),
+                                                        start_line: e.range.start.line,
+                                                        start_character: e.range.start.character,
+                                                        end_line: e.range.end.line,
+                                                        end_character: e.range.end.character,
+                                                        new_text: e.new_text,
+                                                    }
+                                                })
+                                            })
+                                        })
+                                        .collect();
+                                    let _ = gtk_tx.send(LspResponse::RenameResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        edits,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        LspRequest::PrepareRename {
+                            request_id,
+                            uri,
+                            version,
+                            line,
+                            character,
+                        } => {
+                            let lang = language_from_uri(&uri);
+                            let clients = registry.get_clients(&lang, &uri).await;
+                            for client in clients {
+                                if let Ok(result) = client.prepare_rename(&uri, line, character).await {
+                                    let (range, placeholder) = match result {
+                                        Some(lsp_types::PrepareRenameResponse::Range(r)) => {
+                                            (Some(crate::lsp_completion::RangeInfo {
+                                                start_line: r.start.line,
+                                                start_character: r.start.character,
+                                                end_line: r.end.line,
+                                                end_character: r.end.character,
+                                            }), None)
+                                        }
+                                        Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                            range,
+                                            placeholder,
+                                        }) => {
+                                            (Some(crate::lsp_completion::RangeInfo {
+                                                start_line: range.start.line,
+                                                start_character: range.start.character,
+                                                end_line: range.end.line,
+                                                end_character: range.end.character,
+                                            }), Some(placeholder))
+                                        }
+                                        Some(lsp_types::PrepareRenameResponse::DefaultBehavior { .. }) | None => {
+                                            (None, None)
+                                        }
+                                    };
+                                    let _ = gtk_tx.send(LspResponse::PrepareRenameResult {
+                                        request_id,
+                                        uri: uri.clone(),
+                                        version,
+                                        range,
+                                        placeholder,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
                         LspRequest::Shutdown => {
                             registry.shutdown_all().await;
                         }
@@ -338,6 +636,16 @@ pub fn build_window(app: &adw::Application) {
     // Maps internal LSP seq → Monaco's request_id for definition requests,
     // so we can resolve the correct Monaco promise when the LSP responds.
     let definition_monaco_ids: Rc<RefCell<std::collections::HashMap<u64, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_formatting_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_signature_help_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_references_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_code_action_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
+        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let latest_rename_req: Rc<RefCell<std::collections::HashMap<String, u64>>> =
         Rc::new(RefCell::new(std::collections::HashMap::new()));
     let lsp_error_toast_dedupe: Rc<RefCell<HashSet<String>>> =
         Rc::new(RefCell::new(HashSet::new()));
@@ -490,6 +798,11 @@ pub fn build_window(app: &adw::Application) {
         latest_definition_req: latest_definition_req.clone(),
         definition_monaco_ids: definition_monaco_ids.clone(),
         error_toast_dedupe: lsp_error_toast_dedupe.clone(),
+        latest_formatting_req: latest_formatting_req.clone(),
+        latest_signature_help_req: latest_signature_help_req.clone(),
+        latest_references_req: latest_references_req.clone(),
+        latest_code_action_req: latest_code_action_req.clone(),
+        latest_rename_req: latest_rename_req.clone(),
     };
 
     let ctx = context::WindowContext {

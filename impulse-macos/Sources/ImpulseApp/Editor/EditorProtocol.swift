@@ -17,6 +17,12 @@ enum EditorCommand: Encodable {
     case goToPosition(line: UInt32, column: UInt32)
     case setReadOnly(readOnly: Bool)
     case applyDiffDecorations(decorations: [DiffDecoration])
+    case resolveFormatting(requestId: UInt64, edits: [MonacoTextEdit])
+    case resolveSignatureHelp(requestId: UInt64, signatureHelp: MonacoSignatureHelp?)
+    case resolveReferences(requestId: UInt64, locations: [MonacoLocation])
+    case resolveCodeActions(requestId: UInt64, actions: [MonacoCodeAction])
+    case resolveRename(requestId: UInt64, edits: [MonacoWorkspaceTextEdit])
+    case resolvePrepareRename(requestId: UInt64, range: MonacoRange?, placeholder: String?)
 
     // MARK: Tagged Enum Encoding
 
@@ -31,6 +37,12 @@ enum EditorCommand: Encodable {
         case goToPosition = "GoToPosition"
         case setReadOnly = "SetReadOnly"
         case applyDiffDecorations = "ApplyDiffDecorations"
+        case resolveFormatting = "ResolveFormatting"
+        case resolveSignatureHelp = "ResolveSignatureHelp"
+        case resolveReferences = "ResolveReferences"
+        case resolveCodeActions = "ResolveCodeActions"
+        case resolveRename = "ResolveRename"
+        case resolvePrepareRename = "ResolvePrepareRename"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -49,6 +61,12 @@ enum EditorCommand: Encodable {
         case column
         case readOnly = "read_only"
         case decorations
+        case edits
+        case signatureHelp = "signature_help"
+        case locations
+        case actions
+        case range
+        case placeholder
     }
 
     func encode(to encoder: Encoder) throws {
@@ -103,6 +121,37 @@ enum EditorCommand: Encodable {
         case let .applyDiffDecorations(decorations):
             try container.encode(TypeTag.applyDiffDecorations, forKey: .type)
             try container.encode(decorations, forKey: .decorations)
+
+        case let .resolveFormatting(requestId, edits):
+            try container.encode(TypeTag.resolveFormatting, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encode(edits, forKey: .edits)
+
+        case let .resolveSignatureHelp(requestId, signatureHelp):
+            try container.encode(TypeTag.resolveSignatureHelp, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encodeIfPresent(signatureHelp, forKey: .signatureHelp)
+
+        case let .resolveReferences(requestId, locations):
+            try container.encode(TypeTag.resolveReferences, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encode(locations, forKey: .locations)
+
+        case let .resolveCodeActions(requestId, actions):
+            try container.encode(TypeTag.resolveCodeActions, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encode(actions, forKey: .actions)
+
+        case let .resolveRename(requestId, edits):
+            try container.encode(TypeTag.resolveRename, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encode(edits, forKey: .edits)
+
+        case let .resolvePrepareRename(requestId, range, placeholder):
+            try container.encode(TypeTag.resolvePrepareRename, forKey: .type)
+            try container.encode(requestId, forKey: .requestId)
+            try container.encodeIfPresent(range, forKey: .range)
+            try container.encodeIfPresent(placeholder, forKey: .placeholder)
         }
     }
 }
@@ -124,6 +173,12 @@ enum EditorEvent: Decodable {
     case definitionRequested(requestId: UInt64, line: UInt32, character: UInt32)
     case openFileRequested(uri: String, line: UInt32, character: UInt32)
     case focusChanged(focused: Bool)
+    case formattingRequested(requestId: UInt64, tabSize: UInt32, insertSpaces: Bool)
+    case signatureHelpRequested(requestId: UInt64, line: UInt32, character: UInt32)
+    case referencesRequested(requestId: UInt64, line: UInt32, character: UInt32)
+    case codeActionRequested(requestId: UInt64, startLine: UInt32, startColumn: UInt32, endLine: UInt32, endColumn: UInt32, diagnostics: [MonacoDiagnostic])
+    case renameRequested(requestId: UInt64, line: UInt32, character: UInt32, newName: String)
+    case prepareRenameRequested(requestId: UInt64, line: UInt32, character: UInt32)
 
     private enum TypeTag: String, Decodable {
         case ready = "Ready"
@@ -136,6 +191,12 @@ enum EditorEvent: Decodable {
         case definitionRequested = "DefinitionRequested"
         case openFileRequested = "OpenFileRequested"
         case focusChanged = "FocusChanged"
+        case formattingRequested = "FormattingRequested"
+        case signatureHelpRequested = "SignatureHelpRequested"
+        case referencesRequested = "ReferencesRequested"
+        case codeActionRequested = "CodeActionRequested"
+        case renameRequested = "RenameRequested"
+        case prepareRenameRequested = "PrepareRenameRequested"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -148,6 +209,14 @@ enum EditorEvent: Decodable {
         case requestId = "request_id"
         case uri
         case focused
+        case tabSize = "tab_size"
+        case insertSpaces = "insert_spaces"
+        case startLine = "start_line"
+        case startColumn = "start_column"
+        case endLine = "end_line"
+        case endColumn = "end_column"
+        case diagnostics
+        case newName = "new_name"
     }
 
     init(from decoder: Decoder) throws {
@@ -201,6 +270,46 @@ enum EditorEvent: Decodable {
         case .focusChanged:
             let focused = try container.decode(Bool.self, forKey: .focused)
             self = .focusChanged(focused: focused)
+
+        case .formattingRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let tabSize = try container.decode(UInt32.self, forKey: .tabSize)
+            let insertSpaces = try container.decode(Bool.self, forKey: .insertSpaces)
+            self = .formattingRequested(requestId: requestId, tabSize: tabSize, insertSpaces: insertSpaces)
+
+        case .signatureHelpRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            let character = try container.decode(UInt32.self, forKey: .character)
+            self = .signatureHelpRequested(requestId: requestId, line: line, character: character)
+
+        case .referencesRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            let character = try container.decode(UInt32.self, forKey: .character)
+            self = .referencesRequested(requestId: requestId, line: line, character: character)
+
+        case .codeActionRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let startLine = try container.decode(UInt32.self, forKey: .startLine)
+            let startColumn = try container.decode(UInt32.self, forKey: .startColumn)
+            let endLine = try container.decode(UInt32.self, forKey: .endLine)
+            let endColumn = try container.decode(UInt32.self, forKey: .endColumn)
+            let diagnostics = try container.decode([MonacoDiagnostic].self, forKey: .diagnostics)
+            self = .codeActionRequested(requestId: requestId, startLine: startLine, startColumn: startColumn, endLine: endLine, endColumn: endColumn, diagnostics: diagnostics)
+
+        case .renameRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            let character = try container.decode(UInt32.self, forKey: .character)
+            let newName = try container.decode(String.self, forKey: .newName)
+            self = .renameRequested(requestId: requestId, line: line, character: character, newName: newName)
+
+        case .prepareRenameRequested:
+            let requestId = try container.decode(UInt64.self, forKey: .requestId)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            let character = try container.decode(UInt32.self, forKey: .character)
+            self = .prepareRenameRequested(requestId: requestId, line: line, character: character)
         }
     }
 }
@@ -355,6 +464,58 @@ struct DiffDecoration: Codable {
     var line: UInt32
     /// One of "added", "modified", or "deleted".
     var status: String
+}
+
+// MARK: - Signature Help Types
+
+struct MonacoSignatureHelp: Codable {
+    var signatures: [MonacoSignatureInfo]
+    var activeSignature: UInt32
+    var activeParameter: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case signatures
+        case activeSignature = "active_signature"
+        case activeParameter = "active_parameter"
+    }
+}
+
+struct MonacoSignatureInfo: Codable {
+    var label: String
+    var documentation: String?
+    var parameters: [MonacoParameterInfo]
+}
+
+struct MonacoParameterInfo: Codable {
+    var label: String
+    var documentation: String?
+}
+
+// MARK: - Location & Code Action Types
+
+struct MonacoLocation: Codable {
+    var uri: String
+    var range: MonacoRange
+}
+
+struct MonacoCodeAction: Codable {
+    var title: String
+    var kind: String?
+    var edits: [MonacoWorkspaceTextEdit]
+    var isPreferred: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case kind
+        case edits
+        case isPreferred = "is_preferred"
+    }
+}
+
+struct MonacoWorkspaceTextEdit: Codable {
+    var uri: String
+    var range: MonacoRange
+    var text: String
 }
 
 // MARK: - Theme Types

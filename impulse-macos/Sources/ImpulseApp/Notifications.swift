@@ -54,6 +54,25 @@ extension Notification.Name {
     /// the new model is set up and ready for decorations. The `object` is the
     /// `EditorTab` and the `userInfo` dictionary contains `"filePath"`.
     static let editorFileOpened = Notification.Name("impulse.editorFileOpened")
+    /// Posted when a formatting request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"tabSize"`, and `"insertSpaces"`.
+    static let editorFormattingRequested = Notification.Name("impulse.editorFormattingRequested")
+    /// Posted when a signature help request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"line"`, and `"character"`.
+    static let editorSignatureHelpRequested = Notification.Name("impulse.editorSignatureHelpRequested")
+    /// Posted when a references request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"line"`, and `"character"`.
+    static let editorReferencesRequested = Notification.Name("impulse.editorReferencesRequested")
+    /// Posted when a code action request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"startLine"`, `"startColumn"`, `"endLine"`,
+    /// `"endColumn"`, and `"diagnostics"`.
+    static let editorCodeActionRequested = Notification.Name("impulse.editorCodeActionRequested")
+    /// Posted when a rename request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"line"`, `"character"`, and `"newName"`.
+    static let editorRenameRequested = Notification.Name("impulse.editorRenameRequested")
+    /// Posted when a prepare rename request is received from Monaco. The `userInfo`
+    /// dictionary contains `"requestId"`, `"line"`, and `"character"`.
+    static let editorPrepareRenameRequested = Notification.Name("impulse.editorPrepareRenameRequested")
 
     // MARK: Editor Commands
 

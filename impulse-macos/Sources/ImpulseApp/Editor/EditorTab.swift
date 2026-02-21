@@ -280,6 +280,87 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 object: self,
                 userInfo: ["focused": focused]
             )
+
+        case let .formattingRequested(requestId, tabSize, insertSpaces):
+            NotificationCenter.default.post(
+                name: .editorFormattingRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "tabSize": tabSize,
+                    "insertSpaces": insertSpaces,
+                ]
+            )
+
+        case let .signatureHelpRequested(requestId, line, character):
+            NotificationCenter.default.post(
+                name: .editorSignatureHelpRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "line": line,
+                    "character": character,
+                ]
+            )
+
+        case let .referencesRequested(requestId, line, character):
+            NotificationCenter.default.post(
+                name: .editorReferencesRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "line": line,
+                    "character": character,
+                ]
+            )
+
+        case let .codeActionRequested(requestId, startLine, startColumn, endLine, endColumn, diagnostics):
+            let diagDicts: [[String: Any]] = diagnostics.map { d in
+                [
+                    "severity": d.severity,
+                    "startLine": d.startLine,
+                    "startColumn": d.startColumn,
+                    "endLine": d.endLine,
+                    "endColumn": d.endColumn,
+                    "message": d.message,
+                    "source": d.source as Any,
+                ]
+            }
+            NotificationCenter.default.post(
+                name: .editorCodeActionRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "startLine": startLine,
+                    "startColumn": startColumn,
+                    "endLine": endLine,
+                    "endColumn": endColumn,
+                    "diagnostics": diagDicts,
+                ]
+            )
+
+        case let .renameRequested(requestId, line, character, newName):
+            NotificationCenter.default.post(
+                name: .editorRenameRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "line": line,
+                    "character": character,
+                    "newName": newName,
+                ]
+            )
+
+        case let .prepareRenameRequested(requestId, line, character):
+            NotificationCenter.default.post(
+                name: .editorPrepareRenameRequested,
+                object: self,
+                userInfo: [
+                    "requestId": requestId,
+                    "line": line,
+                    "character": character,
+                ]
+            )
         }
     }
 
@@ -489,6 +570,36 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Resolve an in-flight hover request with content from the LSP server.
     func resolveHover(requestId: UInt64, contents: [MonacoHoverContent]) {
         sendCommand(.resolveHover(requestId: requestId, contents: contents))
+    }
+
+    /// Resolve an in-flight formatting request with text edits from the LSP server.
+    func resolveFormatting(requestId: UInt64, edits: [MonacoTextEdit]) {
+        sendCommand(.resolveFormatting(requestId: requestId, edits: edits))
+    }
+
+    /// Resolve an in-flight signature help request.
+    func resolveSignatureHelp(requestId: UInt64, signatureHelp: MonacoSignatureHelp?) {
+        sendCommand(.resolveSignatureHelp(requestId: requestId, signatureHelp: signatureHelp))
+    }
+
+    /// Resolve an in-flight references request with locations from the LSP server.
+    func resolveReferences(requestId: UInt64, locations: [MonacoLocation]) {
+        sendCommand(.resolveReferences(requestId: requestId, locations: locations))
+    }
+
+    /// Resolve an in-flight code action request with actions from the LSP server.
+    func resolveCodeActions(requestId: UInt64, actions: [MonacoCodeAction]) {
+        sendCommand(.resolveCodeActions(requestId: requestId, actions: actions))
+    }
+
+    /// Resolve an in-flight rename request with workspace edits from the LSP server.
+    func resolveRename(requestId: UInt64, edits: [MonacoWorkspaceTextEdit]) {
+        sendCommand(.resolveRename(requestId: requestId, edits: edits))
+    }
+
+    /// Resolve an in-flight prepare rename request with range and placeholder.
+    func resolvePrepareRename(requestId: UInt64, range: MonacoRange?, placeholder: String?) {
+        sendCommand(.resolvePrepareRename(requestId: requestId, range: range, placeholder: placeholder))
     }
 
     /// Make the WebView the first responder to accept keyboard input.

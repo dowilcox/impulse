@@ -233,6 +233,11 @@ pub(super) fn setup_lsp_response_polling(
     let latest_hover_req = ctx.lsp.latest_hover_req.clone();
     let latest_definition_req = ctx.lsp.latest_definition_req.clone();
     let definition_monaco_ids = ctx.lsp.definition_monaco_ids.clone();
+    let latest_formatting_req = ctx.lsp.latest_formatting_req.clone();
+    let latest_signature_help_req = ctx.lsp.latest_signature_help_req.clone();
+    let latest_references_req = ctx.lsp.latest_references_req.clone();
+    let latest_code_action_req = ctx.lsp.latest_code_action_req.clone();
+    let latest_rename_req = ctx.lsp.latest_rename_req.clone();
     let toast_overlay = ctx.toast_overlay.clone();
     let lsp_error_toast_dedupe = ctx.lsp.error_toast_dedupe.clone();
     let lsp_install_result_rx = lsp_install_result_rx.clone();
@@ -429,6 +434,197 @@ pub(super) fn setup_lsp_response_polling(
                                 if let Some(handle) = editor::get_handle_for_widget(&child) {
                                     let text = crate::lsp_hover::extract_hover_text(&contents);
                                     handle.resolve_hover(request_id, &text);
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::FormattingResult {
+                        request_id,
+                        uri,
+                        version,
+                        edits,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_formatting_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_formatting(request_id, &edits);
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::SignatureHelpResult {
+                        request_id,
+                        uri,
+                        version,
+                        signature_help,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_signature_help_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_signature_help(request_id, signature_help.as_ref());
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::ReferencesResult {
+                        request_id,
+                        uri,
+                        version,
+                        locations,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_references_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_references(request_id, &locations);
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::CodeActionResult {
+                        request_id,
+                        uri,
+                        version,
+                        actions,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_code_action_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_code_actions(request_id, &actions);
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::RenameResult {
+                        request_id,
+                        uri,
+                        version,
+                        edits,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_rename_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_rename(request_id, &edits);
+                                }
+                            }
+                        }
+                    }
+                    LspResponse::PrepareRenameResult {
+                        request_id,
+                        uri,
+                        version,
+                        range,
+                        placeholder,
+                    } => {
+                        let source_path = uri_to_file_path(&uri);
+                        let latest = latest_rename_req
+                            .borrow()
+                            .get(&source_path)
+                            .copied()
+                            .unwrap_or(0);
+                        if latest != request_id {
+                            continue;
+                        }
+                        let current_version =
+                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+                        if current_version != version {
+                            continue;
+                        }
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child)
+                                && child.widget_name().as_str() == source_path
+                            {
+                                if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                    handle.resolve_prepare_rename(
+                                        request_id,
+                                        range.as_ref(),
+                                        placeholder.as_deref(),
+                                    );
                                 }
                             }
                         }

@@ -22,6 +22,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
     let latest_hover_req = &ctx.lsp.latest_hover_req;
     let latest_definition_req = &ctx.lsp.latest_definition_req;
     let definition_monaco_ids = &ctx.lsp.definition_monaco_ids;
+    let latest_formatting_req = &ctx.lsp.latest_formatting_req;
+    let latest_signature_help_req = &ctx.lsp.latest_signature_help_req;
+    let latest_references_req = &ctx.lsp.latest_references_req;
+    let latest_code_action_req = &ctx.lsp.latest_code_action_req;
+    let latest_rename_req = &ctx.lsp.latest_rename_req;
     let toast_overlay = &ctx.toast_overlay;
 
     // Wire up file activation to open in editor tab
@@ -41,6 +46,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
         let latest_hover_req = latest_hover_req.clone();
         let latest_definition_req = latest_definition_req.clone();
         let definition_monaco_ids = definition_monaco_ids.clone();
+        let latest_formatting_req = latest_formatting_req.clone();
+        let latest_signature_help_req = latest_signature_help_req.clone();
+        let latest_references_req = latest_references_req.clone();
+        let latest_code_action_req = latest_code_action_req.clone();
+        let latest_rename_req = latest_rename_req.clone();
         let icon_cache = sidebar_state.icon_cache.clone();
         let toast_overlay_for_editor = toast_overlay.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
@@ -97,6 +107,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                             let latest_hover_req = latest_hover_req.clone();
                             let latest_definition_req = latest_definition_req.clone();
                             let definition_monaco_ids = definition_monaco_ids.clone();
+                            let latest_formatting_req = latest_formatting_req.clone();
+                            let latest_signature_help_req = latest_signature_help_req.clone();
+                            let latest_references_req = latest_references_req.clone();
+                            let latest_code_action_req = latest_code_action_req.clone();
+                            let latest_rename_req = latest_rename_req.clone();
                             let sidebar_state = sidebar_state_for_editor.clone();
                             let toast_overlay = toast_overlay_for_editor.clone();
                             let path = path.to_string();
@@ -328,6 +343,128 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 send_diff_decorations(handle, &path);
                                                 sidebar_state.refresh();
                                             }
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::FormattingRequested { request_id: _, tab_size, insert_spaces } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_formatting_req.borrow_mut().insert(path.clone(), seq);
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::Formatting {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            tab_size,
+                                            insert_spaces,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::SignatureHelpRequested { request_id: _, line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_signature_help_req.borrow_mut().insert(path.clone(), seq);
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::SignatureHelp {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::ReferencesRequested { request_id: _, line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_references_req.borrow_mut().insert(path.clone(), seq);
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::References {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::CodeActionRequested { request_id: _, start_line, start_column, end_line, end_column, diagnostics } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_code_action_req.borrow_mut().insert(path.clone(), seq);
+                                        // Convert MonacoDiagnostic to DiagnosticInfo
+                                        let diag_infos: Vec<crate::lsp_completion::DiagnosticInfo> = diagnostics.into_iter().map(|d| {
+                                            crate::lsp_completion::DiagnosticInfo {
+                                                line: d.start_line,
+                                                character: d.start_column,
+                                                end_line: d.end_line,
+                                                end_character: d.end_column,
+                                                severity: match d.severity {
+                                                    8 => crate::lsp_completion::DiagnosticSeverity::Error,
+                                                    4 => crate::lsp_completion::DiagnosticSeverity::Warning,
+                                                    2 => crate::lsp_completion::DiagnosticSeverity::Information,
+                                                    _ => crate::lsp_completion::DiagnosticSeverity::Hint,
+                                                },
+                                                message: d.message,
+                                            }
+                                        }).collect();
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::CodeAction {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            start_line,
+                                            start_column,
+                                            end_line,
+                                            end_column,
+                                            diagnostics: diag_infos,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::RenameRequested { request_id: _, line, character, new_name } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_rename_req.borrow_mut().insert(path.clone(), seq);
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::Rename {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                            new_name,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
+                                        }
+                                    }
+                                    impulse_editor::protocol::EditorEvent::PrepareRenameRequested { request_id: _, line, character } => {
+                                        let uri = file_path_to_uri(std::path::Path::new(&path))
+                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
+                                        let seq = lsp_request_seq.get() + 1;
+                                        lsp_request_seq.set(seq);
+                                        latest_rename_req.borrow_mut().insert(path.clone(), seq);
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::PrepareRename {
+                                            request_id: seq,
+                                            uri,
+                                            version,
+                                            line,
+                                            character,
+                                        }) {
+                                            log::warn!("LSP request channel full, dropping request: {}", e);
                                         }
                                     }
                                 }

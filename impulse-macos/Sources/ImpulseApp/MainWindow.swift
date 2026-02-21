@@ -286,6 +286,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// In-flight hover work items per URI, cancelled when a newer request arrives.
     var hoverWorkItems: [String: DispatchWorkItem] = [:]
 
+    /// Tracks the latest formatting request ID per URI for deduplication.
+    var latestFormattingReq: [String: UInt64] = [:]
+
+    /// Tracks the latest signature help request ID per URI for deduplication.
+    var latestSignatureHelpReq: [String: UInt64] = [:]
+
+    /// Tracks the latest references request ID per URI for deduplication.
+    var latestReferencesReq: [String: UInt64] = [:]
+
+    /// Tracks the latest code action request ID per URI for deduplication.
+    var latestCodeActionReq: [String: UInt64] = [:]
+
+    /// Tracks the latest rename request ID per URI for deduplication.
+    var latestRenameReq: [String: UInt64] = [:]
+
+    /// In-flight formatting work items per URI, cancelled when a newer request arrives.
+    var formattingWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight signature help work items per URI, cancelled when a newer request arrives.
+    var signatureHelpWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight references work items per URI, cancelled when a newer request arrives.
+    var referencesWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight code action work items per URI, cancelled when a newer request arrives.
+    var codeActionWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight rename work items per URI, cancelled when a newer request arrives.
+    var renameWorkItems: [String: DispatchWorkItem] = [:]
+
+    /// In-flight prepare rename work items per URI, cancelled when a newer request arrives.
+    var prepareRenameWorkItems: [String: DispatchWorkItem] = [:]
+
     /// Timer for polling LSP events (diagnostics, lifecycle).
     var lspPollTimer: Timer?
 
@@ -1519,6 +1552,82 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
                 self.handleOpenFileRequested(uri: uri, line: line, character: character)
+            }
+        )
+
+        // LSP: formatting requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorFormattingRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let tabSize = notification.userInfo?["tabSize"] as? UInt32,
+                      let insertSpaces = notification.userInfo?["insertSpaces"] as? Bool else { return }
+                self.handleFormattingRequest(editor: editor, requestId: requestId, tabSize: tabSize, insertSpaces: insertSpaces)
+            }
+        )
+
+        // LSP: signature help requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorSignatureHelpRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleSignatureHelpRequest(editor: editor, requestId: requestId, line: line, character: character)
+            }
+        )
+
+        // LSP: references requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorReferencesRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handleReferencesRequest(editor: editor, requestId: requestId, line: line, character: character)
+            }
+        )
+
+        // LSP: code action requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorCodeActionRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let startLine = notification.userInfo?["startLine"] as? UInt32,
+                      let startColumn = notification.userInfo?["startColumn"] as? UInt32,
+                      let endLine = notification.userInfo?["endLine"] as? UInt32,
+                      let endColumn = notification.userInfo?["endColumn"] as? UInt32 else { return }
+                let diagnostics = notification.userInfo?["diagnostics"] as? [[String: Any]] ?? []
+                self.handleCodeActionRequest(editor: editor, requestId: requestId, startLine: startLine, startColumn: startColumn, endLine: endLine, endColumn: endColumn, diagnostics: diagnostics)
+            }
+        )
+
+        // LSP: rename requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorRenameRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32,
+                      let newName = notification.userInfo?["newName"] as? String else { return }
+                self.handleRenameRequest(editor: editor, requestId: requestId, line: line, character: character, newName: newName)
+            }
+        )
+
+        // LSP: prepare rename requested
+        notificationObservers.append(
+            nc.addObserver(forName: .editorPrepareRenameRequested, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      let editor = notification.object as? EditorTab,
+                      let requestId = notification.userInfo?["requestId"] as? UInt64,
+                      let line = notification.userInfo?["line"] as? UInt32,
+                      let character = notification.userInfo?["character"] as? UInt32 else { return }
+                self.handlePrepareRenameRequest(editor: editor, requestId: requestId, line: line, character: character)
             }
         )
     }

@@ -24,6 +24,12 @@ let requestSeq = 0;
 const pendingCompletions = new Map();
 const pendingHovers = new Map();
 const pendingDefinitions = new Map();
+const pendingFormatting = new Map();
+const pendingSignatureHelp = new Map();
+const pendingReferences = new Map();
+const pendingCodeActions = new Map();
+const pendingRename = new Map();
+const pendingPrepareRename = new Map();
 let contentChangeTimer = null;
 let contentVersion = 0;
 let currentDiffDecorations = [];
@@ -261,6 +267,150 @@ require(["vs/editor/editor.main"], function () {
     },
   });
 
+  // --- Register LSP Document Formatting Provider ---
+  monaco.languages.registerDocumentFormattingEditProvider("*", {
+    provideDocumentFormattingEdits: function (model, options) {
+      var id = ++requestSeq;
+      sendToHost({
+        type: "FormattingRequested",
+        request_id: id,
+        tab_size: options.tabSize,
+        insert_spaces: options.insertSpaces,
+      });
+      return new Promise(function (resolve) {
+        pendingFormatting.set(id, resolve);
+        setTimeout(function () {
+          if (pendingFormatting.has(id)) {
+            pendingFormatting.delete(id);
+            resolve([]);
+          }
+        }, 10000);
+      });
+    },
+  });
+
+  // --- Register LSP Signature Help Provider ---
+  monaco.languages.registerSignatureHelpProvider("*", {
+    signatureHelpTriggerCharacters: ["(", ","],
+    provideSignatureHelp: function (model, position) {
+      var id = ++requestSeq;
+      sendToHost({
+        type: "SignatureHelpRequested",
+        request_id: id,
+        line: position.lineNumber - 1,
+        character: position.column - 1,
+      });
+      return new Promise(function (resolve) {
+        pendingSignatureHelp.set(id, resolve);
+        setTimeout(function () {
+          if (pendingSignatureHelp.has(id)) {
+            pendingSignatureHelp.delete(id);
+            resolve(null);
+          }
+        }, 5000);
+      });
+    },
+  });
+
+  // --- Register LSP Reference Provider ---
+  monaco.languages.registerReferenceProvider("*", {
+    provideReferences: function (model, position) {
+      var id = ++requestSeq;
+      sendToHost({
+        type: "ReferencesRequested",
+        request_id: id,
+        line: position.lineNumber - 1,
+        character: position.column - 1,
+      });
+      return new Promise(function (resolve) {
+        pendingReferences.set(id, resolve);
+        setTimeout(function () {
+          if (pendingReferences.has(id)) {
+            pendingReferences.delete(id);
+            resolve([]);
+          }
+        }, 15000);
+      });
+    },
+  });
+
+  // --- Register LSP Code Action Provider ---
+  monaco.languages.registerCodeActionProvider("*", {
+    provideCodeActions: function (model, range, context) {
+      var id = ++requestSeq;
+      var diagnostics = (context.markers || []).map(function (m) {
+        return {
+          severity: m.severity,
+          start_line: m.startLineNumber - 1,
+          start_column: m.startColumn - 1,
+          end_line: m.endLineNumber - 1,
+          end_column: m.endColumn - 1,
+          message: m.message,
+          source: m.source || null,
+        };
+      });
+      sendToHost({
+        type: "CodeActionRequested",
+        request_id: id,
+        start_line: range.startLineNumber - 1,
+        start_column: range.startColumn - 1,
+        end_line: range.endLineNumber - 1,
+        end_column: range.endColumn - 1,
+        diagnostics: diagnostics,
+      });
+      return new Promise(function (resolve) {
+        pendingCodeActions.set(id, resolve);
+        setTimeout(function () {
+          if (pendingCodeActions.has(id)) {
+            pendingCodeActions.delete(id);
+            resolve({ actions: [], dispose: function () {} });
+          }
+        }, 10000);
+      });
+    },
+  });
+
+  // --- Register LSP Rename Provider ---
+  monaco.languages.registerRenameProvider("*", {
+    provideRenameEdits: function (model, position, newName) {
+      var id = ++requestSeq;
+      sendToHost({
+        type: "RenameRequested",
+        request_id: id,
+        line: position.lineNumber - 1,
+        character: position.column - 1,
+        new_name: newName,
+      });
+      return new Promise(function (resolve, reject) {
+        pendingRename.set(id, { resolve: resolve, reject: reject });
+        setTimeout(function () {
+          if (pendingRename.has(id)) {
+            pendingRename.delete(id);
+            reject(new Error("Rename request timed out"));
+          }
+        }, 15000);
+      });
+    },
+    resolveRenameLocation: function (model, position) {
+      var id = ++requestSeq;
+      sendToHost({
+        type: "PrepareRenameRequested",
+        request_id: id,
+        line: position.lineNumber - 1,
+        character: position.column - 1,
+      });
+      return new Promise(function (resolve, reject) {
+        pendingPrepareRename.set(id, { resolve: resolve, reject: reject });
+        setTimeout(function () {
+          if (pendingPrepareRename.has(id)) {
+            pendingPrepareRename.delete(id);
+            reject(new Error("Prepare rename request timed out"));
+          }
+        }, 5000);
+      });
+    },
+  });
+
   // --- Cross-file go-to-definition ---
   // Monaco calls this when Cmd+click resolves to a definition in a different
   // file URI. We forward the request to the host to open the target file.
@@ -331,6 +481,24 @@ function handleCommand(cmd) {
       case "ApplyDiffDecorations":
         handleApplyDiffDecorations(cmd);
         break;
+      case "ResolveFormatting":
+        handleResolveFormatting(cmd);
+        break;
+      case "ResolveSignatureHelp":
+        handleResolveSignatureHelp(cmd);
+        break;
+      case "ResolveReferences":
+        handleResolveReferences(cmd);
+        break;
+      case "ResolveCodeActions":
+        handleResolveCodeActions(cmd);
+        break;
+      case "ResolveRename":
+        handleResolveRename(cmd);
+        break;
+      case "ResolvePrepareRename":
+        handleResolvePrepareRename(cmd);
+        break;
       default:
         console.warn("Unknown command:", cmd.type);
     }
@@ -374,6 +542,17 @@ function handleOpenFile(cmd) {
   if (currentModel) {
     currentModel.dispose();
   }
+
+  // Clear pending LSP requests from previous file
+  pendingCompletions.clear();
+  pendingHovers.clear();
+  pendingDefinitions.clear();
+  pendingFormatting.clear();
+  pendingSignatureHelp.clear();
+  pendingReferences.clear();
+  pendingCodeActions.clear();
+  pendingRename.clear();
+  pendingPrepareRename.clear();
 
   const uri = monaco.Uri.file(currentFilePath);
   currentModel = monaco.editor.createModel(cmd.content || "", language, uri);
@@ -589,6 +768,156 @@ function handleApplyDiffDecorations(cmd) {
     currentDiffDecorations,
     decorations,
   );
+}
+
+function handleResolveFormatting(cmd) {
+  var resolve = pendingFormatting.get(cmd.request_id);
+  if (!resolve) return;
+  pendingFormatting.delete(cmd.request_id);
+
+  var edits = (cmd.edits || []).map(function (e) {
+    return {
+      range: {
+        startLineNumber: e.range.start_line + 1,
+        startColumn: e.range.start_column + 1,
+        endLineNumber: e.range.end_line + 1,
+        endColumn: e.range.end_column + 1,
+      },
+      text: e.text,
+    };
+  });
+  resolve(edits);
+}
+
+function handleResolveSignatureHelp(cmd) {
+  var resolve = pendingSignatureHelp.get(cmd.request_id);
+  if (!resolve) return;
+  pendingSignatureHelp.delete(cmd.request_id);
+
+  if (!cmd.signature_help) {
+    resolve(null);
+    return;
+  }
+
+  var sh = cmd.signature_help;
+  var signatures = (sh.signatures || []).map(function (sig) {
+    var params = (sig.parameters || []).map(function (p) {
+      var param = { label: p.label };
+      if (p.documentation) {
+        param.documentation = { value: p.documentation };
+      }
+      return param;
+    });
+    var result = {
+      label: sig.label,
+      parameters: params,
+    };
+    if (sig.documentation) {
+      result.documentation = { value: sig.documentation };
+    }
+    return result;
+  });
+
+  resolve({
+    value: {
+      signatures: signatures,
+      activeSignature: sh.active_signature,
+      activeParameter: sh.active_parameter,
+    },
+    dispose: function () {},
+  });
+}
+
+function handleResolveReferences(cmd) {
+  var resolve = pendingReferences.get(cmd.request_id);
+  if (!resolve) return;
+  pendingReferences.delete(cmd.request_id);
+
+  var locations = (cmd.locations || []).map(function (loc) {
+    return {
+      uri: monaco.Uri.parse(loc.uri),
+      range: {
+        startLineNumber: loc.range.start_line + 1,
+        startColumn: loc.range.start_column + 1,
+        endLineNumber: loc.range.end_line + 1,
+        endColumn: loc.range.end_column + 1,
+      },
+    };
+  });
+  resolve(locations);
+}
+
+function handleResolveCodeActions(cmd) {
+  var resolve = pendingCodeActions.get(cmd.request_id);
+  if (!resolve) return;
+  pendingCodeActions.delete(cmd.request_id);
+
+  var actions = (cmd.actions || []).map(function (action) {
+    var workspaceEdits = (action.edits || []).map(function (e) {
+      return {
+        resource: monaco.Uri.parse(e.uri),
+        textEdit: {
+          range: {
+            startLineNumber: e.range.start_line + 1,
+            startColumn: e.range.start_column + 1,
+            endLineNumber: e.range.end_line + 1,
+            endColumn: e.range.end_column + 1,
+          },
+          text: e.text,
+        },
+      };
+    });
+    return {
+      title: action.title,
+      kind: action.kind || undefined,
+      isPreferred: action.is_preferred,
+      edit: { edits: workspaceEdits },
+    };
+  });
+
+  resolve({ actions: actions, dispose: function () {} });
+}
+
+function handleResolveRename(cmd) {
+  var pending = pendingRename.get(cmd.request_id);
+  if (!pending) return;
+  pendingRename.delete(cmd.request_id);
+
+  var edits = (cmd.edits || []).map(function (e) {
+    return {
+      resource: monaco.Uri.parse(e.uri),
+      textEdit: {
+        range: {
+          startLineNumber: e.range.start_line + 1,
+          startColumn: e.range.start_column + 1,
+          endLineNumber: e.range.end_line + 1,
+          endColumn: e.range.end_column + 1,
+        },
+        text: e.text,
+      },
+    };
+  });
+  pending.resolve({ edits: edits });
+}
+
+function handleResolvePrepareRename(cmd) {
+  var pending = pendingPrepareRename.get(cmd.request_id);
+  if (!pending) return;
+  pendingPrepareRename.delete(cmd.request_id);
+
+  if (cmd.range) {
+    pending.resolve({
+      range: {
+        startLineNumber: cmd.range.start_line + 1,
+        startColumn: cmd.range.start_column + 1,
+        endLineNumber: cmd.range.end_line + 1,
+        endColumn: cmd.range.end_column + 1,
+      },
+      text: cmd.placeholder || "",
+    });
+  } else {
+    pending.reject(new Error("Symbol cannot be renamed"));
+  }
 }
 
 function isValidCssColor(c) {

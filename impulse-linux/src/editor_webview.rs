@@ -10,12 +10,16 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use impulse_editor::protocol::{
-    self, DiffDecoration, EditorCommand, EditorEvent, EditorOptions, MonacoCompletionItem,
-    MonacoDiagnostic, MonacoHoverContent, MonacoRange, MonacoTextEdit, MonacoThemeColors,
-    MonacoThemeDefinition, MonacoTokenRule,
+    self, DiffDecoration, EditorCommand, EditorEvent, EditorOptions, MonacoCodeAction,
+    MonacoCompletionItem, MonacoDiagnostic, MonacoHoverContent, MonacoLocation,
+    MonacoParameterInfo, MonacoRange, MonacoSignatureHelp, MonacoSignatureInfo, MonacoTextEdit,
+    MonacoThemeColors, MonacoThemeDefinition, MonacoTokenRule, MonacoWorkspaceTextEdit,
 };
 
-use crate::lsp_completion::{CompletionInfo, DiagnosticInfo, DiagnosticSeverity};
+use crate::lsp_completion::{
+    CodeActionInfo, CompletionInfo, DiagnosticInfo, DiagnosticSeverity, LocationInfo, RangeInfo,
+    SignatureHelpInfo, TextEditInfo, WorkspaceTextEditInfo,
+};
 use crate::settings::Settings;
 use crate::theme::ThemeColors;
 
@@ -237,6 +241,143 @@ impl MonacoEditorHandle {
             uri,
             line,
             column,
+        });
+    }
+
+    pub fn resolve_formatting(&self, request_id: u64, edits: &[TextEditInfo]) {
+        let monaco_edits: Vec<MonacoTextEdit> = edits
+            .iter()
+            .map(|e| MonacoTextEdit {
+                range: MonacoRange {
+                    start_line: e.start_line,
+                    start_column: e.start_character,
+                    end_line: e.end_line,
+                    end_column: e.end_character,
+                },
+                text: e.new_text.clone(),
+            })
+            .collect();
+        self.send_command(&EditorCommand::ResolveFormatting {
+            request_id,
+            edits: monaco_edits,
+        });
+    }
+
+    pub fn resolve_signature_help(
+        &self,
+        request_id: u64,
+        help: Option<&SignatureHelpInfo>,
+    ) {
+        let monaco_help = help.map(|h| MonacoSignatureHelp {
+            active_signature: h.active_signature,
+            active_parameter: h.active_parameter,
+            signatures: h
+                .signatures
+                .iter()
+                .map(|s| MonacoSignatureInfo {
+                    label: s.label.clone(),
+                    documentation: s.documentation.clone(),
+                    parameters: s
+                        .parameters
+                        .iter()
+                        .map(|p| MonacoParameterInfo {
+                            label: p.label.clone(),
+                            documentation: p.documentation.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        });
+        self.send_command(&EditorCommand::ResolveSignatureHelp {
+            request_id,
+            signature_help: monaco_help,
+        });
+    }
+
+    pub fn resolve_references(&self, request_id: u64, locations: &[LocationInfo]) {
+        let monaco_locations: Vec<MonacoLocation> = locations
+            .iter()
+            .map(|l| MonacoLocation {
+                uri: l.uri.clone(),
+                range: MonacoRange {
+                    start_line: l.start_line,
+                    start_column: l.start_character,
+                    end_line: l.end_line,
+                    end_column: l.end_character,
+                },
+            })
+            .collect();
+        self.send_command(&EditorCommand::ResolveReferences {
+            request_id,
+            locations: monaco_locations,
+        });
+    }
+
+    pub fn resolve_code_actions(&self, request_id: u64, actions: &[CodeActionInfo]) {
+        let monaco_actions: Vec<MonacoCodeAction> = actions
+            .iter()
+            .map(|a| MonacoCodeAction {
+                title: a.title.clone(),
+                kind: a.kind.clone(),
+                edits: a
+                    .edits
+                    .iter()
+                    .map(|e| MonacoWorkspaceTextEdit {
+                        uri: e.uri.clone(),
+                        range: MonacoRange {
+                            start_line: e.start_line,
+                            start_column: e.start_character,
+                            end_line: e.end_line,
+                            end_column: e.end_character,
+                        },
+                        text: e.new_text.clone(),
+                    })
+                    .collect(),
+                is_preferred: a.is_preferred,
+            })
+            .collect();
+        self.send_command(&EditorCommand::ResolveCodeActions {
+            request_id,
+            actions: monaco_actions,
+        });
+    }
+
+    pub fn resolve_rename(&self, request_id: u64, edits: &[WorkspaceTextEditInfo]) {
+        let monaco_edits: Vec<MonacoWorkspaceTextEdit> = edits
+            .iter()
+            .map(|e| MonacoWorkspaceTextEdit {
+                uri: e.uri.clone(),
+                range: MonacoRange {
+                    start_line: e.start_line,
+                    start_column: e.start_character,
+                    end_line: e.end_line,
+                    end_column: e.end_character,
+                },
+                text: e.new_text.clone(),
+            })
+            .collect();
+        self.send_command(&EditorCommand::ResolveRename {
+            request_id,
+            edits: monaco_edits,
+        });
+    }
+
+    pub fn resolve_prepare_rename(
+        &self,
+        request_id: u64,
+        range: Option<&RangeInfo>,
+        placeholder: Option<&str>,
+    ) {
+        let monaco_range = range.map(|r| MonacoRange {
+            start_line: r.start_line,
+            start_column: r.start_character,
+            end_line: r.end_line,
+            end_column: r.end_character,
+        });
+        self.send_command(&EditorCommand::ResolvePrepareRename {
+            request_id,
+            range: monaco_range,
+            placeholder: placeholder.map(|s| s.to_string()),
         });
     }
 

@@ -47,6 +47,31 @@ pub enum EditorCommand {
     ApplyDiffDecorations {
         decorations: Vec<DiffDecoration>,
     },
+    ResolveFormatting {
+        request_id: u64,
+        edits: Vec<MonacoTextEdit>,
+    },
+    ResolveSignatureHelp {
+        request_id: u64,
+        signature_help: Option<MonacoSignatureHelp>,
+    },
+    ResolveReferences {
+        request_id: u64,
+        locations: Vec<MonacoLocation>,
+    },
+    ResolveCodeActions {
+        request_id: u64,
+        actions: Vec<MonacoCodeAction>,
+    },
+    ResolveRename {
+        request_id: u64,
+        edits: Vec<MonacoWorkspaceTextEdit>,
+    },
+    ResolvePrepareRename {
+        request_id: u64,
+        range: Option<MonacoRange>,
+        placeholder: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +112,40 @@ pub enum EditorEvent {
     /// navigate to the given position.
     OpenFileRequested {
         uri: String,
+        line: u32,
+        character: u32,
+    },
+    FormattingRequested {
+        request_id: u64,
+        tab_size: u32,
+        insert_spaces: bool,
+    },
+    SignatureHelpRequested {
+        request_id: u64,
+        line: u32,
+        character: u32,
+    },
+    ReferencesRequested {
+        request_id: u64,
+        line: u32,
+        character: u32,
+    },
+    CodeActionRequested {
+        request_id: u64,
+        start_line: u32,
+        start_column: u32,
+        end_line: u32,
+        end_column: u32,
+        diagnostics: Vec<MonacoDiagnostic>,
+    },
+    RenameRequested {
+        request_id: u64,
+        line: u32,
+        character: u32,
+        new_name: String,
+    },
+    PrepareRenameRequested {
+        request_id: u64,
         line: u32,
         character: u32,
     },
@@ -189,6 +248,58 @@ pub struct MonacoRange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonacoTextEdit {
+    pub range: MonacoRange,
+    pub text: String,
+}
+
+// ---------------------------------------------------------------------------
+// Signature Help
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoSignatureHelp {
+    pub signatures: Vec<MonacoSignatureInfo>,
+    pub active_signature: u32,
+    pub active_parameter: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoSignatureInfo {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+    pub parameters: Vec<MonacoParameterInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoParameterInfo {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Location & Code Actions
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoLocation {
+    pub uri: String,
+    pub range: MonacoRange,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoCodeAction {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    pub edits: Vec<MonacoWorkspaceTextEdit>,
+    pub is_preferred: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoWorkspaceTextEdit {
+    pub uri: String,
     pub range: MonacoRange,
     pub text: String,
 }
@@ -762,6 +873,434 @@ mod tests {
         match parsed2 {
             EditorEvent::FocusChanged { focused } => {
                 assert!(!focused);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_formatting_requested() {
+        let event = EditorEvent::FormattingRequested {
+            request_id: 50,
+            tab_size: 4,
+            insert_spaces: true,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::FormattingRequested {
+                request_id,
+                tab_size,
+                insert_spaces,
+            } => {
+                assert_eq!(request_id, 50);
+                assert_eq!(tab_size, 4);
+                assert!(insert_spaces);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_signature_help_requested() {
+        let event = EditorEvent::SignatureHelpRequested {
+            request_id: 51,
+            line: 10,
+            character: 5,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::SignatureHelpRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 51);
+                assert_eq!(line, 10);
+                assert_eq!(character, 5);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_references_requested() {
+        let event = EditorEvent::ReferencesRequested {
+            request_id: 52,
+            line: 20,
+            character: 8,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::ReferencesRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 52);
+                assert_eq!(line, 20);
+                assert_eq!(character, 8);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_code_action_requested() {
+        let event = EditorEvent::CodeActionRequested {
+            request_id: 53,
+            start_line: 5,
+            start_column: 0,
+            end_line: 5,
+            end_column: 10,
+            diagnostics: vec![MonacoDiagnostic {
+                severity: 1,
+                start_line: 5,
+                start_column: 0,
+                end_line: 5,
+                end_column: 10,
+                message: "unused variable".to_string(),
+                source: Some("rustc".to_string()),
+            }],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::CodeActionRequested {
+                request_id,
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                diagnostics,
+            } => {
+                assert_eq!(request_id, 53);
+                assert_eq!(start_line, 5);
+                assert_eq!(start_column, 0);
+                assert_eq!(end_line, 5);
+                assert_eq!(end_column, 10);
+                assert_eq!(diagnostics.len(), 1);
+                assert_eq!(diagnostics[0].message, "unused variable");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_rename_requested() {
+        let event = EditorEvent::RenameRequested {
+            request_id: 54,
+            line: 15,
+            character: 3,
+            new_name: "new_var".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::RenameRequested {
+                request_id,
+                line,
+                character,
+                new_name,
+            } => {
+                assert_eq!(request_id, 54);
+                assert_eq!(line, 15);
+                assert_eq!(character, 3);
+                assert_eq!(new_name, "new_var");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_event_roundtrip_prepare_rename_requested() {
+        let event = EditorEvent::PrepareRenameRequested {
+            request_id: 55,
+            line: 15,
+            character: 3,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorEvent::PrepareRenameRequested {
+                request_id,
+                line,
+                character,
+            } => {
+                assert_eq!(request_id, 55);
+                assert_eq!(line, 15);
+                assert_eq!(character, 3);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_formatting() {
+        let cmd = EditorCommand::ResolveFormatting {
+            request_id: 60,
+            edits: vec![MonacoTextEdit {
+                range: MonacoRange {
+                    start_line: 0,
+                    start_column: 0,
+                    end_line: 0,
+                    end_column: 5,
+                },
+                text: "  hello".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveFormatting { request_id, edits } => {
+                assert_eq!(request_id, 60);
+                assert_eq!(edits.len(), 1);
+                assert_eq!(edits[0].text, "  hello");
+                assert_eq!(edits[0].range.start_line, 0);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_signature_help() {
+        let cmd = EditorCommand::ResolveSignatureHelp {
+            request_id: 61,
+            signature_help: Some(MonacoSignatureHelp {
+                signatures: vec![MonacoSignatureInfo {
+                    label: "fn foo(x: i32, y: &str)".to_string(),
+                    documentation: Some("Does something".to_string()),
+                    parameters: vec![
+                        MonacoParameterInfo {
+                            label: "x: i32".to_string(),
+                            documentation: Some("The x param".to_string()),
+                        },
+                        MonacoParameterInfo {
+                            label: "y: &str".to_string(),
+                            documentation: None,
+                        },
+                    ],
+                }],
+                active_signature: 0,
+                active_parameter: 1,
+            }),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveSignatureHelp {
+                request_id,
+                signature_help,
+            } => {
+                assert_eq!(request_id, 61);
+                let sh = signature_help.unwrap();
+                assert_eq!(sh.signatures.len(), 1);
+                assert_eq!(sh.signatures[0].label, "fn foo(x: i32, y: &str)");
+                assert_eq!(sh.active_signature, 0);
+                assert_eq!(sh.active_parameter, 1);
+                assert_eq!(sh.signatures[0].parameters.len(), 2);
+                assert_eq!(sh.signatures[0].parameters[0].label, "x: i32");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_signature_help_none() {
+        let cmd = EditorCommand::ResolveSignatureHelp {
+            request_id: 62,
+            signature_help: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveSignatureHelp {
+                request_id,
+                signature_help,
+            } => {
+                assert_eq!(request_id, 62);
+                assert!(signature_help.is_none());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_references() {
+        let cmd = EditorCommand::ResolveReferences {
+            request_id: 63,
+            locations: vec![
+                MonacoLocation {
+                    uri: "file:///tmp/a.rs".to_string(),
+                    range: MonacoRange {
+                        start_line: 10,
+                        start_column: 5,
+                        end_line: 10,
+                        end_column: 15,
+                    },
+                },
+                MonacoLocation {
+                    uri: "file:///tmp/b.rs".to_string(),
+                    range: MonacoRange {
+                        start_line: 20,
+                        start_column: 0,
+                        end_line: 20,
+                        end_column: 10,
+                    },
+                },
+            ],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveReferences {
+                request_id,
+                locations,
+            } => {
+                assert_eq!(request_id, 63);
+                assert_eq!(locations.len(), 2);
+                assert_eq!(locations[0].uri, "file:///tmp/a.rs");
+                assert_eq!(locations[0].range.start_line, 10);
+                assert_eq!(locations[1].uri, "file:///tmp/b.rs");
+                assert_eq!(locations[1].range.start_line, 20);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_code_actions() {
+        let cmd = EditorCommand::ResolveCodeActions {
+            request_id: 64,
+            actions: vec![MonacoCodeAction {
+                title: "Remove unused import".to_string(),
+                kind: Some("quickfix".to_string()),
+                edits: vec![MonacoWorkspaceTextEdit {
+                    uri: "file:///tmp/test.rs".to_string(),
+                    range: MonacoRange {
+                        start_line: 0,
+                        start_column: 0,
+                        end_line: 1,
+                        end_column: 0,
+                    },
+                    text: "".to_string(),
+                }],
+                is_preferred: true,
+            }],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveCodeActions {
+                request_id,
+                actions,
+            } => {
+                assert_eq!(request_id, 64);
+                assert_eq!(actions.len(), 1);
+                assert_eq!(actions[0].title, "Remove unused import");
+                assert_eq!(actions[0].kind.as_deref(), Some("quickfix"));
+                assert!(actions[0].is_preferred);
+                assert_eq!(actions[0].edits.len(), 1);
+                assert_eq!(actions[0].edits[0].uri, "file:///tmp/test.rs");
+                assert_eq!(actions[0].edits[0].text, "");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_rename() {
+        let cmd = EditorCommand::ResolveRename {
+            request_id: 65,
+            edits: vec![
+                MonacoWorkspaceTextEdit {
+                    uri: "file:///tmp/test.rs".to_string(),
+                    range: MonacoRange {
+                        start_line: 5,
+                        start_column: 4,
+                        end_line: 5,
+                        end_column: 11,
+                    },
+                    text: "new_name".to_string(),
+                },
+                MonacoWorkspaceTextEdit {
+                    uri: "file:///tmp/test.rs".to_string(),
+                    range: MonacoRange {
+                        start_line: 10,
+                        start_column: 8,
+                        end_line: 10,
+                        end_column: 15,
+                    },
+                    text: "new_name".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolveRename { request_id, edits } => {
+                assert_eq!(request_id, 65);
+                assert_eq!(edits.len(), 2);
+                assert_eq!(edits[0].text, "new_name");
+                assert_eq!(edits[0].range.start_line, 5);
+                assert_eq!(edits[1].range.start_line, 10);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_prepare_rename() {
+        let cmd = EditorCommand::ResolvePrepareRename {
+            request_id: 66,
+            range: Some(MonacoRange {
+                start_line: 5,
+                start_column: 4,
+                end_line: 5,
+                end_column: 11,
+            }),
+            placeholder: Some("old_name".to_string()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolvePrepareRename {
+                request_id,
+                range,
+                placeholder,
+            } => {
+                assert_eq!(request_id, 66);
+                let r = range.unwrap();
+                assert_eq!(r.start_line, 5);
+                assert_eq!(r.start_column, 4);
+                assert_eq!(r.end_line, 5);
+                assert_eq!(r.end_column, 11);
+                assert_eq!(placeholder.as_deref(), Some("old_name"));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn editor_command_roundtrip_resolve_prepare_rename_none() {
+        let cmd = EditorCommand::ResolvePrepareRename {
+            request_id: 67,
+            range: None,
+            placeholder: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: EditorCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            EditorCommand::ResolvePrepareRename {
+                request_id,
+                range,
+                placeholder,
+            } => {
+                assert_eq!(request_id, 67);
+                assert!(range.is_none());
+                assert!(placeholder.is_none());
             }
             _ => panic!("Wrong variant"),
         }

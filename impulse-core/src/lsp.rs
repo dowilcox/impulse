@@ -1036,6 +1036,204 @@ impl LspClient {
         }
     }
 
+    pub async fn formatting(
+        &self,
+        uri: &str,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) -> Result<Vec<lsp_types::TextEdit>, String> {
+        let result = self
+            .request(
+                "textDocument/formatting",
+                lsp_types::DocumentFormattingParams {
+                    text_document: lsp_types::TextDocumentIdentifier {
+                        uri: parse_uri(uri)?,
+                    },
+                    options: lsp_types::FormattingOptions {
+                        tab_size,
+                        insert_spaces,
+                        ..Default::default()
+                    },
+                    work_done_progress_params: Default::default(),
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else if let Ok(edits) = serde_json::from_value::<Vec<lsp_types::TextEdit>>(result) {
+            Ok(edits)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub async fn signature_help(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Option<lsp_types::SignatureHelp>, String> {
+        let result = self
+            .request(
+                "textDocument/signatureHelp",
+                lsp_types::SignatureHelpParams {
+                    text_document_position_params: lsp_types::TextDocumentPositionParams {
+                        text_document: lsp_types::TextDocumentIdentifier {
+                            uri: parse_uri(uri)?,
+                        },
+                        position: lsp_types::Position { line, character },
+                    },
+                    context: None,
+                    work_done_progress_params: Default::default(),
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(None)
+        } else {
+            serde_json::from_value(result).map_err(|e| e.to_string())
+        }
+    }
+
+    pub async fn references(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<lsp_types::Location>, String> {
+        let result = self
+            .request(
+                "textDocument/references",
+                lsp_types::ReferenceParams {
+                    text_document_position: lsp_types::TextDocumentPositionParams {
+                        text_document: lsp_types::TextDocumentIdentifier {
+                            uri: parse_uri(uri)?,
+                        },
+                        position: lsp_types::Position { line, character },
+                    },
+                    context: lsp_types::ReferenceContext {
+                        include_declaration: true,
+                    },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else if let Ok(locations) = serde_json::from_value::<Vec<lsp_types::Location>>(result) {
+            Ok(locations)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub async fn code_action(
+        &self,
+        uri: &str,
+        start_line: u32,
+        start_col: u32,
+        end_line: u32,
+        end_col: u32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+    ) -> Result<Vec<lsp_types::CodeActionOrCommand>, String> {
+        let result = self
+            .request(
+                "textDocument/codeAction",
+                lsp_types::CodeActionParams {
+                    text_document: lsp_types::TextDocumentIdentifier {
+                        uri: parse_uri(uri)?,
+                    },
+                    range: lsp_types::Range {
+                        start: lsp_types::Position {
+                            line: start_line,
+                            character: start_col,
+                        },
+                        end: lsp_types::Position {
+                            line: end_line,
+                            character: end_col,
+                        },
+                    },
+                    context: lsp_types::CodeActionContext {
+                        diagnostics,
+                        only: None,
+                        ..Default::default()
+                    },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else if let Ok(actions) =
+            serde_json::from_value::<Vec<lsp_types::CodeActionOrCommand>>(result)
+        {
+            Ok(actions)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub async fn rename(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<Option<lsp_types::WorkspaceEdit>, String> {
+        let result = self
+            .request(
+                "textDocument/rename",
+                lsp_types::RenameParams {
+                    text_document_position: lsp_types::TextDocumentPositionParams {
+                        text_document: lsp_types::TextDocumentIdentifier {
+                            uri: parse_uri(uri)?,
+                        },
+                        position: lsp_types::Position { line, character },
+                    },
+                    new_name: new_name.to_string(),
+                    work_done_progress_params: Default::default(),
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(None)
+        } else {
+            serde_json::from_value(result).map_err(|e| e.to_string())
+        }
+    }
+
+    pub async fn prepare_rename(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Option<lsp_types::PrepareRenameResponse>, String> {
+        let result = self
+            .request(
+                "textDocument/prepareRename",
+                lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier {
+                        uri: parse_uri(uri)?,
+                    },
+                    position: lsp_types::Position { line, character },
+                },
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(None)
+        } else {
+            serde_json::from_value(result).map_err(|e| e.to_string())
+        }
+    }
+
     pub async fn shutdown(&self) -> Result<(), String> {
         // Give the server 5 seconds to respond to shutdown
         let _ = tokio::time::timeout(
