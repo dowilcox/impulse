@@ -23,11 +23,16 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 const APP_ID: &str = "dev.impulse.Impulse";
+const APP_ID_DEVEL: &str = "dev.impulse.Impulse.Devel";
 
 enum StartupMode {
     RunGui,
     InstallLspServers,
     CheckLspServers,
+}
+
+fn is_devel_mode() -> bool {
+    std::env::args().any(|a| a == "--dev")
 }
 
 fn parse_startup_mode() -> StartupMode {
@@ -175,20 +180,30 @@ fn main() {
         StartupMode::RunGui => {}
     }
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    let devel = is_devel_mode();
+    let app_id = if devel { APP_ID_DEVEL } else { APP_ID };
+    let app = adw::Application::builder().application_id(app_id).build();
 
-    app.connect_startup(|_app| {
+    app.connect_startup(move |_app| {
         let style_manager = adw::StyleManager::default();
         style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
 
         // Install application icon into user icon theme and set as default
         install_app_icon();
         gtk4::Window::set_default_icon_name("dev.impulse.Impulse");
+
+        if devel {
+            log::info!("Running in development mode (app-id: {})", APP_ID_DEVEL);
+        }
     });
 
     app.connect_activate(move |app| {
         window::build_window(app);
     });
 
-    app.run();
+    // Filter out custom flags so GTK/GLib doesn't reject them.
+    let gtk_args: Vec<String> = std::env::args()
+        .filter(|a| !matches!(a.as_str(), "--dev" | "--install-lsp-servers" | "--check-lsp-servers"))
+        .collect();
+    app.run_with_args(&gtk_args);
 }
