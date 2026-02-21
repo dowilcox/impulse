@@ -38,6 +38,9 @@ pub fn get_handle_for_widget(widget: &gtk4::Widget) -> Option<Rc<MonacoEditorHan
     get_handle(name.as_str())
 }
 
+/// Maximum file size (in bytes) before the editor opens in read-only mode.
+const LARGE_FILE_THRESHOLD: u64 = 5 * 1024 * 1024; // 5 MB
+
 /// Create a Monaco editor for the given file.
 ///
 /// The `on_event` callback receives editor events (content changes,
@@ -51,12 +54,24 @@ pub fn create_editor<F>(
 where
     F: Fn(&MonacoEditorHandle, EditorEvent) + 'static,
 {
+    let large_file = std::fs::metadata(file_path)
+        .map(|m| m.len() > LARGE_FILE_THRESHOLD)
+        .unwrap_or(false);
     let contents = std::fs::read_to_string(file_path).unwrap_or_default();
     let language = guess_language(file_path);
 
     let (container, handle) = editor_webview::create_monaco_editor(
         file_path, &contents, &language, settings, theme, on_event,
     );
+
+    if large_file {
+        log::warn!(
+            "File {} exceeds {}MB, opening in read-only mode",
+            file_path,
+            LARGE_FILE_THRESHOLD / (1024 * 1024)
+        );
+        handle.set_read_only(true);
+    }
 
     register_handle(file_path, handle.clone());
     handle.setup_file_watcher();
@@ -219,7 +234,7 @@ fn guess_language(file_path: &str) -> String {
         "json" | "jsonc" => "json",
         "xml" | "svg" | "xsl" | "xslt" => "xml",
         "yaml" | "yml" => "yaml",
-        "toml" => "plaintext",
+        "toml" => "toml",
         "md" | "markdown" => "markdown",
         "sh" | "bash" | "zsh" => "shell",
         "fish" => "shell",

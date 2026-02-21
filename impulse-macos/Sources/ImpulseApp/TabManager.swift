@@ -279,6 +279,7 @@ final class TabManager: NSObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+            let largeFile = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap({ $0 }) ?? 0 > 5 * 1024 * 1024
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -293,6 +294,11 @@ final class TabManager: NSObject {
                 // Apply editor settings (font, tab size, etc.) from the current settings.
                 editorTab.applySettings(editorOptions)
                 editorTab.applyTheme(themeDef)
+
+                // Open large files in read-only mode to avoid WebView freezes.
+                if largeFile {
+                    editorTab.setReadOnly(true)
+                }
 
                 // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
                 if let line = goToLine, let column = goToColumn {
@@ -766,6 +772,7 @@ final class TabManager: NSObject {
         case "sh", "bash", "zsh", "fish": return "shell"
         case "json", "jsonc": return "json"
         case "yaml", "yml": return "yaml"
+        case "toml": return "toml"
         case "md", "markdown": return "markdown"
         case "html", "htm": return "html"
         case "css": return "css"

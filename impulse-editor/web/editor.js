@@ -27,6 +27,7 @@ const pendingDefinitions = new Map();
 let contentChangeTimer = null;
 let contentVersion = 0;
 let currentDiffDecorations = [];
+let pendingCommands = [];
 
 // ---------------------------------------------------------------------------
 // Monaco initialization
@@ -155,13 +156,17 @@ require(["vs/editor/editor.main"], function () {
     }, 300);
   });
 
-  // --- Cursor change listener ---
+  // --- Cursor change listener (debounced) ---
+  var cursorDebounceTimer = null;
   editor.onDidChangeCursorPosition(function (e) {
-    sendToHost({
-      type: "CursorMoved",
-      line: e.position.lineNumber,
-      column: e.position.column,
-    });
+    clearTimeout(cursorDebounceTimer);
+    cursorDebounceTimer = setTimeout(function () {
+      sendToHost({
+        type: "CursorMoved",
+        line: e.position.lineNumber,
+        column: e.position.column,
+      });
+    }, 50);
   });
 
   // --- Focus listeners ---
@@ -282,27 +287,18 @@ require(["vs/editor/editor.main"], function () {
     },
   });
 
+  // Flush any commands that arrived before Monaco was ready
+  pendingCommands.forEach(handleCommand);
+  pendingCommands = [];
+
   // Signal ready
   sendToHost({ type: "Ready" });
 });
 
 // ---------------------------------------------------------------------------
-// Command handler: called from Rust via evaluate_javascript
+// Command dispatch
 // ---------------------------------------------------------------------------
-window.impulseReceiveCommand = function (jsonString) {
-  let cmd;
-  try {
-    cmd = JSON.parse(jsonString);
-  } catch (e) {
-    console.error("Failed to parse command:", e);
-    return;
-  }
-
-  if (!editor) {
-    console.warn("Editor not ready, queuing command:", cmd.type);
-    return;
-  }
-
+function handleCommand(cmd) {
   try {
     switch (cmd.type) {
       case "OpenFile":
@@ -341,6 +337,26 @@ window.impulseReceiveCommand = function (jsonString) {
   } catch (e) {
     console.error("Command handler error for", cmd.type, ":", e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Command handler: called from Rust via evaluate_javascript
+// ---------------------------------------------------------------------------
+window.impulseReceiveCommand = function (jsonString) {
+  let cmd;
+  try {
+    cmd = JSON.parse(jsonString);
+  } catch (e) {
+    console.error("Failed to parse command:", e);
+    return;
+  }
+
+  if (!editor) {
+    pendingCommands.push(cmd);
+    return;
+  }
+
+  handleCommand(cmd);
 };
 
 // ---------------------------------------------------------------------------
@@ -350,6 +366,9 @@ window.impulseReceiveCommand = function (jsonString) {
 function handleOpenFile(cmd) {
   currentFilePath = cmd.file_path || "";
   const language = cmd.language || "plaintext";
+
+  // Clear diff decorations from previous file
+  currentDiffDecorations = editor.deltaDecorations(currentDiffDecorations, []);
 
   // Dispose old model if it exists
   if (currentModel) {

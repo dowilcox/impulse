@@ -34,6 +34,8 @@ pub struct MonacoEditorHandle {
     pub suppress_next_modify: Rc<Cell<bool>>,
     /// Position to navigate to once the editor becomes ready (for cross-file go-to-definition).
     pending_position: Cell<Option<(u32, u32)>>,
+    /// When set, the editor will be put into read-only mode once it becomes ready.
+    pending_read_only: Cell<bool>,
     /// Keeps the file watcher alive. Dropping this stops watching.
     _file_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Source ID for the file watcher's polling timer.
@@ -211,6 +213,14 @@ impl MonacoEditorHandle {
 
     pub fn apply_diff_decorations(&self, decorations: Vec<DiffDecoration>) {
         self.send_command(&EditorCommand::ApplyDiffDecorations { decorations });
+    }
+
+    pub fn set_read_only(&self, read_only: bool) {
+        if self.is_ready.get() {
+            self.send_command(&EditorCommand::SetReadOnly { read_only });
+        } else {
+            self.pending_read_only.set(read_only);
+        }
     }
 
     /// Resolve a pending definition request in Monaco. Monaco will show an
@@ -531,6 +541,7 @@ where
             version: Rc::new(Cell::new(0)),
             suppress_next_modify: Rc::new(Cell::new(false)),
             pending_position: Cell::new(None),
+            pending_read_only: Cell::new(false),
             indent_info: RefCell::new(indent_info),
             _file_watcher: Rc::new(RefCell::new(None)),
             _file_watcher_timer: RefCell::new(None),
@@ -624,6 +635,7 @@ where
         version: Rc::new(Cell::new(0)),
         suppress_next_modify: Rc::new(Cell::new(false)),
         pending_position: Cell::new(None),
+        pending_read_only: Cell::new(false),
         indent_info: RefCell::new(indent_info),
         _file_watcher: Rc::new(RefCell::new(None)),
         _file_watcher_timer: RefCell::new(None),
@@ -677,6 +689,13 @@ where
                     content: initial_content.clone(),
                     language: initial_language.clone(),
                 });
+
+                // Apply deferred read-only mode (e.g. for large files)
+                if handle_for_signal.pending_read_only.get() {
+                    handle_for_signal.send_command(&EditorCommand::SetReadOnly {
+                        read_only: true,
+                    });
+                }
             }
         }
 

@@ -300,7 +300,36 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             }
                                         }
                                     }
-                                    _ => {}
+                                    impulse_editor::protocol::EditorEvent::FocusChanged { focused } => {
+                                        // Auto-save on focus loss
+                                        if !focused && settings.borrow().auto_save && handle.is_modified.get() {
+                                            let content = handle.get_content();
+                                            if let Err(e) = std::fs::write(&path, &content) {
+                                                log::error!("Auto-save failed for {}: {}", path, e);
+                                            } else {
+                                                handle.is_modified.set(false);
+                                                let n = tab_view.n_pages();
+                                                for i in 0..n {
+                                                    let page = tab_view.nth_page(i);
+                                                    if page.child().widget_name().as_str() == path {
+                                                        let filename = std::path::Path::new(&path)
+                                                            .file_name()
+                                                            .and_then(|n| n.to_str())
+                                                            .unwrap_or(&path);
+                                                        page.set_title(filename);
+                                                        break;
+                                                    }
+                                                }
+                                                let uri = file_path_to_uri(std::path::Path::new(&path))
+                                                    .unwrap_or_else(|| format!("file://{}", path));
+                                                if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
+                                                    log::warn!("LSP request channel full, dropping request: {}", e);
+                                                }
+                                                send_diff_decorations(handle, &path);
+                                                sidebar_state.refresh();
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         },
