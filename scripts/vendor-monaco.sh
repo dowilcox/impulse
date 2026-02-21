@@ -4,7 +4,7 @@
 # Run once, or when upgrading Monaco version.
 set -euo pipefail
 
-MONACO_VERSION="0.52.2"
+MONACO_VERSION="0.55.1"
 # SHA256 hash of the npm tarball for integrity verification.
 # To update: download the tarball manually and run `sha256sum monaco.tgz`.
 MONACO_SHA256=""
