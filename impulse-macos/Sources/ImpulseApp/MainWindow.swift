@@ -153,7 +153,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     // MARK: - State
 
     private var settings: Settings
+
+    /// The shared Rust backend (impulse-ffi) instance.
+    ///
+    /// `internal` (not `private`) because it is accessed from the
+    /// `MainWindowController+LSP` extension in a separate file.
     let core: ImpulseCore
+
     private(set) var theme: Theme
 
     private let tabBarContainer: NSView = {
@@ -236,6 +242,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     private var notificationObservers: [Any] = []
 
     /// Dictionary mapping file paths to open editor tabs for O(1) lookup.
+    ///
+    /// `internal` (not `private`) because it is accessed from the
+    /// `MainWindowController+LSP` extension in a separate file.
     var editorTabsByPath: [String: EditorTab] = [:]
 
     // MARK: File Tree State

@@ -576,9 +576,15 @@ pub fn build_window(app: &adw::Application) {
         })
     };
 
+    let term_ctx = context::TerminalContext {
+        copy_on_select: copy_on_select_flag.clone(),
+        font_size: font_size.clone(),
+        shell_cache: shell_cache.clone(),
+    };
+
     keybinding_setup::setup_capture_phase_keys(
-        &ctx, &sidebar_btn,
-        &setup_terminal_signals, &copy_on_select_flag, &shell_cache,
+        &ctx, &term_ctx, &sidebar_btn,
+        &setup_terminal_signals,
         &create_tab, &reopen_tab,
     );
 
@@ -867,9 +873,8 @@ pub fn build_window(app: &adw::Application) {
     };
 
     keybinding_setup::setup_shortcut_controller(
-        &ctx, app, &sidebar_btn,
-        &setup_terminal_signals, &copy_on_select_flag, &shell_cache,
-        &font_size, &open_settings, &search_revealer, &find_entry,
+        &ctx, &term_ctx, app, &sidebar_btn,
+        &setup_terminal_signals, &open_settings, &search_revealer, &find_entry,
         &commands, &create_tab, &reopen_tab,
     );
 

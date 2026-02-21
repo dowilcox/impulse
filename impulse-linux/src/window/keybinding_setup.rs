@@ -2,7 +2,6 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use vte4::prelude::*;
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::editor;
@@ -25,10 +24,9 @@ use super::{
 /// Ctrl+1-9 (switch tab).
 pub(super) fn setup_capture_phase_keys(
     ctx: &super::context::WindowContext,
+    term_ctx: &super::context::TerminalContext,
     sidebar_btn: &gtk4::ToggleButton,
     setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
-    copy_on_select_flag: &Rc<Cell<bool>>,
-    shell_cache: &Rc<terminal::ShellSpawnCache>,
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
 ) {
@@ -62,7 +60,7 @@ pub(super) fn setup_capture_phase_keys(
                 let tab_view = tab_view.clone();
                 let setup_terminal_signals = setup_terminal_signals.clone();
                 let settings = settings.clone();
-                let copy_on_select_flag = copy_on_select_flag.clone();
+                let copy_on_select = term_ctx.copy_on_select.clone();
                 let icon_cache = sidebar_state.icon_cache.clone();
                 custom_kb_actions.push(CustomKbAction {
                     parsed,
@@ -74,7 +72,7 @@ pub(super) fn setup_capture_phase_keys(
                         let term = terminal::create_terminal(
                             &settings.borrow(),
                             theme,
-                            copy_on_select_flag.clone(),
+                            copy_on_select.clone(),
                         );
                         setup_terminal_signals(&term);
                         terminal::spawn_command(&term, &command, &args, cwd.as_deref());
@@ -114,8 +112,8 @@ pub(super) fn setup_capture_phase_keys(
 
     let split_setup = setup_terminal_signals.clone();
     let split_settings = settings.clone();
-    let split_copy_flag = copy_on_select_flag.clone();
-    let split_shell_cache = shell_cache.clone();
+    let split_copy_flag = term_ctx.copy_on_select.clone();
+    let split_shell_cache = term_ctx.shell_cache.clone();
 
     let capture_key_ctrl = gtk4::EventControllerKey::new();
     capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -262,12 +260,10 @@ pub(super) fn setup_capture_phase_keys(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn setup_shortcut_controller(
     ctx: &super::context::WindowContext,
+    term_ctx: &super::context::TerminalContext,
     app: &adw::Application,
     sidebar_btn: &gtk4::ToggleButton,
     setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
-    copy_on_select_flag: &Rc<Cell<bool>>,
-    shell_cache: &Rc<terminal::ShellSpawnCache>,
-    font_size: &Rc<Cell<i32>>,
     open_settings: &Rc<dyn Fn()>,
     search_revealer: &gtk4::Revealer,
     find_entry: &gtk4::SearchEntry,
@@ -432,7 +428,7 @@ pub(super) fn setup_shortcut_controller(
     // Ctrl+Equal / Ctrl+plus: Increase font size
     {
         let tab_view = tab_view.clone();
-        let font_size = font_size.clone();
+        let font_size = term_ctx.font_size.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_increase", &kb_overrides),
@@ -447,7 +443,7 @@ pub(super) fn setup_shortcut_controller(
     // Ctrl+minus: Decrease font size
     {
         let tab_view = tab_view.clone();
-        let font_size = font_size.clone();
+        let font_size = term_ctx.font_size.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_decrease", &kb_overrides),
@@ -464,7 +460,7 @@ pub(super) fn setup_shortcut_controller(
     // Ctrl+0: Reset font size to default
     {
         let tab_view = tab_view.clone();
-        let font_size = font_size.clone();
+        let font_size = term_ctx.font_size.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_reset", &kb_overrides),
@@ -608,8 +604,8 @@ pub(super) fn setup_shortcut_controller(
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
-        let copy_on_select_flag = copy_on_select_flag.clone();
-        let shell_cache = shell_cache.clone();
+        let copy_on_select_flag = term_ctx.copy_on_select.clone();
+        let shell_cache = term_ctx.shell_cache.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("split_horizontal", &kb_overrides),
@@ -640,8 +636,8 @@ pub(super) fn setup_shortcut_controller(
         let tab_view = tab_view.clone();
         let setup_terminal_signals = setup_terminal_signals.clone();
         let settings = settings.clone();
-        let copy_on_select_flag = copy_on_select_flag.clone();
-        let shell_cache = shell_cache.clone();
+        let copy_on_select_flag = term_ctx.copy_on_select.clone();
+        let shell_cache = term_ctx.shell_cache.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("split_vertical", &kb_overrides),
@@ -760,7 +756,7 @@ pub(super) fn setup_shortcut_controller(
             let tab_view = tab_view.clone();
             let setup_terminal_signals = setup_terminal_signals.clone();
             let settings = settings.clone();
-            let copy_on_select_flag = copy_on_select_flag.clone();
+            let copy_on_select_flag = term_ctx.copy_on_select.clone();
             let icon_cache = sidebar_state.icon_cache.clone();
             add_shortcut(&shortcut_controller, &accel, move || {
                 // Open a new terminal tab running the command in the active CWD

@@ -174,6 +174,155 @@ pub fn read_directory_with_git_status(
     Ok(entries)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn non_git_directory_returns_empty_map() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("file.txt"), "hello").unwrap();
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn clean_repo_returns_empty_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Create a file and commit it so the repo is clean
+        let file_path = dir.path().join("tracked.txt");
+        fs::write(&file_path, "content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn untracked_file_shows_question_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        fs::write(dir.path().join("new_file.txt"), "hello").unwrap();
+
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.get("new_file.txt").map(String::as_str), Some("?"));
+    }
+
+    #[test]
+    fn modified_tracked_file_shows_m() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Commit a file, then modify it
+        let file_path = dir.path().join("tracked.txt");
+        fs::write(&file_path, "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        fs::write(&file_path, "modified").unwrap();
+
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.get("tracked.txt").map(String::as_str), Some("M"));
+    }
+
+    #[test]
+    fn staged_new_file_shows_a() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Create an initial commit so HEAD exists
+        let init_path = dir.path().join(".gitkeep");
+        fs::write(&init_path, "").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(".gitkeep")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        // Stage a new file (INDEX_NEW)
+        let file_path = dir.path().join("added.txt");
+        fs::write(&file_path, "new content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("added.txt")).unwrap();
+        index.write().unwrap();
+
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.get("added.txt").map(String::as_str), Some("A"));
+    }
+
+    #[test]
+    fn deleted_file_shows_d() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Commit a file, then delete it
+        let file_path = dir.path().join("doomed.txt");
+        fs::write(&file_path, "content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("doomed.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        fs::remove_file(&file_path).unwrap();
+
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.get("doomed.txt").map(String::as_str), Some("D"));
+    }
+
+    #[test]
+    fn subdirectory_aggregation_marks_parent_as_modified() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Commit a file in a subdirectory, then modify it
+        let sub_dir = dir.path().join("subdir");
+        fs::create_dir(&sub_dir).unwrap();
+        let file_path = sub_dir.join("nested.txt");
+        fs::write(&file_path, "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("subdir/nested.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        fs::write(&file_path, "modified").unwrap();
+
+        // Query the parent directory — the subdirectory should show "M"
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.get("subdir").map(String::as_str), Some("M"));
+        // The nested file itself should NOT appear (it's not a direct child)
+        assert!(!result.contains_key("nested.txt"));
+    }
+}
+
 /// Get current git branch name for a path using libgit2.
 pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
     let repo = match crate::git::open_repo(std::path::Path::new(path)) {
