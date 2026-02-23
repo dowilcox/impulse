@@ -161,7 +161,7 @@ final class FileTreeView: NSView {
         let outline = PointerOutlineView()
         outline.headerView = nil
         outline.indentationPerLevel = 16
-        outline.rowHeight = 28
+        outline.rowHeight = 24
         outline.focusRingType = .none
         outline.allowsMultipleSelection = false
         outline.autoresizesOutlineColumn = true
@@ -195,6 +195,8 @@ final class FileTreeView: NSView {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
 
         addSubview(scroll)
         self.scrollView = scroll
@@ -209,6 +211,11 @@ final class FileTreeView: NSView {
         // Single-click action
         outline.target = self
         outline.action = #selector(outlineViewClicked(_:))
+    }
+
+    override func layout() {
+        super.layout()
+        outlineView.sizeLastColumnToFit()
     }
 
     // MARK: Public API
@@ -918,6 +925,7 @@ final class FileTreeView: NSView {
     }
 
     private func reloadVisibleRows() {
+        outlineView.sizeLastColumnToFit()
         let visibleRange = outlineView.rows(in: outlineView.visibleRect)
         guard visibleRange.length > 0 else {
             outlineView.reloadData()
@@ -1226,7 +1234,7 @@ extension FileTreeView: NSOutlineViewDelegate {
             node.loadChildren(showHidden: showHidden)
             didLoadChildren = true
             if !isBulkRestoring {
-                FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: rootPath)
+                FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: node.path)
             }
         }
 

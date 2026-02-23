@@ -11,8 +11,10 @@ final class SearchPanel: NSView {
 
     // MARK: Properties
 
-    private var searchField: NSSearchField!
+    private var searchField: NSTextField!
+    private var searchIcon: NSImageView!
     private var caseSensitiveButton: NSButton!
+    private var searchRowStack: NSStackView!
     private var resultsTableView: NSTableView!
     private var resultsScrollView: NSScrollView!
     private var statusLabel: NSTextField!
@@ -43,14 +45,28 @@ final class SearchPanel: NSView {
     }
 
     private func setup() {
-        // --- Search field ---
-        let field = NSSearchField()
+        // --- Search icon ---
+        let icon: NSImageView
+        if let img = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search") {
+            icon = NSImageView(image: img)
+        } else {
+            icon = NSImageView()
+        }
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.contentTintColor = .secondaryLabelColor
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        self.searchIcon = icon
+
+        // --- Search field (plain NSTextField for full theme control) ---
+        let field = NSTextField()
         field.placeholderString = "Search files and content..."
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.sendsWholeSearchString = false
-        field.sendsSearchStringImmediately = false
-        field.delegate = self
+        field.isBezeled = false
+        field.drawsBackground = false
         field.focusRingType = .none
+        field.font = NSFont.systemFont(ofSize: 13)
+        field.delegate = self
         self.searchField = field
 
         // --- Case-sensitive toggle (placed beside the search field) ---
@@ -67,12 +83,18 @@ final class SearchPanel: NSView {
         caseBtn.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
         self.caseSensitiveButton = caseBtn
 
-        // Search row: field + case toggle
-        let searchRow = NSStackView(views: [field, caseBtn])
+        // Search row: icon + field + case toggle, acts as themed container
+        let searchRow = NSStackView(views: [icon, field, caseBtn])
         searchRow.orientation = .horizontal
-        searchRow.spacing = 4
+        searchRow.spacing = 6
+        searchRow.alignment = .centerY
         searchRow.translatesAutoresizingMaskIntoConstraints = false
         searchRow.distribution = .fill
+        searchRow.wantsLayer = true
+        searchRow.layer?.cornerRadius = 6
+        searchRow.layer?.masksToBounds = true
+        searchRow.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 4)
+        self.searchRowStack = searchRow
 
         // --- Results table ---
         let table = NSTableView()
@@ -127,9 +149,9 @@ final class SearchPanel: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            field.heightAnchor.constraint(equalToConstant: 28),
+            searchRow.heightAnchor.constraint(equalToConstant: 28),
+            icon.widthAnchor.constraint(equalToConstant: 14),
             caseBtn.widthAnchor.constraint(equalToConstant: 28),
-            caseBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -154,8 +176,18 @@ final class SearchPanel: NSView {
         // Style the case-sensitive toggle
         caseSensitiveButton.contentTintColor = theme.fgDark
 
-        // Style the search field to match the theme
-        searchField.appearance = NSAppearance(named: .darkAqua)
+        // Style the search row container and field to match the theme
+        searchRowStack.layer?.backgroundColor = theme.bgHighlight.cgColor
+        searchIcon.contentTintColor = theme.comment
+        searchField.textColor = theme.fg
+        (searchField.currentEditor() as? NSTextView)?.insertionPointColor = theme.fg
+        searchField.placeholderAttributedString = NSAttributedString(
+            string: "Search files and content...",
+            attributes: [
+                .foregroundColor: theme.comment,
+                .font: searchField.font ?? NSFont.systemFont(ofSize: 13),
+            ]
+        )
     }
 
     // MARK: Actions
@@ -265,9 +297,9 @@ final class SearchPanel: NSView {
 
 }
 
-// MARK: - NSSearchFieldDelegate
+// MARK: - NSTextFieldDelegate
 
-extension SearchPanel: NSSearchFieldDelegate {
+extension SearchPanel: NSTextFieldDelegate {
 
     func controlTextDidChange(_ obj: Notification) {
         triggerSearch()

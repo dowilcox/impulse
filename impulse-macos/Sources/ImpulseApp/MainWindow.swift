@@ -437,18 +437,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         toggleHiddenButton.target = self
         toggleHiddenButton.action = #selector(toggleHiddenAction(_:))
+        toggleHiddenButton.contentTintColor = theme.fgDark
 
         collapseAllButton.target = self
         collapseAllButton.action = #selector(collapseAllAction(_:))
+        collapseAllButton.contentTintColor = theme.fgDark
 
         newFileButton.target = self
         newFileButton.action = #selector(newFileAction(_:))
+        newFileButton.contentTintColor = theme.fgDark
 
         newFolderButton.target = self
         newFolderButton.action = #selector(newFolderAction(_:))
+        newFolderButton.contentTintColor = theme.fgDark
 
         refreshButton.target = self
         refreshButton.action = #selector(refreshTreeAction(_:))
+        refreshButton.contentTintColor = theme.fgDark
 
 
         setupLayout()
@@ -571,7 +576,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             fileTreeView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             fileTreeView.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
 
-            searchPanel.topAnchor.constraint(equalTo: projectHeaderView.bottomAnchor, constant: 4),
+            searchPanel.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 6),
             searchPanel.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
             searchPanel.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             searchPanel.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
@@ -1040,6 +1045,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Sidebar toggle buttons
         filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
         searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
+
+        // Sidebar toolbar buttons
+        newFileButton.contentTintColor = newTheme.fgDark
+        newFolderButton.contentTintColor = newTheme.fgDark
+        toggleHiddenButton.contentTintColor = newTheme.fgDark
+        refreshButton.contentTintColor = newTheme.fgDark
+        collapseAllButton.contentTintColor = newTheme.fgDark
 
         // Sidebar views
         fileTreeView.applyTheme(newTheme)

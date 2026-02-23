@@ -94,17 +94,33 @@ final class FileTreeNode {
 
     // MARK: Git Status Enrichment
 
-    /// Run `git status --porcelain` relative to the repository root that contains
-    /// this tree and propagate status markers down to individual nodes.
-    ///
-    /// Call on the root-level array via the static variant below.
+    /// Fetch git status for the tree rooted at `rootPath` and propagate status
+    /// markers to all nodes. For each directory level, a separate FFI call
+    /// retrieves per-file status so that deeply nested changes are visible.
     static func refreshGitStatus(nodes: [FileTreeNode], rootPath: String) {
-        let statusMap = Self.fetchGitStatus(rootPath: rootPath)
-        // Always apply — an empty map correctly clears all statuses to .none.
-        Self.applyGitStatus(statusMap, to: nodes, basePath: rootPath)
+        refreshLevel(nodes: nodes, dirPath: rootPath)
     }
 
     // MARK: Private Helpers
+
+    /// Fetch git status for one directory and apply it to `nodes` (direct
+    /// children only), then recurse into any expanded subdirectories.
+    private static func refreshLevel(nodes: [FileTreeNode], dirPath: String) {
+        let statusMap = fetchGitStatus(rootPath: dirPath)
+
+        // Apply to this level's nodes only — no deep recursion that would
+        // overwrite status set by deeper refreshLevel calls.
+        for node in nodes {
+            node.gitStatus = statusMap[node.path] ?? .none
+        }
+
+        // Recurse into expanded subdirectories with their own FFI calls.
+        for node in nodes {
+            if node.isDirectory, node.isExpanded, let children = node.children {
+                refreshLevel(nodes: children, dirPath: node.path)
+            }
+        }
+    }
 
     /// Fetch git status for files in the directory at `rootPath` using the
     /// impulse-core FFI bridge (libgit2), avoiding the overhead and parsing
@@ -130,49 +146,6 @@ final class FileTreeNode {
             map[absPath] = status
         }
         return map
-    }
-
-    /// Walk the node tree and apply status from the map. Directories inherit the
-    /// "highest priority" status of their children when applicable.
-    private static func applyGitStatus(_ map: [String: GitStatus],
-                                       to nodes: [FileTreeNode],
-                                       basePath: String) {
-        // Pre-compute directory prefixes that contain changed files for O(1) lookup.
-        var directoriesWithChanges = Set<String>()
-        for key in map.keys {
-            var path = key
-            while let range = path.range(of: "/", options: .backwards) {
-                path = String(path[..<range.lowerBound])
-                let prefix = path + "/"
-                if directoriesWithChanges.contains(prefix) { break }
-                directoriesWithChanges.insert(prefix)
-            }
-        }
-        applyGitStatusRecursive(map, to: nodes, directoriesWithChanges: directoriesWithChanges)
-    }
-
-    private static func applyGitStatusRecursive(_ map: [String: GitStatus],
-                                                to nodes: [FileTreeNode],
-                                                directoriesWithChanges: Set<String>) {
-        for node in nodes {
-            if let directStatus = map[node.path] {
-                node.gitStatus = directStatus
-            } else if node.isDirectory {
-                // O(1) set lookup instead of O(M) linear scan.
-                let prefix = node.path.hasSuffix("/") ? node.path : node.path + "/"
-                if directoriesWithChanges.contains(prefix) {
-                    node.gitStatus = .modified
-                } else {
-                    node.gitStatus = .none
-                }
-            } else {
-                node.gitStatus = .none
-            }
-
-            if let children = node.children {
-                applyGitStatusRecursive(map, to: children, directoriesWithChanges: directoriesWithChanges)
-            }
-        }
     }
 
 }
