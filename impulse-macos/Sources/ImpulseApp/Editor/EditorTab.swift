@@ -42,6 +42,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Monaco language identifier for the current file.
     private(set) var language: String = "plaintext"
 
+    /// LSP language identifier (e.g. "typescriptreact" for .tsx, "javascriptreact" for .jsx).
+    /// Falls back to `language` when not explicitly set.
+    private(set) var lspLanguage: String = "plaintext"
+
     /// Whether the content has been modified since the last save.
     private(set) var isModified: Bool = false
 
@@ -461,10 +465,22 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         self.filePath = path
         self.content = content
         self.language = language
+        self.lspLanguage = Self.lspLanguageForPath(path, monacoLanguage: language)
         self.isModified = false
 
         sendCommand(.openFile(filePath: path, content: content, language: language))
         startFileWatching()
+    }
+
+    /// Returns the LSP language ID for a file path, which may differ from the Monaco language.
+    /// For example, `.tsx` files use "typescript" in Monaco but "typescriptreact" for LSP.
+    private static func lspLanguageForPath(_ path: String, monacoLanguage: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "tsx": return "typescriptreact"
+        case "jsx": return "javascriptreact"
+        default: return monacoLanguage
+        }
     }
 
     /// Save the current content to the file at `filePath`.

@@ -85,7 +85,7 @@ extension MainWindowController {
         lspOpenFiles.insert(uri)
         lspDocVersions[uri] = 1
 
-        let language = editorTab.language
+        let language = editorTab.lspLanguage
         let content = editorTab.content
 
         lspQueue.async { [weak self] in
@@ -107,7 +107,7 @@ extension MainWindowController {
         let version = (lspDocVersions[uri] ?? 1) + 1
         lspDocVersions[uri] = version
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let content = editor.content
 
         lspQueue.async { [weak self] in
@@ -127,7 +127,7 @@ extension MainWindowController {
         lspOpenFiles.remove(uri)
         lspDocVersions.removeValue(forKey: uri)
 
-        let language = editor.language
+        let language = editor.lspLanguage
         lspQueue.async { [weak self] in
             guard let self else { return }
             let params = """
@@ -143,7 +143,7 @@ extension MainWindowController {
         let uri = filePathToUri(path)
         guard lspOpenFiles.contains(uri) else { return }
 
-        let language = editor.language
+        let language = editor.lspLanguage
         lspQueue.async { [weak self] in
             guard let self else { return }
             let params = """
@@ -162,7 +162,7 @@ extension MainWindowController {
         // Cancel any previous in-flight completion request for this URI.
         completionWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
@@ -195,7 +195,7 @@ extension MainWindowController {
         // Cancel any previous in-flight hover request for this URI.
         hoverWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
@@ -230,7 +230,7 @@ extension MainWindowController {
             return
         }
         let uri = filePathToUri(path)
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
@@ -268,7 +268,7 @@ extension MainWindowController {
 
         formattingWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"options":{"tabSize":\(tabSize),"insertSpaces":\(insertSpaces)}}
         """
@@ -299,7 +299,7 @@ extension MainWindowController {
 
         signatureHelpWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
@@ -330,7 +330,7 @@ extension MainWindowController {
 
         referencesWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"context":{"includeDeclaration":true}}
         """
@@ -361,10 +361,10 @@ extension MainWindowController {
 
         codeActionWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
 
         // Build diagnostics JSON array from the Monaco diagnostics passed through.
-        // Monaco diagnostics are 1-based; LSP expects 0-based, so subtract 1.
+        // Values are already 0-based (JS converts from Monaco 1-based before sending).
         var diagJsonParts: [String] = []
         for d in diagnostics {
             guard let startL = (d["startLine"] as? NSNumber)?.uint32Value,
@@ -384,7 +384,7 @@ extension MainWindowController {
             }
             let source = d["source"] as? String
             var diagJson = """
-            {"range":{"start":{"line":\(startL - 1),"character":\(startC - 1)},"end":{"line":\(endL - 1),"character":\(endC - 1)}},"severity":\(lspSeverity),"message":"\(jsonEscape(message))"
+            {"range":{"start":{"line":\(startL),"character":\(startC)},"end":{"line":\(endL),"character":\(endC)}},"severity":\(lspSeverity),"message":"\(jsonEscape(message))"
             """
             if let src = source {
                 diagJson += ",\"source\":\"\(jsonEscape(src))\""
@@ -424,7 +424,7 @@ extension MainWindowController {
 
         renameWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"newName":"\(jsonEscape(newName))"}
         """
@@ -454,7 +454,7 @@ extension MainWindowController {
 
         prepareRenameWorkItems[uri]?.cancel()
 
-        let language = editor.language
+        let language = editor.lspLanguage
         let params = """
         {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
         """
