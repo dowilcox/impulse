@@ -741,7 +741,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func newFileAction(_ sender: Any?) {
-        let dirPath = fileTreeRootPath
+        let dirPath = fileTreeView.selectedDirectory
         guard !dirPath.isEmpty else { return }
         fileTreeView.showNameInputAlert(
             title: "New File",
@@ -763,7 +763,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func newFolderAction(_ sender: Any?) {
-        let dirPath = fileTreeRootPath
+        let dirPath = fileTreeView.selectedDirectory
         guard !dirPath.isEmpty else { return }
         fileTreeView.showNameInputAlert(
             title: "New Folder",

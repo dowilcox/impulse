@@ -220,6 +220,17 @@ final class FileTreeView: NSView {
 
     // MARK: Public API
 
+    /// The best target directory for new file/folder creation: the selected
+    /// node's directory (or its parent if a file is selected), falling back
+    /// to the project root.
+    var selectedDirectory: String {
+        let row = outlineView.selectedRow
+        if row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode {
+            return targetDirectory(for: node)
+        }
+        return rootPath
+    }
+
     /// Set (or change) the root project directory. Rebuilds the entire tree,
     /// fetches git status, reloads the outline view, starts watching for
     /// filesystem changes, and restores previously expanded folders.

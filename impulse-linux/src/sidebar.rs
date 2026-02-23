@@ -978,14 +978,14 @@ pub fn build_sidebar(
         _last_git_status_hash: Rc::new(Cell::new(0)),
     };
 
-    // Wire up New File toolbar button (creates in root directory)
+    // Wire up New File toolbar button (creates in selected/root directory)
     {
         let tree_nodes = state.tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let current_path = state.current_path.clone();
         let icon_cache = icon_cache.clone();
         new_file_btn.connect_clicked(move |btn| {
-            let dir_path = current_path.borrow().clone();
+            let dir_path = selected_directory(&file_tree_list, &tree_nodes, &current_path);
             if dir_path.is_empty() {
                 return;
             }
@@ -1067,14 +1067,14 @@ pub fn build_sidebar(
         });
     }
 
-    // Wire up New Folder toolbar button (creates in root directory)
+    // Wire up New Folder toolbar button (creates in selected/root directory)
     {
         let tree_nodes = state.tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let current_path = state.current_path.clone();
         let icon_cache = icon_cache.clone();
         new_folder_btn.connect_clicked(move |btn| {
-            let dir_path = current_path.borrow().clone();
+            let dir_path = selected_directory(&file_tree_list, &tree_nodes, &current_path);
             if dir_path.is_empty() {
                 return;
             }
@@ -1749,6 +1749,31 @@ impl SidebarState {
 }
 
 /// Insert a newly created file or folder into the tree at the correct position.
+/// Return the best target directory for new file/folder creation: the selected
+/// node's directory (or its parent if a file is selected), falling back to
+/// the project root.
+fn selected_directory(
+    list: &gtk4::ListBox,
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    current_path: &Rc<RefCell<String>>,
+) -> String {
+    if let Some(row) = list.selected_row() {
+        let index = row.index() as usize;
+        let nodes = tree_nodes.borrow();
+        if index < nodes.len() {
+            let node = &nodes[index];
+            if node.entry.is_dir {
+                return node.entry.path.clone();
+            }
+            // File selected — use its parent directory
+            if let Some(parent) = Path::new(&node.entry.path).parent() {
+                return parent.to_string_lossy().to_string();
+            }
+        }
+    }
+    current_path.borrow().clone()
+}
+
 /// Handles both subdirectory insertion (when parent node is found and expanded)
 /// and root-level insertion (when dir_path equals the sidebar's root directory).
 #[allow(clippy::too_many_arguments)]
