@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::glib;
@@ -39,7 +39,12 @@ fn rebuild_overrides_group(
     tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
     settings: &Rc<RefCell<Settings>>,
     on_changed: &Rc<dyn Fn(&Settings)>,
+    generation: &Rc<Cell<u64>>,
 ) {
+    // Increment generation so stale closures from previous rebuilds become no-ops
+    generation.set(generation.get() + 1);
+    let gen = generation.get();
+
     for row in tracked.borrow().iter() {
         group.remove(row);
     }
@@ -70,14 +75,18 @@ fn rebuild_overrides_group(
             let tracked = Rc::clone(tracked);
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             delete_btn.connect_clicked(move |_| {
                 {
                     let mut s = settings.borrow_mut();
+                    if i >= s.file_type_overrides.len() {
+                        return;
+                    }
                     s.file_type_overrides.remove(i);
                     settings::save(&s);
                     on_changed(&s);
                 }
-                rebuild_overrides_group(&group, &tracked, &settings, &on_changed);
+                rebuild_overrides_group(&group, &tracked, &settings, &on_changed, &generation);
             });
         }
         expander.add_suffix(&delete_btn);
@@ -89,8 +98,15 @@ fn rebuild_overrides_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             pattern_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.file_type_overrides.len() {
+                    return;
+                }
                 s.file_type_overrides[i].pattern = row.text().to_string();
                 expander.set_title(&row.text());
                 expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
@@ -108,9 +124,16 @@ fn rebuild_overrides_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             tw_row.connect_value_notify(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let val = row.value() as u32;
                 let mut s = settings.borrow_mut();
+                if i >= s.file_type_overrides.len() {
+                    return;
+                }
                 s.file_type_overrides[i].tab_width = if val == 0 { None } else { Some(val) };
                 expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
                 settings::save(&s);
@@ -126,8 +149,15 @@ fn rebuild_overrides_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             spaces_row.connect_active_notify(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.file_type_overrides.len() {
+                    return;
+                }
                 s.file_type_overrides[i].use_spaces = Some(row.is_active());
                 expander.set_subtitle(&override_summary(&s.file_type_overrides[i]));
                 settings::save(&s);
@@ -149,6 +179,7 @@ fn rebuild_overrides_group(
         let tracked = Rc::clone(tracked);
         let settings = Rc::clone(settings);
         let on_changed = Rc::clone(on_changed);
+        let generation = Rc::clone(generation);
         add_row.connect_activated(move |_| {
             {
                 let mut s = settings.borrow_mut();
@@ -161,7 +192,7 @@ fn rebuild_overrides_group(
                 settings::save(&s);
                 on_changed(&s);
             }
-            rebuild_overrides_group(&group, &tracked, &settings, &on_changed);
+            rebuild_overrides_group(&group, &tracked, &settings, &on_changed, &generation);
         });
     }
     group.add(&add_row);
@@ -173,7 +204,12 @@ fn rebuild_commands_group(
     tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
     settings: &Rc<RefCell<Settings>>,
     on_changed: &Rc<dyn Fn(&Settings)>,
+    generation: &Rc<Cell<u64>>,
 ) {
+    // Increment generation so stale closures from previous rebuilds become no-ops
+    generation.set(generation.get() + 1);
+    let gen = generation.get();
+
     for row in tracked.borrow().iter() {
         group.remove(row);
     }
@@ -206,14 +242,18 @@ fn rebuild_commands_group(
             let tracked = Rc::clone(tracked);
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             delete_btn.connect_clicked(move |_| {
                 {
                     let mut s = settings.borrow_mut();
+                    if i >= s.commands_on_save.len() {
+                        return;
+                    }
                     s.commands_on_save.remove(i);
                     settings::save(&s);
                     on_changed(&s);
                 }
-                rebuild_commands_group(&group, &tracked, &settings, &on_changed);
+                rebuild_commands_group(&group, &tracked, &settings, &on_changed, &generation);
             });
         }
         expander.add_suffix(&delete_btn);
@@ -225,8 +265,15 @@ fn rebuild_commands_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             name_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.commands_on_save.len() {
+                    return;
+                }
                 s.commands_on_save[i].name = row.text().to_string();
                 expander.set_title(&row.text());
                 expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
@@ -243,8 +290,15 @@ fn rebuild_commands_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             cmd_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.commands_on_save.len() {
+                    return;
+                }
                 s.commands_on_save[i].command = row.text().to_string();
                 expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
                 settings::save(&s);
@@ -259,8 +313,15 @@ fn rebuild_commands_group(
         {
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             args_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.commands_on_save.len() {
+                    return;
+                }
                 s.commands_on_save[i].args = row
                     .text()
                     .to_string()
@@ -280,8 +341,15 @@ fn rebuild_commands_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             pattern_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.commands_on_save.len() {
+                    return;
+                }
                 s.commands_on_save[i].file_pattern = row.text().to_string();
                 expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
                 settings::save(&s);
@@ -298,8 +366,15 @@ fn rebuild_commands_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             reload_row.connect_active_notify(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.commands_on_save.len() {
+                    return;
+                }
                 s.commands_on_save[i].reload_file = row.is_active();
                 expander.set_subtitle(&command_summary(&s.commands_on_save[i]));
                 settings::save(&s);
@@ -321,6 +396,7 @@ fn rebuild_commands_group(
         let tracked = Rc::clone(tracked);
         let settings = Rc::clone(settings);
         let on_changed = Rc::clone(on_changed);
+        let generation = Rc::clone(generation);
         add_row.connect_activated(move |_| {
             {
                 let mut s = settings.borrow_mut();
@@ -334,7 +410,7 @@ fn rebuild_commands_group(
                 settings::save(&s);
                 on_changed(&s);
             }
-            rebuild_commands_group(&group, &tracked, &settings, &on_changed);
+            rebuild_commands_group(&group, &tracked, &settings, &on_changed, &generation);
         });
     }
     group.add(&add_row);
@@ -1106,14 +1182,28 @@ pub fn show_settings_window(
     overrides_group.set_title("File Type Overrides");
     overrides_group.set_description(Some("Per-file-type indentation settings"));
     let tracked_overrides: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
-    rebuild_overrides_group(&overrides_group, &tracked_overrides, settings, &on_changed);
+    let overrides_generation: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    rebuild_overrides_group(
+        &overrides_group,
+        &tracked_overrides,
+        settings,
+        &on_changed,
+        &overrides_generation,
+    );
     automation_page.add(&overrides_group);
 
     let commands_group = adw::PreferencesGroup::new();
     commands_group.set_title("Commands on Save");
     commands_group.set_description(Some("Shell commands that run after saving matching files"));
     let tracked_commands: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
-    rebuild_commands_group(&commands_group, &tracked_commands, settings, &on_changed);
+    let commands_generation: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    rebuild_commands_group(
+        &commands_group,
+        &tracked_commands,
+        settings,
+        &on_changed,
+        &commands_generation,
+    );
     automation_page.add(&commands_group);
 
     preferences_window.add(&automation_page);
@@ -1194,7 +1284,14 @@ pub fn show_settings_window(
     custom_kb_group.set_title("Custom Keybindings");
     custom_kb_group.set_description(Some("Shortcuts that run shell commands"));
     let tracked_custom_kb: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
-    rebuild_custom_keybindings_group(&custom_kb_group, &tracked_custom_kb, settings, &on_changed);
+    let custom_kb_generation: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    rebuild_custom_keybindings_group(
+        &custom_kb_group,
+        &tracked_custom_kb,
+        settings,
+        &on_changed,
+        &custom_kb_generation,
+    );
     keybindings_page.add(&custom_kb_group);
 
     preferences_window.add(&keybindings_page);
@@ -1551,7 +1648,12 @@ fn rebuild_custom_keybindings_group(
     tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
     settings: &Rc<RefCell<Settings>>,
     on_changed: &Rc<dyn Fn(&Settings)>,
+    generation: &Rc<Cell<u64>>,
 ) {
+    // Increment generation so stale closures from previous rebuilds become no-ops
+    generation.set(generation.get() + 1);
+    let gen = generation.get();
+
     for row in tracked.borrow().iter() {
         group.remove(row);
     }
@@ -1582,14 +1684,24 @@ fn rebuild_custom_keybindings_group(
             let tracked = Rc::clone(tracked);
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             delete_btn.connect_clicked(move |_| {
                 {
                     let mut s = settings.borrow_mut();
+                    if i >= s.custom_keybindings.len() {
+                        return;
+                    }
                     s.custom_keybindings.remove(i);
                     settings::save(&s);
                     on_changed(&s);
                 }
-                rebuild_custom_keybindings_group(&group, &tracked, &settings, &on_changed);
+                rebuild_custom_keybindings_group(
+                    &group,
+                    &tracked,
+                    &settings,
+                    &on_changed,
+                    &generation,
+                );
             });
         }
         expander.add_suffix(&delete_btn);
@@ -1601,8 +1713,15 @@ fn rebuild_custom_keybindings_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             name_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.custom_keybindings.len() {
+                    return;
+                }
                 s.custom_keybindings[i].name = row.text().to_string();
                 expander.set_title(&row.text());
                 settings::save(&s);
@@ -1618,8 +1737,15 @@ fn rebuild_custom_keybindings_group(
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
             let expander = expander.clone();
+            let generation = Rc::clone(generation);
             key_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.custom_keybindings.len() {
+                    return;
+                }
                 s.custom_keybindings[i].key = row.text().to_string();
                 expander.set_subtitle(&row.text());
                 settings::save(&s);
@@ -1634,8 +1760,15 @@ fn rebuild_custom_keybindings_group(
         {
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             cmd_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.custom_keybindings.len() {
+                    return;
+                }
                 s.custom_keybindings[i].command = row.text().to_string();
                 settings::save(&s);
                 on_changed(&s);
@@ -1649,8 +1782,15 @@ fn rebuild_custom_keybindings_group(
         {
             let settings = Rc::clone(settings);
             let on_changed = Rc::clone(on_changed);
+            let generation = Rc::clone(generation);
             args_row.connect_changed(move |row| {
+                if generation.get() != gen {
+                    return;
+                }
                 let mut s = settings.borrow_mut();
+                if i >= s.custom_keybindings.len() {
+                    return;
+                }
                 s.custom_keybindings[i].args = row
                     .text()
                     .to_string()
@@ -1676,6 +1816,7 @@ fn rebuild_custom_keybindings_group(
         let tracked = Rc::clone(tracked);
         let settings = Rc::clone(settings);
         let on_changed = Rc::clone(on_changed);
+        let generation = Rc::clone(generation);
         add_row.connect_activated(move |_| {
             {
                 let mut s = settings.borrow_mut();
@@ -1688,7 +1829,13 @@ fn rebuild_custom_keybindings_group(
                 settings::save(&s);
                 on_changed(&s);
             }
-            rebuild_custom_keybindings_group(&group, &tracked, &settings, &on_changed);
+            rebuild_custom_keybindings_group(
+                &group,
+                &tracked,
+                &settings,
+                &on_changed,
+                &generation,
+            );
         });
     }
     group.add(&add_row);

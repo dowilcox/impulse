@@ -46,6 +46,8 @@ final class SettingsWindowController: NSWindowController {
     static func show(settings: Settings) {
         if let existing = shared {
             existing.settings = settings
+            existing.paneCache.removeAll()
+            existing.switchToPane(existing.currentPaneId, animated: false)
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }

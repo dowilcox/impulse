@@ -268,10 +268,11 @@ pub fn get_line_blame(file_path: &str, line: u32) -> Result<BlameInfo, String> {
     let sig = hunk.final_signature();
     let author = sig.name().unwrap_or("Unknown").to_string();
 
-    // Format the time
+    // Format the time, applying the timezone offset from git
     let time = sig.when();
     let timestamp = time.seconds();
-    let date = format_timestamp(timestamp);
+    let tz_offset_minutes = time.offset_minutes();
+    let date = format_timestamp(timestamp, tz_offset_minutes);
 
     let commit_hash = format!("{}", hunk.final_commit_id());
     let commit_hash_short = commit_hash[..7.min(commit_hash.len())].to_string();
@@ -291,10 +292,19 @@ pub fn get_line_blame(file_path: &str, line: u32) -> Result<BlameInfo, String> {
 }
 
 /// Format a unix timestamp into a human-readable date string.
-fn format_timestamp(timestamp: i64) -> String {
+/// `tz_offset_minutes` is the timezone offset in minutes (e.g. -300 for EST, +60 for CET).
+fn format_timestamp(timestamp: i64, tz_offset_minutes: i32) -> String {
+    // Apply timezone offset to get local time
+    let local_timestamp = timestamp + (tz_offset_minutes as i64) * 60;
+
+    // Handle negative timestamps (pre-epoch) gracefully
+    if local_timestamp < 0 {
+        return "1970-01-01".to_string();
+    }
+
     let secs_per_day = 86400i64;
 
-    let days_since_epoch = timestamp / secs_per_day;
+    let days_since_epoch = local_timestamp / secs_per_day;
 
     // Calculate year, month, day from days since epoch (1970-01-01)
     let mut year = 1970i32;
@@ -346,25 +356,40 @@ mod tests {
 
     #[test]
     fn format_timestamp_epoch() {
-        assert_eq!(format_timestamp(0), "1970-01-01");
+        assert_eq!(format_timestamp(0, 0), "1970-01-01");
     }
 
     #[test]
     fn format_timestamp_known_date() {
         // 2024-01-01 00:00:00 UTC = 1704067200
-        assert_eq!(format_timestamp(1704067200), "2024-01-01");
+        assert_eq!(format_timestamp(1704067200, 0), "2024-01-01");
     }
 
     #[test]
     fn format_timestamp_leap_day() {
         // 2024-02-29 00:00:00 UTC = 1709164800
-        assert_eq!(format_timestamp(1709164800), "2024-02-29");
+        assert_eq!(format_timestamp(1709164800, 0), "2024-02-29");
     }
 
     #[test]
     fn format_timestamp_end_of_year() {
         // 2023-12-31 00:00:00 UTC = 1703980800
-        assert_eq!(format_timestamp(1703980800), "2023-12-31");
+        assert_eq!(format_timestamp(1703980800, 0), "2023-12-31");
+    }
+
+    #[test]
+    fn format_timestamp_negative_returns_fallback() {
+        // Pre-epoch timestamp should return a reasonable fallback
+        assert_eq!(format_timestamp(-86400, 0), "1970-01-01");
+    }
+
+    #[test]
+    fn format_timestamp_with_timezone_offset() {
+        // 2024-01-01 00:00:00 UTC = 1704067200
+        // With UTC+5:30 (330 minutes), still 2024-01-01
+        assert_eq!(format_timestamp(1704067200, 330), "2024-01-01");
+        // 2023-12-31 23:00:00 UTC with UTC+2 => 2024-01-01 01:00 local
+        assert_eq!(format_timestamp(1704067200 - 3600, 120), "2024-01-01");
     }
 
     #[test]

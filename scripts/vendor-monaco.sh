@@ -15,22 +15,33 @@ VENDOR_DIR="$PROJECT_ROOT/impulse-editor/vendor/monaco"
 echo "Vendoring Monaco Editor v${MONACO_VERSION}..."
 
 # Work in a temp directory
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Download the npm tarball
 echo "Downloading monaco-editor@${MONACO_VERSION}..."
 curl -sL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" \
-    -o "$TMPDIR/monaco.tgz"
+    -o "$WORK_DIR/monaco.tgz"
 
 # Verify download integrity
 if [ -n "$MONACO_SHA256" ]; then
     echo "Verifying download integrity..."
-    echo "${MONACO_SHA256}  ${TMPDIR}/monaco.tgz" | sha256sum -c - || {
-        echo "ERROR: Monaco download checksum verification failed!"
-        echo "The downloaded file may be corrupted or tampered with."
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo "${MONACO_SHA256}  ${WORK_DIR}/monaco.tgz" | sha256sum -c - || {
+            echo "ERROR: Monaco download checksum verification failed!"
+            echo "The downloaded file may be corrupted or tampered with."
+            exit 1
+        }
+    elif command -v shasum >/dev/null 2>&1; then
+        echo "${MONACO_SHA256}  ${WORK_DIR}/monaco.tgz" | shasum -a 256 -c - || {
+            echo "ERROR: Monaco download checksum verification failed!"
+            echo "The downloaded file may be corrupted or tampered with."
+            exit 1
+        }
+    else
+        echo "ERROR: Neither sha256sum nor shasum found. Cannot verify checksum."
         exit 1
-    }
+    fi
 else
     echo "WARNING: No SHA256 checksum configured. Skipping integrity verification."
     echo "To enable, set MONACO_SHA256 at the top of this script."
@@ -38,7 +49,7 @@ fi
 
 # Extract tarball
 echo "Extracting..."
-tar -xzf "$TMPDIR/monaco.tgz" -C "$TMPDIR"
+tar -xzf "$WORK_DIR/monaco.tgz" -C "$WORK_DIR"
 
 # Clean existing vendor dir and recreate
 rm -rf "$VENDOR_DIR"
@@ -46,7 +57,7 @@ mkdir -p "$VENDOR_DIR"
 
 # Copy min/vs/ tree
 echo "Copying min/vs/ tree..."
-cp -r "$TMPDIR/package/min/vs" "$VENDOR_DIR/vs"
+cp -r "$WORK_DIR/package/min/vs" "$VENDOR_DIR/vs"
 
 # Remove heavy language workers — we use external LSP servers for
 # language intelligence, so these bundled workers are dead weight.

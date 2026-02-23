@@ -541,13 +541,13 @@ extension MainWindowController {
               let contents = response["contents"] else { return [] }
 
         if let markup = contents as? [String: Any], let value = markup["value"] as? String {
-            return [MonacoHoverContent(value: value, isTrusted: false)]
+            return [MonacoHoverContent(value: value)]
         } else if let str = contents as? String {
-            return [MonacoHoverContent(value: str, isTrusted: false)]
+            return [MonacoHoverContent(value: str)]
         } else if let array = contents as? [[String: Any]] {
             return array.compactMap { item in
                 guard let value = item["value"] as? String else { return nil }
-                return MonacoHoverContent(value: value, isTrusted: false)
+                return MonacoHoverContent(value: value)
             }
         }
         return []

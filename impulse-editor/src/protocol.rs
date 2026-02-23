@@ -158,7 +158,7 @@ pub enum EditorEvent {
 // Supporting Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EditorOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
@@ -234,8 +234,6 @@ pub struct MonacoCompletionItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonacoHoverContent {
     pub value: String,
-    #[serde(default)]
-    pub is_trusted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,12 +306,19 @@ pub struct MonacoWorkspaceTextEdit {
 // Diff decorations
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffDecoration {
     /// 1-based line number
     pub line: u32,
-    /// "added", "modified", or "deleted"
-    pub status: String,
+    pub status: DiffStatus,
 }
 
 // ---------------------------------------------------------------------------
@@ -543,26 +548,7 @@ mod tests {
     fn editor_options_skip_none_fields() {
         let opts = EditorOptions {
             font_size: Some(14),
-            font_family: None,
-            tab_size: None,
-            insert_spaces: None,
-            word_wrap: None,
-            minimap_enabled: None,
-            line_numbers: None,
-            render_whitespace: None,
-            render_line_highlight: None,
-            rulers: None,
-            sticky_scroll: None,
-            bracket_pair_colorization: None,
-            indent_guides: None,
-            font_ligatures: None,
-            folding: None,
-            scroll_beyond_last_line: None,
-            smooth_scrolling: None,
-            cursor_style: None,
-            cursor_blinking: None,
-            line_height: None,
-            auto_closing_brackets: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&opts).unwrap();
         assert!(json.contains("\"font_size\":14"));
@@ -595,12 +581,13 @@ mod tests {
     fn diff_decoration_roundtrip() {
         let dec = DiffDecoration {
             line: 42,
-            status: "added".to_string(),
+            status: DiffStatus::Added,
         };
         let json = serde_json::to_string(&dec).unwrap();
+        assert!(json.contains("\"status\":\"added\""));
         let parsed: DiffDecoration = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.line, 42);
-        assert_eq!(parsed.status, "added");
+        assert_eq!(parsed.status, DiffStatus::Added);
     }
 
     #[test]
@@ -732,7 +719,6 @@ mod tests {
             request_id: 42,
             contents: vec![MonacoHoverContent {
                 value: "```rust\nfn main()\n```".to_string(),
-                is_trusted: false,
             }],
         };
         let json = serde_json::to_string(&cmd).unwrap();
@@ -745,7 +731,6 @@ mod tests {
                 assert_eq!(request_id, 42);
                 assert_eq!(contents.len(), 1);
                 assert_eq!(contents[0].value, "```rust\nfn main()\n```");
-                assert!(!contents[0].is_trusted);
             }
             _ => panic!("Wrong variant"),
         }
@@ -757,15 +742,15 @@ mod tests {
             decorations: vec![
                 DiffDecoration {
                     line: 1,
-                    status: "added".to_string(),
+                    status: DiffStatus::Added,
                 },
                 DiffDecoration {
                     line: 5,
-                    status: "modified".to_string(),
+                    status: DiffStatus::Modified,
                 },
                 DiffDecoration {
                     line: 10,
-                    status: "deleted".to_string(),
+                    status: DiffStatus::Deleted,
                 },
             ],
         };
@@ -775,11 +760,11 @@ mod tests {
             EditorCommand::ApplyDiffDecorations { decorations } => {
                 assert_eq!(decorations.len(), 3);
                 assert_eq!(decorations[0].line, 1);
-                assert_eq!(decorations[0].status, "added");
+                assert_eq!(decorations[0].status, DiffStatus::Added);
                 assert_eq!(decorations[1].line, 5);
-                assert_eq!(decorations[1].status, "modified");
+                assert_eq!(decorations[1].status, DiffStatus::Modified);
                 assert_eq!(decorations[2].line, 10);
-                assert_eq!(decorations[2].status, "deleted");
+                assert_eq!(decorations[2].status, DiffStatus::Deleted);
             }
             _ => panic!("Wrong variant"),
         }

@@ -60,7 +60,10 @@ window.MonacoEnvironment = {
       ],
       { type: "application/javascript" },
     );
-    return new Worker(URL.createObjectURL(blob));
+    var blobUrl = URL.createObjectURL(blob);
+    var worker = new Worker(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+    return worker;
   },
 };
 
@@ -921,7 +924,10 @@ function handleResolvePrepareRename(cmd) {
 }
 
 function isValidCssColor(c) {
-  return typeof c === "string" && /^#[0-9a-fA-F]{3,8}$/.test(c);
+  return (
+    typeof c === "string" &&
+    /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c)
+  );
 }
 
 function updateDiffGutterColors(colors) {

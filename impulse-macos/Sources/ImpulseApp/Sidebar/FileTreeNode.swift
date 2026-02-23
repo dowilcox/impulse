@@ -95,31 +95,41 @@ final class FileTreeNode {
     // MARK: Git Status Enrichment
 
     /// Fetch git status for the tree rooted at `rootPath` and propagate status
-    /// markers to all nodes. For each directory level, a separate FFI call
-    /// retrieves per-file status so that deeply nested changes are visible.
+    /// markers to all nodes. The FFI calls run on the current thread (expected
+    /// to be a background queue), then node mutations are dispatched to the
+    /// main thread to avoid data races with NSOutlineView.
     static func refreshGitStatus(nodes: [FileTreeNode], rootPath: String) {
-        refreshLevel(nodes: nodes, dirPath: rootPath)
+        let updates = collectStatusUpdates(nodes: nodes, dirPath: rootPath)
+        DispatchQueue.main.async {
+            for (node, status) in updates {
+                node.gitStatus = status
+            }
+        }
     }
 
     // MARK: Private Helpers
 
-    /// Fetch git status for one directory and apply it to `nodes` (direct
-    /// children only), then recurse into any expanded subdirectories.
-    private static func refreshLevel(nodes: [FileTreeNode], dirPath: String) {
+    /// Collect (node, status) pairs by walking the tree and fetching git status
+    /// for each expanded directory. This runs on a background thread and does
+    /// NOT mutate any nodes — the caller applies the updates on the main thread.
+    private static func collectStatusUpdates(
+        nodes: [FileTreeNode],
+        dirPath: String
+    ) -> [(FileTreeNode, GitStatus)] {
         let statusMap = fetchGitStatus(rootPath: dirPath)
+        var updates: [(FileTreeNode, GitStatus)] = []
 
-        // Apply to this level's nodes only — no deep recursion that would
-        // overwrite status set by deeper refreshLevel calls.
         for node in nodes {
-            node.gitStatus = statusMap[node.path] ?? .none
+            updates.append((node, statusMap[node.path] ?? .none))
         }
 
         // Recurse into expanded subdirectories with their own FFI calls.
         for node in nodes {
             if node.isDirectory, node.isExpanded, let children = node.children {
-                refreshLevel(nodes: children, dirPath: node.path)
+                updates.append(contentsOf: collectStatusUpdates(nodes: children, dirPath: node.path))
             }
         }
+        return updates
     }
 
     /// Fetch git status for files in the directory at `rootPath` using the

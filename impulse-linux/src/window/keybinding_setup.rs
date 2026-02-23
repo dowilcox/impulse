@@ -454,16 +454,18 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
-    // Ctrl+0: Reset font size to default
+    // Ctrl+0: Reset font size to default (from settings)
     {
         let tab_view = tab_view.clone();
         let font_size = term_ctx.font_size.clone();
+        let settings = settings.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_reset", &kb_overrides),
             move || {
-                font_size.set(11);
-                super::apply_font_size_to_all_terminals(&tab_view, 11);
+                let default_size = settings.borrow().terminal_font_size;
+                font_size.set(default_size);
+                super::apply_font_size_to_all_terminals(&tab_view, default_size);
             },
         );
     }

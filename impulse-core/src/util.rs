@@ -6,8 +6,22 @@ use url::Url;
 use crate::pty::url_decode;
 
 /// Run a blocking closure with a timeout. Returns `Err` if the operation
-/// exceeds the deadline. The closure continues running on its thread
-/// (it cannot be cancelled), but the caller is unblocked.
+/// exceeds the deadline.
+///
+/// # Cancellation limitation
+///
+/// Rust threads cannot be cancelled cooperatively. If the timeout fires, the
+/// caller is unblocked with an error, but the spawned thread continues running
+/// in the background until the closure returns naturally. This means:
+///
+/// - The thread's resources (stack, any held locks, file handles, etc.) remain
+///   allocated until the closure finishes.
+/// - If the closure never returns (e.g. a permanently blocked syscall), the
+///   thread is leaked for the lifetime of the process.
+///
+/// Callers should ensure the wrapped operation will eventually complete (e.g.
+/// by using operations that respect OS-level timeouts or can be interrupted by
+/// closing an underlying file descriptor).
 pub fn run_with_timeout<T: Send + 'static>(
     timeout: Duration,
     label: &str,
@@ -21,8 +35,15 @@ pub fn run_with_timeout<T: Send + 'static>(
             let _ = tx.send(f());
         })
         .map_err(|e| format!("Failed to spawn timeout thread: {}", e))?;
-    rx.recv_timeout(timeout)
-        .map_err(|_| format!("{} timed out after {:?}", label, timeout))?
+    rx.recv_timeout(timeout).map_err(|_| {
+        log::warn!(
+            "{} timed out after {:?} — the background thread will continue running \
+             until the operation completes",
+            label,
+            timeout
+        );
+        format!("{} timed out after {:?}", label, timeout)
+    })?
 }
 
 /// Convert a local path to a `file://` URI.
@@ -69,6 +90,15 @@ pub fn language_from_uri(uri: &str) -> String {
     if let Some(name) = path_obj.file_name().and_then(|n| n.to_str()) {
         if name.eq_ignore_ascii_case("dockerfile") {
             return "dockerfile".to_string();
+        }
+        // Common extensionless files
+        match name {
+            "Makefile" | "makefile" | "GNUmakefile" => return "makefile".to_string(),
+            "CMakeLists.txt" => return "cmake".to_string(),
+            "Gemfile" | "Rakefile" => return "ruby".to_string(),
+            "Vagrantfile" => return "ruby".to_string(),
+            "Jenkinsfile" => return "groovy".to_string(),
+            _ => {}
         }
     }
     let ext = path_obj
@@ -132,11 +162,28 @@ pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
 
 /// Validates that `path` is within `root` after canonicalization.
 /// Returns the canonicalized path on success, or an error if path escapes root.
+/// If the path does not exist, canonicalizes the parent directory instead and
+/// appends the filename to check containment.
 pub fn validate_path_within_root(path: &str, root: &str) -> Result<std::path::PathBuf, String> {
     let canonical_root = std::fs::canonicalize(root)
         .map_err(|e| format!("Failed to canonicalize root '{}': {}", root, e))?;
-    let canonical_path = std::fs::canonicalize(path)
-        .map_err(|e| format!("Failed to canonicalize path '{}': {}", path, e))?;
+    let canonical_path = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(_) => {
+            // Path doesn't exist yet — canonicalize the parent and append the filename
+            let p = std::path::Path::new(path);
+            let parent = p.parent().ok_or_else(|| {
+                format!("Path '{}' has no parent directory", path)
+            })?;
+            let file_name = p.file_name().ok_or_else(|| {
+                format!("Path '{}' has no file name component", path)
+            })?;
+            let canonical_parent = std::fs::canonicalize(parent).map_err(|e| {
+                format!("Failed to canonicalize parent of '{}': {}", path, e)
+            })?;
+            canonical_parent.join(file_name)
+        }
+    };
     if !canonical_path.starts_with(&canonical_root) {
         return Err(format!(
             "Path '{}' is outside the workspace root '{}'",
@@ -232,8 +279,38 @@ mod tests {
     }
 
     #[test]
+    fn language_from_uri_makefile() {
+        assert_eq!(language_from_uri("file:///foo/Makefile"), "makefile");
+    }
+
+    #[test]
+    fn language_from_uri_cmake() {
+        assert_eq!(language_from_uri("file:///foo/CMakeLists.txt"), "cmake");
+    }
+
+    #[test]
+    fn language_from_uri_gemfile() {
+        assert_eq!(language_from_uri("file:///foo/Gemfile"), "ruby");
+    }
+
+    #[test]
+    fn language_from_uri_rakefile() {
+        assert_eq!(language_from_uri("file:///foo/Rakefile"), "ruby");
+    }
+
+    #[test]
+    fn language_from_uri_vagrantfile() {
+        assert_eq!(language_from_uri("file:///foo/Vagrantfile"), "ruby");
+    }
+
+    #[test]
+    fn language_from_uri_jenkinsfile() {
+        assert_eq!(language_from_uri("file:///foo/Jenkinsfile"), "groovy");
+    }
+
+    #[test]
     fn language_from_uri_no_extension_returns_empty() {
-        assert_eq!(language_from_uri("file:///foo/Makefile"), "");
+        assert_eq!(language_from_uri("file:///foo/SomeRandomFile"), "");
     }
 
     #[test]

@@ -2,6 +2,8 @@
 /dist
 .claude/
 .serena/
+*.DS_Store
+.env*
 
 # macOS Swift Package Manager build artifacts
 impulse-macos/.build/

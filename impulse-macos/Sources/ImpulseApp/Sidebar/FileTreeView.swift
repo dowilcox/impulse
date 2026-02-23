@@ -1285,15 +1285,8 @@ extension FileTreeView: NSOutlineViewDelegate {
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        let row = outlineView.selectedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode else { return }
-        guard !node.isDirectory else { return }
-
-        NotificationCenter.default.post(
-            name: .impulseOpenFile,
-            object: self,
-            userInfo: ["path": node.path]
-        )
+        // File opening is handled by outlineViewClicked to avoid double-firing.
+        // This delegate method is intentionally left empty.
     }
 
     // MARK: Cell Construction

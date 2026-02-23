@@ -147,11 +147,11 @@ enum MenuBuilder {
         item.submenu = menu
 
         menu.addItem(withTitle: "Undo",
-                     action: Selector(("undo:")),
+                     action: #selector(UndoManager.undo),
                      keyEquivalent: "z")
 
         let redoItem = NSMenuItem(title: "Redo",
-                                  action: Selector(("redo:")),
+                                  action: #selector(UndoManager.redo),
                                   keyEquivalent: "Z")
         redoItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(redoItem)

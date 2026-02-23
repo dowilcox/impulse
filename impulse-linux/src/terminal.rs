@@ -325,7 +325,7 @@ fn build_spawn_params(
 
     // Add Impulse / VTE env vars
     envv.push("TERM_PROGRAM=Impulse".to_string());
-    envv.push("TERM_PROGRAM_VERSION=0.1.0".to_string());
+    envv.push(format!("TERM_PROGRAM_VERSION={}", env!("CARGO_PKG_VERSION")));
     envv.push("TERM=xterm-256color".to_string());
     envv.push("COLORTERM=truecolor".to_string());
     // VTE_VERSION tells shells (especially fish) this is a VTE terminal,

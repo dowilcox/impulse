@@ -115,9 +115,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // retains its handlers strongly).
         config.userContentController.add(WeakScriptMessageHandler(delegate: self), name: "impulse")
 
-        let preferences = WKPreferences()
-        preferences.setValue(true, forKey: "javaScriptEnabled")
-        config.preferences = preferences
+        let pagePrefs = WKWebpagePreferences()
+        pagePrefs.allowsContentJavaScript = true
+        config.defaultWebpagePreferences = pagePrefs
 
         let wv = WKWebView(frame: bounds, configuration: config)
         wv.navigationDelegate = self
@@ -125,7 +125,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         // Make the WebView background transparent so it does not flash white
         // before Monaco renders its own background colour.
-        wv.setValue(false, forKey: "drawsBackground")
+        wv.underPageBackgroundColor = .clear
 
         addSubview(wv)
         NSLayoutConstraint.activate([
@@ -446,6 +446,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         escaped = sanitized
 
         let script = "impulseReceiveCommand('\(escaped)')"
+        guard let webView else { return }
         webView.evaluateJavaScript(script) { _, error in
             if let error = error {
                 os_log(.error, log: Self.log, "evaluateJavaScript failed: %{public}@", error.localizedDescription)
@@ -475,17 +476,14 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         let contentToSave = content
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
-                DispatchQueue.main.async {
-                    self?.isModified = false
-                }
-            } catch {
-                os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
-            }
+        do {
+            try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
+            isModified = false
+            return true
+        } catch {
+            os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
+            return false
         }
-        return true
     }
 
     /// Fetch the latest content from Monaco and then call `completion`.
@@ -604,6 +602,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Make the WebView the first responder to accept keyboard input.
     func focus() {
+        guard let webView else { return }
         window?.makeFirstResponder(webView)
     }
 

@@ -57,7 +57,13 @@ where
     let large_file = std::fs::metadata(file_path)
         .map(|m| m.len() > LARGE_FILE_THRESHOLD)
         .unwrap_or(false);
-    let contents = std::fs::read_to_string(file_path).unwrap_or_default();
+    let contents = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("Failed to read file {}: {}", file_path, e);
+            String::new()
+        }
+    };
     let language = guess_language(file_path);
 
     let (container, handle) = editor_webview::create_monaco_editor(

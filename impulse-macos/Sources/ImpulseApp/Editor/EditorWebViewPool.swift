@@ -53,12 +53,12 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "impulse")
 
-        let preferences = WKPreferences()
-        preferences.setValue(true, forKey: "javaScriptEnabled")
-        config.preferences = preferences
+        let pagePrefs = WKWebpagePreferences()
+        pagePrefs.allowsContentJavaScript = true
+        config.defaultWebpagePreferences = pagePrefs
 
         let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
-        wv.setValue(false, forKey: "drawsBackground")
+        wv.underPageBackgroundColor = .clear
 
         warmWebView = wv
         isReady = false

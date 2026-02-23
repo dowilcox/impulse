@@ -77,9 +77,16 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         // Kill the entire process group so child processes (lazygit, vim, etc.)
         // are terminated, not just the shell. SwiftTerm's terminate() only sends
         // SIGTERM to the shell PID.
+        // Use getpgid() to get the actual process group ID rather than assuming
+        // PID == PGID, which may not hold if setpgrp() was not called.
         let pid = terminalView.process?.shellPid ?? 0
         if pid > 0 {
-            killpg(pid, SIGHUP)
+            let pgid = getpgid(pid)
+            if pgid > 0 {
+                killpg(pgid, SIGHUP)
+            } else {
+                kill(pid, SIGHUP)
+            }
         }
         terminalView.terminate()
     }

@@ -189,6 +189,10 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
     /// - Parameter customKeybindings: The user-defined custom keybindings
     ///   from settings.
     func registerCustomCommands(_ customKeybindings: [CustomKeybinding]) {
+        // Remove previously registered custom commands before adding new ones
+        // to prevent accumulation on repeated settings changes.
+        commands.removeAll { $0.id.hasPrefix("custom_") }
+
         for custom in customKeybindings where !custom.name.isEmpty {
             let shortcut = custom.key.isEmpty ? nil : custom.key
             let command = custom.command

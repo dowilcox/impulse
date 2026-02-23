@@ -4,14 +4,28 @@ import AppKit
 
 extension NSColor {
     /// Initializes an NSColor from a hex string such as "#1F1F28".
+    /// Accepts 6-digit (RGB) and 8-digit (RGBA) hex strings.
     convenience init(hex: String) {
         let trimmed = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard trimmed.count == 6 || trimmed.count == 8,
+              trimmed.allSatisfy({ $0.isHexDigit }) else {
+            self.init(srgbRed: 0, green: 0, blue: 0, alpha: 1.0)
+            return
+        }
         var rgb: UInt64 = 0
         Scanner(string: trimmed).scanHexInt64(&rgb)
-        let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
-        let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
-        let b = CGFloat(rgb & 0xFF) / 255.0
-        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+        if trimmed.count == 8 {
+            let r = CGFloat((rgb >> 24) & 0xFF) / 255.0
+            let g = CGFloat((rgb >> 16) & 0xFF) / 255.0
+            let b = CGFloat((rgb >> 8) & 0xFF) / 255.0
+            let a = CGFloat(rgb & 0xFF) / 255.0
+            self.init(srgbRed: r, green: g, blue: b, alpha: a)
+        } else {
+            let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
+            let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
+            let b = CGFloat(rgb & 0xFF) / 255.0
+            self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+        }
     }
 
     /// Static factory method to create an NSColor from a hex string.

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
 use std::time::Instant;
@@ -47,6 +48,9 @@ pub struct PtySession {
     pub child: Box<dyn Child + Send + Sync>,
     pub master: Box<dyn MasterPty + Send>,
     pub shell_type: ShellType,
+    /// Handle for the reader thread that processes PTY output.
+    /// Stored so it can be joined during session cleanup.
+    reader_thread: Option<JoinHandle<()>>,
 }
 
 /// Manages all PTY sessions.
@@ -116,7 +120,7 @@ impl PtyManager {
         let thread_stop_flag = Arc::clone(&stop_flag);
 
         let session_id = id.clone();
-        std::thread::spawn(move || {
+        let reader_handle = std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             let mut parser = OscParser::new();
 
@@ -190,6 +194,7 @@ impl PtyManager {
             child,
             master: pair.master,
             shell_type,
+            reader_thread: Some(reader_handle),
         };
 
         self.sessions.lock().insert(id.clone(), session);
@@ -256,6 +261,13 @@ impl PtyManager {
         if let Some(mut session) = sessions.remove(id) {
             let _ = session.child.kill();
             let _ = session.child.wait();
+            // Join the reader thread — it should exit promptly since the PTY fd
+            // is closed after the child exits and the stop flag has been set.
+            if let Some(handle) = session.reader_thread.take() {
+                if let Err(e) = handle.join() {
+                    log::warn!("PTY reader thread for session {} panicked: {:?}", id, e);
+                }
+            }
             Ok(())
         } else {
             Err(format!("Session not found: {}", id))
@@ -278,6 +290,12 @@ impl Drop for PtyManager {
             if let Some(mut session) = sessions.remove(&id) {
                 let _ = session.child.kill();
                 let _ = session.child.wait();
+                // Join the reader thread after the child has exited
+                if let Some(handle) = session.reader_thread.take() {
+                    if let Err(e) = handle.join() {
+                        log::warn!("PTY reader thread for session {} panicked: {:?}", id, e);
+                    }
+                }
             }
         }
     }
@@ -300,8 +318,8 @@ pub struct OscParser {
     output_buf: Vec<u8>,
     esc_buf: Vec<u8>,
     in_escape: bool,
-    pub current_block_id: Option<String>,
-    pub command_start_time: Option<Instant>,
+    current_block_id: Option<String>,
+    command_start_time: Option<Instant>,
 }
 
 impl Default for OscParser {

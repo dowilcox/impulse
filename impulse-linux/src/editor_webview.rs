@@ -194,7 +194,6 @@ impl MonacoEditorHandle {
         } else {
             vec![MonacoHoverContent {
                 value: format!("```\n{}\n```", content),
-                is_trusted: false,
             }]
         };
         self.send_command(&EditorCommand::ResolveHover {

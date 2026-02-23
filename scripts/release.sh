@@ -41,6 +41,11 @@ for arg in "$@"; do
     esac
 done
 
+if [[ "$MACOS_ONLY" == true && "$LINUX_ONLY" == true ]]; then
+    echo "Error: --macos-only and --linux-only are mutually exclusive." >&2
+    exit 1
+fi
+
 TAG="v${VERSION}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

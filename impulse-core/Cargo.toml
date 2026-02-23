@@ -19,7 +19,6 @@ url = { workspace = true }
 dirs = { workspace = true }
 parking_lot = { workspace = true }
 lru = "0.12"
-rayon = "1"
 regex = "1"
 
 [dev-dependencies]

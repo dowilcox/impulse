@@ -64,7 +64,13 @@ pub(super) fn show_quick_open(
                             let label = gtk4::Label::new(Some(&result.path));
                             label.set_halign(gtk4::Align::Start);
                             label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+                            // Store the full path in the widget name for retrieval
+                            label.set_widget_name(&result.path);
                             list.append(&label);
+                        }
+                        // Select first row by default
+                        if let Some(first_row) = list.row_at_index(0) {
+                            list.select_row(Some(&first_row));
                         }
                     }
                 });
@@ -72,13 +78,75 @@ pub(super) fn show_quick_open(
         });
     }
 
-    // Escape to close
-    let key_controller = gtk4::EventControllerKey::new();
+    // Helper: extract the file path from a selected row
+    fn extract_path_from_row(row: &gtk4::ListBoxRow) -> Option<String> {
+        let child = row.child()?;
+        let name = child.widget_name();
+        let path = name.to_string();
+        if path.is_empty() || path == "GtkLabel" {
+            return None;
+        }
+        Some(path)
+    }
+
+    // Activate file on row click
     {
         let dialog = dialog.clone();
+        let on_file_activated = sidebar_state.on_file_activated.clone();
+        list.connect_row_activated(move |_list, row| {
+            if let Some(path) = extract_path_from_row(row) {
+                if let Some(cb) = on_file_activated.borrow().as_ref() {
+                    cb(&path);
+                }
+            }
+            dialog.close();
+        });
+    }
+
+    // Enter key activates selected row; Up/Down navigate between entry and list
+    let key_controller = gtk4::EventControllerKey::new();
+    {
+        let list = list.clone();
+        let dialog = dialog.clone();
+        let on_file_activated = sidebar_state.on_file_activated.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk4::gdk::Key::Escape {
                 dialog.close();
+                return gtk4::glib::Propagation::Stop;
+            }
+            if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
+                if let Some(row) = list.selected_row() {
+                    if let Some(path) = extract_path_from_row(&row) {
+                        if let Some(cb) = on_file_activated.borrow().as_ref() {
+                            cb(&path);
+                        }
+                    }
+                    dialog.close();
+                    return gtk4::glib::Propagation::Stop;
+                }
+            }
+            if key == gtk4::gdk::Key::Down {
+                // Move selection down in the list
+                if let Some(row) = list.selected_row() {
+                    let idx = row.index();
+                    if let Some(next) = list.row_at_index(idx + 1) {
+                        list.select_row(Some(&next));
+                    }
+                } else if let Some(first) = list.row_at_index(0) {
+                    list.select_row(Some(&first));
+                }
+                return gtk4::glib::Propagation::Stop;
+            }
+            if key == gtk4::gdk::Key::Up {
+                // Move selection up in the list
+                if let Some(row) = list.selected_row() {
+                    let idx = row.index();
+                    if idx > 0 {
+                        if let Some(prev) = list.row_at_index(idx - 1) {
+                            list.select_row(Some(&prev));
+                        }
+                    }
+                }
                 return gtk4::glib::Propagation::Stop;
             }
             gtk4::glib::Propagation::Proceed

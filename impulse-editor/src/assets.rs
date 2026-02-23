@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
-pub const MONACO_VERSION: &str = "0.52.2";
+pub const MONACO_VERSION: &str = "0.55.1";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
 

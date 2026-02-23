@@ -373,9 +373,14 @@ struct Settings: Codable {
 extension Settings {
     /// Returns the path to `~/Library/Application Support/impulse/settings.json`.
     static func settingsPath() -> URL {
-        let appSupport = FileManager.default.urls(
+        guard let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
+        ).first else {
+            // Fallback to ~/Library/Application Support if the system API
+            // returns an empty array (should never happen on macOS).
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            return home.appendingPathComponent("Library/Application Support/impulse/settings.json")
+        }
         let dir = appSupport.appendingPathComponent("impulse", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Set restrictive permissions on settings directory

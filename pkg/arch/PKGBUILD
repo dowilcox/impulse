@@ -4,9 +4,9 @@ pkgver=__VERSION__
 pkgrel=1
 pkgdesc='Terminal-first development environment'
 arch=('x86_64')
-url='https://github.com/your-username/impulse'
+url='https://github.com/dowilcox/impulse'
 license=('GPL-3.0-only')
-depends=('gtk4' 'libadwaita' 'vte4' 'gtksourceview5' 'webkit2gtk-4.1')
+depends=('gtk4' 'libadwaita' 'vte4' 'gtksourceview5' 'webkitgtk-6.0')
 source=('impulse' 'dev.impulse.Impulse.desktop' 'impulse-logo.svg')
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 

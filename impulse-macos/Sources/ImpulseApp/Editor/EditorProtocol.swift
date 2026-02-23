@@ -427,16 +427,9 @@ struct MonacoCompletionItem: Codable {
 
 struct MonacoHoverContent: Codable {
     var value: String
-    var isTrusted: Bool
 
-    enum CodingKeys: String, CodingKey {
-        case value
-        case isTrusted = "is_trusted"
-    }
-
-    init(value: String, isTrusted: Bool = false) {
+    init(value: String) {
         self.value = value
-        self.isTrusted = isTrusted
     }
 }
 

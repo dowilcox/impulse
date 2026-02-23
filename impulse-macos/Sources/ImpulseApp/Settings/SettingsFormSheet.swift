@@ -131,7 +131,7 @@ enum SettingsFormSheet {
 
 /// Mediates between the sheet's controls and the onSave callback.
 private class SheetHandler: NSObject {
-    unowned let panel: NSPanel
+    weak var panel: NSPanel?
     weak var parent: NSWindow?
     let controls: [(String, NSView)]
     let onSave: ([String: String]) -> Void
@@ -145,6 +145,7 @@ private class SheetHandler: NSObject {
     }
 
     @objc func saveClicked(_ sender: Any?) {
+        guard let panel else { return }
         var values: [String: String] = [:]
         for (key, control) in controls {
             if let textField = control as? NSTextField {
@@ -158,6 +159,7 @@ private class SheetHandler: NSObject {
     }
 
     @objc func cancelClicked(_ sender: Any?) {
+        guard let panel else { return }
         parent?.endSheet(panel, returnCode: .cancel)
     }
 }

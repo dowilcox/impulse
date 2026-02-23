@@ -1188,7 +1188,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                    self.tabManager.selectedIndex < self.tabManager.tabs.count,
                    case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
                    let terminal = container.activeTerminal {
-                    terminal.sendCommand("cd \(dir.replacingOccurrences(of: " ", with: "\\ "))")
+                    let escapedDir: String
+                    if dir.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-")).contains($0) }) {
+                        escapedDir = dir
+                    } else {
+                        escapedDir = "'" + dir.replacingOccurrences(of: "'", with: "'\\''") + "'"
+                    }
+                    terminal.sendCommand("cd \(escapedDir)")
                 }
             }
         )

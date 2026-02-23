@@ -343,7 +343,7 @@ enum Keybindings {
     static func keyDisplay(_ key: String) -> String {
         switch key {
         case "\t":       return "Tab"
-        case "\u{0019}": return "Tab"
+        case "\u{0019}": return "Shift+Tab"
         case "\r":       return "Return"
         case " ":        return "Space"
         case ",":        return ","

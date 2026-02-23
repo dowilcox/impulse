@@ -229,7 +229,14 @@ pub fn parse_keybinding_to_accel(key: &str) -> String {
             _ => return String::new(),
         }
     }
-    accel.push_str(parts.last().unwrap().trim());
+    let key_part = match parts.last() {
+        Some(part) => part.trim(),
+        None => return String::new(),
+    };
+    if key_part.is_empty() {
+        return String::new();
+    }
+    accel.push_str(key_part);
     accel
 }
 

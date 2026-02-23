@@ -1378,21 +1378,21 @@ pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle,
                 .changed_lines
                 .iter()
                 .filter_map(|(&line, status)| {
-                    let status_str = match status {
-                        impulse_core::git::DiffLineStatus::Added => "added",
-                        impulse_core::git::DiffLineStatus::Modified => "modified",
+                    let diff_status = match status {
+                        impulse_core::git::DiffLineStatus::Added => impulse_editor::protocol::DiffStatus::Added,
+                        impulse_core::git::DiffLineStatus::Modified => impulse_editor::protocol::DiffStatus::Modified,
                         impulse_core::git::DiffLineStatus::Unchanged => return None,
                     };
                     Some(impulse_editor::protocol::DiffDecoration {
                         line,
-                        status: status_str.to_string(),
+                        status: diff_status,
                     })
                 })
                 .collect();
             for &line in &diff.deleted_lines {
                 decos.push(impulse_editor::protocol::DiffDecoration {
                     line,
-                    status: "deleted".to_string(),
+                    status: impulse_editor::protocol::DiffStatus::Deleted,
                 });
             }
             decos

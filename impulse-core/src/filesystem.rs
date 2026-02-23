@@ -26,19 +26,33 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
         fs::read_dir(&dir_path).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in read_dir {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("Skipping unreadable entry in '{}': {}", path, e);
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().to_string();
 
         if !show_hidden && name.starts_with('.') {
             continue;
         }
 
-        let metadata = entry
-            .metadata()
-            .map_err(|e| format!("Failed to read metadata: {}", e))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Failed to get file type: {}", e))?;
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("Skipping entry '{}': failed to read metadata: {}", name, e);
+                continue;
+            }
+        };
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                log::warn!("Skipping entry '{}': failed to get file type: {}", name, e);
+                continue;
+            }
+        };
 
         let modified = metadata
             .modified()

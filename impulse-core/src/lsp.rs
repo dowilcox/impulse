@@ -1744,6 +1744,11 @@ impl LspRegistry {
     async fn get_or_start_client(&self, server_id: &str, root_uri: &str) -> Option<Arc<LspClient>> {
         let client_key = Self::client_key(server_id, root_uri);
 
+        // Maximum number of iterations to wait for a server that is already
+        // being started by another task. 50 iterations * 120ms sleep = ~6s.
+        const MAX_STARTING_WAIT_ITERATIONS: u32 = 50;
+        let mut wait_iterations: u32 = 0;
+
         loop {
             {
                 let clients = self.clients.lock().await;
@@ -1766,6 +1771,17 @@ impl LspRegistry {
                 let starting = self.starting.lock().await;
                 if starting.contains(&client_key) {
                     drop(starting);
+                    wait_iterations += 1;
+                    if wait_iterations >= MAX_STARTING_WAIT_ITERATIONS {
+                        log::warn!(
+                            "LSP server '{}' at '{}' still starting after {} iterations (~{}s), giving up",
+                            server_id,
+                            root_uri,
+                            wait_iterations,
+                            (wait_iterations as u64 * 120) / 1000
+                        );
+                        return None;
+                    }
                     tokio::time::sleep(Duration::from_millis(120)).await;
                     continue;
                 }

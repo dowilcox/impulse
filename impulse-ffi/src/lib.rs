@@ -729,7 +729,7 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
 /// Check whether npm is available on the system PATH.
 #[no_mangle]
 pub extern "C" fn impulse_npm_is_available() -> bool {
-    impulse_core::lsp::npm_is_available()
+    ffi_catch(false, AssertUnwindSafe(|| impulse_core::lsp::npm_is_available()))
 }
 
 /// Check the installation status of system (non-managed) LSP servers.
@@ -918,21 +918,21 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                         .changed_lines
                         .iter()
                         .filter_map(|(&line, status)| {
-                            let status_str = match status {
-                                impulse_core::git::DiffLineStatus::Added => "added",
-                                impulse_core::git::DiffLineStatus::Modified => "modified",
+                            let diff_status = match status {
+                                impulse_core::git::DiffLineStatus::Added => impulse_editor::protocol::DiffStatus::Added,
+                                impulse_core::git::DiffLineStatus::Modified => impulse_editor::protocol::DiffStatus::Modified,
                                 impulse_core::git::DiffLineStatus::Unchanged => return None,
                             };
                             Some(impulse_editor::protocol::DiffDecoration {
                                 line,
-                                status: status_str.to_string(),
+                                status: diff_status,
                             })
                         })
                         .collect();
                     for &line in &diff.deleted_lines {
                         markers.push(impulse_editor::protocol::DiffDecoration {
                             line,
-                            status: "deleted".to_string(),
+                            status: impulse_editor::protocol::DiffStatus::Deleted,
                         });
                     }
                     serde_json::to_string(&markers)

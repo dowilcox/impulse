@@ -2,7 +2,7 @@ use ignore::WalkBuilder;
 use regex::RegexBuilder;
 use serde::Serialize;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -73,6 +73,18 @@ pub fn search_filenames(
     Ok(results)
 }
 
+/// Check the first 8KB of an already-opened file for null bytes (binary indicator).
+/// Returns `Ok(true)` if the file appears to be binary, `Ok(false)` if it appears to be text.
+/// Returns `Err` on permission or I/O errors so the caller can decide how to handle them.
+/// On success, the file handle is seeked back to the beginning for subsequent reading.
+fn check_binary_and_rewind(file: &mut File) -> Result<bool, std::io::Error> {
+    let mut buffer = [0u8; 8192];
+    let bytes_read = file.read(&mut buffer)?;
+    let is_binary = buffer[..bytes_read].contains(&0);
+    file.seek(SeekFrom::Start(0))?;
+    Ok(is_binary)
+}
+
 /// Search file contents for a text pattern.
 /// If `cancel` is provided and set to `true`, the search stops early and returns partial results.
 pub fn search_contents(
@@ -127,14 +139,23 @@ pub fn search_contents(
             continue;
         }
 
-        if is_likely_binary(path) {
-            continue;
-        }
-
-        let file = match File::open(path) {
+        // Open the file once: check for binary content, then reuse the handle for reading lines.
+        let mut file = match File::open(path) {
             Ok(f) => f,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!("Failed to open '{}': {}", path.display(), e);
+                continue;
+            }
         };
+
+        match check_binary_and_rewind(&mut file) {
+            Ok(true) => continue,  // binary file, skip
+            Ok(false) => {}        // text file, proceed
+            Err(e) => {
+                log::warn!("Failed to read '{}': {}", path.display(), e);
+                continue;
+            }
+        }
 
         let reader = BufReader::new(file);
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -156,14 +177,36 @@ pub fn search_contents(
                 line.to_lowercase()
             };
 
-            if let Some(col) = haystack.find(&query_match) {
+            // Find all matches on this line, not just the first.
+            // Use character-based column positions so that non-ASCII text
+            // (and case-insensitive lowercasing that changes byte lengths)
+            // reports correct columns.
+            let line_content: Option<String> = None;
+            for (byte_pos, _) in haystack.match_indices(&query_match) {
+                if results.len() >= limit {
+                    break;
+                }
+
+                // Convert byte offset in the haystack to a character offset.
+                let col_start_chars = haystack[..byte_pos].chars().count();
+
+                // For column_end, we need the character length of the match
+                // in the *original* line (not the lowercased haystack), because
+                // lowercasing can change character count for certain Unicode.
+                // The match length in characters from the original line is the
+                // same span of characters starting at col_start_chars.
+                let match_char_len = query.chars().count();
+                let col_end_chars = col_start_chars + match_char_len;
+
                 results.push(SearchResult {
                     path: file_path.clone(),
                     name: file_name.clone(),
                     line_number: Some((line_idx + 1) as u32),
-                    line_content: Some(line.chars().take(500).collect()),
-                    column_start: Some(col as u32),
-                    column_end: Some((col + query_match.len()) as u32),
+                    line_content: line_content
+                        .clone()
+                        .or_else(|| Some(line.chars().take(500).collect())),
+                    column_start: Some(col_start_chars as u32),
+                    column_end: Some(col_end_chars as u32),
                     match_type: "content".to_string(),
                 });
             }
@@ -205,6 +248,8 @@ pub fn search(
 }
 
 /// Replace all occurrences of `search` with `replacement` in a single file.
+/// Uses atomic file replacement: writes to a temporary file then renames over
+/// the original to prevent data loss on crash. Preserves file permissions.
 /// Returns the number of replacements made.
 pub fn replace_in_file(
     path: &str,
@@ -212,6 +257,8 @@ pub fn replace_in_file(
     replacement: &str,
     case_sensitive: bool,
 ) -> Result<usize, String> {
+    use std::os::unix::fs::PermissionsExt;
+
     // Check file size before reading
     let metadata = std::fs::metadata(path)
         .map_err(|e| format!("Failed to read metadata for '{}': {}", path, e))?;
@@ -222,6 +269,8 @@ pub fn replace_in_file(
             metadata.len()
         ));
     }
+
+    let permissions = metadata.permissions();
 
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
@@ -239,8 +288,48 @@ pub fn replace_in_file(
     };
 
     if count > 0 {
-        std::fs::write(path, new_content)
-            .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+        // Write to a temporary file in the same directory, then atomically rename.
+        // This ensures the original file is not corrupted if we crash mid-write.
+        let original_path = Path::new(path);
+        let parent = original_path
+            .parent()
+            .ok_or_else(|| format!("Cannot determine parent directory of '{}'", path))?;
+        let tmp_path = parent.join(format!(
+            ".{}.impulse-tmp",
+            original_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string())
+        ));
+
+        {
+            let mut tmp_file = File::create(&tmp_path)
+                .map_err(|e| format!("Failed to create temp file '{}': {}", tmp_path.display(), e))?;
+            tmp_file.write_all(new_content.as_bytes())
+                .map_err(|e| {
+                    // Clean up temp file on write failure
+                    let _ = std::fs::remove_file(&tmp_path);
+                    format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
+                })?;
+            tmp_file.sync_all()
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    format!("Failed to sync temp file '{}': {}", tmp_path.display(), e)
+                })?;
+        }
+
+        // Preserve original file permissions
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(permissions.mode()))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                format!("Failed to set permissions on temp file: {}", e)
+            })?;
+
+        // Atomic rename
+        std::fs::rename(&tmp_path, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Failed to rename temp file to '{}': {}", path, e)
+        })?;
     }
 
     Ok(count)
@@ -268,17 +357,3 @@ pub fn replace_in_files(
         .collect()
 }
 
-fn is_likely_binary(path: &Path) -> bool {
-    let mut file = match File::open(path) {
-        Ok(f) => f,
-        Err(_) => return true,
-    };
-
-    let mut buffer = [0u8; 8192];
-    let bytes_read = match file.read(&mut buffer) {
-        Ok(n) => n,
-        Err(_) => return true,
-    };
-
-    buffer[..bytes_read].contains(&0)
-}

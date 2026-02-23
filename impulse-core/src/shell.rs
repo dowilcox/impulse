@@ -90,6 +90,12 @@ fn create_secure_dir(path: &std::path::Path) -> Result<(), std::io::Error> {
         .create(path)
 }
 
+/// Escape a string for use inside single-quoted shell strings.
+/// Replaces `'` with `'\''` (end quote, escaped quote, start quote).
+fn escape_single_quotes(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
 /// Build the shell command with integration scripts injected.
 /// Returns the CommandBuilder and a list of temp files that must be kept alive.
 pub fn build_shell_command(
@@ -101,7 +107,7 @@ pub fn build_shell_command(
     let mut cmd = match shell_type {
         ShellType::Bash => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            let user_bashrc = format!("{}/.bashrc", home);
+            let escaped_bashrc = escape_single_quotes(&format!("{}/.bashrc", home));
 
             let rc_content = format!(
                 "# Source user's bashrc\n\
@@ -110,7 +116,7 @@ pub fn build_shell_command(
                  fi\n\
                  # Impulse shell integration\n\
                  {}\n",
-                user_bashrc, user_bashrc, BASH_INTEGRATION
+                escaped_bashrc, escaped_bashrc, BASH_INTEGRATION
             );
 
             let rc_path = std::env::temp_dir().join(format!(
@@ -128,6 +134,7 @@ pub fn build_shell_command(
         }
         ShellType::Zsh => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let escaped_home = escape_single_quotes(&home);
 
             let zdotdir = std::env::temp_dir().join(format!(
                 "impulse-zsh-{}-{}",
@@ -140,7 +147,7 @@ pub fn build_shell_command(
                 "if [ -f '{0}/.zshenv' ]; then\n\
                      source '{0}/.zshenv'\n\
                  fi\n",
-                home
+                escaped_home
             );
             let zshenv_path = zdotdir.join(".zshenv");
             write_secure_file(&zshenv_path, &zshenv_content)?;
@@ -150,7 +157,7 @@ pub fn build_shell_command(
                 "if [ -f '{0}/.zprofile' ]; then\n\
                      source '{0}/.zprofile'\n\
                  fi\n",
-                home
+                escaped_home
             );
             let zprofile_path = zdotdir.join(".zprofile");
             write_secure_file(&zprofile_path, &zprofile_content)?;
@@ -160,7 +167,7 @@ pub fn build_shell_command(
                 "if [ -f '{0}/.zlogin' ]; then\n\
                      source '{0}/.zlogin'\n\
                  fi\n",
-                home
+                escaped_home
             );
             let zlogin_path = zdotdir.join(".zlogin");
             write_secure_file(&zlogin_path, &zlogin_content)?;
@@ -175,7 +182,7 @@ pub fn build_shell_command(
                  fi\n\
                  # Impulse shell integration\n\
                  {1}\n",
-                home, ZSH_INTEGRATION
+                escaped_home, ZSH_INTEGRATION
             );
 
             let zshrc_path = zdotdir.join(".zshrc");
@@ -299,5 +306,26 @@ mod tests {
         let path = get_default_shell_path();
         assert!(!path.is_empty());
         assert!(path.contains('/'));
+    }
+
+    #[test]
+    fn escape_single_quotes_no_quotes() {
+        assert_eq!(escape_single_quotes("/home/user"), "/home/user");
+    }
+
+    #[test]
+    fn escape_single_quotes_with_quotes() {
+        assert_eq!(
+            escape_single_quotes("/home/user's dir"),
+            "/home/user'\\''s dir"
+        );
+    }
+
+    #[test]
+    fn escape_single_quotes_multiple() {
+        assert_eq!(
+            escape_single_quotes("it's a 'test'"),
+            "it'\\''s a '\\''test'\\''"
+        );
     }
 }

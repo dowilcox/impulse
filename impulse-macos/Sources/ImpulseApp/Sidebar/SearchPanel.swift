@@ -44,6 +44,10 @@ final class SearchPanel: NSView {
         setup()
     }
 
+    deinit {
+        debounceTimer?.invalidate()
+    }
+
     private func setup() {
         // --- Search icon ---
         let icon: NSImageView
