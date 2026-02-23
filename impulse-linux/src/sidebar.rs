@@ -1015,6 +1015,7 @@ pub fn build_sidebar(
             let file_tree_list = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
+            let dir_path = dir_path.clone();
             {
                 let dialog = dialog.clone();
                 entry.connect_activate(move |entry| {
@@ -1028,7 +1029,7 @@ pub fn build_sidebar(
                             dialog.close();
                             return;
                         }
-                        let dir = current_path.borrow().clone();
+                        let dir = dir_path.clone();
                         let new_path = std::path::Path::new(&dir).join(&name);
                         if let Err(e) = std::fs::write(&new_path, "") {
                             log::error!("Failed to create file: {}", e);
@@ -1104,6 +1105,7 @@ pub fn build_sidebar(
             let file_tree_list = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
+            let dir_path = dir_path.clone();
             {
                 let dialog = dialog.clone();
                 entry.connect_activate(move |entry| {
@@ -1117,7 +1119,7 @@ pub fn build_sidebar(
                             dialog.close();
                             return;
                         }
-                        let dir = current_path.borrow().clone();
+                        let dir = dir_path.clone();
                         let new_path = std::path::Path::new(&dir).join(&name);
                         if let Err(e) = std::fs::create_dir_all(&new_path) {
                             log::error!("Failed to create folder: {}", e);

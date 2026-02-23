@@ -22,6 +22,7 @@ cargo build -p impulse-editor      # Build only the editor crate (cross-platform
 cargo build -p impulse-linux       # Build only the Linux frontend (Linux only)
 cargo build -p impulse-ffi         # Build only the FFI static library (cross-platform)
 cargo run -p impulse-linux         # Run the Linux app (Linux only)
+cargo run -p impulse-linux -- --dev  # Run in dev mode (uses separate app ID + config)
 cargo check                        # Type-check without full compilation
 cargo fmt                          # Format all code
 cargo clippy                       # Lint
