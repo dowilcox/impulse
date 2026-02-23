@@ -8,7 +8,10 @@ use crate::sidebar;
 
 use super::{run_guarded_ui, Command};
 
-pub(super) fn show_quick_open(window: &adw::ApplicationWindow, sidebar_state: &Rc<sidebar::SidebarState>) {
+pub(super) fn show_quick_open(
+    window: &adw::ApplicationWindow,
+    sidebar_state: &Rc<sidebar::SidebarState>,
+) {
     let dialog = gtk4::Window::builder()
         .transient_for(window)
         .modal(true)
@@ -183,7 +186,10 @@ pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[
     entry.grab_focus();
 }
 
-pub(super) fn show_go_to_line_dialog(window: &adw::ApplicationWindow, editor_widget: &gtk4::Widget) {
+pub(super) fn show_go_to_line_dialog(
+    window: &adw::ApplicationWindow,
+    editor_widget: &gtk4::Widget,
+) {
     let dialog = gtk4::Window::builder()
         .transient_for(window)
         .modal(true)

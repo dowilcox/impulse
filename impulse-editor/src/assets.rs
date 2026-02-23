@@ -21,7 +21,10 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
     let monaco_dir = data_dir.join("impulse").join("monaco").join(MONACO_VERSION);
 
     // Acquire exclusive lock to make check-and-extract atomic
-    let lock_path = data_dir.join("impulse").join("monaco").join(".extract.lock");
+    let lock_path = data_dir
+        .join("impulse")
+        .join("monaco")
+        .join(".extract.lock");
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create lock directory: {}", e))?;

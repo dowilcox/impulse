@@ -817,13 +817,16 @@ pub fn build_window(app: &adw::Application) {
 
     sidebar_signals::wire_sidebar_signals(&ctx);
 
-    let setup_terminal_signals = tab_management::make_setup_terminal_signals(
-        &tab_view, &status_bar, &sidebar_state,
-    );
+    let setup_terminal_signals =
+        tab_management::make_setup_terminal_signals(&tab_view, &status_bar, &sidebar_state);
 
     let create_tab = tab_management::make_create_tab(
-        &tab_view, &setup_terminal_signals, &settings,
-        &copy_on_select_flag, &shell_cache, &sidebar_state.icon_cache,
+        &tab_view,
+        &setup_terminal_signals,
+        &settings,
+        &copy_on_select_flag,
+        &shell_cache,
+        &sidebar_state.icon_cache,
     );
 
     // Create first tab
@@ -861,11 +864,7 @@ pub fn build_window(app: &adw::Application) {
 
     tab_management::setup_tab_context_menu(&window, &tab_view, &create_tab);
 
-    tab_management::setup_lsp_response_polling(
-        &ctx,
-        &lsp_gtk_rx,
-        &lsp_install_result_rx,
-    );
+    tab_management::setup_lsp_response_polling(&ctx, &lsp_gtk_rx, &lsp_install_result_rx);
 
     // Shared closure for reopening the most recently closed editor/image tab.
     // Defined early so it can be used by both the capture-phase key handler and
@@ -896,9 +895,12 @@ pub fn build_window(app: &adw::Application) {
     };
 
     keybinding_setup::setup_capture_phase_keys(
-        &ctx, &term_ctx, &sidebar_btn,
+        &ctx,
+        &term_ctx,
+        &sidebar_btn,
         &setup_terminal_signals,
-        &create_tab, &reopen_tab,
+        &create_tab,
+        &reopen_tab,
     );
 
     let kb_overrides = settings.borrow().keybinding_overrides.clone();
@@ -1165,17 +1167,20 @@ pub fn build_window(app: &adw::Application) {
 
                         let tx = lsp_install_result_tx.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                let result = impulse_core::lsp::install_managed_web_lsp_servers().map(
-                                    |bin_dir| {
-                                        format!(
-                                            "Installed managed LSP servers to {}",
-                                            bin_dir.display()
-                                        )
-                                    },
-                                );
-                                let _ = tx.send(result);
-                            })) {
+                            if let Err(e) =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    let result =
+                                        impulse_core::lsp::install_managed_web_lsp_servers().map(
+                                            |bin_dir| {
+                                                format!(
+                                                    "Installed managed LSP servers to {}",
+                                                    bin_dir.display()
+                                                )
+                                            },
+                                        );
+                                    let _ = tx.send(result);
+                                }))
+                            {
                                 log::error!("Background thread panicked: {:?}", e);
                             }
                         });
@@ -1186,9 +1191,17 @@ pub fn build_window(app: &adw::Application) {
     };
 
     keybinding_setup::setup_shortcut_controller(
-        &ctx, &term_ctx, app, &sidebar_btn,
-        &setup_terminal_signals, &open_settings, &search_revealer, &find_entry,
-        &commands, &create_tab, &reopen_tab,
+        &ctx,
+        &term_ctx,
+        app,
+        &sidebar_btn,
+        &setup_terminal_signals,
+        &open_settings,
+        &search_revealer,
+        &find_entry,
+        &commands,
+        &create_tab,
+        &reopen_tab,
     );
 
     // --- Terminal search bar wiring ---
@@ -1297,9 +1310,7 @@ pub fn build_window(app: &adw::Application) {
 
     tab_management::setup_tab_switch_handler(&tab_view, &status_bar, &sidebar_state);
 
-    tab_management::setup_tab_close_handler(
-        &ctx, &create_tab, &closed_tabs,
-    );
+    tab_management::setup_tab_close_handler(&ctx, &create_tab, &closed_tabs);
 
     // Save settings when window is closed
     {

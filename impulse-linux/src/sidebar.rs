@@ -39,7 +39,7 @@ pub fn build_sidebar(
 ) -> (gtk4::Box, SidebarState) {
     let sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     sidebar.add_css_class("sidebar");
-    sidebar.set_width_request(250);
+    sidebar.set_width_request(150);
 
     let icon_cache: Rc<RefCell<IconCache>> = Rc::new(RefCell::new(IconCache::new(theme)));
 
@@ -74,15 +74,33 @@ pub fn build_sidebar(
     switcher_box.append(&files_btn);
     switcher_box.append(&search_btn);
 
-    // Toolbar row with action buttons
+    // Project name header with toolbar buttons
+    let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    header_box.add_css_class("sidebar-project-header");
+
     let toolbar_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
-    toolbar_box.add_css_class("sidebar-toolbar");
     toolbar_box.set_halign(gtk4::Align::End);
-    toolbar_box.set_margin_end(4);
-    toolbar_box.set_margin_top(2);
-    toolbar_box.set_margin_bottom(2);
+    toolbar_box.set_hexpand(true);
 
     let show_hidden = Rc::new(RefCell::new(settings.borrow().sidebar_show_hidden));
+
+    let new_file_btn = gtk4::Button::new();
+    new_file_btn.set_tooltip_text(Some("New File"));
+    new_file_btn.set_cursor_from_name(Some("pointer"));
+    new_file_btn.add_css_class("flat");
+    new_file_btn.add_css_class("sidebar-toolbar-btn");
+    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("toolbar-new-file") {
+        new_file_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+    }
+
+    let new_folder_btn = gtk4::Button::new();
+    new_folder_btn.set_tooltip_text(Some("New Folder"));
+    new_folder_btn.set_cursor_from_name(Some("pointer"));
+    new_folder_btn.add_css_class("flat");
+    new_folder_btn.add_css_class("sidebar-toolbar-btn");
+    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("toolbar-new-folder") {
+        new_folder_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+    }
 
     let hidden_btn = gtk4::ToggleButton::new();
     hidden_btn.set_tooltip_text(Some("Toggle Hidden Files"));
@@ -120,9 +138,12 @@ pub fn build_sidebar(
         collapse_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
     }
 
+    toolbar_box.append(&new_file_btn);
+    toolbar_box.append(&new_folder_btn);
     toolbar_box.append(&hidden_btn);
     toolbar_box.append(&refresh_btn);
     toolbar_box.append(&collapse_btn);
+    header_box.append(&toolbar_box);
 
     // File tree page
     let file_tree_scroll = gtk4::ScrolledWindow::new();
@@ -184,7 +205,10 @@ pub fn build_sidebar(
             if !path.is_empty() {
                 let file = gio::File::for_path(&path);
                 let uri = file.uri();
-                let _ = gio::AppInfo::launch_default_for_uri(uri.as_str(), None::<&gio::AppLaunchContext>);
+                let _ = gio::AppInfo::launch_default_for_uri(
+                    uri.as_str(),
+                    None::<&gio::AppLaunchContext>,
+                );
             }
         });
     }
@@ -901,32 +925,32 @@ pub fn build_sidebar(
     {
         let stack = stack.clone();
         let search_btn_ref = search_btn.clone();
-        let toolbar_box = toolbar_box.clone();
+        let header_box = header_box.clone();
         files_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
                 stack.set_visible_child_name("files");
                 btn.add_css_class("sidebar-tab-active");
                 search_btn_ref.remove_css_class("sidebar-tab-active");
-                toolbar_box.set_visible(true);
+                header_box.set_visible(true);
             }
         });
     }
     {
         let stack = stack.clone();
         let files_btn_ref = files_btn.clone();
-        let toolbar_box = toolbar_box.clone();
+        let header_box = header_box.clone();
         search_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
                 stack.set_visible_child_name("search");
                 btn.add_css_class("sidebar-tab-active");
                 files_btn_ref.remove_css_class("sidebar-tab-active");
-                toolbar_box.set_visible(false);
+                header_box.set_visible(false);
             }
         });
     }
 
     sidebar.append(&switcher_box);
-    sidebar.append(&toolbar_box);
+    sidebar.append(&header_box);
     sidebar.append(&stack);
 
     let on_file_activated: EventCallback = Rc::new(RefCell::new(None));
@@ -953,6 +977,184 @@ pub fn build_sidebar(
         _git_status_timer: Rc::new(RefCell::new(None)),
         _last_git_status_hash: Rc::new(Cell::new(0)),
     };
+
+    // Wire up New File toolbar button (creates in root directory)
+    {
+        let tree_nodes = state.tree_nodes.clone();
+        let file_tree_list = state.file_tree_list.clone();
+        let current_path = state.current_path.clone();
+        let icon_cache = icon_cache.clone();
+        new_file_btn.connect_clicked(move |btn| {
+            let dir_path = current_path.borrow().clone();
+            if dir_path.is_empty() {
+                return;
+            }
+
+            let dialog = gtk4::Window::builder()
+                .modal(true)
+                .decorated(false)
+                .default_width(300)
+                .default_height(50)
+                .build();
+            if let Some(root) = btn.root() {
+                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
+                    dialog.set_transient_for(Some(window));
+                }
+            }
+            dialog.add_css_class("quick-open");
+
+            let entry = gtk4::Entry::new();
+            entry.set_placeholder_text(Some("New file name..."));
+            entry.set_margin_start(12);
+            entry.set_margin_end(12);
+            entry.set_margin_top(12);
+            entry.set_margin_bottom(12);
+            dialog.set_child(Some(&entry));
+
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list = file_tree_list.clone();
+            let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
+            {
+                let dialog = dialog.clone();
+                entry.connect_activate(move |entry| {
+                    let name = entry.text().to_string();
+                    if !name.is_empty() {
+                        let path_check = Path::new(&name);
+                        if path_check.file_name() != Some(path_check.as_os_str())
+                            || name.contains('\0')
+                        {
+                            log::error!("Invalid filename: must be a single filename component");
+                            dialog.close();
+                            return;
+                        }
+                        let dir = current_path.borrow().clone();
+                        let new_path = std::path::Path::new(&dir).join(&name);
+                        if let Err(e) = std::fs::write(&new_path, "") {
+                            log::error!("Failed to create file: {}", e);
+                        } else {
+                            insert_new_entry_into_tree(
+                                &tree_nodes,
+                                &file_tree_list,
+                                &current_path,
+                                &dir,
+                                &name,
+                                &new_path.to_string_lossy(),
+                                false,
+                                &icon_cache.borrow(),
+                            );
+                        }
+                    }
+                    dialog.close();
+                });
+            }
+
+            let key_ctrl = gtk4::EventControllerKey::new();
+            {
+                let dialog = dialog.clone();
+                key_ctrl.connect_key_pressed(move |_, key, _, _| {
+                    if key == gtk4::gdk::Key::Escape {
+                        dialog.close();
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    gtk4::glib::Propagation::Proceed
+                });
+            }
+            entry.add_controller(key_ctrl);
+
+            dialog.present();
+            entry.grab_focus();
+        });
+    }
+
+    // Wire up New Folder toolbar button (creates in root directory)
+    {
+        let tree_nodes = state.tree_nodes.clone();
+        let file_tree_list = state.file_tree_list.clone();
+        let current_path = state.current_path.clone();
+        let icon_cache = icon_cache.clone();
+        new_folder_btn.connect_clicked(move |btn| {
+            let dir_path = current_path.borrow().clone();
+            if dir_path.is_empty() {
+                return;
+            }
+
+            let dialog = gtk4::Window::builder()
+                .modal(true)
+                .decorated(false)
+                .default_width(300)
+                .default_height(50)
+                .build();
+            if let Some(root) = btn.root() {
+                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
+                    dialog.set_transient_for(Some(window));
+                }
+            }
+            dialog.add_css_class("quick-open");
+
+            let entry = gtk4::Entry::new();
+            entry.set_placeholder_text(Some("New folder name..."));
+            entry.set_margin_start(12);
+            entry.set_margin_end(12);
+            entry.set_margin_top(12);
+            entry.set_margin_bottom(12);
+            dialog.set_child(Some(&entry));
+
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list = file_tree_list.clone();
+            let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
+            {
+                let dialog = dialog.clone();
+                entry.connect_activate(move |entry| {
+                    let name = entry.text().to_string();
+                    if !name.is_empty() {
+                        let path_check = Path::new(&name);
+                        if path_check.file_name() != Some(path_check.as_os_str())
+                            || name.contains('\0')
+                        {
+                            log::error!("Invalid folder name: must be a single filename component");
+                            dialog.close();
+                            return;
+                        }
+                        let dir = current_path.borrow().clone();
+                        let new_path = std::path::Path::new(&dir).join(&name);
+                        if let Err(e) = std::fs::create_dir_all(&new_path) {
+                            log::error!("Failed to create folder: {}", e);
+                        } else {
+                            insert_new_entry_into_tree(
+                                &tree_nodes,
+                                &file_tree_list,
+                                &current_path,
+                                &dir,
+                                &name,
+                                &new_path.to_string_lossy(),
+                                true,
+                                &icon_cache.borrow(),
+                            );
+                        }
+                    }
+                    dialog.close();
+                });
+            }
+
+            let key_ctrl = gtk4::EventControllerKey::new();
+            {
+                let dialog = dialog.clone();
+                key_ctrl.connect_key_pressed(move |_, key, _, _| {
+                    if key == gtk4::gdk::Key::Escape {
+                        dialog.close();
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    gtk4::glib::Propagation::Proceed
+                });
+            }
+            entry.add_controller(key_ctrl);
+
+            dialog.present();
+            entry.grab_focus();
+        });
+    }
 
     // Wire up toolbar buttons
     {
@@ -1190,6 +1392,7 @@ impl SidebarState {
     /// Load directory contents into the file tree as root-level (depth 0) nodes.
     pub fn load_directory(&self, path: &str) {
         *self.current_path.borrow_mut() = path.to_string();
+
         let list = self.file_tree_list.clone();
         let path = path.to_string();
         let tree_nodes = self.tree_nodes.clone();
@@ -1793,9 +1996,33 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
     row.set_widget_name(&node.entry.path);
     row.set_cursor_from_name(Some("pointer"));
 
-    // Indent based on depth
+    // Indent guides: for each depth level, draw a 16px-wide slot with a 1px vertical line
     if node.depth > 0 {
-        row.set_margin_start((node.depth as i32) * 16);
+        let indent_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        indent_box.set_size_request((node.depth as i32) * 16, -1);
+        for _ in 0..node.depth {
+            let guide = gtk4::DrawingArea::new();
+            guide.set_size_request(16, -1);
+            guide.set_vexpand(true);
+            guide.add_css_class("sidebar-indent-guide");
+            guide.set_draw_func(|area, cr, width, height| {
+                // Read the CSS color from the widget's style context
+                let color = area.color();
+                cr.set_source_rgba(
+                    color.red() as f64,
+                    color.green() as f64,
+                    color.blue() as f64,
+                    color.alpha() as f64,
+                );
+                let x = (width as f64) / 2.0;
+                cr.set_line_width(1.0);
+                cr.move_to(x, 0.0);
+                cr.line_to(x, height as f64);
+                let _ = cr.stroke();
+            });
+            indent_box.append(&guide);
+        }
+        row.append(&indent_box);
     }
 
     // Expand/collapse arrow for directories, spacer for files
@@ -1805,11 +2032,11 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
         } else {
             gtk4::Image::from_icon_name("pan-end-symbolic")
         };
-        arrow.set_pixel_size(12);
+        arrow.set_pixel_size(10);
         row.append(&arrow);
     } else {
         let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        spacer.set_size_request(12, -1);
+        spacer.set_size_request(10, -1);
         row.append(&spacer);
     }
 
@@ -1829,7 +2056,7 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
             };
             gtk4::Image::from_icon_name(icon_name)
         };
-    icon.set_pixel_size(16);
+    icon.set_pixel_size(14);
     row.append(&icon);
 
     // Name label
@@ -1856,9 +2083,11 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
     }
     row.append(&label);
 
-    // Git status indicator badge
+    // Git status indicator badge (right-aligned letter)
     if let Some(ref status) = node.entry.git_status {
         let status_label = gtk4::Label::new(Some(status));
+        status_label.add_css_class("git-badge");
+        status_label.set_halign(gtk4::Align::End);
         match status.as_str() {
             "M" => status_label.add_css_class("git-modified"),
             "A" => status_label.add_css_class("git-added"),

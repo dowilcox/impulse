@@ -262,7 +262,16 @@ pub fn spawn_command(
     // environment variables to prevent library injection in child processes
     let envv: Vec<String> = std::env::vars()
         .filter(|(k, _)| {
-            !matches!(k.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT" | "LD_DEBUG" | "LD_PROFILE" | "LD_DYNAMIC_WEAK" | "LD_BIND_NOW")
+            !matches!(
+                k.as_str(),
+                "LD_PRELOAD"
+                    | "LD_LIBRARY_PATH"
+                    | "LD_AUDIT"
+                    | "LD_DEBUG"
+                    | "LD_PROFILE"
+                    | "LD_DYNAMIC_WEAK"
+                    | "LD_BIND_NOW"
+            )
         })
         .map(|(k, v)| format!("{}={}", k, v))
         .collect();
@@ -299,7 +308,16 @@ fn build_spawn_params(
     // Inherit current environment, filtering out dangerous linker
     // environment variables to prevent library injection in child processes
     for (key, value) in std::env::vars() {
-        if matches!(key.as_str(), "LD_PRELOAD" | "LD_LIBRARY_PATH" | "LD_AUDIT" | "LD_DEBUG" | "LD_PROFILE" | "LD_DYNAMIC_WEAK" | "LD_BIND_NOW") {
+        if matches!(
+            key.as_str(),
+            "LD_PRELOAD"
+                | "LD_LIBRARY_PATH"
+                | "LD_AUDIT"
+                | "LD_DEBUG"
+                | "LD_PROFILE"
+                | "LD_DYNAMIC_WEAK"
+                | "LD_BIND_NOW"
+        ) {
             continue;
         }
         envv.push(format!("{}={}", key, value));
@@ -389,7 +407,9 @@ pub fn paste_from_clipboard(terminal: &vte4::Terminal) {
                     .map_err(|e| {
                         log::error!("Failed to create temp file: {}", e);
                     });
-                let Ok(tmp) = tmp else { return; };
+                let Ok(tmp) = tmp else {
+                    return;
+                };
                 // Persist the temp file so wl-copy/other tools can read it asynchronously
                 let persist_path = match tmp.keep() {
                     Ok((_file, path)) => path,

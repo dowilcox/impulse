@@ -221,10 +221,7 @@ pub(super) fn setup_capture_phase_keys(
             }
 
             // Ctrl+Shift+T: reopen last closed tab (VTE/WebView eat this)
-            if ctrl
-                && shift
-                && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T)
-            {
+            if ctrl && shift && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T) {
                 reopen_tab_capture();
                 return gtk4::glib::Propagation::Stop;
             }
@@ -545,7 +542,10 @@ pub(super) fn setup_shortcut_controller(
                                         uri: file_path_to_uri(std::path::Path::new(&path))
                                             .unwrap_or_else(|| format!("file://{}", path)),
                                     }) {
-                                        log::warn!("LSP request channel full, dropping request: {}", e);
+                                        log::warn!(
+                                            "LSP request channel full, dropping request: {}",
+                                            e
+                                        );
                                     }
                                     let toast = adw::Toast::new(&format!("Saved {}", filename));
                                     toast.set_timeout(2);
@@ -554,34 +554,47 @@ pub(super) fn setup_shortcut_controller(
                                     let commands = settings.borrow().commands_on_save.clone();
                                     let save_path = path.clone();
                                     std::thread::spawn(move || {
-                                        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                            let needs_reload =
-                                                run_commands_on_save(&save_path, &commands);
-                                            if needs_reload {
-                                                let reload_path = save_path.clone();
-                                                gtk4::glib::MainContext::default().invoke(move || {
-                                                    if let Some(handle) =
-                                                        crate::editor::get_handle(&reload_path)
-                                                    {
-                                                        if let Ok(new_content) =
-                                                            std::fs::read_to_string(&reload_path)
-                                                        {
-                                                            let lang = handle.language.borrow().clone();
-                                                            handle.suppress_next_modify.set(true);
-                                                            handle.open_file(
-                                                                &reload_path,
-                                                                &new_content,
-                                                                &lang,
-                                                            );
-                                                            send_diff_decorations(
-                                                                &handle,
-                                                                &reload_path,
-                                                            );
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        })) {
+                                        if let Err(e) = std::panic::catch_unwind(
+                                            std::panic::AssertUnwindSafe(|| {
+                                                let needs_reload =
+                                                    run_commands_on_save(&save_path, &commands);
+                                                if needs_reload {
+                                                    let reload_path = save_path.clone();
+                                                    gtk4::glib::MainContext::default().invoke(
+                                                        move || {
+                                                            if let Some(handle) =
+                                                                crate::editor::get_handle(
+                                                                    &reload_path,
+                                                                )
+                                                            {
+                                                                if let Ok(new_content) =
+                                                                    std::fs::read_to_string(
+                                                                        &reload_path,
+                                                                    )
+                                                                {
+                                                                    let lang = handle
+                                                                        .language
+                                                                        .borrow()
+                                                                        .clone();
+                                                                    handle
+                                                                        .suppress_next_modify
+                                                                        .set(true);
+                                                                    handle.open_file(
+                                                                        &reload_path,
+                                                                        &new_content,
+                                                                        &lang,
+                                                                    );
+                                                                    send_diff_decorations(
+                                                                        &handle,
+                                                                        &reload_path,
+                                                                    );
+                                                                }
+                                                            }
+                                                        },
+                                                    );
+                                                }
+                                            }),
+                                        ) {
                                             log::error!("Background thread panicked: {:?}", e);
                                         }
                                     });

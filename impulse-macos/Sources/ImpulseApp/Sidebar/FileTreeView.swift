@@ -16,6 +16,7 @@ private final class PointerOutlineView: NSOutlineView {
 /// rounded corners, giving the file tree a polished native appearance.
 private final class HoverRowView: NSTableRowView {
 
+    var indentLevel: Int = 0
     private var isHovered = false
     private var trackingArea: NSTrackingArea?
 
@@ -56,6 +57,21 @@ private final class HoverRowView: NSTableRowView {
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
+        // Draw indent guide lines
+        if indentLevel > 0 {
+            let guideColor = NSColor.white.withAlphaComponent(0.25)
+            guideColor.setFill()
+            let indentPerLevel: CGFloat = 16
+            // The outline view adds its own indentation offset; the guides should
+            // align with the start of each indentation level relative to the row's
+            // own coordinate system.  The first guide starts at indentPerLevel.
+            for level in 0..<indentLevel {
+                let x = indentPerLevel * CGFloat(level) + indentPerLevel * 0.5
+                let guideRect = NSRect(x: x, y: bounds.minY, width: 1, height: bounds.height)
+                guideRect.fill()
+            }
+        }
+
         if isHovered && !isSelected {
             let inset = bounds.insetBy(dx: 4, dy: 1)
             let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
@@ -145,7 +161,7 @@ final class FileTreeView: NSView {
         let outline = PointerOutlineView()
         outline.headerView = nil
         outline.indentationPerLevel = 16
-        outline.rowHeight = 24
+        outline.rowHeight = 28
         outline.focusRingType = .none
         outline.allowsMultipleSelection = false
         outline.autoresizesOutlineColumn = true
@@ -541,7 +557,7 @@ final class FileTreeView: NSView {
 
     /// Show a modal alert with a text field for entering a name. Calls
     /// `completion` with the trimmed text (or empty string if cancelled).
-    private func showNameInputAlert(title: String,
+    func showNameInputAlert(title: String,
                                     message: String,
                                     placeholder: String,
                                     defaultValue: String,
@@ -1168,7 +1184,7 @@ extension FileTreeView: NSOutlineViewDelegate {
             } else {
                 fallback = NSWorkspace.shared.icon(forFile: node.path)
             }
-            fallback.size = NSSize(width: 16, height: 16)
+            fallback.size = NSSize(width: 14, height: 14)
             cell.imageView?.image = fallback
         }
 
@@ -1177,11 +1193,26 @@ extension FileTreeView: NSOutlineViewDelegate {
         cell.textField?.textColor = textColor(for: node.gitStatus)
         cell.textField?.lineBreakMode = .byTruncatingMiddle
 
+        // Git status badge (right-aligned letter)
+        if let badge = cell.viewWithTag(FileTreeView.gitBadgeTag) as? NSTextField {
+            let (badgeText, badgeColor) = badgeInfo(for: node.gitStatus)
+            if let text = badgeText {
+                badge.stringValue = text
+                badge.textColor = badgeColor
+                badge.isHidden = false
+            } else {
+                badge.stringValue = ""
+                badge.isHidden = true
+            }
+        }
+
         return cell
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        return HoverRowView()
+        let rowView = HoverRowView()
+        rowView.indentLevel = outlineView.level(forItem: item)
+        return rowView
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
@@ -1248,6 +1279,9 @@ extension FileTreeView: NSOutlineViewDelegate {
 
     // MARK: Cell Construction
 
+    /// Tag used to identify the git status badge label within a cell view.
+    private static let gitBadgeTag = 42
+
     private func makeCellView() -> NSTableCellView {
         let cell = NSTableCellView()
         cell.identifier = cellID
@@ -1262,19 +1296,30 @@ extension FileTreeView: NSOutlineViewDelegate {
         textField.cell?.truncatesLastVisibleLine = true
         textField.lineBreakMode = .byTruncatingMiddle
 
+        let badge = NSTextField(labelWithString: "")
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+        badge.alignment = .center
+        badge.tag = FileTreeView.gitBadgeTag
+
         cell.addSubview(imageView)
         cell.addSubview(textField)
+        cell.addSubview(badge)
         cell.imageView = imageView
         cell.textField = textField
 
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 16),
-            imageView.heightAnchor.constraint(equalToConstant: 16),
+            imageView.widthAnchor.constraint(equalToConstant: 14),
+            imageView.heightAnchor.constraint(equalToConstant: 14),
+
+            badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 14),
 
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
-            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+            textField.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -4),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
@@ -1292,6 +1337,18 @@ extension FileTreeView: NSOutlineViewDelegate {
         case .deleted:    return NSColor.systemRed
         case .renamed:    return NSColor.systemBlue
         case .conflict:   return NSColor.systemOrange
+        }
+    }
+
+    private func badgeInfo(for status: FileTreeNode.GitStatus) -> (String?, NSColor) {
+        switch status {
+        case .none:       return (nil, .labelColor)
+        case .modified:   return ("M", NSColor.systemYellow)
+        case .added:      return ("A", NSColor.systemGreen)
+        case .untracked:  return ("?", NSColor.systemGreen)
+        case .deleted:    return ("D", NSColor.systemRed)
+        case .renamed:    return ("R", NSColor.systemBlue)
+        case .conflict:   return ("C", NSColor.systemOrange)
         }
     }
 }

@@ -81,6 +81,8 @@ const TOOLBAR_EYE_OPEN_SVG: &str = include_str!("../../assets/icons/toolbar-eye-
 const TOOLBAR_EYE_CLOSED_SVG: &str = include_str!("../../assets/icons/toolbar-eye-closed.svg");
 const TOOLBAR_COLLAPSE_SVG: &str = include_str!("../../assets/icons/toolbar-collapse.svg");
 const TOOLBAR_REFRESH_SVG: &str = include_str!("../../assets/icons/toolbar-refresh.svg");
+const TOOLBAR_NEW_FILE_SVG: &str = include_str!("../../assets/icons/toolbar-new-file.svg");
+const TOOLBAR_NEW_FOLDER_SVG: &str = include_str!("../../assets/icons/toolbar-new-folder.svg");
 
 // ---------------------------------------------------------------------------
 // Color field — which theme color an icon uses
@@ -417,6 +419,16 @@ const ALL_ICONS: &[IconDef] = &[
     IconDef {
         name: "toolbar-refresh",
         svg: TOOLBAR_REFRESH_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-new-file",
+        svg: TOOLBAR_NEW_FILE_SVG,
+        color: ColorField::Fg,
+    },
+    IconDef {
+        name: "toolbar-new-folder",
+        svg: TOOLBAR_NEW_FOLDER_SVG,
         color: ColorField::Fg,
     },
 ];

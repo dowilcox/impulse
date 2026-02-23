@@ -149,7 +149,9 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
             // File is in a subdirectory — mark the immediate child
             // directory as modified so it shows as changed in the tree.
             let dir_name = components[0].as_os_str().to_string_lossy().to_string();
-            status_map.entry(dir_name).or_insert_with(|| "M".to_string());
+            status_map
+                .entry(dir_name)
+                .or_insert_with(|| "M".to_string());
         }
     }
 
@@ -339,8 +341,9 @@ pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
         Ok(head.shorthand().map(String::from))
     } else {
         // Detached HEAD — return abbreviated commit hash
-        Ok(head
-            .target()
-            .map(|oid| { let s = oid.to_string(); s[..7.min(s.len())].to_string() }))
+        Ok(head.target().map(|oid| {
+            let s = oid.to_string();
+            s[..7.min(s.len())].to_string()
+        }))
     }
 }

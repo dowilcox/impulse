@@ -348,8 +348,10 @@ fn lsp_request_timeout(method: &str) -> Duration {
         "textDocument/completion" => Duration::from_secs(5),
         "textDocument/hover" => Duration::from_secs(5),
         "textDocument/signatureHelp" => Duration::from_secs(5),
-        "textDocument/definition" | "textDocument/declaration"
-        | "textDocument/typeDefinition" | "textDocument/implementation"
+        "textDocument/definition"
+        | "textDocument/declaration"
+        | "textDocument/typeDefinition"
+        | "textDocument/implementation"
         | "textDocument/references" => Duration::from_secs(15),
         "textDocument/rename" | "textDocument/prepareRename" => Duration::from_secs(15),
         "textDocument/codeAction" => Duration::from_secs(10),
@@ -641,8 +643,7 @@ impl LspClient {
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.len())
                     .unwrap_or(0);
-                let result =
-                    serde_json::Value::Array(vec![serde_json::json!({}); count]);
+                let result = serde_json::Value::Array(vec![serde_json::json!({}); count]);
                 send_jsonrpc_result(sender, id, result);
             }
             "window/workDoneProgress/create" => {
@@ -746,7 +747,11 @@ impl LspClient {
                 // Remove the pending request so the oneshot sender is dropped
                 let mut pending = self.pending.lock().await;
                 pending.remove(&id);
-                Err(format!("LSP request '{}' timed out after {}s", method, timeout.as_secs()))
+                Err(format!(
+                    "LSP request '{}' timed out after {}s",
+                    method,
+                    timeout.as_secs()
+                ))
             }
         }
     }
@@ -1375,10 +1380,7 @@ impl LspConfig {
             let valid_markers: Vec<String> = root_markers
                 .into_iter()
                 .filter(|m| {
-                    !m.is_empty()
-                        && !m.contains('/')
-                        && !m.contains('\\')
-                        && !m.contains("..")
+                    !m.is_empty() && !m.contains('/') && !m.contains('\\') && !m.contains("..")
                 })
                 .collect();
             if !valid_markers.is_empty() {

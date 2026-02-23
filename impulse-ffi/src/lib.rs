@@ -450,8 +450,11 @@ pub extern "C" fn impulse_lsp_request(
             let params: Option<serde_json::Value> =
                 to_rust_str(params_json).and_then(|s| serde_json::from_str(&s).ok());
 
-            with_lsp_handle(handle, to_c_string("{\"error\":\"invalid handle\"}"), |inner| {
-                inner.runtime.block_on(async {
+            with_lsp_handle(
+                handle,
+                to_c_string("{\"error\":\"invalid handle\"}"),
+                |inner| {
+                    inner.runtime.block_on(async {
                     let clients = inner.registry.get_clients(&language_id, &file_uri).await;
                     if let Some(client) = clients.first() {
                         match client.request(&method, params).await {
@@ -475,7 +478,8 @@ pub extern "C" fn impulse_lsp_request(
                         to_c_string("{\"error\":\"no LSP client available\"}")
                     }
                 })
-            })
+                },
+            )
         }),
     )
 }
@@ -696,8 +700,7 @@ pub extern "C" fn impulse_lsp_check_status() -> *mut c_char {
                 Ok(j) => j,
                 Err(e) => {
                     log::error!("JSON serialization failed: {}", e);
-                    serde_json::json!({"error": format!("serialization failed: {}", e)})
-                        .to_string()
+                    serde_json::json!({"error": format!("serialization failed: {}", e)}).to_string()
                 }
             };
             to_c_string(&result)
@@ -754,8 +757,7 @@ pub extern "C" fn impulse_system_lsp_status() -> *mut c_char {
                 Ok(j) => j,
                 Err(e) => {
                     log::error!("JSON serialization failed: {}", e);
-                    serde_json::json!({"error": format!("serialization failed: {}", e)})
-                        .to_string()
+                    serde_json::json!({"error": format!("serialization failed: {}", e)}).to_string()
                 }
             };
             to_c_string(&result)

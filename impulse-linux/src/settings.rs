@@ -197,7 +197,9 @@ fn settings_path() -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&impulse_dir, std::fs::Permissions::from_mode(0o700)) {
+        if let Err(e) =
+            std::fs::set_permissions(&impulse_dir, std::fs::Permissions::from_mode(0o700))
+        {
             log::warn!("Failed to set permissions on {:?}: {}", impulse_dir, e);
         }
     }
@@ -236,7 +238,7 @@ pub fn load() -> Settings {
     }
     settings.tab_width = settings.tab_width.clamp(1, 16);
     settings.right_margin_position = settings.right_margin_position.clamp(1, 500);
-    settings.sidebar_width = settings.sidebar_width.clamp(100, 1000);
+    settings.sidebar_width = settings.sidebar_width.clamp(150, 1000);
     settings.editor_line_height = settings.editor_line_height.min(100);
 
     settings

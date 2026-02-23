@@ -52,7 +52,7 @@ private final class SidebarToggleButton: NSButton {
         self.title = title
         isBordered = false
         bezelStyle = .inline
-        font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 6
@@ -85,7 +85,7 @@ private final class SidebarToggleButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let base = super.intrinsicContentSize
-        return NSSize(width: base.width + 24, height: max(28, base.height + 8))
+        return NSSize(width: base.width + 24, height: max(26, base.height + 8))
     }
 
     override func updateTrackingAreas() {
@@ -203,6 +203,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         btn.bezelStyle = .texturedRounded
         btn.isBordered = false
         btn.toolTip = "Collapse All"
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
+    /// The project header row (toolbar buttons), hidden when Search is active.
+    private let projectHeaderView: NSView = {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    /// Button to create a new file in the project root.
+    private let newFileButton: PointerButton = {
+        let btn = PointerButton()
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.toolTip = "New File"
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
+    /// Button to create a new folder in the project root.
+    private let newFolderButton: PointerButton = {
+        let btn = PointerButton()
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.toolTip = "New Folder"
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
+    /// Button to refresh the file tree.
+    private let refreshButton: PointerButton = {
+        let btn = PointerButton()
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.toolTip = "Refresh File Tree"
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         return btn
@@ -380,6 +420,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             ?? NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "Toggle Hidden Files")
         collapseAllButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-collapse")
             ?? NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Collapse All")
+        newFileButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-new-file")
+            ?? NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")
+        newFolderButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-new-folder")
+            ?? NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")
+        refreshButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-refresh")
+            ?? NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
 
         sidebarToggleButton.target = self
         sidebarToggleButton.action = #selector(toggleSidebarAction(_:))
@@ -394,6 +440,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         collapseAllButton.target = self
         collapseAllButton.action = #selector(collapseAllAction(_:))
+
+        newFileButton.target = self
+        newFileButton.action = #selector(newFileAction(_:))
+
+        newFolderButton.target = self
+        newFolderButton.action = #selector(newFolderAction(_:))
+
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshTreeAction(_:))
+
 
         setupLayout()
         setupNotificationObservers()
@@ -462,7 +518,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         splitView.delegate = self
         splitView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Sidebar: header (mode switch) + file tree / search panel
+        // Sidebar: segmented control → project header → file tree / search panel
         sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let sidebarModeStack = NSStackView(views: [filesToggle, searchToggle])
@@ -471,35 +527,51 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         sidebarModeStack.distribution = .fillEqually
         sidebarModeStack.translatesAutoresizingMaskIntoConstraints = false
 
+        // Project header: project name label + toolbar buttons (new file, new folder, hidden, refresh, collapse)
+        let toolbarStack = NSStackView(views: [newFileButton, newFolderButton, toggleHiddenButton, refreshButton, collapseAllButton])
+        toolbarStack.orientation = .horizontal
+        toolbarStack.spacing = 2
+        toolbarStack.translatesAutoresizingMaskIntoConstraints = false
+
+        projectHeaderView.addSubview(toolbarStack)
+
+        NSLayoutConstraint.activate([
+            toolbarStack.trailingAnchor.constraint(equalTo: projectHeaderView.trailingAnchor, constant: -8),
+            toolbarStack.centerYAnchor.constraint(equalTo: projectHeaderView.centerYAnchor),
+
+            newFileButton.widthAnchor.constraint(equalToConstant: 24),
+            newFolderButton.widthAnchor.constraint(equalToConstant: 24),
+            toggleHiddenButton.widthAnchor.constraint(equalToConstant: 24),
+            refreshButton.widthAnchor.constraint(equalToConstant: 24),
+            collapseAllButton.widthAnchor.constraint(equalToConstant: 24),
+
+            projectHeaderView.heightAnchor.constraint(equalToConstant: 24),
+        ])
+
         fileTreeView.translatesAutoresizingMaskIntoConstraints = false
         searchPanel.translatesAutoresizingMaskIntoConstraints = false
         searchPanel.isHidden = true
 
         sidebarContainer.addSubview(sidebarModeStack)
-        sidebarContainer.addSubview(toggleHiddenButton)
-        sidebarContainer.addSubview(collapseAllButton)
+        sidebarContainer.addSubview(projectHeaderView)
         sidebarContainer.addSubview(fileTreeView)
         sidebarContainer.addSubview(searchPanel)
 
         NSLayoutConstraint.activate([
             sidebarModeStack.topAnchor.constraint(equalTo: sidebarContainer.safeAreaLayoutGuide.topAnchor, constant: 10),
             sidebarModeStack.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor, constant: 10),
+            sidebarModeStack.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -10),
 
-            toggleHiddenButton.centerYAnchor.constraint(equalTo: sidebarModeStack.centerYAnchor),
-            toggleHiddenButton.leadingAnchor.constraint(greaterThanOrEqualTo: sidebarModeStack.trailingAnchor, constant: 8),
-            toggleHiddenButton.widthAnchor.constraint(equalToConstant: 24),
+            projectHeaderView.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 6),
+            projectHeaderView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
+            projectHeaderView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
 
-            collapseAllButton.centerYAnchor.constraint(equalTo: sidebarModeStack.centerYAnchor),
-            collapseAllButton.leadingAnchor.constraint(equalTo: toggleHiddenButton.trailingAnchor, constant: 4),
-            collapseAllButton.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -10),
-            collapseAllButton.widthAnchor.constraint(equalToConstant: 24),
-
-            fileTreeView.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 8),
+            fileTreeView.topAnchor.constraint(equalTo: projectHeaderView.bottomAnchor, constant: 4),
             fileTreeView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
             fileTreeView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             fileTreeView.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
 
-            searchPanel.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 8),
+            searchPanel.topAnchor.constraint(equalTo: projectHeaderView.bottomAnchor, constant: 4),
             searchPanel.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
             searchPanel.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             searchPanel.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
@@ -659,13 +731,64 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         fileTreeView.collapseAll()
     }
 
+    @objc private func refreshTreeAction(_ sender: Any?) {
+        fileTreeView.refreshTree()
+    }
+
+    @objc private func newFileAction(_ sender: Any?) {
+        let dirPath = fileTreeRootPath
+        guard !dirPath.isEmpty else { return }
+        fileTreeView.showNameInputAlert(
+            title: "New File",
+            message: "Enter a name for the new file:",
+            placeholder: "untitled",
+            defaultValue: ""
+        ) { [weak self] name in
+            guard let self, !name.isEmpty, !name.contains("/") else { return }
+            let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            let resolvedPath = (fullPath as NSString).standardizingPath
+            let resolvedDir = (dirPath as NSString).standardizingPath
+            guard resolvedPath.hasPrefix(resolvedDir) else { return }
+            guard FileManager.default.createFile(atPath: fullPath, contents: nil) else {
+                NSLog("MainWindow: failed to create file at \(fullPath)")
+                return
+            }
+            self.fileTreeView.refreshTree()
+        }
+    }
+
+    @objc private func newFolderAction(_ sender: Any?) {
+        let dirPath = fileTreeRootPath
+        guard !dirPath.isEmpty else { return }
+        fileTreeView.showNameInputAlert(
+            title: "New Folder",
+            message: "Enter a name for the new folder:",
+            placeholder: "untitled-folder",
+            defaultValue: ""
+        ) { [weak self] name in
+            guard let self, !name.isEmpty, !name.contains("/") else { return }
+            let fullPath = (dirPath as NSString).appendingPathComponent(name)
+            let resolvedPath = (fullPath as NSString).standardizingPath
+            let resolvedDir = (dirPath as NSString).standardizingPath
+            guard resolvedPath.hasPrefix(resolvedDir) else { return }
+            do {
+                try FileManager.default.createDirectory(atPath: fullPath,
+                                                        withIntermediateDirectories: false)
+            } catch {
+                NSLog("MainWindow: failed to create folder at \(fullPath): \(error)")
+                return
+            }
+            self.fileTreeView.refreshTree()
+        }
+    }
+
+
     @objc private func filesToggleClicked(_ sender: Any?) {
         filesToggle.isActive = true
         searchToggle.isActive = false
         fileTreeView.isHidden = false
         searchPanel.isHidden = true
-        toggleHiddenButton.isHidden = false
-        collapseAllButton.isHidden = false
+        projectHeaderView.isHidden = false
     }
 
     @objc private func searchToggleClicked(_ sender: Any?) {
@@ -673,8 +796,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         searchToggle.isActive = true
         fileTreeView.isHidden = true
         searchPanel.isHidden = false
-        toggleHiddenButton.isHidden = true
-        collapseAllButton.isHidden = true
+        projectHeaderView.isHidden = true
         searchPanel.focus()
     }
 

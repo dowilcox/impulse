@@ -1230,7 +1230,10 @@ pub fn show_settings_window(
     managed_group.set_description(Some("Installed and managed by Impulse via npm."));
 
     // Helper: rebuild managed server rows from fresh data
-    fn rebuild_managed_lsp_rows(group: &adw::PreferencesGroup, tracked: &Rc<RefCell<Vec<gtk4::Widget>>>) {
+    fn rebuild_managed_lsp_rows(
+        group: &adw::PreferencesGroup,
+        tracked: &Rc<RefCell<Vec<gtk4::Widget>>>,
+    ) {
         let mut rows = tracked.borrow_mut();
         for row in rows.drain(..) {
             group.remove(&row);

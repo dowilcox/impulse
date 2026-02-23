@@ -181,11 +181,7 @@ pub fn remove_terminal(container: &gtk4::Widget, terminal: &vte4::Terminal) -> b
     let start = paned.start_child();
     let end = paned.end_child();
     let is_start = start.as_ref() == Some(&wrapper);
-    let sibling = if is_start {
-        end.clone()
-    } else {
-        start.clone()
-    };
+    let sibling = if is_start { end.clone() } else { start.clone() };
     let sibling = match sibling {
         Some(s) => s,
         None => return false,
@@ -215,8 +211,7 @@ pub fn remove_terminal(container: &gtk4::Widget, terminal: &vte4::Terminal) -> b
         }
     } else if let Some(parent_paned) = parent.downcast_ref::<gtk4::Paned>() {
         // The Paned is itself nested inside another Paned.
-        let is_start_of_parent =
-            parent_paned.start_child().as_ref() == Some(&paned_widget);
+        let is_start_of_parent = parent_paned.start_child().as_ref() == Some(&paned_widget);
         if is_start_of_parent {
             parent_paned.set_start_child(Some(&sibling));
         } else {

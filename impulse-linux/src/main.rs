@@ -123,7 +123,9 @@ fn install_panic_hook() {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                {
                     log::warn!("Failed to set permissions on {:?}: {}", dir, e);
                 }
             }
@@ -203,7 +205,12 @@ fn main() {
 
     // Filter out custom flags so GTK/GLib doesn't reject them.
     let gtk_args: Vec<String> = std::env::args()
-        .filter(|a| !matches!(a.as_str(), "--dev" | "--install-lsp-servers" | "--check-lsp-servers"))
+        .filter(|a| {
+            !matches!(
+                a.as_str(),
+                "--dev" | "--install-lsp-servers" | "--check-lsp-servers"
+            )
+        })
         .collect();
     app.run_with_args(&gtk_args);
 }

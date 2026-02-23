@@ -339,14 +339,14 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         .sidebar-tab {{
             border-radius: 6px;
-            padding: 4px 12px;
+            padding: 4px 14px;
             font-size: 12px;
-            font-weight: 500;
+            font-weight: 600;
             color: {fg_dark};
             background: transparent;
             border: none;
             box-shadow: none;
-            min-height: 28px;
+            min-height: 26px;
         }}
         .sidebar-tab:hover {{
             color: {fg_dark};
@@ -356,6 +356,15 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {cyan};
             background-color: {bg_highlight};
         }}
+        .sidebar-project-header {{
+            padding: 4px 8px;
+        }}
+        .sidebar-project-name {{
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            color: {comment};
+        }}
         .sidebar-toolbar-btn {{
             min-width: 24px;
             min-height: 24px;
@@ -364,20 +373,34 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .file-tree {{
             background-color: transparent;
         }}
+        .file-tree row {{
+            padding: 0;
+        }}
         .file-tree row:hover {{
             background-color: {bg_highlight};
         }}
         .file-tree row:selected {{
             background-color: {bg_highlight};
         }}
+        .sidebar-indent-guide {{
+            color: alpha({comment}, 0.25);
+        }}
         .file-entry {{
-            padding: 3px 10px;
+            padding: 0px 8px;
+            min-height: 28px;
         }}
         .file-entry-dir {{
             color: {fg};
         }}
         .file-entry-file {{
             color: {fg};
+        }}
+        .git-badge {{
+            font-size: 11px;
+            font-weight: 600;
+            font-family: monospace;
+            margin-right: 4px;
+            min-width: 14px;
         }}
         .git-modified {{
             color: {yellow};

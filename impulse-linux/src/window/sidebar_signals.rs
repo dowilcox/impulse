@@ -6,7 +6,10 @@ use crate::editor;
 use crate::lsp_completion::LspRequest;
 use crate::terminal_container;
 
-use super::{file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui, send_diff_decorations, uri_to_file_path};
+use super::{
+    file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui,
+    send_diff_decorations, uri_to_file_path,
+};
 
 /// Wire up sidebar file activation, project search result activation,
 /// and "Open in Terminal" context menu callbacks.

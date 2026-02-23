@@ -35,12 +35,8 @@ pub fn open_repo(path: &Path) -> Result<git2::Repository, String> {
     }
 
     // Discover and cache
-    let repo =
-        git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
-    let root = repo
-        .workdir()
-        .ok_or("Bare repository")?
-        .to_path_buf();
+    let repo = git2::Repository::discover(path).map_err(|e| format!("Not a git repo: {}", e))?;
+    let root = repo.workdir().ok_or("Bare repository")?.to_path_buf();
 
     {
         let mut cache = REPO_ROOT_CACHE.lock();
