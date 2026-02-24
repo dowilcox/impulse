@@ -94,12 +94,26 @@ final class FileTreeNode {
 
     // MARK: Git Status Enrichment
 
-    /// Fetch git status for the tree rooted at `rootPath` and propagate status
-    /// markers to all nodes. The FFI calls run on the current thread (expected
-    /// to be a background queue), then node mutations are dispatched to the
-    /// main thread to avoid data races with NSOutlineView.
-    static func refreshGitStatus(nodes: [FileTreeNode], rootPath: String) {
-        let updates = collectStatusUpdates(nodes: nodes, dirPath: rootPath)
+    /// Fetch git status for nodes under `dirPath` and propagate status markers.
+    /// Uses the batch `getAllGitStatuses` FFI call to fetch all statuses in a
+    /// single pass (instead of N+1 per-directory calls).
+    ///
+    /// - Parameters:
+    ///   - nodes: The tree nodes to update.
+    ///   - repoPath: The git repository root (used to fetch all statuses).
+    ///   - dirPath: The directory that `nodes` are children of (used for status lookup).
+    static func refreshGitStatus(
+        nodes: [FileTreeNode],
+        repoPath: String,
+        dirPath: String
+    ) {
+        // The batch call runs on the current thread (expected to be background).
+        let batchStatuses = ImpulseCore.getAllGitStatuses(repoPath: repoPath)
+        let updates = collectStatusUpdates(
+            nodes: nodes,
+            dirPath: dirPath,
+            batchStatuses: batchStatuses
+        )
         DispatchQueue.main.async {
             for (node, status) in updates {
                 node.gitStatus = status
@@ -109,53 +123,47 @@ final class FileTreeNode {
 
     // MARK: Private Helpers
 
-    /// Collect (node, status) pairs by walking the tree and fetching git status
-    /// for each expanded directory. This runs on a background thread and does
-    /// NOT mutate any nodes — the caller applies the updates on the main thread.
+    /// Collect (node, status) pairs using the pre-computed batch status map.
+    /// Recurses into all directories with loaded children — this is cheap since
+    /// it only does dictionary lookups, no I/O.
     private static func collectStatusUpdates(
         nodes: [FileTreeNode],
-        dirPath: String
+        dirPath: String,
+        batchStatuses: [String: [String: String]]
     ) -> [(FileTreeNode, GitStatus)] {
-        let statusMap = fetchGitStatus(rootPath: dirPath)
         var updates: [(FileTreeNode, GitStatus)] = []
+        let dirStatuses = batchStatuses[dirPath] ?? [:]
 
         for node in nodes {
-            updates.append((node, statusMap[node.path] ?? .none))
+            let status = statusFromCode(dirStatuses[node.name])
+            updates.append((node, status))
         }
 
-        // Recurse into expanded subdirectories with their own FFI calls.
+        // Recurse into all directories with loaded children.
         for node in nodes {
-            if node.isDirectory, node.isExpanded, let children = node.children {
-                updates.append(contentsOf: collectStatusUpdates(nodes: children, dirPath: node.path))
+            if node.isDirectory, let children = node.children {
+                updates.append(contentsOf: collectStatusUpdates(
+                    nodes: children,
+                    dirPath: node.path,
+                    batchStatuses: batchStatuses
+                ))
             }
         }
         return updates
     }
 
-    /// Fetch git status for files in the directory at `rootPath` using the
-    /// impulse-core FFI bridge (libgit2), avoiding the overhead and parsing
-    /// fragility of shelling out to `git status --porcelain`.
-    private static func fetchGitStatus(rootPath: String) -> [String: GitStatus] {
-        let raw = ImpulseCore.gitStatusForDirectory(path: rootPath)
-        guard !raw.isEmpty else { return [:] }
-
-        var map: [String: GitStatus] = [:]
-        for (name, code) in raw {
-            let status: GitStatus
-            switch code {
-            case "M":  status = .modified
-            case "A":  status = .added
-            case "D":  status = .deleted
-            case "R":  status = .renamed
-            case "C":  status = .conflict
-            case "?":  status = .untracked
-            default:   status = .modified
-            }
-            // The FFI returns filenames (not full paths), so reconstruct the absolute path.
-            let absPath = (rootPath as NSString).appendingPathComponent(name)
-            map[absPath] = status
+    /// Convert a status code string to a GitStatus enum value.
+    private static func statusFromCode(_ code: String?) -> GitStatus {
+        guard let code else { return .none }
+        switch code {
+        case "M":  return .modified
+        case "A":  return .added
+        case "D":  return .deleted
+        case "R":  return .renamed
+        case "C":  return .conflict
+        case "?":  return .untracked
+        default:   return .modified
         }
-        return map
     }
 
 }

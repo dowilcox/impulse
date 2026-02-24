@@ -2,11 +2,12 @@ use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::mpsc as std_mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::file_icons::IconCache;
@@ -534,7 +535,6 @@ pub fn build_sidebar(
             if clicked.is_empty() {
                 return;
             }
-            // Resolve to parent directory if the clicked path is a file
             let dir_path = if std::path::Path::new(&clicked).is_dir() {
                 clicked
             } else {
@@ -543,82 +543,23 @@ pub fn build_sidebar(
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default()
             };
-
-            let dialog = gtk4::Window::builder()
-                .modal(true)
-                .decorated(false)
-                .default_width(300)
-                .default_height(50)
-                .build();
-            if let Some(root) = file_tree_list.root() {
-                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
-                    dialog.set_transient_for(Some(window));
-                }
-            }
-            dialog.add_css_class("quick-open");
-
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("New file name..."));
-            entry.set_margin_start(12);
-            entry.set_margin_end(12);
-            entry.set_margin_top(12);
-            entry.set_margin_bottom(12);
-            dialog.set_child(Some(&entry));
-
             let tree_nodes = tree_nodes.clone();
-            let file_tree_list = file_tree_list.clone();
+            let file_tree_list2 = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
-            {
-                let dialog = dialog.clone();
-                let dir_path = dir_path.clone();
-                entry.connect_activate(move |entry| {
-                    let name = entry.text().to_string();
-                    if !name.is_empty() {
-                        // Validate filename is a single valid component
-                        let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str())
-                            || name.contains('\0')
-                        {
-                            log::error!("Invalid filename: must be a single filename component");
-                            dialog.close();
-                            return;
-                        }
-                        let new_path = std::path::Path::new(&dir_path).join(&name);
-                        if let Err(e) = std::fs::write(&new_path, "") {
-                            log::error!("Failed to create file: {}", e);
-                        } else {
-                            insert_new_entry_into_tree(
-                                &tree_nodes,
-                                &file_tree_list,
-                                &current_path,
-                                &dir_path,
-                                &name,
-                                &new_path.to_string_lossy(),
-                                false,
-                                &icon_cache.borrow(),
-                            );
-                        }
-                    }
-                    dialog.close();
-                });
-            }
-
-            let key_ctrl = gtk4::EventControllerKey::new();
-            {
-                let dialog = dialog.clone();
-                key_ctrl.connect_key_pressed(move |_, key, _, _| {
-                    if key == gtk4::gdk::Key::Escape {
-                        dialog.close();
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                    gtk4::glib::Propagation::Proceed
-                });
-            }
-            entry.add_controller(key_ctrl);
-
-            dialog.present();
-            entry.grab_focus();
+            let dir_path2 = dir_path.clone();
+            show_new_entry_dialog(false, &dir_path, &file_tree_list, move |name, new_path| {
+                insert_new_entry_into_tree(
+                    &tree_nodes,
+                    &file_tree_list2,
+                    &current_path,
+                    &dir_path2,
+                    &name,
+                    &new_path,
+                    false,
+                    &icon_cache.borrow(),
+                );
+            });
         });
     }
     action_group.add_action(&new_file_action);
@@ -636,7 +577,6 @@ pub fn build_sidebar(
             if clicked.is_empty() {
                 return;
             }
-            // Resolve to parent directory if the clicked path is a file
             let dir_path = if std::path::Path::new(&clicked).is_dir() {
                 clicked
             } else {
@@ -645,82 +585,23 @@ pub fn build_sidebar(
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default()
             };
-
-            let dialog = gtk4::Window::builder()
-                .modal(true)
-                .decorated(false)
-                .default_width(300)
-                .default_height(50)
-                .build();
-            if let Some(root) = file_tree_list.root() {
-                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
-                    dialog.set_transient_for(Some(window));
-                }
-            }
-            dialog.add_css_class("quick-open");
-
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("New folder name..."));
-            entry.set_margin_start(12);
-            entry.set_margin_end(12);
-            entry.set_margin_top(12);
-            entry.set_margin_bottom(12);
-            dialog.set_child(Some(&entry));
-
             let tree_nodes = tree_nodes.clone();
-            let file_tree_list = file_tree_list.clone();
+            let file_tree_list2 = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
-            {
-                let dialog = dialog.clone();
-                let dir_path = dir_path.clone();
-                entry.connect_activate(move |entry| {
-                    let name = entry.text().to_string();
-                    if !name.is_empty() {
-                        // Validate filename is a single valid component
-                        let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str())
-                            || name.contains('\0')
-                        {
-                            log::error!("Invalid filename: must be a single filename component");
-                            dialog.close();
-                            return;
-                        }
-                        let new_path = std::path::Path::new(&dir_path).join(&name);
-                        if let Err(e) = std::fs::create_dir(&new_path) {
-                            log::error!("Failed to create folder: {}", e);
-                        } else {
-                            insert_new_entry_into_tree(
-                                &tree_nodes,
-                                &file_tree_list,
-                                &current_path,
-                                &dir_path,
-                                &name,
-                                &new_path.to_string_lossy(),
-                                true,
-                                &icon_cache.borrow(),
-                            );
-                        }
-                    }
-                    dialog.close();
-                });
-            }
-
-            let key_ctrl = gtk4::EventControllerKey::new();
-            {
-                let dialog = dialog.clone();
-                key_ctrl.connect_key_pressed(move |_, key, _, _| {
-                    if key == gtk4::gdk::Key::Escape {
-                        dialog.close();
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                    gtk4::glib::Propagation::Proceed
-                });
-            }
-            entry.add_controller(key_ctrl);
-
-            dialog.present();
-            entry.grab_focus();
+            let dir_path2 = dir_path.clone();
+            show_new_entry_dialog(true, &dir_path, &file_tree_list, move |name, new_path| {
+                insert_new_entry_into_tree(
+                    &tree_nodes,
+                    &file_tree_list2,
+                    &current_path,
+                    &dir_path2,
+                    &name,
+                    &new_path,
+                    true,
+                    &icon_cache.borrow(),
+                );
+            });
         });
     }
     action_group.add_action(&new_folder_action);
@@ -803,20 +684,21 @@ pub fn build_sidebar(
     // Accept internal moves: string paths from our DragSource
     let drop_target_internal =
         gtk4::DropTarget::new(glib::types::Type::STRING, gtk4::gdk::DragAction::MOVE);
+    let internal_highlight: Rc<std::cell::Cell<i32>> = Rc::new(std::cell::Cell::new(-1));
     {
         let file_tree_list = file_tree_list.clone();
+        let highlight = internal_highlight.clone();
         drop_target_internal.connect_motion(move |_target, _x, y| {
-            remove_drop_highlights(&file_tree_list);
-            if let Some(row) = file_tree_list.row_at_y(y as i32) {
-                row.add_css_class("drop-target");
-            }
+            let row_idx = file_tree_list.row_at_y(y as i32).map_or(-1, |r| r.index());
+            set_drop_highlight(&file_tree_list, row_idx, &highlight);
             gtk4::gdk::DragAction::MOVE
         });
     }
     {
         let file_tree_list = file_tree_list.clone();
+        let highlight = internal_highlight.clone();
         drop_target_internal.connect_leave(move |_target| {
-            remove_drop_highlights(&file_tree_list);
+            remove_drop_highlight(&file_tree_list, &highlight);
         });
     }
     {
@@ -826,8 +708,9 @@ pub fn build_sidebar(
         let file_tree_scroll = file_tree_scroll.clone();
         let show_hidden = show_hidden.clone();
         let icon_cache = icon_cache.clone();
+        let highlight = internal_highlight.clone();
         drop_target_internal.connect_drop(move |_target, value, _x, y| {
-            remove_drop_highlights(&file_tree_list);
+            remove_drop_highlight(&file_tree_list, &highlight);
             if let Ok(source_path) = value.get::<String>() {
                 let cur = current_path.borrow().clone();
                 if let Some(target_dir) = resolve_drop_target_dir(&file_tree_list, y, &cur) {
@@ -859,20 +742,21 @@ pub fn build_sidebar(
         gtk4::gdk::FileList::static_type(),
         gtk4::gdk::DragAction::COPY,
     );
+    let external_highlight: Rc<std::cell::Cell<i32>> = Rc::new(std::cell::Cell::new(-1));
     {
         let file_tree_list = file_tree_list.clone();
+        let highlight = external_highlight.clone();
         drop_target_external.connect_motion(move |_target, _x, y| {
-            remove_drop_highlights(&file_tree_list);
-            if let Some(row) = file_tree_list.row_at_y(y as i32) {
-                row.add_css_class("drop-target");
-            }
+            let row_idx = file_tree_list.row_at_y(y as i32).map_or(-1, |r| r.index());
+            set_drop_highlight(&file_tree_list, row_idx, &highlight);
             gtk4::gdk::DragAction::COPY
         });
     }
     {
         let file_tree_list = file_tree_list.clone();
+        let highlight = external_highlight.clone();
         drop_target_external.connect_leave(move |_target| {
-            remove_drop_highlights(&file_tree_list);
+            remove_drop_highlight(&file_tree_list, &highlight);
         });
     }
     {
@@ -882,8 +766,9 @@ pub fn build_sidebar(
         let file_tree_scroll = file_tree_scroll.clone();
         let show_hidden = show_hidden.clone();
         let icon_cache = icon_cache.clone();
+        let highlight = external_highlight.clone();
         drop_target_external.connect_drop(move |_target, value, _x, y| {
-            remove_drop_highlights(&file_tree_list);
+            remove_drop_highlight(&file_tree_list, &highlight);
             if let Ok(file_list) = value.get::<gtk4::gdk::FileList>() {
                 let cur = current_path.borrow().clone();
                 if let Some(target_dir) = resolve_drop_target_dir(&file_tree_list, y, &cur) {
@@ -970,12 +855,10 @@ pub fn build_sidebar(
         icon_cache: icon_cache.clone(),
         #[allow(clippy::arc_with_non_send_sync)]
         _watcher: Rc::new(RefCell::new(None)),
-        _watcher_timer: Rc::new(RefCell::new(None)),
         #[allow(clippy::arc_with_non_send_sync)]
         _git_index_watcher: Rc::new(RefCell::new(None)),
-        _git_index_timer: Rc::new(RefCell::new(None)),
-        _git_status_timer: Rc::new(RefCell::new(None)),
-        _last_git_status_hash: Rc::new(Cell::new(0)),
+        _refresh_dirty: Arc::new(AtomicBool::new(false)),
+        _refresh_timer: Rc::new(RefCell::new(None)),
     };
 
     // Wire up New File toolbar button (creates in selected/root directory)
@@ -989,82 +872,23 @@ pub fn build_sidebar(
             if dir_path.is_empty() {
                 return;
             }
-
-            let dialog = gtk4::Window::builder()
-                .modal(true)
-                .decorated(false)
-                .default_width(300)
-                .default_height(50)
-                .build();
-            if let Some(root) = btn.root() {
-                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
-                    dialog.set_transient_for(Some(window));
-                }
-            }
-            dialog.add_css_class("quick-open");
-
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("New file name..."));
-            entry.set_margin_start(12);
-            entry.set_margin_end(12);
-            entry.set_margin_top(12);
-            entry.set_margin_bottom(12);
-            dialog.set_child(Some(&entry));
-
             let tree_nodes = tree_nodes.clone();
-            let file_tree_list = file_tree_list.clone();
+            let file_tree_list2 = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
-            let dir_path = dir_path.clone();
-            {
-                let dialog = dialog.clone();
-                entry.connect_activate(move |entry| {
-                    let name = entry.text().to_string();
-                    if !name.is_empty() {
-                        let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str())
-                            || name.contains('\0')
-                        {
-                            log::error!("Invalid filename: must be a single filename component");
-                            dialog.close();
-                            return;
-                        }
-                        let dir = dir_path.clone();
-                        let new_path = std::path::Path::new(&dir).join(&name);
-                        if let Err(e) = std::fs::write(&new_path, "") {
-                            log::error!("Failed to create file: {}", e);
-                        } else {
-                            insert_new_entry_into_tree(
-                                &tree_nodes,
-                                &file_tree_list,
-                                &current_path,
-                                &dir,
-                                &name,
-                                &new_path.to_string_lossy(),
-                                false,
-                                &icon_cache.borrow(),
-                            );
-                        }
-                    }
-                    dialog.close();
-                });
-            }
-
-            let key_ctrl = gtk4::EventControllerKey::new();
-            {
-                let dialog = dialog.clone();
-                key_ctrl.connect_key_pressed(move |_, key, _, _| {
-                    if key == gtk4::gdk::Key::Escape {
-                        dialog.close();
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                    gtk4::glib::Propagation::Proceed
-                });
-            }
-            entry.add_controller(key_ctrl);
-
-            dialog.present();
-            entry.grab_focus();
+            let dir_path2 = dir_path.clone();
+            show_new_entry_dialog(false, &dir_path, btn, move |name, new_path| {
+                insert_new_entry_into_tree(
+                    &tree_nodes,
+                    &file_tree_list2,
+                    &current_path,
+                    &dir_path2,
+                    &name,
+                    &new_path,
+                    false,
+                    &icon_cache.borrow(),
+                );
+            });
         });
     }
 
@@ -1079,82 +903,23 @@ pub fn build_sidebar(
             if dir_path.is_empty() {
                 return;
             }
-
-            let dialog = gtk4::Window::builder()
-                .modal(true)
-                .decorated(false)
-                .default_width(300)
-                .default_height(50)
-                .build();
-            if let Some(root) = btn.root() {
-                if let Some(window) = root.downcast_ref::<gtk4::Window>() {
-                    dialog.set_transient_for(Some(window));
-                }
-            }
-            dialog.add_css_class("quick-open");
-
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("New folder name..."));
-            entry.set_margin_start(12);
-            entry.set_margin_end(12);
-            entry.set_margin_top(12);
-            entry.set_margin_bottom(12);
-            dialog.set_child(Some(&entry));
-
             let tree_nodes = tree_nodes.clone();
-            let file_tree_list = file_tree_list.clone();
+            let file_tree_list2 = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
-            let dir_path = dir_path.clone();
-            {
-                let dialog = dialog.clone();
-                entry.connect_activate(move |entry| {
-                    let name = entry.text().to_string();
-                    if !name.is_empty() {
-                        let path_check = Path::new(&name);
-                        if path_check.file_name() != Some(path_check.as_os_str())
-                            || name.contains('\0')
-                        {
-                            log::error!("Invalid folder name: must be a single filename component");
-                            dialog.close();
-                            return;
-                        }
-                        let dir = dir_path.clone();
-                        let new_path = std::path::Path::new(&dir).join(&name);
-                        if let Err(e) = std::fs::create_dir_all(&new_path) {
-                            log::error!("Failed to create folder: {}", e);
-                        } else {
-                            insert_new_entry_into_tree(
-                                &tree_nodes,
-                                &file_tree_list,
-                                &current_path,
-                                &dir,
-                                &name,
-                                &new_path.to_string_lossy(),
-                                true,
-                                &icon_cache.borrow(),
-                            );
-                        }
-                    }
-                    dialog.close();
-                });
-            }
-
-            let key_ctrl = gtk4::EventControllerKey::new();
-            {
-                let dialog = dialog.clone();
-                key_ctrl.connect_key_pressed(move |_, key, _, _| {
-                    if key == gtk4::gdk::Key::Escape {
-                        dialog.close();
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                    gtk4::glib::Propagation::Proceed
-                });
-            }
-            entry.add_controller(key_ctrl);
-
-            dialog.present();
-            entry.grab_focus();
+            let dir_path2 = dir_path.clone();
+            show_new_entry_dialog(true, &dir_path, btn, move |name, new_path| {
+                insert_new_entry_into_tree(
+                    &tree_nodes,
+                    &file_tree_list2,
+                    &current_path,
+                    &dir_path2,
+                    &name,
+                    &new_path,
+                    true,
+                    &icon_cache.borrow(),
+                );
+            });
         });
     }
 
@@ -1378,16 +1143,13 @@ pub struct SidebarState {
     pub icon_cache: Rc<RefCell<IconCache>>,
     /// Keeps the filesystem watcher alive. Dropping this stops watching.
     _watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
-    /// Source ID for the watcher's polling timer, so we can cancel it on re-watch.
-    _watcher_timer: Rc<RefCell<Option<glib::SourceId>>>,
     /// Keeps the .git/index watcher alive.
     _git_index_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
-    /// Source ID for the .git/index watcher's polling timer.
-    _git_index_timer: Rc<RefCell<Option<glib::SourceId>>>,
-    /// Source ID for the periodic git status polling timer.
-    _git_status_timer: Rc<RefCell<Option<glib::SourceId>>>,
-    /// Hash of the last `git status --porcelain` output, to avoid redundant refreshes.
-    _last_git_status_hash: Rc<Cell<u64>>,
+    /// Coalesced dirty flag: set by FS watcher and .git/index watcher callbacks,
+    /// checked by a single 300ms timer that triggers refresh_tree when dirty.
+    _refresh_dirty: Arc<AtomicBool>,
+    /// Source ID for the coalesced refresh timer.
+    _refresh_timer: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 impl SidebarState {
@@ -1433,18 +1195,18 @@ impl SidebarState {
     }
 
     /// Set up a filesystem watcher for the given directory.
-    /// Events are debounced and forwarded to the GTK main loop to trigger tree refresh.
-    /// Also starts a .git/index watcher and periodic git status polling.
+    /// Both the FS watcher and .git/index watcher set a shared dirty flag;
+    /// a single 300ms timer checks the flag and triggers `refresh_tree`.
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
-        // Cancel previous watcher timer to avoid leaked polling loops
-        if let Some(id) = self._watcher_timer.borrow_mut().take() {
+        // Cancel previous refresh timer.
+        if let Some(id) = self._refresh_timer.borrow_mut().take() {
             id.remove();
         }
+        self._refresh_dirty.store(false, Ordering::Relaxed);
 
-        let (tx, rx) = std_mpsc::channel::<()>();
-
+        let dirty = self._refresh_dirty.clone();
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
@@ -1452,7 +1214,7 @@ impl SidebarState {
                         notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_)
                         | notify::EventKind::Modify(_) => {
-                            let _ = tx.send(());
+                            dirty.store(true, Ordering::Relaxed);
                         }
                         _ => {}
                     }
@@ -1473,7 +1235,21 @@ impl SidebarState {
             return;
         }
 
-        // Poll for filesystem events every 500ms (debounced)
+        // Also watch currently expanded subdirectories so changes in them
+        // are detected without needing recursive inotify watches.
+        for node in self.tree_nodes.borrow().iter() {
+            if node.entry.is_dir && node.expanded {
+                let _ = watcher.watch(Path::new(&node.entry.path), RecursiveMode::NonRecursive);
+            }
+        }
+
+        *self._watcher.borrow_mut() = Some(watcher);
+
+        // Start .git/index watcher (also sets the same dirty flag).
+        self.setup_git_index_watcher(path);
+
+        // Single coalesced 300ms timer for both FS and git index changes.
+        let dirty = self._refresh_dirty.clone();
         let tree_nodes = self.tree_nodes.clone();
         let file_tree_list = self.file_tree_list.clone();
         let file_tree_scroll = self.file_tree_scroll.clone();
@@ -1481,13 +1257,8 @@ impl SidebarState {
         let show_hidden = self.show_hidden.clone();
         let icon_cache = self.icon_cache.clone();
 
-        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
-            // Drain all pending events
-            let mut has_event = false;
-            while rx.try_recv().is_ok() {
-                has_event = true;
-            }
-            if has_event {
+        let timer_id = glib::timeout_add_local(Duration::from_millis(300), move || {
+            if dirty.swap(false, Ordering::Relaxed) {
                 refresh_tree(
                     &tree_nodes,
                     &file_tree_list,
@@ -1500,42 +1271,21 @@ impl SidebarState {
             glib::ControlFlow::Continue
         });
 
-        // Also watch currently expanded subdirectories so changes in them
-        // are detected without needing recursive inotify watches.
-        for node in self.tree_nodes.borrow().iter() {
-            if node.entry.is_dir && node.expanded {
-                let _ = watcher.watch(Path::new(&node.entry.path), RecursiveMode::NonRecursive);
-            }
-        }
-
-        *self._watcher.borrow_mut() = Some(watcher);
-        *self._watcher_timer.borrow_mut() = Some(timer_id);
-
-        // Start .git/index watcher and periodic git status polling.
-        self.setup_git_index_watcher(path);
-        self.setup_git_status_timer(path);
+        *self._refresh_timer.borrow_mut() = Some(timer_id);
     }
 
     /// Watch `.git/index` for staging/commit/reset/checkout changes.
+    /// Sets the shared dirty flag instead of running its own timer.
     fn setup_git_index_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
         // Stop any previous git index watcher.
-        if let Some(id) = self._git_index_timer.borrow_mut().take() {
-            id.remove();
-        }
         *self._git_index_watcher.borrow_mut() = None;
 
-        // Find the git repo root.
-        let git_root = match std::process::Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .current_dir(path)
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                String::from_utf8_lossy(&output.stdout).trim().to_string()
-            }
-            _ => return,
+        // Find the git repo root via libgit2 (no subprocess).
+        let git_root = match impulse_core::git::get_git_root(path) {
+            Some(root) => root,
+            None => return,
         };
 
         let index_path = format!("{}/.git/index", git_root);
@@ -1543,8 +1293,7 @@ impl SidebarState {
             return;
         }
 
-        let (tx, rx) = std_mpsc::channel::<()>();
-
+        let dirty = self._refresh_dirty.clone();
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
@@ -1554,7 +1303,7 @@ impl SidebarState {
                             | notify::EventKind::Modify(_)
                             | notify::EventKind::Remove(_)
                     ) {
-                        let _ = tx.send(());
+                        dirty.store(true, Ordering::Relaxed);
                     }
                 }
             }) {
@@ -1570,99 +1319,7 @@ impl SidebarState {
             return;
         }
 
-        // Debounced poll: when .git/index changes, refresh the tree.
-        let tree_nodes = self.tree_nodes.clone();
-        let file_tree_list = self.file_tree_list.clone();
-        let file_tree_scroll = self.file_tree_scroll.clone();
-        let current_path = self.current_path.clone();
-        let show_hidden = self.show_hidden.clone();
-        let icon_cache = self.icon_cache.clone();
-
-        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
-            let mut has_event = false;
-            while rx.try_recv().is_ok() {
-                has_event = true;
-            }
-            if has_event {
-                refresh_tree(
-                    &tree_nodes,
-                    &file_tree_list,
-                    &file_tree_scroll,
-                    &current_path,
-                    *show_hidden.borrow(),
-                    icon_cache.clone(),
-                );
-            }
-            glib::ControlFlow::Continue
-        });
-
         *self._git_index_watcher.borrow_mut() = Some(watcher);
-        *self._git_index_timer.borrow_mut() = Some(timer_id);
-    }
-
-    /// Start a periodic timer that polls `git status --porcelain -u` every 2 seconds.
-    /// Only triggers a tree refresh when the output hash changes.
-    fn setup_git_status_timer(&self, path: &str) {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Stop any previous timer.
-        if let Some(id) = self._git_status_timer.borrow_mut().take() {
-            id.remove();
-        }
-        self._last_git_status_hash.set(0);
-
-        let root = path.to_string();
-        let tree_nodes = self.tree_nodes.clone();
-        let file_tree_list = self.file_tree_list.clone();
-        let file_tree_scroll = self.file_tree_scroll.clone();
-        let current_path = self.current_path.clone();
-        let show_hidden = self.show_hidden.clone();
-        let icon_cache = self.icon_cache.clone();
-        let last_hash = self._last_git_status_hash.clone();
-
-        let timer_id = glib::timeout_add_local(Duration::from_secs(2), move || {
-            let root = root.clone();
-            let tree_nodes = tree_nodes.clone();
-            let file_tree_list = file_tree_list.clone();
-            let file_tree_scroll = file_tree_scroll.clone();
-            let current_path = current_path.clone();
-            let show_hidden = show_hidden.clone();
-            let icon_cache = icon_cache.clone();
-            let last_hash = last_hash.clone();
-
-            glib::spawn_future_local(async move {
-                let root_clone = root.clone();
-                let result = gio::spawn_blocking(move || {
-                    std::process::Command::new("git")
-                        .args(["status", "--porcelain", "-u"])
-                        .current_dir(&root_clone)
-                        .output()
-                })
-                .await;
-
-                if let Ok(Ok(output)) = result {
-                    let mut hasher = DefaultHasher::new();
-                    output.stdout.hash(&mut hasher);
-                    let hash = hasher.finish();
-
-                    if hash != last_hash.get() {
-                        last_hash.set(hash);
-                        refresh_tree(
-                            &tree_nodes,
-                            &file_tree_list,
-                            &file_tree_scroll,
-                            &current_path,
-                            *show_hidden.borrow(),
-                            icon_cache.clone(),
-                        );
-                    }
-                }
-            });
-            glib::ControlFlow::Continue
-        });
-
-        *self._git_status_timer.borrow_mut() = Some(timer_id);
     }
 
     /// Save the current tree state for the active tab.
@@ -1881,8 +1538,8 @@ fn refresh_tree(
         return;
     }
 
-    // Collect currently expanded directory paths
-    let expanded_paths: Vec<String> = tree_nodes
+    // Collect currently expanded directory paths as a HashSet for O(1) lookup.
+    let expanded_paths: HashSet<String> = tree_nodes
         .borrow()
         .iter()
         .filter(|n| n.entry.is_dir && n.expanded)
@@ -1895,13 +1552,10 @@ fn refresh_tree(
     let file_tree_scroll = file_tree_scroll.clone();
 
     glib::spawn_future_local(async move {
-        let path_clone = path.clone();
+        // All filesystem + git I/O runs off the GTK main thread.
         let result = gio::spawn_blocking(move || {
-            impulse_core::filesystem::read_directory_with_git_status(&path_clone, show_hidden)
-        })
-        .await;
-
-        if let Ok(Ok(entries)) = result {
+            let entries = impulse_core::filesystem::read_directory_with_git_status(&path, show_hidden)
+                .map_err(|e| e.to_string())?;
             let mut nodes: Vec<TreeNode> = entries
                 .into_iter()
                 .map(|e| TreeNode {
@@ -1911,7 +1565,8 @@ fn refresh_tree(
                 })
                 .collect();
 
-            // Re-expand previously expanded directories (breadth-first)
+            // Re-expand previously expanded directories (breadth-first).
+            // This loop runs entirely on the background thread.
             let mut i = 0;
             while i < nodes.len() {
                 if nodes[i].entry.is_dir && expanded_paths.contains(&nodes[i].entry.path) {
@@ -1938,6 +1593,11 @@ fn refresh_tree(
                 i += 1;
             }
 
+            Ok::<_, String>(nodes)
+        })
+        .await;
+
+        if let Ok(Ok(nodes)) = result {
             *tree_nodes.borrow_mut() = nodes.clone();
             render_tree(&file_tree_list, &nodes, &icon_cache.borrow());
 
@@ -2014,6 +1674,89 @@ fn file_icon_name(filename: &str) -> &'static str {
             }
         }
     }
+}
+
+/// Show a modal dialog for creating a new file or folder.
+/// `is_dir` determines whether to create a directory (true) or file (false).
+/// `parent_widget` is used to resolve the transient-for window.
+/// On success, calls `on_created(name, new_path)`.
+fn show_new_entry_dialog(
+    is_dir: bool,
+    dir_path: &str,
+    parent_widget: &impl IsA<gtk4::Widget>,
+    on_created: impl Fn(String, String) + 'static,
+) {
+    let dialog = gtk4::Window::builder()
+        .modal(true)
+        .decorated(false)
+        .default_width(300)
+        .default_height(50)
+        .build();
+    if let Some(root) = parent_widget.root() {
+        if let Some(window) = root.downcast_ref::<gtk4::Window>() {
+            dialog.set_transient_for(Some(window));
+        }
+    }
+    dialog.add_css_class("quick-open");
+
+    let entry = gtk4::Entry::new();
+    entry.set_placeholder_text(Some(if is_dir {
+        "New folder name..."
+    } else {
+        "New file name..."
+    }));
+    entry.set_margin_start(12);
+    entry.set_margin_end(12);
+    entry.set_margin_top(12);
+    entry.set_margin_bottom(12);
+    dialog.set_child(Some(&entry));
+
+    let dir_path = dir_path.to_string();
+    {
+        let dialog = dialog.clone();
+        entry.connect_activate(move |entry| {
+            let name = entry.text().to_string();
+            if !name.is_empty() {
+                let path_check = Path::new(&name);
+                if path_check.file_name() != Some(path_check.as_os_str()) || name.contains('\0') {
+                    log::error!("Invalid name: must be a single filename component");
+                    dialog.close();
+                    return;
+                }
+                let new_path = std::path::Path::new(&dir_path).join(&name);
+                let result = if is_dir {
+                    std::fs::create_dir(&new_path).map(|_| ())
+                } else {
+                    std::fs::write(&new_path, "").map(|_| ())
+                };
+                match result {
+                    Ok(()) => on_created(name, new_path.to_string_lossy().to_string()),
+                    Err(e) => log::error!(
+                        "Failed to create {}: {}",
+                        if is_dir { "folder" } else { "file" },
+                        e
+                    ),
+                }
+            }
+            dialog.close();
+        });
+    }
+
+    let key_ctrl = gtk4::EventControllerKey::new();
+    {
+        let dialog = dialog.clone();
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk4::gdk::Key::Escape {
+                dialog.close();
+                return gtk4::glib::Propagation::Stop;
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+    }
+    entry.add_controller(key_ctrl);
+
+    dialog.present();
+    entry.grab_focus();
 }
 
 /// Build a single row widget for a tree node.
@@ -2145,30 +1888,37 @@ fn update_dir_row_expanded(
         Some(b) => b,
         None => return,
     };
-    // First child is the arrow Image
-    if let Some(arrow) = content_box
-        .first_child()
-        .and_then(|c| c.downcast::<gtk4::Image>().ok())
-    {
+    // Walk children to find the first two gtk4::Image widgets.
+    // The first is the arrow, the second is the folder icon.
+    // This is robust against nested containers (e.g. indent guide DrawingAreas).
+    let mut images: Vec<gtk4::Image> = Vec::new();
+    let mut child = content_box.first_child();
+    while let Some(widget) = child {
+        if let Ok(img) = widget.clone().downcast::<gtk4::Image>() {
+            images.push(img);
+            if images.len() >= 2 {
+                break;
+            }
+        }
+        child = widget.next_sibling();
+    }
+
+    if let Some(arrow) = images.first() {
         arrow.set_icon_name(Some(if expanded {
             "pan-down-symbolic"
         } else {
             "pan-end-symbolic"
         }));
-        // Second child (sibling) is the folder icon
-        if let Some(icon) = arrow
-            .next_sibling()
-            .and_then(|c| c.downcast::<gtk4::Image>().ok())
-        {
-            if let Some(texture) = icon_cache.get("", true, expanded) {
-                icon.set_paintable(Some(texture));
+    }
+    if let Some(icon) = images.get(1) {
+        if let Some(texture) = icon_cache.get("", true, expanded) {
+            icon.set_paintable(Some(texture));
+        } else {
+            icon.set_icon_name(Some(if expanded {
+                "folder-open-symbolic"
             } else {
-                icon.set_icon_name(Some(if expanded {
-                    "folder-open-symbolic"
-                } else {
-                    "folder-symbolic"
-                }));
-            }
+                "folder-symbolic"
+            }));
         }
     }
 }
@@ -2214,12 +1964,26 @@ fn clear_list(list: &gtk4::ListBox) {
     }
 }
 
-/// Remove the `drop-target` CSS class from all rows in the list.
-fn remove_drop_highlights(list: &gtk4::ListBox) {
-    let mut i = 0;
-    while let Some(row) = list.row_at_index(i) {
-        row.remove_css_class("drop-target");
-        i += 1;
+/// Remove the `drop-target` CSS class from the previously highlighted row.
+/// Uses a tracked row index to avoid iterating all rows.
+fn remove_drop_highlight(list: &gtk4::ListBox, prev_highlight: &std::cell::Cell<i32>) {
+    let idx = prev_highlight.get();
+    if idx >= 0 {
+        if let Some(row) = list.row_at_index(idx) {
+            row.remove_css_class("drop-target");
+        }
+        prev_highlight.set(-1);
+    }
+}
+
+/// Set the `drop-target` CSS class on the given row index, clearing any previous.
+fn set_drop_highlight(list: &gtk4::ListBox, row_index: i32, prev_highlight: &std::cell::Cell<i32>) {
+    remove_drop_highlight(list, prev_highlight);
+    if row_index >= 0 {
+        if let Some(row) = list.row_at_index(row_index) {
+            row.add_css_class("drop-target");
+        }
+        prev_highlight.set(row_index);
     }
 }
 

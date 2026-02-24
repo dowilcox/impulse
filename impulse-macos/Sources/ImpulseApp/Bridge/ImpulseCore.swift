@@ -171,6 +171,38 @@ final class ImpulseCore {
         return dict
     }
 
+    /// Batch-fetch git status for the entire repository in a single call.
+    ///
+    /// Returns a nested dictionary: outer key = directory absolute path,
+    /// inner key = filename, value = status code. Parent directories receive
+    /// the highest-priority status among their descendants.
+    static func getAllGitStatuses(repoPath: String) -> [String: [String: String]] {
+        guard let json = consumeCString(impulse_get_all_git_statuses(repoPath)) else { return [:] }
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]] else { return [:] }
+        return dict
+    }
+
+    /// Codable struct matching the Rust `FileEntry` serialization.
+    struct FileEntryFFI: Codable {
+        let name: String
+        let path: String
+        let is_dir: Bool
+        let is_symlink: Bool
+        let size: UInt64
+        let modified: UInt64
+        let git_status: String?
+    }
+
+    /// Read directory contents with git status enrichment in a single FFI call.
+    ///
+    /// Returns an array of `FileEntryFFI` values, or `nil` on error.
+    static func readDirectoryWithGitStatus(path: String, showHidden: Bool) -> [FileEntryFFI]? {
+        guard let json = consumeCString(impulse_read_directory_with_git_status(path, showHidden)) else { return nil }
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([FileEntryFFI].self, from: data)
+    }
+
     /// Returns git blame info for a specific 1-based line in a file.
     ///
     /// - Parameters:

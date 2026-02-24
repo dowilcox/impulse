@@ -16,6 +16,11 @@ private final class PointerOutlineView: NSOutlineView {
 /// rounded corners, giving the file tree a polished native appearance.
 private final class HoverRowView: NSTableRowView {
 
+    // Static cached colors to avoid per-frame NSColor allocation.
+    private static let guideColor = NSColor.white.withAlphaComponent(0.25)
+    private static let hoverColor = NSColor.white.withAlphaComponent(0.05)
+    private static let selectionColor = NSColor.white.withAlphaComponent(0.10)
+
     var indentLevel: Int = 0
     private var isHovered = false
     private var trackingArea: NSTrackingArea?
@@ -59,8 +64,7 @@ private final class HoverRowView: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {
         // Draw indent guide lines
         if indentLevel > 0 {
-            let guideColor = NSColor.white.withAlphaComponent(0.25)
-            guideColor.setFill()
+            Self.guideColor.setFill()
             let indentPerLevel: CGFloat = 16
             // The outline view adds its own indentation offset; the guides should
             // align with the start of each indentation level relative to the row's
@@ -75,7 +79,7 @@ private final class HoverRowView: NSTableRowView {
         if isHovered && !isSelected {
             let inset = bounds.insetBy(dx: 4, dy: 1)
             let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
-            NSColor.white.withAlphaComponent(0.05).setFill()
+            Self.hoverColor.setFill()
             path.fill()
         }
     }
@@ -83,7 +87,7 @@ private final class HoverRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         let inset = bounds.insetBy(dx: 4, dy: 1)
         let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
-        NSColor.white.withAlphaComponent(0.10).setFill()
+        Self.selectionColor.setFill()
         path.fill()
     }
 }
@@ -106,6 +110,9 @@ final class FileTreeView: NSView {
 
     // Icon cache for themed file icons
     private var iconCache: IconCache?
+
+    // Path-to-node lookup for O(1) node search instead of O(n) tree walk.
+    private var nodeByPath: [String: FileTreeNode] = [:]
 
     // Column identifier
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
@@ -237,7 +244,6 @@ final class FileTreeView: NSView {
     func setRootPath(_ path: String) {
         rootPath = path
         rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
-        FileTreeNode.refreshGitStatus(nodes: rootNodes, rootPath: rootPath)
 
         // Start root watcher first — this stops all previous watchers.
         startWatching(path: path)
@@ -256,6 +262,8 @@ final class FileTreeView: NSView {
         }
         isBulkRestoring = false
         NSAnimationContext.endGrouping()
+
+        rebuildNodeIndex()
 
         // Batch-set up subdirectory watchers for all expanded directories.
         watchExpandedSubdirectories(rootNodes)
@@ -291,6 +299,8 @@ final class FileTreeView: NSView {
         isBulkRestoring = false
         NSAnimationContext.endGrouping()
 
+        rebuildNodeIndex()
+
         // Batch-set up subdirectory watchers for all expanded directories.
         watchExpandedSubdirectories(rootNodes)
 
@@ -304,7 +314,7 @@ final class FileTreeView: NSView {
         let nodes = rootNodes
         let root = rootPath
         DispatchQueue.global(qos: .utility).async {
-            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: root)
+            FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
             DispatchQueue.main.async { [weak self] in
                 self?.reloadVisibleRows()
             }
@@ -359,7 +369,6 @@ final class FileTreeView: NSView {
 
         DispatchQueue.global(qos: .utility).async {
             let newNodes = FileTreeNode.buildTree(rootPath: root, showHidden: hidden)
-            FileTreeNode.refreshGitStatus(nodes: newNodes, rootPath: root)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.rootNodes = newNodes
@@ -370,8 +379,10 @@ final class FileTreeView: NSView {
                 self.restoreExpandedPaths(expandedPaths, in: self.rootNodes)
                 self.isBulkRestoring = false
                 NSAnimationContext.endGrouping()
+                self.rebuildNodeIndex()
                 self.watchExpandedSubdirectories(self.rootNodes)
-                // Children loaded during bulk restore skipped git status — refresh now.
+                // Single git status refresh after expansion restoration ensures
+                // all expanded children are covered by the batch API call.
                 self.refreshGitStatus()
             }
         }
@@ -612,15 +623,19 @@ final class FileTreeView: NSView {
     /// Recursively collect the paths of all expanded directories.
     private func collectExpandedPaths(_ nodes: [FileTreeNode]) -> Set<String> {
         var paths = Set<String>()
+        collectExpandedPaths(nodes, into: &paths)
+        return paths
+    }
+
+    private func collectExpandedPaths(_ nodes: [FileTreeNode], into paths: inout Set<String>) {
         for node in nodes {
             if node.isDirectory && node.isExpanded {
                 paths.insert(node.path)
                 if let children = node.children {
-                    paths.formUnion(collectExpandedPaths(children))
+                    collectExpandedPaths(children, into: &paths)
                 }
             }
         }
-        return paths
     }
 
     /// After a reload, re-expand directories whose paths match the saved set.
@@ -638,17 +653,23 @@ final class FileTreeView: NSView {
 
     // MARK: Expansion Persistence
 
-    private static let expandedPathsKey = "impulse.fileTree.expandedPaths"
+    private static let expandedPathsKeyPrefix = "impulse.fileTree.expandedPaths"
+
+    /// Per-root UserDefaults key so switching projects doesn't clobber
+    /// expansion state.
+    private var expandedPathsKey: String {
+        "\(Self.expandedPathsKeyPrefix).\(rootPath)"
+    }
 
     /// Save the current set of expanded paths to UserDefaults.
     private func saveExpandedPaths() {
         let paths = collectExpandedPaths(rootNodes)
-        UserDefaults.standard.set(Array(paths), forKey: Self.expandedPathsKey)
+        UserDefaults.standard.set(Array(paths), forKey: expandedPathsKey)
     }
 
     /// Load the saved set of expanded paths from UserDefaults.
     private func loadExpandedPaths() -> Set<String> {
-        let paths = UserDefaults.standard.stringArray(forKey: Self.expandedPathsKey) ?? []
+        let paths = UserDefaults.standard.stringArray(forKey: expandedPathsKey) ?? []
         return Set(paths)
     }
 
@@ -688,9 +709,11 @@ final class FileTreeView: NSView {
         startGitStatusTimer()
     }
 
-    /// Start watching an expanded subdirectory.
+    /// Start watching an expanded subdirectory. Capped at 64 file descriptors
+    /// to avoid exhausting the per-process FD limit on deeply nested trees.
     private func watchSubdirectory(_ path: String) {
         guard subdirWatchers[path] == nil else { return }
+        guard subdirWatchers.count < 64 else { return }
 
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else { return }
@@ -874,31 +897,32 @@ final class FileTreeView: NSView {
         gitStatusTimer = nil
     }
 
-    /// Lightweight poll: run `git status --porcelain` and only update the tree
-    /// if the output changed since the last poll.
+    /// Lightweight poll: fetch batch git statuses via libgit2 and only update
+    /// the tree if the status map changed since the last poll.
     private func pollGitStatus() {
         guard !rootPath.isEmpty else { return }
         let root = rootPath
         let nodes = rootNodes
         let previousHash = lastGitStatusHash
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            // Quick hash of porcelain output to avoid unnecessary tree walks.
-            let pipe = Pipe()
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            proc.arguments = ["status", "--porcelain", "-u"]
-            proc.currentDirectoryURL = URL(fileURLWithPath: root)
-            proc.standardOutput = pipe
-            proc.standardError = FileHandle.nullDevice
-            do { try proc.run() } catch { return }
-            proc.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let hash = data.hashValue
+            let batchStatuses = ImpulseCore.getAllGitStatuses(repoPath: root)
+
+            // Compute a stable hash from sorted status entries.
+            var hasher = Hasher()
+            for dirPath in batchStatuses.keys.sorted() {
+                hasher.combine(dirPath)
+                let entries = batchStatuses[dirPath]!
+                for name in entries.keys.sorted() {
+                    hasher.combine(name)
+                    hasher.combine(entries[name])
+                }
+            }
+            let hash = hasher.finalize()
 
             guard hash != previousHash else { return }
 
-            // Hash changed — do the full status refresh.
-            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: root)
+            // Hash changed — apply statuses directly from the batch result.
+            FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.lastGitStatusHash = hash
@@ -920,16 +944,31 @@ final class FileTreeView: NSView {
 
     // MARK: Private Helpers
 
-    /// Recursively find a node by its file path.
-    private func findNode(withPath path: String, in nodes: [FileTreeNode]) -> FileTreeNode? {
+    /// Rebuild the `nodeByPath` lookup dictionary from the current tree.
+    private func rebuildNodeIndex() {
+        nodeByPath.removeAll()
+        indexNodes(rootNodes)
+    }
+
+    private func indexNodes(_ nodes: [FileTreeNode]) {
         for node in nodes {
-            if node.path == path {
-                return node
-            }
+            nodeByPath[node.path] = node
             if let children = node.children {
-                if let found = findNode(withPath: path, in: children) {
-                    return found
-                }
+                indexNodes(children)
+            }
+        }
+    }
+
+    /// Find a node by its file path using the O(1) lookup dictionary.
+    /// Falls back to tree walk if the index is stale.
+    private func findNode(withPath path: String, in nodes: [FileTreeNode]) -> FileTreeNode? {
+        if let node = nodeByPath[path] { return node }
+        // Fallback: linear scan (index may be stale after lazy load).
+        for node in nodes {
+            if node.path == path { return node }
+            if let children = node.children,
+               let found = findNode(withPath: path, in: children) {
+                return found
             }
         }
         return nil
@@ -1229,7 +1268,15 @@ extension FileTreeView: NSOutlineViewDelegate {
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        let rowView = HoverRowView()
+        let rowID = NSUserInterfaceItemIdentifier("HoverRow")
+        let rowView: HoverRowView
+        if let reused = outlineView.makeView(withIdentifier: rowID, owner: self) as? HoverRowView {
+            rowView = reused
+        } else {
+            let newRow = HoverRowView()
+            newRow.identifier = rowID
+            rowView = newRow
+        }
         rowView.indentLevel = outlineView.level(forItem: item)
         return rowView
     }
@@ -1244,8 +1291,23 @@ extension FileTreeView: NSOutlineViewDelegate {
         if !node.isLoaded {
             node.loadChildren(showHidden: showHidden)
             didLoadChildren = true
+            // Index newly loaded children for O(1) path lookup.
+            if let children = node.children {
+                indexNodes(children)
+            }
             if !isBulkRestoring {
-                FileTreeNode.refreshGitStatus(nodes: node.children ?? [], rootPath: node.path)
+                // Dispatch git status to background to avoid blocking the main thread.
+                let children = node.children ?? []
+                let root = rootPath
+                let nodePath = node.path
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    FileTreeNode.refreshGitStatus(
+                        nodes: children, repoPath: root, dirPath: nodePath
+                    )
+                    DispatchQueue.main.async {
+                        self?.reloadVisibleRows()
+                    }
+                }
             }
         }
 

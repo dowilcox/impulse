@@ -783,7 +783,7 @@ pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::filesystem::get_git_branch(&path) {
+            match impulse_core::git::get_git_branch(&path) {
                 Ok(Some(branch)) => to_c_string(&branch),
                 Ok(None) | Err(_) => std::ptr::null_mut(),
             }
@@ -879,6 +879,78 @@ pub extern "C" fn impulse_git_status_for_directory(path: *const c_char) -> *mut 
             match impulse_core::filesystem::get_git_status_for_directory(&path) {
                 Ok(status_map) => {
                     let json = match serde_json::to_string(&status_map) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            return std::ptr::null_mut();
+                        }
+                    };
+                    to_c_string(&json)
+                }
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
+/// Batch-fetch git status for the entire repository in a single call.
+///
+/// Returns a JSON object mapping directory paths to inner objects mapping
+/// filenames to status codes. Example:
+/// `{"/path/to/dir": {"file.rs": "M", "new.txt": "?"}}`.
+///
+/// Parent directories receive the highest-priority status among descendants.
+/// Returns null on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_get_all_git_statuses(path: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            match impulse_core::filesystem::get_all_git_statuses(&path) {
+                Ok(status_map) => {
+                    let json = match serde_json::to_string(&status_map) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::error!("JSON serialization failed: {}", e);
+                            return std::ptr::null_mut();
+                        }
+                    };
+                    to_c_string(&json)
+                }
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
+/// Read directory contents with git status enrichment as a JSON array.
+///
+/// Returns a JSON array of `FileEntry` objects, each with `name`, `path`,
+/// `is_dir`, `is_symlink`, `size`, `modified`, and `git_status` fields.
+/// Returns null on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_read_directory_with_git_status(
+    path: *const c_char,
+    show_hidden: bool,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            match impulse_core::filesystem::read_directory_with_git_status(&path, show_hidden) {
+                Ok(entries) => {
+                    let json = match serde_json::to_string(&entries) {
                         Ok(j) => j,
                         Err(e) => {
                             log::error!("JSON serialization failed: {}", e);

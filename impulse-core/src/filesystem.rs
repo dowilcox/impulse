@@ -64,7 +64,7 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
         entries.push(FileEntry {
             name,
             path: entry.path().to_string_lossy().to_string(),
-            is_dir: file_type.is_dir(),
+            is_dir: metadata.is_dir(),
             is_symlink: file_type.is_symlink(),
             size: metadata.len(),
             modified,
@@ -72,18 +72,16 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
         });
     }
 
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
+    entries.sort_by_cached_key(|e| (!e.is_dir, e.name.to_lowercase()));
 
     Ok(entries)
 }
 
 /// Get git status for files in a directory using libgit2.
 pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String>, String> {
-    let dir_path = PathBuf::from(path);
+    // Canonicalize path to resolve symlinks (e.g. /var -> /private/var on macOS)
+    // so it matches the repo root from libgit2.
+    let dir_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     let repo = match crate::git::open_repo(&dir_path) {
         Ok(r) => r,
         Err(_) => return Ok(HashMap::new()),
@@ -93,16 +91,23 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
 
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
+        .recurse_untracked_dirs(false)
         .include_unmodified(false);
 
     // Restrict to the requested directory relative to the repo root.
+    // When at the repo root (empty relative path), skip pathspec entirely
+    // to list all statuses — pathspec("") matches nothing with some libgit2
+    // configurations.
     if let Ok(rel) = dir_path.strip_prefix(&repo_root) {
-        let mut spec = rel.to_string_lossy().to_string();
-        if !spec.is_empty() && !spec.ends_with('/') {
-            spec.push('/');
+        let spec = rel.to_string_lossy().to_string();
+        if !spec.is_empty() {
+            let spec = if spec.ends_with('/') {
+                spec
+            } else {
+                format!("{}/", spec)
+            };
+            opts.pathspec(&spec);
         }
-        opts.pathspec(&spec);
     }
 
     let statuses = repo
@@ -123,28 +128,9 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
             continue;
         }
 
-        let s = entry.status();
-        let code = if s.intersects(git2::Status::CONFLICTED) {
-            "C"
-        } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
-            if s.contains(git2::Status::INDEX_NEW) {
-                "A"
-            } else {
-                "?"
-            }
-        } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
-            "D"
-        } else if s.intersects(git2::Status::INDEX_RENAMED | git2::Status::WT_RENAMED) {
-            "R"
-        } else if s.intersects(
-            git2::Status::WT_MODIFIED
-                | git2::Status::INDEX_MODIFIED
-                | git2::Status::WT_TYPECHANGE
-                | git2::Status::INDEX_TYPECHANGE,
-        ) {
-            "M"
-        } else {
-            continue;
+        let code = match status_to_code(entry.status()) {
+            Some(c) => c,
+            None => continue,
         };
 
         // Compute path relative to the requested directory so we can
@@ -161,11 +147,16 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
             }
         } else if components.len() > 1 {
             // File is in a subdirectory — mark the immediate child
-            // directory as modified so it shows as changed in the tree.
+            // directory with the highest-priority status among its descendants.
             let dir_name = components[0].as_os_str().to_string_lossy().to_string();
             status_map
                 .entry(dir_name)
-                .or_insert_with(|| "M".to_string());
+                .and_modify(|existing| {
+                    if git_status_priority(code) > git_status_priority(existing) {
+                        *existing = code.to_string();
+                    }
+                })
+                .or_insert_with(|| code.to_string());
         }
     }
 
@@ -188,6 +179,161 @@ pub fn read_directory_with_git_status(
     }
 
     Ok(entries)
+}
+
+/// Priority ranking for git status codes. Higher value = higher priority.
+/// Used when propagating status from files to parent directories.
+fn git_status_priority(code: &str) -> u8 {
+    match code {
+        "C" => 6, // conflict
+        "D" => 5, // deleted
+        "A" => 4, // added (staged)
+        "?" => 3, // untracked
+        "R" => 2, // renamed
+        "M" => 1, // modified
+        _ => 0,
+    }
+}
+
+/// Convert a `git2::Status` bitflags value to a single-character status code.
+fn status_to_code(s: git2::Status) -> Option<&'static str> {
+    if s.intersects(git2::Status::CONFLICTED) {
+        Some("C")
+    } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
+        if s.contains(git2::Status::INDEX_NEW) {
+            Some("A")
+        } else {
+            Some("?")
+        }
+    } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+        Some("D")
+    } else if s.intersects(git2::Status::INDEX_RENAMED | git2::Status::WT_RENAMED) {
+        Some("R")
+    } else if s.intersects(
+        git2::Status::WT_MODIFIED
+            | git2::Status::INDEX_MODIFIED
+            | git2::Status::WT_TYPECHANGE
+            | git2::Status::INDEX_TYPECHANGE,
+    ) {
+        Some("M")
+    } else {
+        None
+    }
+}
+
+/// Batch-fetch git status for the entire repository at once.
+///
+/// Opens the repo once, calls `repo.statuses()` once with no pathspec filter,
+/// and buckets results by parent directory. Returns a nested map:
+/// outer key = directory absolute path, inner key = filename, value = status code.
+///
+/// Parent directories receive the highest-priority status among their descendants
+/// (conflict > deleted > added > untracked > renamed > modified).
+pub fn get_all_git_statuses(path: &str) -> Result<HashMap<String, HashMap<String, String>>, String> {
+    let dir_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let repo = match crate::git::open_repo(&dir_path) {
+        Ok(r) => r,
+        Err(_) => return Ok(HashMap::new()),
+    };
+
+    let repo_root = repo.workdir().ok_or("Bare repository")?.to_path_buf();
+
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_unmodified(false);
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| format!("Failed to get git status: {}", e))?;
+
+    let mut result: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    for entry in statuses.iter() {
+        let Some(rel_path) = entry.path() else {
+            continue;
+        };
+        let abs_path = repo_root.join(rel_path);
+
+        let code = match status_to_code(entry.status()) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Add file to its direct parent directory's map
+        let Some(parent) = abs_path.parent() else {
+            continue;
+        };
+        if let Some(file_name) = abs_path.file_name() {
+            let file_name = file_name.to_string_lossy().to_string();
+            let parent_str = parent.to_string_lossy().to_string();
+            let dir_map = result.entry(parent_str).or_default();
+            dir_map
+                .entry(file_name)
+                .and_modify(|existing| {
+                    if git_status_priority(code) > git_status_priority(existing) {
+                        *existing = code.to_string();
+                    }
+                })
+                .or_insert_with(|| code.to_string());
+        }
+
+        // Propagate status to ancestor directories up to repo root
+        let mut child = parent.to_path_buf();
+        while let Some(ancestor) = child.parent() {
+            if !child.starts_with(&repo_root) || child == repo_root {
+                break;
+            }
+            let dir_name = child
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let ancestor_str = ancestor.to_string_lossy().to_string();
+
+            let ancestor_map = result.entry(ancestor_str).or_default();
+            ancestor_map
+                .entry(dir_name)
+                .and_modify(|existing| {
+                    if git_status_priority(code) > git_status_priority(existing) {
+                        *existing = code.to_string();
+                    }
+                })
+                .or_insert_with(|| code.to_string());
+
+            child = ancestor.to_path_buf();
+        }
+    }
+
+    Ok(result)
+}
+
+/// Read directory contents with git status from a pre-computed batch status map.
+///
+/// This avoids redundant git work when refreshing multiple directories —
+/// call `get_all_git_statuses()` once and pass the result here for each directory.
+pub fn read_directory_with_git_status_batch(
+    path: &str,
+    show_hidden: bool,
+    batch_statuses: &HashMap<String, HashMap<String, String>>,
+) -> Result<Vec<FileEntry>, String> {
+    let mut entries = read_directory_entries(path, show_hidden)?;
+
+    if let Some(dir_statuses) = batch_statuses.get(path) {
+        for entry in &mut entries {
+            if let Some(status) = dir_statuses.get(&entry.name) {
+                entry.git_status = Some(status.clone());
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Get current git branch name for a path using libgit2.
+///
+/// Re-exported from `crate::git::get_git_branch` for backward compatibility.
+pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
+    crate::git::get_git_branch(path)
 }
 
 #[cfg(test)]
@@ -337,27 +483,54 @@ mod tests {
         // The nested file itself should NOT appear (it's not a direct child)
         assert!(!result.contains_key("nested.txt"));
     }
-}
 
-/// Get current git branch name for a path using libgit2.
-pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
-    let repo = match crate::git::open_repo(std::path::Path::new(path)) {
-        Ok(r) => r,
-        Err(_) => return Ok(None),
-    };
+    #[test]
+    fn batch_statuses_buckets_by_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
 
-    let head = match repo.head() {
-        Ok(h) => h,
-        Err(_) => return Ok(None),
-    };
+        // Commit files in root and subdirectory, then modify them
+        let sub_dir = dir.path().join("subdir");
+        fs::create_dir(&sub_dir).unwrap();
+        let root_file = dir.path().join("root.txt");
+        let nested_file = sub_dir.join("nested.txt");
+        fs::write(&root_file, "original").unwrap();
+        fs::write(&nested_file, "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("root.txt"))
+            .unwrap();
+        index
+            .add_path(std::path::Path::new("subdir/nested.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
 
-    if head.is_branch() {
-        Ok(head.shorthand().map(String::from))
-    } else {
-        // Detached HEAD — return abbreviated commit hash
-        Ok(head.target().map(|oid| {
-            let s = oid.to_string();
-            s[..7.min(s.len())].to_string()
-        }))
+        fs::write(&root_file, "modified").unwrap();
+        fs::write(&nested_file, "modified").unwrap();
+
+        let result = get_all_git_statuses(dir.path().to_str().unwrap()).unwrap();
+
+        // Root directory should have root.txt=M and subdir=M (propagated)
+        let root_key = fs::canonicalize(dir.path())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let root_map = result.get(&root_key).expect("root directory should be in result");
+        assert_eq!(root_map.get("root.txt").map(String::as_str), Some("M"));
+        assert_eq!(root_map.get("subdir").map(String::as_str), Some("M"));
+
+        // Subdirectory should have nested.txt=M
+        let sub_key = fs::canonicalize(&sub_dir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let sub_map = result.get(&sub_key).expect("subdirectory should be in result");
+        assert_eq!(sub_map.get("nested.txt").map(String::as_str), Some("M"));
     }
+
 }

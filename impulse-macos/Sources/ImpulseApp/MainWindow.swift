@@ -475,7 +475,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         searchPanel.setRootPath(rootPath)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
-            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: rootPath)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 guard self.fileTreeRootPath == rootPath else { return }
@@ -1257,7 +1256,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                         let showHidden = self.fileTreeView.showHidden
                         DispatchQueue.global(qos: .userInitiated).async {
                             let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                            FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
                             DispatchQueue.main.async { [weak self] in
                                 guard let self else { return }
                                 // Only update if we're still on this directory.
@@ -1414,7 +1412,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     let showHidden = self.fileTreeView.showHidden
                     DispatchQueue.global(qos: .userInitiated).async {
                         let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                        FileTreeNode.refreshGitStatus(nodes: nodes, rootPath: dir)
                         let branch = ImpulseCore.gitBranch(path: dir)
                         DispatchQueue.main.async { [weak self] in
                             guard let self else { return }

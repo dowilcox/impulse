@@ -342,6 +342,42 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
+/// Get current git branch name for a path using libgit2.
+///
+/// Returns the short branch name, or an abbreviated commit hash if HEAD is
+/// detached, or `Ok(None)` if the path is not inside a git repository.
+pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
+    let repo = match open_repo(Path::new(path)) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
+
+    if head.is_branch() {
+        Ok(head.shorthand().map(String::from))
+    } else {
+        // Detached HEAD — return abbreviated commit hash
+        Ok(head.target().map(|oid| {
+            let s = oid.to_string();
+            s[..7.min(s.len())].to_string()
+        }))
+    }
+}
+
+/// Return the git working directory root for the given path, or `None` if
+/// the path is not inside a git repository.
+pub fn get_git_root(path: &str) -> Option<String> {
+    open_repo(Path::new(path)).ok().and_then(|repo| {
+        repo.workdir().map(|wd| {
+            wd.to_string_lossy().trim_end_matches('/').to_string()
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
