@@ -56,16 +56,16 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
         let latest_rename_req = latest_rename_req.clone();
         let icon_cache = sidebar_state.icon_cache.clone();
         let toast_overlay_for_editor = toast_overlay.clone();
+        let open_editor_paths = ctx.open_editor_paths.clone();
+        let editor_tab_pages = ctx.editor_tab_pages.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
-                // Check if the file is already open in a tab
-                let n = tab_view.n_pages();
-                for i in 0..n {
-                    let page = tab_view.nth_page(i);
-                    if page.child().widget_name().as_str() == path {
-                        tab_view.set_selected_page(&page);
-                        return;
+                // O(1) dedup check: if already open, find and select the existing tab
+                if open_editor_paths.borrow().contains(path) {
+                    if let Some(page) = editor_tab_pages.borrow().get(path) {
+                        tab_view.set_selected_page(page);
                     }
+                    return;
                 }
 
                 let filename = std::path::Path::new(path)
@@ -82,6 +82,9 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get_toolbar_icon("image") {
                         page.set_icon(Some(texture));
                     }
+                    // Track in dedup set and page map
+                    open_editor_paths.borrow_mut().insert(path.to_string());
+                    editor_tab_pages.borrow_mut().insert(path.to_string(), page.clone());
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
                         preview.clone().upcast::<gtk4::Widget>(),
@@ -117,6 +120,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                             let latest_rename_req = latest_rename_req.clone();
                             let sidebar_state = sidebar_state_for_editor.clone();
                             let toast_overlay = toast_overlay_for_editor.clone();
+                            let editor_tab_pages = editor_tab_pages.clone();
                             let path = path.to_string();
                             move |handle, event| {
                                 match event {
@@ -146,21 +150,16 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         send_diff_decorations(handle, &path);
                                     }
                                     impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
-                                        // Update tab title based on modified state
-                                        let n = tab_view.n_pages();
-                                        for i in 0..n {
-                                            let page = tab_view.nth_page(i);
-                                            if page.child().widget_name().as_str() == path {
-                                                let filename = std::path::Path::new(&path)
-                                                    .file_name()
-                                                    .and_then(|n| n.to_str())
-                                                    .unwrap_or(&path);
-                                                if handle.is_modified.get() {
-                                                    page.set_title(&format!("\u{25CF} {}", filename));
-                                                } else {
-                                                    page.set_title(filename);
-                                                }
-                                                break;
+                                        // Update tab title based on modified state (O(1) lookup)
+                                        if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                            let filename = std::path::Path::new(&path)
+                                                .file_name()
+                                                .and_then(|n| n.to_str())
+                                                .unwrap_or(&path);
+                                            if handle.is_modified.get() {
+                                                page.set_title(&format!("\u{25CF} {}", filename));
+                                            } else {
+                                                page.set_title(filename);
                                             }
                                         }
                                         // Send LSP didChange
@@ -202,18 +201,13 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             toast_overlay.add_toast(toast);
                                         } else {
                                             handle.is_modified.set(false);
-                                            // Revert tab title
-                                            let n = tab_view.n_pages();
-                                            for i in 0..n {
-                                                let page = tab_view.nth_page(i);
-                                                if page.child().widget_name().as_str() == path {
-                                                    let filename = std::path::Path::new(&path)
-                                                        .file_name()
-                                                        .and_then(|n| n.to_str())
-                                                        .unwrap_or(&path);
-                                                    page.set_title(filename);
-                                                    break;
-                                                }
+                                            // Revert tab title (O(1) lookup)
+                                            if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                                let filename = std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or(&path);
+                                                page.set_title(filename);
                                             }
                                             let uri = file_path_to_uri(std::path::Path::new(&path))
                                                 .unwrap_or_else(|| format!("file://{}", path));
@@ -306,16 +300,10 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
                                             cb(&file_path);
                                         }
-                                        // Navigate to position once the tab is created
-                                        let n = tab_view.n_pages();
-                                        for i in 0..n {
-                                            let page = tab_view.nth_page(i);
-                                            let child = page.child();
-                                            if child.widget_name().as_str() == file_path {
-                                                editor::go_to_position(&child, line + 1, character + 1);
-                                                tab_view.set_selected_page(&page);
-                                                break;
-                                            }
+                                        // Navigate to position once the tab is created (O(1) lookup)
+                                        if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
+                                            editor::go_to_position(&page.child(), line + 1, character + 1);
+                                            tab_view.set_selected_page(page);
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::FocusChanged { focused } => {
@@ -326,17 +314,13 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 log::error!("Auto-save failed for {}: {}", path, e);
                                             } else {
                                                 handle.is_modified.set(false);
-                                                let n = tab_view.n_pages();
-                                                for i in 0..n {
-                                                    let page = tab_view.nth_page(i);
-                                                    if page.child().widget_name().as_str() == path {
-                                                        let filename = std::path::Path::new(&path)
-                                                            .file_name()
-                                                            .and_then(|n| n.to_str())
-                                                            .unwrap_or(&path);
-                                                        page.set_title(filename);
-                                                        break;
-                                                    }
+                                                // Revert tab title (O(1) lookup)
+                                                if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                                    let filename = std::path::Path::new(&path)
+                                                        .file_name()
+                                                        .and_then(|n| n.to_str())
+                                                        .unwrap_or(&path);
+                                                    page.set_title(filename);
                                                 }
                                                 let uri = file_path_to_uri(std::path::Path::new(&path))
                                                     .unwrap_or_else(|| format!("file://{}", path));
@@ -479,6 +463,9 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get(&filename, false, false) {
                         page.set_icon(Some(texture));
                     }
+                    // Track in dedup set and page map
+                    open_editor_paths.borrow_mut().insert(path.to_string());
+                    editor_tab_pages.borrow_mut().insert(path.to_string(), page.clone());
 
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
@@ -498,7 +485,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
     // Wire up project search result activation to open file at line
     {
         let sidebar_on_file = sidebar_state.on_file_activated.clone();
-        let tab_view = tab_view.clone();
+        let editor_tab_pages = ctx.editor_tab_pages.clone();
         *sidebar_state
             .project_search
             .on_result_activated
@@ -508,14 +495,9 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                 if let Some(cb) = sidebar_on_file.borrow().as_ref() {
                     cb(path);
                 }
-                // Then scroll to the specific line in the editor
-                let n = tab_view.n_pages();
-                for i in 0..n {
-                    let page = tab_view.nth_page(i);
-                    if page.child().widget_name().as_str() == path {
-                        editor::go_to_position(&page.child(), line, 1);
-                        break;
-                    }
+                // Then scroll to the specific line in the editor (O(1) lookup)
+                if let Some(page) = editor_tab_pages.borrow().get(path) {
+                    editor::go_to_position(&page.child(), line, 1);
                 }
             });
         }));

@@ -191,6 +191,7 @@ final class TabManager: NSObject {
         tabBar.translatesAutoresizingMaskIntoConstraints = false
 
         iconCache = IconCache(theme: theme)
+        tabBar.pinIcon = iconCache?.toolbarIcon(name: "pin")
 
         contentView = NSView()
         contentView.wantsLayer = true
@@ -450,7 +451,14 @@ final class TabManager: NSObject {
     func togglePin(index: Int) {
         guard index >= 0, index < tabs.count else { return }
         pinnedTabs[index].toggle()
-        rebuildSegments()
+        refreshSegmentLabels()
+    }
+
+    /// Unpins the tab at the given index (used before closing a pinned tab).
+    func unpin(index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        pinnedTabs[index] = false
+        refreshSegmentLabels()
     }
 
     /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
@@ -622,6 +630,7 @@ final class TabManager: NSObject {
         } else {
             iconCache = IconCache(theme: theme)
         }
+        tabBar.pinIcon = iconCache?.toolbarIcon(name: "pin")
         tabBar.applyTheme(theme)
         rebuildSegments()
         for tab in tabs {

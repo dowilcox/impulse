@@ -53,4 +53,8 @@ pub(crate) struct WindowContext {
     pub lsp: LspState,
     pub toast_overlay: adw::ToastOverlay,
     pub status_bar: Rc<RefCell<crate::status_bar::StatusBar>>,
+    /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
+    pub open_editor_paths: Rc<RefCell<HashSet<String>>>,
+    /// Maps file paths to their TabPage for O(1) lookup in LSP responses and navigation.
+    pub editor_tab_pages: Rc<RefCell<HashMap<String, adw::TabPage>>>,
 }

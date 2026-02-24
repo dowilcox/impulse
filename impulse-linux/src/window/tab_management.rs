@@ -46,19 +46,9 @@ pub(super) fn make_setup_terminal_signals(
                             status_bar.borrow().update_cwd(&path);
                             sidebar_state.load_directory(&path);
                             *project_search_root.borrow_mut() = path.to_string();
-                        } else {
-                            // Background tab CWD changed: invalidate saved tree state
-                            let n = tab_view.n_pages();
-                            for i in 0..n {
-                                let page = tab_view.nth_page(i);
-                                if terminal.is_ancestor(&page.child()) {
-                                    sidebar_state.remove_tab_state(&page.child());
-                                    break;
-                                }
-                            }
                         }
 
-                        // Always update tab title to directory name
+                        // Find the terminal's page once and update both tree state and title
                         let dir_name = std::path::Path::new(&path)
                             .file_name()
                             .and_then(|n| n.to_str())
@@ -67,6 +57,9 @@ pub(super) fn make_setup_terminal_signals(
                         for i in 0..n {
                             let page = tab_view.nth_page(i);
                             if terminal.is_ancestor(&page.child()) {
+                                if !is_active {
+                                    sidebar_state.remove_tab_state(&page.child());
+                                }
                                 page.set_title(dir_name);
                                 break;
                             }
@@ -238,6 +231,7 @@ pub(super) fn setup_lsp_response_polling(
     let toast_overlay = ctx.toast_overlay.clone();
     let lsp_error_toast_dedupe = ctx.lsp.error_toast_dedupe.clone();
     let lsp_install_result_rx = lsp_install_result_rx.clone();
+    let editor_tab_pages = ctx.editor_tab_pages.clone();
     gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
         run_guarded_ui("lsp-gtk-poll", || {
             {
@@ -269,15 +263,11 @@ pub(super) fn setup_lsp_response_polling(
                                 continue;
                             }
                         }
-                        let n = tab_view.n_pages();
-                        for i in 0..n {
-                            let page = tab_view.nth_page(i);
+                        // O(1) lookup via editor_tab_pages
+                        if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
                             let child = page.child();
-                            if child.widget_name().as_str() == file_path {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.apply_diagnostics(&diagnostics);
-                                }
-                                break;
+                            if let Some(handle) = editor::get_handle_for_widget(&child) {
+                                handle.apply_diagnostics(&diagnostics);
                             }
                         }
                     }
@@ -710,7 +700,33 @@ pub(super) fn setup_tab_close_handler(
     let hover_req_for_close = ctx.lsp.latest_hover_req.clone();
     let definition_req_for_close = ctx.lsp.latest_definition_req.clone();
     let closed_tabs_for_close = closed_tabs.clone();
+    let open_editor_paths = ctx.open_editor_paths.clone();
+    let editor_tab_pages = ctx.editor_tab_pages.clone();
     ctx.tab_view.connect_close_page(move |tv, page| {
+        // Confirm before closing pinned tabs
+        if page.is_pinned() {
+            let dialog = adw::AlertDialog::builder()
+                .heading("Pinned Tab")
+                .body("This tab is pinned. Close anyway?")
+                .build();
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("close", "Close");
+            dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("close"));
+            dialog.set_close_response("cancel");
+
+            let tv = tv.clone();
+            let page = page.clone();
+            dialog.connect_response(None, move |_dialog, response| {
+                if response == "close" {
+                    tv.set_page_pinned(&page, false);
+                    tv.close_page(&page);
+                }
+            });
+            dialog.present(Some(&window_ref));
+            return gtk4::glib::Propagation::Stop;
+        }
+
         sidebar_state.remove_tab_state(&page.child());
         let child = page.child();
 
@@ -743,6 +759,15 @@ pub(super) fn setup_tab_close_handler(
             completion_req_for_close.borrow_mut().remove(&path);
             hover_req_for_close.borrow_mut().remove(&path);
             definition_req_for_close.borrow_mut().remove(&path);
+        }
+
+        // Remove from dedup set and page map
+        {
+            let path = child.widget_name().to_string();
+            if !path.is_empty() && path != "GtkBox" {
+                open_editor_paths.borrow_mut().remove(&path);
+                editor_tab_pages.borrow_mut().remove(&path);
+            }
         }
 
         // Check if this is an editor tab with unsaved changes

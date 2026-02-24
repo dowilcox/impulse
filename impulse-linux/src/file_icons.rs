@@ -83,6 +83,7 @@ const TOOLBAR_COLLAPSE_SVG: &str = include_str!("../../assets/icons/toolbar-coll
 const TOOLBAR_REFRESH_SVG: &str = include_str!("../../assets/icons/toolbar-refresh.svg");
 const TOOLBAR_NEW_FILE_SVG: &str = include_str!("../../assets/icons/toolbar-new-file.svg");
 const TOOLBAR_NEW_FOLDER_SVG: &str = include_str!("../../assets/icons/toolbar-new-folder.svg");
+const PIN_SVG: &str = include_str!("../../assets/icons/pin.svg");
 
 // ---------------------------------------------------------------------------
 // Color field — which theme color an icon uses
@@ -430,6 +431,11 @@ const ALL_ICONS: &[IconDef] = &[
         name: "toolbar-new-folder",
         svg: TOOLBAR_NEW_FOLDER_SVG,
         color: ColorField::Fg,
+    },
+    IconDef {
+        name: "pin",
+        svg: PIN_SVG,
+        color: ColorField::Comment,
     },
 ];
 

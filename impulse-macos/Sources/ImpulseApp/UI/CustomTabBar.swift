@@ -41,6 +41,7 @@ private final class TabItemView: NSView {
     var index: Int = 0
     var isSelected: Bool = false { didSet { needsDisplay = true } }
     var isHovered: Bool = false { didSet { needsDisplay = true } }
+    var pinIcon: NSImage?
 
     weak var tabDelegate: CustomTabBarDelegate?
     weak var barDelegate: CustomTabBar?
@@ -56,6 +57,7 @@ private final class TabItemView: NSView {
     // Layout
     private let iconSize: CGFloat = 16
     private let closeSize: CGFloat = 12
+    private let pinSize: CGFloat = 14
     private let padding: CGFloat = 14
     private let iconTextGap: CGFloat = 6
     private let textCloseGap: CGFloat = 8
@@ -195,8 +197,23 @@ private final class TabItemView: NSView {
             NSGraphicsContext.current?.restoreGraphicsState()
         }
 
-        // Draw close button (X) when hovered or selected
-        if isSelected || isHovered {
+        if isPinned {
+            // Draw pin icon in the close button area for pinned tabs
+            if let pinImg = pinIcon {
+                let pinX = bounds.width - padding - pinSize
+                let pinY = y - pinSize / 2
+                let pinRect = NSRect(x: pinX, y: pinY, width: pinSize, height: pinSize)
+                let tintColor = isSelected ? accentColor : fgDarkColor
+                let tinted = NSImage(size: NSSize(width: pinSize, height: pinSize), flipped: false) { [tintColor] rect in
+                    pinImg.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                    tintColor.set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(in: pinRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            }
+        } else if isSelected || isHovered {
+            // Draw close button (X) when hovered or selected (unpinned tabs only)
             let closeColor = isSelected ? fgColor : fgDarkColor
             let closeX = bounds.width - padding - closeSize
             let closeY = y - closeSize / 2
@@ -224,8 +241,8 @@ private final class TabItemView: NSView {
     override func mouseDown(with event: NSEvent) {
         let local = convert(event.locationInWindow, from: nil)
 
-        // Check close button hit area
-        if isSelected || isHovered {
+        // Check close button hit area (not shown for pinned tabs)
+        if !isPinned && (isSelected || isHovered) {
             let closeX = bounds.width - padding - closeSize
             let closeY = bounds.midY - closeSize / 2
             let closeRect = NSRect(x: closeX - 4, y: closeY - 4, width: closeSize + 8, height: closeSize + 8)
@@ -326,6 +343,7 @@ final class CustomTabBar: NSView {
     private var tabViews: [TabItemView] = []
     private var selectedIndex: Int = -1
     private var currentTheme: Theme?
+    var pinIcon: NSImage?
 
     private let tabBarHeight: CGFloat = 48
     private let tabItemHeight: CGFloat = 34
@@ -388,6 +406,7 @@ final class CustomTabBar: NSView {
             tv.title = data.title
             tv.icon = data.icon
             tv.isPinned = data.isPinned
+            tv.pinIcon = pinIcon
             tv.tabDelegate = delegate
             tv.barDelegate = self
             tv.isSelected = (i == selectedIndex)

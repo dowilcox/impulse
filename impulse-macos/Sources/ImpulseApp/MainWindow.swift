@@ -1116,6 +1116,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func requestCloseTab(index: Int) {
         guard index >= 0, index < tabManager.tabs.count else { return }
 
+        // Confirm before closing pinned tabs
+        if tabManager.pinnedTabs[index] {
+            let alert = NSAlert()
+            alert.messageText = "Pinned Tab"
+            alert.informativeText = "This tab is pinned. Close anyway?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+
+            guard let window = self.window else { return }
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                if response == .alertFirstButtonReturn {
+                    // Unpin, then re-enter requestCloseTab for unsaved-changes handling
+                    self.tabManager.unpin(index: index)
+                    self.requestCloseTab(index: index)
+                }
+            }
+            return
+        }
+
         if case .editor(let editor) = tabManager.tabs[index], editor.isModified {
             let filename = editor.filePath.map {
                 ($0 as NSString).lastPathComponent

@@ -13,7 +13,7 @@ use libadwaita::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::editor;
@@ -805,6 +805,10 @@ pub fn build_window(app: &adw::Application) {
         latest_rename_req: latest_rename_req.clone(),
     };
 
+    let open_editor_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
+    let editor_tab_pages: Rc<RefCell<HashMap<String, adw::TabPage>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+
     let ctx = context::WindowContext {
         window: window.clone(),
         tab_view: tab_view.clone(),
@@ -813,6 +817,8 @@ pub fn build_window(app: &adw::Application) {
         lsp: lsp_state,
         toast_overlay: toast_overlay.clone(),
         status_bar: status_bar.clone(),
+        open_editor_paths,
+        editor_tab_pages,
     };
 
     sidebar_signals::wire_sidebar_signals(&ctx);

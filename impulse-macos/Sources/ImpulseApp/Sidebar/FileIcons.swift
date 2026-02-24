@@ -96,6 +96,7 @@ private let allIcons: [IconDef] = [
     IconDef(name: "toolbar-eye-closed", color: .fg),
     IconDef(name: "toolbar-collapse", color: .fg),
     IconDef(name: "toolbar-refresh", color: .fg),
+    IconDef(name: "pin", color: .comment),
 ]
 
 // MARK: - Icon Name Lookup
