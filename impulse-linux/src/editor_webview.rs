@@ -458,7 +458,7 @@ impl MonacoEditorHandle {
         let is_ready = self.is_ready.clone();
         let watcher_cell = self._file_watcher.clone();
 
-        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
+        let timer_id = glib::timeout_add_local(Duration::from_millis(100), move || {
             if !changed.swap(false, Ordering::Relaxed) {
                 return glib::ControlFlow::Continue;
             }

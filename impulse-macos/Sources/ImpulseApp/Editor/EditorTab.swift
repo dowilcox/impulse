@@ -649,7 +649,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
-            eventMask: [.write, .rename],
+            eventMask: [.write, .rename, .delete],
             queue: .main
         )
 
@@ -687,7 +687,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             self?.reloadIfUnmodified()
         }
         fileWatchDebounce = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
     /// Reload the file content if the editor has no unsaved changes.
@@ -711,6 +711,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         suppressNextModify = true
         content = newContent
         sendCommand(.openFile(filePath: path, content: newContent, language: language))
+        // Force WebView repaint immediately — WKWebView may defer visual updates
+        // when the view isn't first responder (e.g. user is focused elsewhere).
+        webView?.setNeedsDisplay(webView!.bounds)
         // Restart the watcher: after an atomic write (temp → rename) the old fd
         // points to a stale inode.  Re-opening gives us the new one.
         startFileWatching()

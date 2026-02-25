@@ -515,6 +515,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background: none;
             border: 1px solid {green};
             box-shadow: none;
+            cursor: pointer;
         }}
         .status-bar .status-bar-preview-btn label {{
             font-size: 11px;

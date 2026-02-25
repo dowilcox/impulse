@@ -1363,23 +1363,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) { [weak self] notification in
                 guard let self, self.window?.isKeyWindow == true else { return }
                 if let path = notification.userInfo?["path"] as? String {
-                    // Find the open editor tab for this file and reload from disk
-                    // off the main thread to avoid blocking UI.
+                    // Find the open editor tab for this file and reload from disk.
+                    // Reading a single source file is fast enough to do synchronously
+                    // on the main thread, and avoids the delayed repaint caused by
+                    // dispatching back from a background queue.
                     if let editor = self.findEditorTab(forPath: path) {
-                        let language = editor.language
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            let content: String
-                            do {
-                                content = try String(contentsOfFile: path, encoding: .utf8)
-                            } catch {
-                                os_log(.error, "Failed to reload file '%{public}@': %{public}@",
-                                       path, error.localizedDescription)
-                                return
-                            }
-                            DispatchQueue.main.async { [weak editor] in
-                                guard let editor else { return }
-                                editor.openFile(path: path, content: content, language: language)
-                            }
+                        do {
+                            let content = try String(contentsOfFile: path, encoding: .utf8)
+                            editor.openFile(path: path, content: content, language: editor.language)
+                            editor.webView?.setNeedsDisplay(editor.webView?.bounds ?? .zero)
+                        } catch {
+                            os_log(.error, "Failed to reload file '%{public}@': %{public}@",
+                                   path, error.localizedDescription)
                         }
                     }
                 }

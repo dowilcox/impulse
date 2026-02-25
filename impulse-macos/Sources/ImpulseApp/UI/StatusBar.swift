@@ -372,6 +372,10 @@ final class PreviewToggleButton: NSButton {
         text.draw(in: textRect, withAttributes: attrs)
     }
 
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
         needsDisplay = true
