@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
-pub const MONACO_VERSION: &str = "0.55.1+fonts1";
+pub const MONACO_VERSION: &str = "0.55.1+fonts2";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
 static FONTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/fonts");
@@ -95,10 +95,10 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
 }
 
 /// Install bundled TTF fonts to the user's system font directory so the
-/// terminal (VTE/SwiftTerm) can use them without manual installation.
+/// terminal (VTE/SwiftTerm) and UI can use them without manual installation.
 ///
-/// - Linux: `~/.local/share/fonts/JetBrainsMono/`
-/// - macOS: `~/Library/Fonts/`
+/// - Linux: `~/.local/share/fonts/JetBrainsMono/`, `~/.local/share/fonts/Inter/`
+/// - macOS: `~/Library/Fonts/` (flat)
 fn install_user_fonts() {
     let font_dir = match dirs::font_dir() {
         Some(d) => d,
@@ -108,11 +108,22 @@ fn install_user_fonts() {
         }
     };
 
-    // On Linux, install into a subdirectory; on macOS, ~/Library/Fonts/ is flat
+    install_font_family(&font_dir, "jetbrains-mono", "JetBrainsMono");
+    install_font_family(&font_dir, "inter", "Inter");
+}
+
+/// Install a single font family from the bundled `FONTS_DIR` into the user's
+/// font directory.  On Linux the fonts go into a named subdirectory; on macOS
+/// they go directly into `~/Library/Fonts/`.
+fn install_font_family(
+    font_dir: &std::path::Path,
+    bundled_subdir: &str,
+    linux_subdir: &str,
+) {
     let target_dir = if cfg!(target_os = "macos") {
-        font_dir.clone()
+        font_dir.to_path_buf()
     } else {
-        font_dir.join("JetBrainsMono")
+        font_dir.join(linux_subdir)
     };
 
     if let Err(e) = std::fs::create_dir_all(&target_dir) {
@@ -120,10 +131,10 @@ fn install_user_fonts() {
         return;
     }
 
-    let font_subdir = match FONTS_DIR.get_dir("jetbrains-mono") {
+    let font_subdir = match FONTS_DIR.get_dir(bundled_subdir) {
         Some(d) => d,
         None => {
-            log::warn!("Bundled jetbrains-mono font directory not found");
+            log::warn!("Bundled {} font directory not found", bundled_subdir);
             return;
         }
     };

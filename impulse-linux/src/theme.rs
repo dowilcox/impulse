@@ -330,7 +330,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         r#"
         /* --- Global font --- */
         window, popover, menu {{
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'Inter', sans-serif;
         }}
 
         /* --- Sidebar --- */
