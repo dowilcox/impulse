@@ -567,6 +567,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: {bg_dark};
             color: {fg_dark};
             border-radius: 6px 6px 0 0;
+            cursor: pointer;
         }}
         tabbar tab:selected {{
             background-color: {bg};

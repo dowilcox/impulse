@@ -259,7 +259,7 @@ pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Op
         preview_wv.connect_decide_policy(|_wv, decision, decision_type| {
             if decision_type == webkit6::PolicyDecisionType::NavigationAction {
                 if let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() {
-                    if let Some(action) = nav.navigation_action() {
+                    if let Some(mut action) = nav.navigation_action() {
                         if let Some(request) = action.request() {
                             if let Some(uri) = request.uri() {
                                 let scheme = uri.split(':').next().unwrap_or("");

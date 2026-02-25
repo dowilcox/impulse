@@ -59,6 +59,7 @@ impl StatusBar {
         preview_button.add_css_class("status-bar-preview-btn");
         preview_button.set_tooltip_text(Some("Toggle Markdown Preview (Ctrl+Shift+M)"));
         preview_button.set_visible(false);
+        preview_button.set_cursor_from_name(Some("pointer"));
 
         widget.append(&shell_label);
         widget.append(&branch_label);

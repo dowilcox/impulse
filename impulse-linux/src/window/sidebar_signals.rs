@@ -184,7 +184,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         {
                                             let path = path.clone();
                                             let status_bar = status_bar.clone();
-                                            glib::spawn_future_local(async move {
+                                            gtk4::glib::spawn_future_local(async move {
                                                 let result = gtk4::gio::spawn_blocking(move || {
                                                     impulse_core::git::get_line_blame(&path, line)
                                                 }).await;

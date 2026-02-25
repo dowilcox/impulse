@@ -668,6 +668,7 @@ pub fn build_window(app: &adw::Application) {
     let tab_view = adw::TabView::new();
     tab_bar.set_view(Some(&tab_view));
     tab_bar.set_autohide(false);
+    tab_bar.set_cursor_from_name(Some("pointer"));
 
     // Tab context menu
     let tab_menu = gio::Menu::new();
@@ -1439,7 +1440,7 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_fam
 
 pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
     let file_path_owned = file_path.to_string();
-    glib::spawn_future_local(async move {
+    gtk4::glib::spawn_future_local(async move {
         let fp = file_path_owned.clone();
         let result = gtk4::gio::spawn_blocking(move || impulse_core::git::get_file_diff(&fp)).await;
         let decorations = match result {
