@@ -15,8 +15,43 @@ pub enum ShellType {
     Fish,
 }
 
-/// Get the user's login shell from /etc/passwd.
+/// Get the user's login shell from the system user database.
+/// On macOS, queries Open Directory via `dscl` since `/etc/passwd` only contains system accounts.
+/// On Linux, reads `/etc/passwd` directly.
 pub fn get_user_login_shell() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        get_user_login_shell_macos()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        get_user_login_shell_passwd()
+    }
+}
+
+/// macOS: query Open Directory for the user's login shell.
+#[cfg(target_os = "macos")]
+fn get_user_login_shell_macos() -> Option<String> {
+    let username = std::env::var("USER").ok()?;
+    let output = std::process::Command::new("dscl")
+        .args([".", "-read", &format!("/Users/{}", username), "UserShell"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    // Output format: "UserShell: /path/to/shell"
+    let shell = stdout.strip_prefix("UserShell:")?.trim().to_string();
+    if shell.is_empty() || !std::path::Path::new(&shell).exists() {
+        return None;
+    }
+    Some(shell)
+}
+
+/// Linux/other: read the user's login shell from /etc/passwd.
+#[cfg(not(target_os = "macos"))]
+fn get_user_login_shell_passwd() -> Option<String> {
     let username = std::env::var("USER").ok()?;
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
     for line in passwd.lines() {
