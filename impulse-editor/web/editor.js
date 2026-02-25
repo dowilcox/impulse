@@ -15,6 +15,32 @@ function sendToHost(msgObj) {
 }
 
 // ---------------------------------------------------------------------------
+// Font family normalization
+// ---------------------------------------------------------------------------
+// Monaco's fontFamily option is a CSS font-family string. Font names with
+// spaces must be quoted (e.g. 'SF Mono'), and a monospace fallback should
+// always be present so the editor never falls back to a proportional font.
+function normalizeFontFamily(raw) {
+  // Split on commas, trim each part, and quote unquoted multi-word names.
+  const parts = raw.split(",").map((s) => {
+    s = s.trim();
+    if (!s) return null;
+    // Already quoted — leave as-is.
+    if ((s.startsWith("'") && s.endsWith("'")) ||
+        (s.startsWith('"') && s.endsWith('"'))) return s;
+    // Generic families (monospace, sans-serif, etc.) must not be quoted.
+    if (/^[a-z-]+$/.test(s)) return s;
+    // Multi-word name without quotes — wrap in single quotes.
+    if (s.includes(" ")) return "'" + s + "'";
+    return s;
+  }).filter(Boolean);
+  // Ensure a monospace fallback is always present.
+  const lower = parts.map((p) => p.toLowerCase().replace(/['"]/g, ""));
+  if (!lower.includes("monospace")) parts.push("monospace");
+  return parts.join(", ");
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 let editor = null;
@@ -590,7 +616,8 @@ function handleUpdateSettings(cmd) {
   const opts = cmd.options || {};
   const update = {};
   if (opts.font_size != null) update.fontSize = opts.font_size;
-  if (opts.font_family != null) update.fontFamily = opts.font_family;
+  if (opts.font_family != null)
+    update.fontFamily = normalizeFontFamily(opts.font_family);
   if (opts.tab_size != null) update.tabSize = opts.tab_size;
   if (opts.insert_spaces != null) update.insertSpaces = opts.insert_spaces;
   if (opts.word_wrap != null) update.wordWrap = opts.word_wrap;
