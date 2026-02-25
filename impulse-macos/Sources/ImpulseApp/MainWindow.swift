@@ -1146,7 +1146,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             alert.informativeText = "\"\(filename)\" has unsaved changes. Close anyway?"
             alert.alertStyle = .warning
             alert.addButton(withTitle: "Save & Close")
-            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Don't Save")
             alert.addButton(withTitle: "Cancel")
 
             guard let window = self.window else { return }
@@ -1162,7 +1162,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     self.lspDidClose(editor: editor)
                     self.tabManager.closeTab(index: index)
                 case .alertSecondButtonReturn:
-                    // Discard
+                    // Don't Save
                     if let path = editor.filePath {
                         self.untrackEditorTab(forPath: path)
                     }
@@ -1285,6 +1285,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                             }
                         }
                     }
+                }
+                // Refresh git diff decorations for the newly-active editor tab
+                // (they may be stale after terminal git operations).
+                if self.tabManager.selectedIndex >= 0,
+                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
+                   case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    self.applyGitDiffDecorations(editor: editor)
                 }
                 // Hide terminal search bar when switching away from a terminal tab.
                 if self.termSearchBarVisible,
@@ -2188,6 +2195,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // Refresh git diff decorations for the active editor tab when the
+        // window regains focus (git state may have changed externally).
+        if tabManager.selectedIndex >= 0,
+           tabManager.selectedIndex < tabManager.tabs.count,
+           case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex] {
+            applyGitDiffDecorations(editor: editor)
+        }
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -666,6 +666,11 @@ pub(super) fn setup_tab_switch_handler(
                         let cwd = sidebar_state.current_path.borrow().clone();
                         status_bar.borrow().update_cwd(&cwd);
                     }
+                    // Refresh git diff decorations (they may be stale after
+                    // terminal git operations like commit/stash/checkout).
+                    if let Some(handle) = editor::get_handle_for_widget(&child) {
+                        super::send_diff_decorations(&handle, &file_path);
+                    }
                     // Cursor position is updated via CursorMoved events from Monaco
                     // Show language and encoding for editor tabs
                     if let Some(lang) = editor::get_editor_language(&child) {
@@ -791,7 +796,7 @@ pub(super) fn setup_tab_close_handler(
                 ))
                 .build();
             dialog.add_response("cancel", "Cancel");
-            dialog.add_response("discard", "Discard");
+            dialog.add_response("discard", "Don't Save");
             dialog.add_response("save", "Save & Close");
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
             dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
