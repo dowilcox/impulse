@@ -372,9 +372,8 @@ pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
 /// the path is not inside a git repository.
 pub fn get_git_root(path: &str) -> Option<String> {
     open_repo(Path::new(path)).ok().and_then(|repo| {
-        repo.workdir().map(|wd| {
-            wd.to_string_lossy().trim_end_matches('/').to_string()
-        })
+        repo.workdir()
+            .map(|wd| wd.to_string_lossy().trim_end_matches('/').to_string())
     })
 }
 

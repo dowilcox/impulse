@@ -1438,34 +1438,46 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_fam
 }
 
 pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
-    let decorations = match impulse_core::git::get_file_diff(file_path) {
-        Ok(diff) => {
-            let mut decos: Vec<impulse_editor::protocol::DiffDecoration> = diff
-                .changed_lines
-                .iter()
-                .filter_map(|(&line, status)| {
-                    let diff_status = match status {
-                        impulse_core::git::DiffLineStatus::Added => impulse_editor::protocol::DiffStatus::Added,
-                        impulse_core::git::DiffLineStatus::Modified => impulse_editor::protocol::DiffStatus::Modified,
-                        impulse_core::git::DiffLineStatus::Unchanged => return None,
-                    };
-                    Some(impulse_editor::protocol::DiffDecoration {
-                        line,
-                        status: diff_status,
+    let file_path_owned = file_path.to_string();
+    glib::spawn_future_local(async move {
+        let fp = file_path_owned.clone();
+        let result = gtk4::gio::spawn_blocking(move || impulse_core::git::get_file_diff(&fp)).await;
+        let decorations = match result {
+            Ok(Ok(diff)) => {
+                let mut decos: Vec<impulse_editor::protocol::DiffDecoration> = diff
+                    .changed_lines
+                    .iter()
+                    .filter_map(|(&line, status)| {
+                        let diff_status = match status {
+                            impulse_core::git::DiffLineStatus::Added => {
+                                impulse_editor::protocol::DiffStatus::Added
+                            }
+                            impulse_core::git::DiffLineStatus::Modified => {
+                                impulse_editor::protocol::DiffStatus::Modified
+                            }
+                            impulse_core::git::DiffLineStatus::Unchanged => return None,
+                        };
+                        Some(impulse_editor::protocol::DiffDecoration {
+                            line,
+                            status: diff_status,
+                        })
                     })
-                })
-                .collect();
-            for &line in &diff.deleted_lines {
-                decos.push(impulse_editor::protocol::DiffDecoration {
-                    line,
-                    status: impulse_editor::protocol::DiffStatus::Deleted,
-                });
+                    .collect();
+                for &line in &diff.deleted_lines {
+                    decos.push(impulse_editor::protocol::DiffDecoration {
+                        line,
+                        status: impulse_editor::protocol::DiffStatus::Deleted,
+                    });
+                }
+                decos
             }
-            decos
+            _ => vec![],
+        };
+        // Re-lookup the handle on the main thread (the Rc may have been dropped during async)
+        if let Some(handle) = crate::editor::get_handle(&file_path_owned) {
+            handle.apply_diff_decorations(decorations);
         }
-        Err(_) => vec![],
-    };
-    handle.apply_diff_decorations(decorations);
+    });
 }
 
 /// Runs all matching commands-on-save for the given file path.

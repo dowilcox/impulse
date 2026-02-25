@@ -1,5 +1,10 @@
 use pulldown_cmark::{Options, Parser};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+/// Maximum markdown source size (in bytes) before preview is refused.
+/// Beyond this threshold, rendering + highlight.js can cause UI lag.
+const MAX_MARKDOWN_SIZE: usize = 1024 * 1024; // 1 MB
 
 /// Theme colors for the rendered markdown preview.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,15 +27,81 @@ pub struct MarkdownThemeColors {
     pub code_font_family: String,
 }
 
+/// Recognised markdown file extensions.
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
+
+/// Check whether a file path is a markdown file based on its extension.
+pub fn is_markdown_file(path: &str) -> bool {
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    MARKDOWN_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// Sanitise a CSS color value.  Accepts `#hex`, `rgb(…)`, `rgba(…)`, and
+/// common named colours.  Anything else is replaced by the fallback.
+fn sanitize_css_color(value: &str, fallback: &str) -> String {
+    let v = value.trim();
+    // Hex: #abc, #aabbcc, #aabbccdd
+    if v.starts_with('#')
+        && (v.len() == 4 || v.len() == 7 || v.len() == 9)
+        && v[1..].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return v.to_string();
+    }
+    // rgb(…) / rgba(…)
+    if (v.starts_with("rgb(") || v.starts_with("rgba(")) && v.ends_with(')') {
+        let inner = &v[v.find('(').unwrap() + 1..v.len() - 1];
+        if inner
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ',' || c == '.' || c == ' ' || c == '%')
+        {
+            return v.to_string();
+        }
+    }
+    fallback.to_string()
+}
+
+/// Sanitise a CSS font-family value by stripping dangerous chars.
+fn sanitize_font_family(value: &str) -> String {
+    // Allow alphanumerics, spaces, commas, quotes, hyphens, underscores
+    if value
+        .chars()
+        .all(|c| c.is_alphanumeric() || " ,'\"-_".contains(c))
+    {
+        value.to_string()
+    } else {
+        "system-ui, sans-serif".to_string()
+    }
+}
+
+/// HTML-escape a string for safe interpolation in attributes or text.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Render a markdown source string to a full standalone HTML document
 /// with themed CSS and highlight.js code highlighting.
 ///
-/// `highlight_js_path` should be an absolute file path or URL to `highlight.min.js`.
+/// `highlight_js_path` should be an absolute `file://` path to `highlight.min.js`.
+///
+/// Returns `None` if the source exceeds the size limit.
 pub fn render_markdown_preview(
     source: &str,
     theme: &MarkdownThemeColors,
     highlight_js_path: &str,
-) -> String {
+) -> Option<String> {
+    if source.len() > MAX_MARKDOWN_SIZE {
+        log::warn!(
+            "Markdown source ({} bytes) exceeds {} byte limit, skipping preview",
+            source.len(),
+            MAX_MARKDOWN_SIZE
+        );
+        return None;
+    }
+
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -40,11 +111,69 @@ pub fn render_markdown_preview(
     let mut html_body = String::new();
     pulldown_cmark::html::push_html(&mut html_body, parser);
 
-    format!(
+    // Sanitise rendered HTML to strip scripts, event handlers, iframes, etc.
+    let clean_body = ammonia::Builder::default()
+        .add_tags(&[
+            "pre",
+            "code",
+            "table",
+            "thead",
+            "tbody",
+            "tfoot",
+            "tr",
+            "th",
+            "td",
+            "details",
+            "summary",
+            "span",
+            "dl",
+            "dt",
+            "dd",
+            "sup",
+            "sub",
+            "kbd",
+            "var",
+            "samp",
+            "mark",
+            "figure",
+            "figcaption",
+            "picture",
+            "source",
+        ])
+        .add_generic_attributes(&["class", "id"])
+        .add_tag_attribute_values("input", "type", &["checkbox"])
+        .add_tag_attributes("input", &["checked", "disabled"])
+        .url_schemes(HashSet::from(["http", "https", "mailto"]))
+        .link_rel(Some("noopener noreferrer"))
+        .clean(&html_body)
+        .to_string();
+
+    // Sanitise theme values
+    let bg = sanitize_css_color(&theme.bg, "#1a1b26");
+    let fg = sanitize_css_color(&theme.fg, "#c0caf5");
+    let heading = sanitize_css_color(&theme.heading, "#7dcfff");
+    let link = sanitize_css_color(&theme.link, "#7aa2f7");
+    let code_bg = sanitize_css_color(&theme.code_bg, "#16161e");
+    let border = sanitize_css_color(&theme.border, "#292e42");
+    let blockquote_fg = sanitize_css_color(&theme.blockquote_fg, "#565f89");
+    let hljs_keyword = sanitize_css_color(&theme.hljs_keyword, "#bb9af7");
+    let hljs_string = sanitize_css_color(&theme.hljs_string, "#9ece6a");
+    let hljs_number = sanitize_css_color(&theme.hljs_number, "#ff9e64");
+    let hljs_comment = sanitize_css_color(&theme.hljs_comment, "#565f89");
+    let hljs_function = sanitize_css_color(&theme.hljs_function, "#7aa2f7");
+    let hljs_type = sanitize_css_color(&theme.hljs_type, "#e0af68");
+    let font_family = sanitize_font_family(&theme.font_family);
+    let code_font_family = sanitize_font_family(&theme.code_font_family);
+
+    // HTML-escape the highlight.js path for safe attribute interpolation
+    let hljs_path = html_escape(highlight_js_path);
+
+    Some(format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file: data: https:; font-src file:;">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -140,22 +269,22 @@ img {{ max-width: 100%; height: auto; border-radius: 4px; }}
 <script>hljs.highlightAll();</script>
 </body>
 </html>"#,
-        bg = theme.bg,
-        fg = theme.fg,
-        heading = theme.heading,
-        link = theme.link,
-        code_bg = theme.code_bg,
-        border = theme.border,
-        blockquote_fg = theme.blockquote_fg,
-        font_family = theme.font_family,
-        code_font_family = theme.code_font_family,
-        hljs_keyword = theme.hljs_keyword,
-        hljs_string = theme.hljs_string,
-        hljs_number = theme.hljs_number,
-        hljs_comment = theme.hljs_comment,
-        hljs_function = theme.hljs_function,
-        hljs_type = theme.hljs_type,
-        body = html_body,
-        hljs_path = highlight_js_path,
-    )
+        bg = bg,
+        fg = fg,
+        heading = heading,
+        link = link,
+        code_bg = code_bg,
+        border = border,
+        blockquote_fg = blockquote_fg,
+        font_family = font_family,
+        code_font_family = code_font_family,
+        hljs_keyword = hljs_keyword,
+        hljs_string = hljs_string,
+        hljs_number = hljs_number,
+        hljs_comment = hljs_comment,
+        hljs_function = hljs_function,
+        hljs_type = hljs_type,
+        body = clean_body,
+        hljs_path = hljs_path,
+    ))
 }

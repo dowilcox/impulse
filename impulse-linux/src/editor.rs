@@ -175,8 +175,7 @@ pub fn go_to_position(widget: &gtk4::Widget, line: u32, column: u32) {
 
 /// Check whether a file path is a markdown file.
 pub fn is_markdown_file(path: &str) -> bool {
-    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkd" | "mkdn")
+    markdown::is_markdown_file(path)
 }
 
 /// Map the application theme to markdown preview colors.
@@ -235,7 +234,10 @@ pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Op
         }
     };
 
-    let html = markdown::render_markdown_preview(&content, &md_colors, &hljs_path);
+    let html = match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
+        Some(h) => h,
+        None => return None, // source too large
+    };
 
     // Create or reuse the preview WebView
     if stack.child_by_name("preview").is_none() {
@@ -243,14 +245,40 @@ pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Op
             .hexpand(true)
             .vexpand(true)
             .build();
-        let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
-            .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+        let bg_rgba =
+            gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
         preview_wv.set_background_color(&bg_rgba);
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&preview_wv) {
             wk_settings.set_enable_javascript(true);
-            wk_settings.set_allow_file_access_from_file_urls(true);
+            // Do NOT enable allowFileAccessFromFileURLs — the base URI
+            // handles relative image resolution and the CSP restricts scripts.
         }
+
+        // Block navigation to external URLs; open them in the default browser.
+        preview_wv.connect_decide_policy(|_wv, decision, decision_type| {
+            if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+                if let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() {
+                    if let Some(action) = nav.navigation_action() {
+                        if let Some(request) = action.request() {
+                            if let Some(uri) = request.uri() {
+                                let scheme = uri.split(':').next().unwrap_or("");
+                                if scheme != "file" && scheme != "about" && scheme != "data" {
+                                    // Open in default browser and block in-WebView navigation
+                                    let _ = gtk4::gio::AppInfo::launch_default_for_uri(
+                                        &uri,
+                                        gtk4::gio::AppLaunchContext::NONE,
+                                    );
+                                    decision.ignore();
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false // use default policy
+        });
 
         stack.add_named(&preview_wv, Some("preview"));
     }
@@ -293,7 +321,10 @@ pub fn refresh_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
         Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
         Err(_) => String::new(),
     };
-    let html = markdown::render_markdown_preview(&content, &md_colors, &hljs_path);
+    let html = match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
+        Some(h) => h,
+        None => return,
+    };
 
     if let Some(preview_widget) = stack.child_by_name("preview") {
         if let Some(preview_wv) = preview_widget.downcast_ref::<webkit6::WebView>() {

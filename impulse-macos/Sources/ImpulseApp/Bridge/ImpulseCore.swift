@@ -165,6 +165,12 @@ final class ImpulseCore {
         return consumeCString(impulse_render_markdown_preview(source, themeJSON, highlightJsPath))
     }
 
+    /// Check whether a file path has a markdown extension.
+    /// Uses the canonical extension list defined in impulse-editor.
+    static func isMarkdownFile(_ path: String) -> Bool {
+        return impulse_is_markdown_file(path)
+    }
+
     // MARK: - Git
 
     /// Returns the current git branch for the directory at `path`, or `nil`

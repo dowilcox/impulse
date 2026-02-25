@@ -729,7 +729,10 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
 /// Check whether npm is available on the system PATH.
 #[no_mangle]
 pub extern "C" fn impulse_npm_is_available() -> bool {
-    ffi_catch(false, AssertUnwindSafe(|| impulse_core::lsp::npm_is_available()))
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| impulse_core::lsp::npm_is_available()),
+    )
 }
 
 /// Check the installation status of system (non-managed) LSP servers.
@@ -991,8 +994,12 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                         .iter()
                         .filter_map(|(&line, status)| {
                             let diff_status = match status {
-                                impulse_core::git::DiffLineStatus::Added => impulse_editor::protocol::DiffStatus::Added,
-                                impulse_core::git::DiffLineStatus::Modified => impulse_editor::protocol::DiffStatus::Modified,
+                                impulse_core::git::DiffLineStatus::Added => {
+                                    impulse_editor::protocol::DiffStatus::Added
+                                }
+                                impulse_core::git::DiffLineStatus::Modified => {
+                                    impulse_editor::protocol::DiffStatus::Modified
+                                }
                                 impulse_core::git::DiffLineStatus::Unchanged => return None,
                             };
                             Some(impulse_editor::protocol::DiffDecoration {
@@ -1060,9 +1067,28 @@ pub extern "C" fn impulse_render_markdown_preview(
                         return std::ptr::null_mut();
                     }
                 };
-            let html =
-                impulse_editor::markdown::render_markdown_preview(&source, &theme, &hljs_path);
+            let html = match impulse_editor::markdown::render_markdown_preview(
+                &source, &theme, &hljs_path,
+            ) {
+                Some(h) => h,
+                None => return std::ptr::null_mut(),
+            };
             to_c_string(&html)
+        }),
+    )
+}
+
+/// Check whether a file path has a markdown extension.
+#[no_mangle]
+pub extern "C" fn impulse_is_markdown_file(path: *const c_char) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return false,
+            };
+            impulse_editor::markdown::is_markdown_file(&path)
         }),
     )
 }

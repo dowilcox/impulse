@@ -229,7 +229,9 @@ fn status_to_code(s: git2::Status) -> Option<&'static str> {
 ///
 /// Parent directories receive the highest-priority status among their descendants
 /// (conflict > deleted > added > untracked > renamed > modified).
-pub fn get_all_git_statuses(path: &str) -> Result<HashMap<String, HashMap<String, String>>, String> {
+pub fn get_all_git_statuses(
+    path: &str,
+) -> Result<HashMap<String, HashMap<String, String>>, String> {
     let dir_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     let repo = match crate::git::open_repo(&dir_path) {
         Ok(r) => r,
@@ -497,9 +499,7 @@ mod tests {
         fs::write(&root_file, "original").unwrap();
         fs::write(&nested_file, "original").unwrap();
         let mut index = repo.index().unwrap();
-        index
-            .add_path(std::path::Path::new("root.txt"))
-            .unwrap();
+        index.add_path(std::path::Path::new("root.txt")).unwrap();
         index
             .add_path(std::path::Path::new("subdir/nested.txt"))
             .unwrap();
@@ -520,7 +520,9 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        let root_map = result.get(&root_key).expect("root directory should be in result");
+        let root_map = result
+            .get(&root_key)
+            .expect("root directory should be in result");
         assert_eq!(root_map.get("root.txt").map(String::as_str), Some("M"));
         assert_eq!(root_map.get("subdir").map(String::as_str), Some("M"));
 
@@ -529,8 +531,9 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        let sub_map = result.get(&sub_key).expect("subdirectory should be in result");
+        let sub_map = result
+            .get(&sub_key)
+            .expect("subdirectory should be in result");
         assert_eq!(sub_map.get("nested.txt").map(String::as_str), Some("M"));
     }
-
 }

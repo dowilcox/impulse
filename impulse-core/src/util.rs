@@ -172,15 +172,14 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<std::path::Pa
         Err(_) => {
             // Path doesn't exist yet — canonicalize the parent and append the filename
             let p = std::path::Path::new(path);
-            let parent = p.parent().ok_or_else(|| {
-                format!("Path '{}' has no parent directory", path)
-            })?;
-            let file_name = p.file_name().ok_or_else(|| {
-                format!("Path '{}' has no file name component", path)
-            })?;
-            let canonical_parent = std::fs::canonicalize(parent).map_err(|e| {
-                format!("Failed to canonicalize parent of '{}': {}", path, e)
-            })?;
+            let parent = p
+                .parent()
+                .ok_or_else(|| format!("Path '{}' has no parent directory", path))?;
+            let file_name = p
+                .file_name()
+                .ok_or_else(|| format!("Path '{}' has no file name component", path))?;
+            let canonical_parent = std::fs::canonicalize(parent)
+                .map_err(|e| format!("Failed to canonicalize parent of '{}': {}", path, e))?;
             canonical_parent.join(file_name)
         }
     };

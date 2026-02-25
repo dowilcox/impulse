@@ -149,8 +149,8 @@ pub fn search_contents(
         };
 
         match check_binary_and_rewind(&mut file) {
-            Ok(true) => continue,  // binary file, skip
-            Ok(false) => {}        // text file, proceed
+            Ok(true) => continue, // binary file, skip
+            Ok(false) => {}       // text file, proceed
             Err(e) => {
                 log::warn!("Failed to read '{}': {}", path.display(), e);
                 continue;
@@ -303,27 +303,29 @@ pub fn replace_in_file(
         ));
 
         {
-            let mut tmp_file = File::create(&tmp_path)
-                .map_err(|e| format!("Failed to create temp file '{}': {}", tmp_path.display(), e))?;
-            tmp_file.write_all(new_content.as_bytes())
-                .map_err(|e| {
-                    // Clean up temp file on write failure
-                    let _ = std::fs::remove_file(&tmp_path);
-                    format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
-                })?;
-            tmp_file.sync_all()
-                .map_err(|e| {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    format!("Failed to sync temp file '{}': {}", tmp_path.display(), e)
-                })?;
+            let mut tmp_file = File::create(&tmp_path).map_err(|e| {
+                format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
+            })?;
+            tmp_file.write_all(new_content.as_bytes()).map_err(|e| {
+                // Clean up temp file on write failure
+                let _ = std::fs::remove_file(&tmp_path);
+                format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
+            })?;
+            tmp_file.sync_all().map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                format!("Failed to sync temp file '{}': {}", tmp_path.display(), e)
+            })?;
         }
 
         // Preserve original file permissions
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(permissions.mode()))
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&tmp_path);
-                format!("Failed to set permissions on temp file: {}", e)
-            })?;
+        std::fs::set_permissions(
+            &tmp_path,
+            std::fs::Permissions::from_mode(permissions.mode()),
+        )
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Failed to set permissions on temp file: {}", e)
+        })?;
 
         // Atomic rename
         std::fs::rename(&tmp_path, path).map_err(|e| {
@@ -356,4 +358,3 @@ pub fn replace_in_files(
         })
         .collect()
 }
-

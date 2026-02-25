@@ -1,6 +1,11 @@
 use fs2::FileExt;
 use include_dir::{include_dir, Dir};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Cached result of the Monaco extraction path so the lock+marker+file-write
+/// only happens once per process lifetime.
+static MONACO_DIR_CACHE: OnceLock<PathBuf> = OnceLock::new();
 
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
@@ -17,6 +22,16 @@ static HIGHLIGHT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/highlig
 /// (e.g. `~/.local/share/impulse/monaco/0.52.2/` on Linux,
 /// `~/Library/Application Support/impulse/monaco/0.52.2/` on macOS).
 pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
+    if let Some(cached) = MONACO_DIR_CACHE.get() {
+        return Ok(cached.clone());
+    }
+    let result = ensure_monaco_extracted_inner()?;
+    // Best-effort cache; if another thread raced us, that's fine.
+    let _ = MONACO_DIR_CACHE.set(result.clone());
+    Ok(result)
+}
+
+fn ensure_monaco_extracted_inner() -> Result<PathBuf, String> {
     let data_dir =
         dirs::data_dir().ok_or_else(|| "Cannot determine data home directory".to_string())?;
 
@@ -119,11 +134,7 @@ fn install_user_fonts() {
 /// Install a single font family from the bundled `FONTS_DIR` into the user's
 /// font directory.  On Linux the fonts go into a named subdirectory; on macOS
 /// they go directly into `~/Library/Fonts/`.
-fn install_font_family(
-    font_dir: &std::path::Path,
-    bundled_subdir: &str,
-    linux_subdir: &str,
-) {
+fn install_font_family(font_dir: &std::path::Path, bundled_subdir: &str, linux_subdir: &str) {
     let target_dir = if cfg!(target_os = "macos") {
         font_dir.to_path_buf()
     } else {

@@ -87,6 +87,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Lazily created WKWebView used for markdown preview rendering.
     private var previewWebView: WKWebView?
 
+    /// Navigation delegate for the preview WebView that blocks external URLs
+    /// and opens them in the default browser instead.
+    private let previewNavigationDelegate = PreviewNavigationDelegate()
+
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -717,9 +721,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     // MARK: - Markdown Preview
 
     /// Check whether a file path is a markdown file.
+    /// Delegates to the canonical extension list in impulse-editor via FFI.
     static func isMarkdownFile(_ path: String) -> Bool {
-        let ext = (path as NSString).pathExtension.lowercased()
-        return ["md", "markdown", "mdown", "mkd", "mkdn"].contains(ext)
+        return ImpulseCore.isMarkdownFile(path)
     }
 
     /// Toggle between Monaco editor and rendered markdown preview.
@@ -755,8 +759,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // Create or reuse preview WebView
         if previewWebView == nil {
             let config = WKWebViewConfiguration()
-            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+            // Do NOT enable allowFileAccessFromFileURLs — the baseURL handles
+            // relative image resolution and the CSP restricts scripts.
             let wv = WKWebView(frame: bounds, configuration: config)
+            wv.navigationDelegate = previewNavigationDelegate
             wv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(wv)
             NSLayoutConstraint.activate([
@@ -808,6 +814,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         webView?.stopLoading()
         webView?.removeFromSuperview()
         webView = nil
+        previewWebView?.navigationDelegate = nil
         previewWebView?.stopLoading()
         previewWebView?.removeFromSuperview()
         previewWebView = nil
@@ -820,6 +827,32 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         if let wv = webView {
             wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
             wv.navigationDelegate = nil
+        }
+    }
+}
+
+// MARK: - Preview Navigation Delegate
+
+/// WKNavigationDelegate for the markdown preview WebView.
+/// Allows file:// and about: navigations (needed for the preview itself).
+/// External URLs (http/https) are opened in the default browser instead.
+private class PreviewNavigationDelegate: NSObject, WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        let scheme = url.scheme ?? ""
+        if scheme == "file" || scheme == "about" || scheme == "data" {
+            decisionHandler(.allow)
+        } else {
+            // Open in the default browser
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
         }
     }
 }

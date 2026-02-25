@@ -1829,13 +1829,7 @@ fn rebuild_custom_keybindings_group(
                 settings::save(&s);
                 on_changed(&s);
             }
-            rebuild_custom_keybindings_group(
-                &group,
-                &tracked,
-                &settings,
-                &on_changed,
-                &generation,
-            );
+            rebuild_custom_keybindings_group(&group, &tracked, &settings, &on_changed, &generation);
         });
     }
     group.add(&add_row);

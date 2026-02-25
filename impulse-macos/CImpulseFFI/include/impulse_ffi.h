@@ -40,6 +40,7 @@ char *impulse_system_lsp_status(void);
 
 // Markdown preview
 char *impulse_render_markdown_preview(const char *source, const char *theme_json, const char *highlight_js_path);
+bool impulse_is_markdown_file(const char *path);
 
 // Git
 char *impulse_git_branch(const char *path);

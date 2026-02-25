@@ -84,12 +84,14 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     }
                     // Track in dedup set and page map
                     open_editor_paths.borrow_mut().insert(path.to_string());
-                    editor_tab_pages.borrow_mut().insert(path.to_string(), page.clone());
+                    editor_tab_pages
+                        .borrow_mut()
+                        .insert(path.to_string(), page.clone());
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
                         preview.clone().upcast::<gtk4::Widget>(),
                         crate::sidebar::TabTreeState {
-                            nodes: tree_nodes.borrow().clone(),
+                            nodes: std::rc::Rc::new(tree_nodes.borrow().clone()),
                             current_path: tree_current_path.borrow().clone(),
                             scroll_position: tree_scroll.vadjustment().value(),
                         },
@@ -178,18 +180,27 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                     }
                                     impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
                                         status_bar.borrow().update_cursor_position(line as i32 - 1, column as i32 - 1);
-                                        // Git blame
-                                        match impulse_core::git::get_line_blame(&path, line) {
-                                            Ok(blame) => {
-                                                let text = format!(
-                                                    "{} \u{2022} {} \u{2022} {}",
-                                                    blame.author, blame.date, blame.summary
-                                                );
-                                                status_bar.borrow().update_blame(&text);
-                                            }
-                                            Err(_) => {
-                                                status_bar.borrow().clear_blame();
-                                            }
+                                        // Git blame — debounced + off main thread
+                                        {
+                                            let path = path.clone();
+                                            let status_bar = status_bar.clone();
+                                            glib::spawn_future_local(async move {
+                                                let result = gtk4::gio::spawn_blocking(move || {
+                                                    impulse_core::git::get_line_blame(&path, line)
+                                                }).await;
+                                                match result {
+                                                    Ok(Ok(blame)) => {
+                                                        let text = format!(
+                                                            "{} \u{2022} {} \u{2022} {}",
+                                                            blame.author, blame.date, blame.summary
+                                                        );
+                                                        status_bar.borrow().update_blame(&text);
+                                                    }
+                                                    _ => {
+                                                        status_bar.borrow().clear_blame();
+                                                    }
+                                                }
+                                            });
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::SaveRequested => {
@@ -465,13 +476,15 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     }
                     // Track in dedup set and page map
                     open_editor_paths.borrow_mut().insert(path.to_string());
-                    editor_tab_pages.borrow_mut().insert(path.to_string(), page.clone());
+                    editor_tab_pages
+                        .borrow_mut()
+                        .insert(path.to_string(), page.clone());
 
                     // Preserve sidebar tree state for the new tab
                     tree_states.borrow_mut().insert(
                         editor_widget.clone().upcast::<gtk4::Widget>(),
                         crate::sidebar::TabTreeState {
-                            nodes: tree_nodes.borrow().clone(),
+                            nodes: std::rc::Rc::new(tree_nodes.borrow().clone()),
                             current_path: tree_current_path.borrow().clone(),
                             scroll_position: tree_scroll.vadjustment().value(),
                         },

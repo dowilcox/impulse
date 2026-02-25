@@ -13,3 +13,4 @@ serde_json = { workspace = true }
 dirs = { workspace = true }
 fs2 = "0.4"
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+ammonia = "4"

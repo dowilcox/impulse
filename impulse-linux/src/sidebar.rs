@@ -28,7 +28,7 @@ pub struct TreeNode {
 
 /// Saved tree state for a tab, used to preserve expand/collapse and scroll position.
 pub struct TabTreeState {
-    pub nodes: Vec<TreeNode>,
+    pub nodes: Rc<Vec<TreeNode>>,
     pub current_path: String,
     pub scroll_position: f64,
 }
@@ -1325,7 +1325,7 @@ impl SidebarState {
     /// Save the current tree state for the active tab.
     pub fn save_active_tab_state(&self) {
         if let Some(ref tab) = *self.active_tab.borrow() {
-            let nodes = self.tree_nodes.borrow().clone();
+            let nodes = Rc::new(self.tree_nodes.borrow().clone());
             let current_path = self.current_path.borrow().clone();
             let scroll_position = self.file_tree_scroll.vadjustment().value();
             self.tab_tree_states.borrow_mut().insert(
@@ -1359,9 +1359,10 @@ impl SidebarState {
                     &saved_path
                 });
             } else {
-                *self.tree_nodes.borrow_mut() = nodes.clone();
-                *self.current_path.borrow_mut() = saved_path.clone();
                 render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());
+                // Unwrap or clone the Rc<Vec> back into tree_nodes
+                *self.tree_nodes.borrow_mut() = Rc::unwrap_or_clone(nodes);
+                *self.current_path.borrow_mut() = saved_path.clone();
 
                 // Re-establish filesystem watcher for the restored directory
                 self.setup_watcher(&saved_path);
@@ -1554,8 +1555,18 @@ fn refresh_tree(
     glib::spawn_future_local(async move {
         // All filesystem + git I/O runs off the GTK main thread.
         let result = gio::spawn_blocking(move || {
-            let entries = impulse_core::filesystem::read_directory_with_git_status(&path, show_hidden)
-                .map_err(|e| e.to_string())?;
+            // Fetch all git statuses in a single pass (one repo.statuses() call)
+            // instead of calling read_directory_with_git_status() per directory.
+            let batch_statuses =
+                impulse_core::filesystem::get_all_git_statuses(&path).unwrap_or_default();
+
+            let entries = impulse_core::filesystem::read_directory_with_git_status_batch(
+                &path,
+                show_hidden,
+                &batch_statuses,
+            )
+            .map_err(|e| e.to_string())?;
+
             let mut nodes: Vec<TreeNode> = entries
                 .into_iter()
                 .map(|e| TreeNode {
@@ -1573,10 +1584,13 @@ fn refresh_tree(
                     nodes[i].expanded = true;
                     let child_depth = nodes[i].depth + 1;
                     let dir_path = nodes[i].entry.path.clone();
-                    if let Ok(children) = impulse_core::filesystem::read_directory_with_git_status(
-                        &dir_path,
-                        show_hidden,
-                    ) {
+                    if let Ok(children) =
+                        impulse_core::filesystem::read_directory_with_git_status_batch(
+                            &dir_path,
+                            show_hidden,
+                            &batch_statuses,
+                        )
+                    {
                         let child_nodes: Vec<TreeNode> = children
                             .into_iter()
                             .map(|e| TreeNode {
