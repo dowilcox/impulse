@@ -660,8 +660,11 @@ pub(super) fn setup_tab_switch_handler(
                     let file_path = child.widget_name().to_string();
                     if let Some(parent) = std::path::Path::new(&file_path).parent() {
                         let dir = parent.to_string_lossy().to_string();
-                        status_bar.borrow().update_cwd(&dir);
                         sidebar_state.switch_to_tab(&child, &dir);
+                        // Use the sidebar's restored current_path for the status bar,
+                        // which preserves the project root rather than the file's parent dir.
+                        let cwd = sidebar_state.current_path.borrow().clone();
+                        status_bar.borrow().update_cwd(&cwd);
                     }
                     // Cursor position is updated via CursorMoved events from Monaco
                     // Show language and encoding for editor tabs

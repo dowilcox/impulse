@@ -159,12 +159,10 @@ final class StatusBar: NSView {
     ///
     /// Shows CWD (derived from file path), git branch (if available), cursor
     /// position, language, encoding, and indentation info. Hides shell name.
-    func updateForEditor(filePath: String, gitBranch: String? = nil,
+    func updateForEditor(cwd: String, gitBranch: String? = nil,
                          cursorLine: Int, cursorCol: Int,
                          language: String, tabWidth: Int, useSpaces: Bool) {
-        // Derive CWD from file path
-        let dir = (filePath as NSString).deletingLastPathComponent
-        let displayPath = shortenHomePath(dir)
+        let displayPath = shortenHomePath(cwd)
         cwdLabel.stringValue = displayPath
 
         if let branch = gitBranch, !branch.isEmpty {

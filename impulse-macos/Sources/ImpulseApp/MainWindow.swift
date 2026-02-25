@@ -291,7 +291,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// The root path currently displayed in the file tree. Used to avoid
     /// unnecessary rebuilds (which lose expansion state) when switching tabs.
-    private var fileTreeRootPath: String = ""
+    private(set) var fileTreeRootPath: String = ""
 
     /// Cached file tree nodes keyed by root path for instant tab switching.
     private var fileTreeCache: [String: [FileTreeNode]] = [:]
@@ -1011,11 +1011,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 shellName: shellName
             )
         } else if let language = tabInfo.language {
-            let filePath = tabInfo.cwd ?? ""
-            let dir = (filePath as NSString).deletingLastPathComponent
-            let branch = dir.isEmpty ? nil : gitBranch(forDirectory: dir)
+            let cwd = tabInfo.cwd ?? ""
+            let branch = cwd.isEmpty ? nil : gitBranch(forDirectory: cwd)
             statusBar.updateForEditor(
-                filePath: filePath,
+                cwd: cwd,
                 gitBranch: branch,
                 cursorLine: (tabInfo.cursorLine ?? 0) + 1,
                 cursorCol: (tabInfo.cursorCol ?? 0) + 1,
@@ -1303,7 +1302,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .impulseOpenFile, object: nil, queue: .main) { [weak self] notification in
                 guard let self, self.window?.isKeyWindow == true else { return }
                 if let path = notification.userInfo?["path"] as? String {
-                    self.tabManager.addEditorTab(path: path)
+                    self.tabManager.addEditorTab(path: path, projectDirectory: self.fileTreeRootPath)
                     self.lspDidOpenIfNeeded(path: path)
                     // Navigate to specific line if provided (e.g. from search results).
                     if self.tabManager.selectedIndex >= 0,
@@ -1311,10 +1310,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                        case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
                         // Track the editor tab in the path dictionary.
                         self.trackEditorTab(editor, forPath: path)
-                        // Record the sidebar directory that was active when this file was opened.
-                        if editor.projectDirectory == nil {
-                            editor.projectDirectory = self.fileTreeRootPath
-                        }
                         if let line = notification.userInfo?["line"] as? UInt32 {
                             editor.goToPosition(line: line, column: 1)
                         }
@@ -1513,11 +1508,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                       case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex],
                       editor === notification.object as? EditorTab else { return }
                 let filePath = editor.filePath ?? ""
-                let dir = (filePath as NSString).deletingLastPathComponent
-                let branch = dir.isEmpty ? nil : self.gitBranch(forDirectory: dir)
+                let cwd = editor.projectDirectory
+                    ?? (filePath as NSString).deletingLastPathComponent
+                let branch = cwd.isEmpty ? nil : self.gitBranch(forDirectory: cwd)
                 let displayLine = Int(line) + 1
                 self.statusBar.updateForEditor(
-                    filePath: filePath,
+                    cwd: cwd,
                     gitBranch: branch,
                     cursorLine: displayLine,
                     cursorCol: Int(col) + 1,

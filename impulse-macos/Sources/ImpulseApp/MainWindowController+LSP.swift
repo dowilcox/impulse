@@ -491,6 +491,7 @@ extension MainWindowController {
         let targetPath = uriToFilePath(uri)
         tabManager.addEditorTab(
             path: targetPath,
+            projectDirectory: fileTreeRootPath,
             goToLine: line + 1,
             goToColumn: character + 1
         )

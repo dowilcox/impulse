@@ -66,7 +66,8 @@ enum TabEntry {
             )
         case .editor(let editor):
             return TabInfo(
-                cwd: editor.filePath,
+                cwd: editor.projectDirectory
+                    ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent },
                 gitBranch: nil,
                 shellName: nil,
                 cursorLine: nil, cursorCol: nil,
@@ -236,7 +237,7 @@ final class TabManager: NSObject {
     /// If a tab for the same file is already open, it is selected instead of
     /// creating a duplicate. Image files are opened in a preview tab. Binary
     /// files (>10 MB or containing null bytes) are skipped with an alert.
-    func addEditorTab(path: String, goToLine: UInt32? = nil, goToColumn: UInt32? = nil) {
+    func addEditorTab(path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil, goToColumn: UInt32? = nil) {
         // O(1) deduplication using the openFilePaths set.
         if openFilePaths.contains(path) {
             if let existingIndex = tabs.firstIndex(where: {
@@ -289,6 +290,8 @@ final class TabManager: NSObject {
                 if self.openFilePaths.contains(path) { return }
 
                 let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+                editorTab.projectDirectory = projectDirectory
+                    ?? (path as NSString).deletingLastPathComponent
                 editorTab.openFile(path: path, content: fileContent, language: language)
                 editorTab.loadEditor()
 
