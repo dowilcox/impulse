@@ -1,6 +1,6 @@
 [package]
 name = "impulse-ffi"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 description = "C-compatible FFI wrappers around impulse-core for macOS Swift frontend"
 license = "GPL-3.0-only"
