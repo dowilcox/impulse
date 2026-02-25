@@ -5,9 +5,10 @@ use std::path::PathBuf;
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
-pub const MONACO_VERSION: &str = "0.55.1";
+pub const MONACO_VERSION: &str = "0.55.1+fonts1";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
+static FONTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/fonts");
 
 /// Ensure Monaco editor files are extracted to the local data directory.
 ///
@@ -74,17 +75,78 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
     // Extract all embedded files
     extract_dir_recursive(&MONACO_DIR, &monaco_dir)?;
 
+    // Extract bundled fonts into the Monaco directory (for editor @font-face)
+    extract_dir_recursive(&FONTS_DIR, &monaco_dir.join("fonts"))?;
+
     // Write editor.html and editor.js
     std::fs::write(monaco_dir.join("editor.html"), EDITOR_HTML)
         .map_err(|e| format!("Failed to write editor.html: {}", e))?;
     std::fs::write(monaco_dir.join("editor.js"), EDITOR_JS)
         .map_err(|e| format!("Failed to write editor.js: {}", e))?;
 
+    // Install fonts to user font directory for the terminal
+    install_user_fonts();
+
     // Write completion marker last (incomplete extraction = retry next time)
     std::fs::write(&marker, MONACO_VERSION)
         .map_err(|e| format!("Failed to write completion marker: {}", e))?;
 
     Ok(monaco_dir)
+}
+
+/// Install bundled TTF fonts to the user's system font directory so the
+/// terminal (VTE/SwiftTerm) can use them without manual installation.
+///
+/// - Linux: `~/.local/share/fonts/JetBrainsMono/`
+/// - macOS: `~/Library/Fonts/`
+fn install_user_fonts() {
+    let font_dir = match dirs::font_dir() {
+        Some(d) => d,
+        None => {
+            log::warn!("Cannot determine user font directory; skipping font installation");
+            return;
+        }
+    };
+
+    // On Linux, install into a subdirectory; on macOS, ~/Library/Fonts/ is flat
+    let target_dir = if cfg!(target_os = "macos") {
+        font_dir.clone()
+    } else {
+        font_dir.join("JetBrainsMono")
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+        log::warn!("Failed to create font directory {:?}: {}", target_dir, e);
+        return;
+    }
+
+    let font_subdir = match FONTS_DIR.get_dir("jetbrains-mono") {
+        Some(d) => d,
+        None => {
+            log::warn!("Bundled jetbrains-mono font directory not found");
+            return;
+        }
+    };
+
+    for file in font_subdir.files() {
+        let name = match file.path().file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+        // Only install .ttf files
+        if !name.to_string_lossy().ends_with(".ttf") {
+            continue;
+        }
+        let dest = target_dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+        if let Err(e) = std::fs::write(&dest, file.contents()) {
+            log::warn!("Failed to install font {:?}: {}", dest, e);
+        } else {
+            log::info!("Installed font: {:?}", dest);
+        }
+    }
 }
 
 fn extract_dir_recursive(dir: &Dir<'_>, target: &std::path::Path) -> Result<(), String> {

@@ -131,7 +131,7 @@ impl Default for Settings {
             // Editor
             auto_save: false,
             font_size: 14,
-            font_family: String::from("monospace"),
+            font_family: String::from("JetBrains Mono"),
             tab_width: 4,
             use_spaces: true,
             show_line_numbers: true,
@@ -156,7 +156,7 @@ impl Default for Settings {
             terminal_cursor_shape: String::from("block"),
             terminal_cursor_blink: true,
             terminal_bell: false,
-            terminal_font_family: String::from("monospace"),
+            terminal_font_family: String::from("JetBrains Mono"),
             terminal_font_size: 14,
             terminal_copy_on_select: true,
             terminal_scroll_on_output: false,
@@ -229,6 +229,7 @@ pub fn load() -> Settings {
         Err(_) => Settings::default(),
     };
     migrate_format_on_save(&mut settings);
+    migrate_default_font(&mut settings);
 
     // Validate/clamp settings values for safety
     settings.font_size = settings.font_size.clamp(6, 72);
@@ -242,6 +243,29 @@ pub fn load() -> Settings {
     settings.editor_line_height = settings.editor_line_height.min(100);
 
     settings
+}
+
+/// Migrates the default font from the old platform default ("monospace" on
+/// Linux, "SF Mono" on macOS) to the bundled "JetBrains Mono". Only changes
+/// settings that still match the old default — user-customized values are left
+/// alone.
+fn migrate_default_font(settings: &mut Settings) {
+    let old_defaults = ["monospace", "SF Mono", ""];
+    let mut changed = false;
+    if old_defaults.iter().any(|d| settings.font_family == *d) {
+        settings.font_family = String::from("JetBrains Mono");
+        changed = true;
+    }
+    if old_defaults
+        .iter()
+        .any(|d| settings.terminal_font_family == *d)
+    {
+        settings.terminal_font_family = String::from("JetBrains Mono");
+        changed = true;
+    }
+    if changed {
+        save(settings);
+    }
 }
 
 /// Migrates `format_on_save` entries from `FileTypeOverride` into

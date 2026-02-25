@@ -209,7 +209,7 @@ struct Settings: Codable {
             openFiles: [],
             autoSave: false,
             fontSize: 14,
-            fontFamily: "SF Mono",
+            fontFamily: "JetBrains Mono",
             tabWidth: 4,
             useSpaces: true,
             showLineNumbers: true,
@@ -232,7 +232,7 @@ struct Settings: Codable {
             terminalCursorShape: "block",
             terminalCursorBlink: true,
             terminalBell: false,
-            terminalFontFamily: "SF Mono",
+            terminalFontFamily: "JetBrains Mono",
             terminalFontSize: 14,
             terminalCopyOnSelect: true,
             terminalScrollOnOutput: false,
@@ -408,6 +408,25 @@ extension Settings {
         windowHeight = max(300, min(10000, windowHeight))
     }
 
+    /// Migrates the default font from old platform defaults ("monospace",
+    /// "SF Mono") to the bundled "JetBrains Mono". Only changes settings that
+    /// still match an old default — user-customized values are left alone.
+    mutating func migrateDefaultFont() {
+        let oldDefaults = ["monospace", "SF Mono", ""]
+        var changed = false
+        if oldDefaults.contains(fontFamily) {
+            fontFamily = "JetBrains Mono"
+            changed = true
+        }
+        if oldDefaults.contains(terminalFontFamily) {
+            terminalFontFamily = "JetBrains Mono"
+            changed = true
+        }
+        if changed {
+            save()
+        }
+    }
+
     /// Loads settings from disk, falling back to defaults for any missing or
     /// corrupt data.
     static func load() -> Settings {
@@ -421,6 +440,7 @@ extension Settings {
         }
         do {
             var settings = try JSONDecoder().decode(Settings.self, from: data)
+            settings.migrateDefaultFont()
             settings.validate()
             return settings
         } catch {
