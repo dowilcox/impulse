@@ -592,6 +592,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         tabContentView.translatesAutoresizingMaskIntoConstraints = false
 
         statusBar.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.previewButton.target = self
+        statusBar.previewButton.action = #selector(previewButtonClicked(_:))
 
         contentContainer.addSubview(tabContentView)
         contentContainer.addSubview(statusBar)
@@ -1022,6 +1024,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 tabWidth: settings.tabWidth,
                 useSpaces: settings.useSpaces
             )
+            // Show/hide markdown preview button based on file type
+            if tabManager.selectedIndex >= 0,
+               tabManager.selectedIndex < tabManager.tabs.count,
+               case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
+               let fp = editor.filePath,
+               EditorTab.isMarkdownFile(fp) {
+                statusBar.showPreviewButton(isPreviewing: editor.isPreviewing)
+            } else {
+                statusBar.hidePreviewButton()
+            }
         }
     }
 
@@ -1066,6 +1078,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
+
+        // Re-render markdown previews with updated theme
+        let themeJSON = markdownThemeJSON()
+        for tab in tabManager.tabs {
+            if case .editor(let editor) = tab {
+                editor.refreshMarkdownPreview(themeJSON: themeJSON)
+            }
+        }
     }
 
     // MARK: - File Tree Cache (LRU)
@@ -1632,6 +1652,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
 
+        // Toggle Markdown Preview
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseToggleMarkdownPreview, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                self.toggleMarkdownPreview()
+            }
+        )
+
         // Font size
         notificationObservers.append(
             nc.addObserver(forName: .impulseFontIncrease, object: nil, queue: .main) { [weak self] _ in
@@ -1984,6 +2012,50 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     // MARK: - Go to Line
 
     /// Shows a dialog asking for a line number and navigates the active editor to it.
+    // MARK: - Markdown Preview
+
+    /// Build the JSON representation of MarkdownThemeColors from the current theme.
+    private func markdownThemeJSON() -> String {
+        let dict: [String: String] = [
+            "bg": theme.bgHex,
+            "fg": theme.fgHex,
+            "heading": theme.cyanHex,
+            "link": theme.blueHex,
+            "code_bg": theme.bgDarkHex,
+            "border": theme.bgHighlightHex,
+            "blockquote_fg": theme.comment.hexString,
+            "hljs_keyword": theme.magentaHex,
+            "hljs_string": theme.greenHex,
+            "hljs_number": theme.orangeHex,
+            "hljs_comment": theme.comment.hexString,
+            "hljs_function": theme.blueHex,
+            "hljs_type": theme.yellowHex,
+            "font_family": "Inter, system-ui, sans-serif",
+            "code_font_family": "'JetBrains Mono', monospace",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let json = String(data: data, encoding: .utf8) else { return "{}" }
+        return json
+    }
+
+    @objc private func previewButtonClicked(_ sender: Any?) {
+        toggleMarkdownPreview()
+    }
+
+    /// Toggle markdown preview for the active editor tab.
+    private func toggleMarkdownPreview() {
+        guard tabManager.selectedIndex >= 0,
+              tabManager.selectedIndex < tabManager.tabs.count,
+              case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
+              let fp = editor.filePath,
+              EditorTab.isMarkdownFile(fp) else { return }
+
+        let themeJSON = markdownThemeJSON()
+        if let isPreviewing = editor.toggleMarkdownPreview(themeJSON: themeJSON) {
+            statusBar.showPreviewButton(isPreviewing: isPreviewing)
+        }
+    }
+
     private func showGoToLineDialog() {
         guard tabManager.selectedIndex >= 0,
               tabManager.selectedIndex < tabManager.tabs.count,

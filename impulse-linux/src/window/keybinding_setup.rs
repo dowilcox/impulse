@@ -110,6 +110,14 @@ pub(super) fn setup_capture_phase_keys(
         &capture_kb_overrides,
     ));
 
+    let md_preview_accel = keybindings::parse_accel(&keybindings::get_accel(
+        "toggle_markdown_preview",
+        &capture_kb_overrides,
+    ));
+    let md_preview_settings = settings.clone();
+    let md_preview_tab_view = tab_view.clone();
+    let md_preview_status_bar = ctx.status_bar.clone();
+
     let split_setup = setup_terminal_signals.clone();
     let split_settings = settings.clone();
     let split_copy_flag = term_ctx.copy_on_select.clone();
@@ -134,6 +142,27 @@ pub(super) fn setup_capture_phase_keys(
         if ctrl && shift && (key == gtk4::gdk::Key::b || key == gtk4::gdk::Key::B) {
             sidebar_btn_capture.set_active(!sidebar_btn_capture.is_active());
             return gtk4::glib::Propagation::Stop;
+        }
+
+        // Toggle Markdown Preview (Ctrl+Shift+M by default, WebView eats it)
+        if let Some(ref accel) = md_preview_accel {
+            if keybindings::matches_key(accel, key, modifiers) {
+                if let Some(page) = md_preview_tab_view.selected_page() {
+                    let child = page.child();
+                    if editor::is_editor(&child) {
+                        let s = md_preview_settings.borrow();
+                        let theme = crate::theme::get_theme(&s.color_scheme);
+                        if let Some(is_previewing) =
+                            editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                        {
+                            md_preview_status_bar
+                                .borrow()
+                                .show_preview_button(is_previewing);
+                        }
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                }
+            }
         }
 
         // Split terminal keybindings (VTE eats Ctrl+Shift+E/O)
@@ -725,6 +754,31 @@ pub(super) fn setup_shortcut_controller(
                     let child = page.child();
                     if editor::is_editor(&child) {
                         show_go_to_line_dialog(&window_ref, &child);
+                    }
+                }
+            },
+        );
+    }
+
+    // Ctrl+Shift+M: Toggle Markdown Preview (also handled in capture phase for WebView)
+    {
+        let tab_view = tab_view.clone();
+        let settings = settings.clone();
+        let status_bar = ctx.status_bar.clone();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("toggle_markdown_preview", &kb_overrides),
+            move || {
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    if editor::is_editor(&child) {
+                        let s = settings.borrow();
+                        let theme = crate::theme::get_theme(&s.color_scheme);
+                        if let Some(is_previewing) =
+                            editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                        {
+                            status_bar.borrow().show_preview_button(is_previewing);
+                        }
                     }
                 }
             },

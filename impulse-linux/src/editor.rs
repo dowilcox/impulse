@@ -3,10 +3,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use webkit6::prelude::*;
 
 use crate::editor_webview::{self, MonacoEditorHandle};
 use crate::settings::Settings;
 use crate::theme::ThemeColors;
+use impulse_editor::markdown;
 use impulse_editor::protocol::EditorEvent;
 
 // Global handle map keyed by file path.
@@ -164,6 +166,147 @@ pub fn apply_theme(widget: &gtk4::Widget, theme: &ThemeColors) {
 pub fn go_to_position(widget: &gtk4::Widget, line: u32, column: u32) {
     if let Some(handle) = get_handle_for_widget(widget) {
         handle.go_to_position(line, column);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Markdown preview
+// ---------------------------------------------------------------------------
+
+/// Check whether a file path is a markdown file.
+pub fn is_markdown_file(path: &str) -> bool {
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkd" | "mkdn")
+}
+
+/// Map the application theme to markdown preview colors.
+pub fn theme_to_markdown_colors(theme: &ThemeColors) -> markdown::MarkdownThemeColors {
+    markdown::MarkdownThemeColors {
+        bg: theme.bg.to_string(),
+        fg: theme.fg.to_string(),
+        heading: theme.cyan.to_string(),
+        link: theme.blue.to_string(),
+        code_bg: theme.bg_dark.to_string(),
+        border: theme.bg_highlight.to_string(),
+        blockquote_fg: theme.comment.to_string(),
+        hljs_keyword: theme.magenta.to_string(),
+        hljs_string: theme.green.to_string(),
+        hljs_number: theme.orange.to_string(),
+        hljs_comment: theme.comment.to_string(),
+        hljs_function: theme.blue.to_string(),
+        hljs_type: theme.yellow.to_string(),
+        font_family: "Inter, system-ui, sans-serif".to_string(),
+        code_font_family: "'JetBrains Mono', monospace".to_string(),
+    }
+}
+
+/// Toggle markdown preview for an editor widget.
+///
+/// Returns the new `is_previewing` state, or `None` if the widget is not a
+/// markdown editor or doesn't have a stack.
+pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool> {
+    let handle = get_handle_for_widget(widget)?;
+    let file_path = handle.file_path.borrow().clone();
+    if !is_markdown_file(&file_path) {
+        return None;
+    }
+
+    let stack_ref = handle.stack.borrow();
+    let stack = stack_ref.as_ref()?;
+
+    let currently_previewing = handle.is_previewing.get();
+    if currently_previewing {
+        // Switch back to editor
+        stack.set_visible_child_name("editor");
+        handle.is_previewing.set(false);
+        return Some(false);
+    }
+
+    // Switch to preview: render current content
+    let content = handle.get_content();
+    let md_colors = theme_to_markdown_colors(theme);
+
+    // Resolve the highlight.js path
+    let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
+        Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
+        Err(e) => {
+            log::warn!("Failed to resolve highlight.js path: {}", e);
+            String::new()
+        }
+    };
+
+    let html = markdown::render_markdown_preview(&content, &md_colors, &hljs_path);
+
+    // Create or reuse the preview WebView
+    if stack.child_by_name("preview").is_none() {
+        let preview_wv = webkit6::WebView::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
+            .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+        preview_wv.set_background_color(&bg_rgba);
+
+        if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&preview_wv) {
+            wk_settings.set_enable_javascript(true);
+            wk_settings.set_allow_file_access_from_file_urls(true);
+        }
+
+        stack.add_named(&preview_wv, Some("preview"));
+    }
+
+    // Load HTML into the preview WebView with the file's parent as base URI
+    // so relative image paths resolve correctly.
+    if let Some(preview_widget) = stack.child_by_name("preview") {
+        if let Some(preview_wv) = preview_widget.downcast_ref::<webkit6::WebView>() {
+            let base_uri = std::path::Path::new(&file_path)
+                .parent()
+                .map(|p| format!("file://{}/", p.display()));
+            preview_wv.load_html(&html, base_uri.as_deref());
+        }
+    }
+
+    stack.set_visible_child_name("preview");
+    handle.is_previewing.set(true);
+    Some(true)
+}
+
+/// Re-render the markdown preview with new theme colors (for theme changes).
+pub fn refresh_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
+    let handle = match get_handle_for_widget(widget) {
+        Some(h) => h,
+        None => return,
+    };
+    if !handle.is_previewing.get() {
+        return;
+    }
+
+    let stack_ref = handle.stack.borrow();
+    let stack = match stack_ref.as_ref() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let content = handle.get_content();
+    let md_colors = theme_to_markdown_colors(theme);
+    let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
+        Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
+        Err(_) => String::new(),
+    };
+    let html = markdown::render_markdown_preview(&content, &md_colors, &hljs_path);
+
+    if let Some(preview_widget) = stack.child_by_name("preview") {
+        if let Some(preview_wv) = preview_widget.downcast_ref::<webkit6::WebView>() {
+            let file_path = handle.file_path.borrow().clone();
+            let base_uri = std::path::Path::new(&file_path)
+                .parent()
+                .map(|p| format!("file://{}/", p.display()));
+            preview_wv.load_html(&html, base_uri.as_deref());
+
+            let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
+                .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+            preview_wv.set_background_color(&bg_rgba);
+        }
     }
 }
 

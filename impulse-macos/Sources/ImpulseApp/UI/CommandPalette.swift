@@ -149,6 +149,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
             "command_palette":   .impulseShowCommandPalette,
             "split_horizontal":  .impulseSplitHorizontal,
             "split_vertical":    .impulseSplitVertical,
+            "toggle_markdown_preview": .impulseToggleMarkdownPreview,
         ]
 
         for binding in Keybindings.builtins {

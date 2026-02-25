@@ -24,6 +24,17 @@ final class StatusBar: NSView {
 
     private let topBorder = NSView()
 
+    /// Button to toggle markdown preview, visible only for .md files.
+    /// Styled as a green-outlined pill that fills solid green when toggled.
+    let previewButton: PreviewToggleButton = {
+        let btn = PreviewToggleButton()
+        btn.toolTip = "Toggle Markdown Preview (⌘⇧M)"
+        btn.isHidden = true
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        btn.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+
     /// The fixed status bar height.
     static let barHeight: CGFloat = 26
 
@@ -89,6 +100,9 @@ final class StatusBar: NSView {
         // Git branch label (hidden until a branch is detected)
         gitBranchLabel.isHidden = true
 
+        // Preview button (hidden by default)
+        previewButton.isHidden = true
+
         // Build the horizontal stack
         let stackView = NSStackView(views: [
             shellNameLabel,
@@ -99,6 +113,7 @@ final class StatusBar: NSView {
             encodingLabel,
             languageLabel,
             cursorPositionLabel,
+            previewButton,
         ])
         stackView.orientation = .horizontal
         stackView.spacing = 12
@@ -153,6 +168,7 @@ final class StatusBar: NSView {
         encodingLabel.isHidden = true
         indentInfoLabel.isHidden = true
         blameLabel.isHidden = true
+        previewButton.isHidden = true
     }
 
     /// Updates the status bar for an editor tab context.
@@ -199,6 +215,18 @@ final class StatusBar: NSView {
         blameLabel.isHidden = true
     }
 
+    /// Show the markdown preview button, toggling its visual state.
+    func showPreviewButton(isPreviewing: Bool) {
+        previewButton.isPreviewing = isPreviewing
+        previewButton.isHidden = false
+    }
+
+    /// Hide the markdown preview button.
+    func hidePreviewButton() {
+        previewButton.isHidden = true
+        previewButton.isPreviewing = false
+    }
+
     // MARK: - Theme
 
     /// Applies the given theme colors to the status bar and all labels.
@@ -214,6 +242,7 @@ final class StatusBar: NSView {
         encodingLabel.textColor = theme.fgDark
         indentInfoLabel.textColor = theme.fgDark
         blameLabel.textColor = theme.fgDark
+        previewButton.applyTheme(borderColor: theme.green, bgDark: theme.bgDark)
     }
 
     // MARK: - Helpers
@@ -251,5 +280,105 @@ final class StatusBar: NSView {
                                 range: NSRange(location: 0, length: result.length))
         }
         return result
+    }
+}
+
+// MARK: - Preview Toggle Button
+
+/// A custom-drawn toggle button for markdown preview. Displays a green outline
+/// by default and fills solid green when toggled on.
+final class PreviewToggleButton: NSButton {
+
+    /// Whether the preview is currently active (solid fill vs outline).
+    var isPreviewing: Bool = false {
+        didSet { needsDisplay = true }
+    }
+
+    private var borderColor: NSColor = .systemGreen
+    private var bgDarkColor: NSColor = .black
+    private var isHovering: Bool = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        commonInit()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit()
+    }
+
+    private func commonInit() {
+        title = "Preview"
+        font = NSFont.appFont(ofSize: 11)
+        isBordered = false
+        wantsLayer = true
+
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
+
+    func applyTheme(borderColor: NSColor, bgDark: NSColor) {
+        self.borderColor = borderColor
+        self.bgDarkColor = bgDark
+        needsDisplay = true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let textSize = attributedTitle.size()
+        return NSSize(width: textSize.width + 18, height: 18)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let bounds = self.bounds
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+
+        if isPreviewing {
+            // Solid green fill
+            let fill = isHovering ? borderColor.withAlphaComponent(0.85) : borderColor
+            fill.setFill()
+            path.fill()
+        } else {
+            // Outline only
+            if isHovering {
+                borderColor.withAlphaComponent(0.1).setFill()
+                path.fill()
+            }
+            borderColor.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+        }
+
+        // Draw label text
+        let textColor = isPreviewing ? bgDarkColor : borderColor
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 11),
+            .foregroundColor: textColor,
+        ]
+        let text = title as NSString
+        let textSize = text.size(withAttributes: attrs)
+        let textRect = NSRect(
+            x: (bounds.width - textSize.width) / 2,
+            y: (bounds.height - textSize.height) / 2,
+            width: textSize.width,
+            height: textSize.height
+        )
+        text.draw(in: textRect, withAttributes: attrs)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        needsDisplay = true
     }
 }

@@ -123,6 +123,8 @@ extension Notification.Name {
     static let impulseShowCommandPalette = Notification.Name("impulseShowCommandPalette")
     /// Requests project-wide find.
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
+    /// Requests toggling markdown preview in the active editor tab.
+    static let impulseToggleMarkdownPreview = Notification.Name("impulseToggleMarkdownPreview")
 
     // MARK: File Tree
 

@@ -44,6 +44,10 @@ pub struct MonacoEditorHandle {
     _file_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Source ID for the file watcher's polling timer.
     _file_watcher_timer: RefCell<Option<glib::SourceId>>,
+    /// Whether this editor is currently showing markdown preview.
+    pub is_previewing: Cell<bool>,
+    /// The gtk4::Stack wrapping editor and preview children (set during create).
+    pub stack: RefCell<Option<gtk4::Stack>>,
 }
 
 impl MonacoEditorHandle {
@@ -684,6 +688,8 @@ where
             indent_info: RefCell::new(indent_info),
             _file_watcher: Rc::new(RefCell::new(None)),
             _file_watcher_timer: RefCell::new(None),
+            is_previewing: Cell::new(false),
+            stack: RefCell::new(None),
         });
 
         // Connect the real signal handler for ongoing events.
@@ -729,7 +735,14 @@ where
             language: language.to_string(),
         });
 
-        container.append(&webview);
+        // Wrap WebView in a Stack to support editor/preview toggling
+        let stack = gtk4::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.add_named(&webview, Some("editor"));
+        stack.set_visible_child_name("editor");
+        container.append(&stack);
+        *handle.stack.borrow_mut() = Some(stack);
 
         // Start warming the next WebView.
         glib::idle_add_local_once(warm_up_editor);
@@ -781,6 +794,8 @@ where
         indent_info: RefCell::new(indent_info),
         _file_watcher: Rc::new(RefCell::new(None)),
         _file_watcher_timer: RefCell::new(None),
+        is_previewing: Cell::new(false),
+        stack: RefCell::new(None),
     });
 
     // Store initial content, language, settings, and theme to send after Ready
@@ -876,7 +891,14 @@ where
         }
     }
 
-    container.append(&webview);
+    // Wrap WebView in a Stack to support editor/preview toggling
+    let stack = gtk4::Stack::new();
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    stack.add_named(&webview, Some("editor"));
+    stack.set_visible_child_name("editor");
+    container.append(&stack);
+    *handle.stack.borrow_mut() = Some(stack);
 
     // Start warming the next WebView (for subsequent tabs).
     glib::idle_add_local_once(warm_up_editor);

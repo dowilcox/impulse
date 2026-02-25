@@ -81,6 +81,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// When true, the next ContentChanged event will not mark the file as modified.
     private var suppressNextModify: Bool = false
 
+    /// Whether this editor is currently showing markdown preview instead of Monaco.
+    private(set) var isPreviewing: Bool = false
+
+    /// Lazily created WKWebView used for markdown preview rendering.
+    private var previewWebView: WKWebView?
+
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -708,6 +714,90 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: Cleanup
 
+    // MARK: - Markdown Preview
+
+    /// Check whether a file path is a markdown file.
+    static func isMarkdownFile(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return ["md", "markdown", "mdown", "mkd", "mkdn"].contains(ext)
+    }
+
+    /// Toggle between Monaco editor and rendered markdown preview.
+    ///
+    /// Returns the new `isPreviewing` state, or `nil` if the file is not markdown.
+    func toggleMarkdownPreview(themeJSON: String) -> Bool? {
+        guard let fp = filePath, EditorTab.isMarkdownFile(fp) else { return nil }
+
+        if isPreviewing {
+            // Switch back to editor
+            previewWebView?.isHidden = true
+            webView?.isHidden = false
+            isPreviewing = false
+            return false
+        }
+
+        // Resolve highlight.js path
+        let hljs: String
+        if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
+            hljs = "file://\(monacoDir)/highlight/highlight.min.js"
+        } else {
+            hljs = ""
+        }
+
+        guard let html = ImpulseCore.renderMarkdownPreview(
+            source: content,
+            themeJSON: themeJSON,
+            highlightJsPath: hljs
+        ) else {
+            return nil
+        }
+
+        // Create or reuse preview WebView
+        if previewWebView == nil {
+            let config = WKWebViewConfiguration()
+            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+            let wv = WKWebView(frame: bounds, configuration: config)
+            wv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(wv)
+            NSLayoutConstraint.activate([
+                wv.topAnchor.constraint(equalTo: topAnchor),
+                wv.bottomAnchor.constraint(equalTo: bottomAnchor),
+                wv.leadingAnchor.constraint(equalTo: leadingAnchor),
+                wv.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ])
+            previewWebView = wv
+        }
+
+        // Load HTML with the file's parent as base URL for relative images
+        let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+        previewWebView?.loadHTMLString(html, baseURL: baseURL)
+        previewWebView?.isHidden = false
+        webView?.isHidden = true
+        isPreviewing = true
+        return true
+    }
+
+    /// Re-render the markdown preview with new theme colors (for theme changes).
+    func refreshMarkdownPreview(themeJSON: String) {
+        guard isPreviewing, let fp = filePath else { return }
+
+        let hljs: String
+        if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
+            hljs = "file://\(monacoDir)/highlight/highlight.min.js"
+        } else {
+            hljs = ""
+        }
+
+        guard let html = ImpulseCore.renderMarkdownPreview(
+            source: content,
+            themeJSON: themeJSON,
+            highlightJsPath: hljs
+        ) else { return }
+
+        let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+        previewWebView?.loadHTMLString(html, baseURL: baseURL)
+    }
+
     /// Explicitly release resources held by the WebView. Must be called before
     /// the tab is removed from the tab list to ensure the WKWebView and its
     /// associated JavaScript context are torn down promptly.
@@ -718,6 +808,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         webView?.stopLoading()
         webView?.removeFromSuperview()
         webView = nil
+        previewWebView?.stopLoading()
+        previewWebView?.removeFromSuperview()
+        previewWebView = nil
     }
 
     deinit {

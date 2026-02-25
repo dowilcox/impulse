@@ -1018,3 +1018,51 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
         }),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Markdown preview
+// ---------------------------------------------------------------------------
+
+/// Render markdown source to a full HTML document with themed CSS and highlight.js.
+///
+/// `source` — the markdown text to render.
+/// `theme_json` — JSON-serialized `MarkdownThemeColors`.
+/// `highlight_js_path` — absolute file:// path or URL to highlight.min.js.
+///
+/// Returns a newly allocated HTML string (caller must free with `impulse_free_string`),
+/// or null on failure.
+#[no_mangle]
+pub extern "C" fn impulse_render_markdown_preview(
+    source: *const c_char,
+    theme_json: *const c_char,
+    highlight_js_path: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let source = match to_rust_str(source) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let theme_json = match to_rust_str(theme_json) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let hljs_path = match to_rust_str(highlight_js_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let theme: impulse_editor::markdown::MarkdownThemeColors =
+                match serde_json::from_str(&theme_json) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        log::error!("Failed to parse MarkdownThemeColors: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+            let html =
+                impulse_editor::markdown::render_markdown_preview(&source, &theme, &hljs_path);
+            to_c_string(&html)
+        }),
+    )
+}

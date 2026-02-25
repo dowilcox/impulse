@@ -229,6 +229,13 @@ enum MenuBuilder {
         findInProjectItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(findInProjectItem)
 
+        let markdownPreviewItem = NSMenuItem(title: "Toggle Markdown Preview",
+                                             action: #selector(MenuActions.menuToggleMarkdownPreview(_:)),
+                                             keyEquivalent: "M")
+        markdownPreviewItem.target = MenuActions.shared
+        markdownPreviewItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(markdownPreviewItem)
+
         menu.addItem(.separator())
 
         let fontIncreaseItem = NSMenuItem(title: "Increase Font Size",
@@ -436,6 +443,10 @@ final class MenuActions: NSObject {
 
     @objc func menuFindInProject(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
+    }
+
+    @objc func menuToggleMarkdownPreview(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseToggleMarkdownPreview, object: nil)
     }
 
     @objc func menuSplitHorizontal(_ sender: Any?) {

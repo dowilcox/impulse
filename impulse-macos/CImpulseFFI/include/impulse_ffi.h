@@ -38,6 +38,9 @@ char *impulse_lsp_install(void);
 bool impulse_npm_is_available(void);
 char *impulse_system_lsp_status(void);
 
+// Markdown preview
+char *impulse_render_markdown_preview(const char *source, const char *theme_json, const char *highlight_js_path);
+
 // Git
 char *impulse_git_branch(const char *path);
 char *impulse_git_status_for_directory(const char *path);

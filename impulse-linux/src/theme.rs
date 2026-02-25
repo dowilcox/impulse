@@ -506,6 +506,33 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {fg_dark};
             font-size: 11px;
         }}
+        .status-bar .status-bar-preview-btn {{
+            min-height: 16px;
+            min-width: 0;
+            padding: 0 8px;
+            margin: 3px 4px 3px 8px;
+            border-radius: 3px;
+            background: none;
+            border: 1px solid {green};
+            box-shadow: none;
+        }}
+        .status-bar .status-bar-preview-btn label {{
+            font-size: 11px;
+            color: {green};
+        }}
+        .status-bar .status-bar-preview-btn:hover {{
+            background: alpha({green}, 0.1);
+        }}
+        .status-bar .status-bar-preview-btn.previewing {{
+            background: {green};
+            border-color: {green};
+        }}
+        .status-bar .status-bar-preview-btn.previewing label {{
+            color: {bg_dark};
+        }}
+        .status-bar .status-bar-preview-btn.previewing:hover {{
+            background: alpha({green}, 0.85);
+        }}
         /* --- Terminal --- */
         vte-terminal {{
             padding: 8px 12px;

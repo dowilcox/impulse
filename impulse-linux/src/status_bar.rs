@@ -14,6 +14,7 @@ pub struct StatusBar {
     encoding_label: gtk4::Label,
     indent_label: gtk4::Label,
     blame_label: gtk4::Label,
+    pub preview_button: gtk4::Button,
 }
 
 impl StatusBar {
@@ -54,6 +55,11 @@ impl StatusBar {
         blame_label.set_visible(false);
         blame_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
 
+        let preview_button = gtk4::Button::with_label("Preview");
+        preview_button.add_css_class("status-bar-preview-btn");
+        preview_button.set_tooltip_text(Some("Toggle Markdown Preview (Ctrl+Shift+M)"));
+        preview_button.set_visible(false);
+
         widget.append(&shell_label);
         widget.append(&branch_label);
         widget.append(&cwd_label);
@@ -62,6 +68,7 @@ impl StatusBar {
         widget.append(&indent_label);
         widget.append(&language_label);
         widget.append(&cursor_label);
+        widget.append(&preview_button);
 
         StatusBar {
             widget,
@@ -73,6 +80,7 @@ impl StatusBar {
             encoding_label,
             indent_label,
             blame_label,
+            preview_button,
         }
     }
 
@@ -132,12 +140,27 @@ impl StatusBar {
         self.blame_label.set_visible(false);
     }
 
+    pub fn show_preview_button(&self, is_previewing: bool) {
+        if is_previewing {
+            self.preview_button.add_css_class("previewing");
+        } else {
+            self.preview_button.remove_css_class("previewing");
+        }
+        self.preview_button.set_visible(true);
+    }
+
+    pub fn hide_preview_button(&self) {
+        self.preview_button.set_visible(false);
+        self.preview_button.remove_css_class("previewing");
+    }
+
     pub fn hide_editor_info(&self) {
         self.language_label.set_visible(false);
         self.encoding_label.set_visible(false);
         self.cursor_label.set_visible(false);
         self.indent_label.set_visible(false);
         self.blame_label.set_visible(false);
+        self.preview_button.set_visible(false);
     }
 }
 

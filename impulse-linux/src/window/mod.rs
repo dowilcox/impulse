@@ -909,6 +909,30 @@ pub fn build_window(app: &adw::Application) {
         &reopen_tab,
     );
 
+    // Wire the markdown preview toggle button in the status bar
+    {
+        let tab_view = tab_view.clone();
+        let settings = settings.clone();
+        let status_bar_for_click = status_bar.clone();
+        let preview_btn = status_bar.borrow().preview_button.clone();
+        preview_btn.connect_clicked(move |_| {
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                if editor::is_editor(&child) {
+                    let s = settings.borrow();
+                    let theme = crate::theme::get_theme(&s.color_scheme);
+                    if let Some(is_previewing) =
+                        editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                    {
+                        status_bar_for_click
+                            .borrow()
+                            .show_preview_button(is_previewing);
+                    }
+                }
+            }
+        });
+    }
+
     let kb_overrides = settings.borrow().keybinding_overrides.clone();
 
     // Shared closure to open settings and apply changes live
@@ -949,6 +973,11 @@ pub fn build_window(app: &adw::Application) {
                     } else if crate::editor::is_editor(&child) {
                         crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
                         crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
+                        // Re-render markdown preview if currently previewing
+                        crate::editor::refresh_markdown_preview(
+                            child.upcast_ref::<gtk4::Widget>(),
+                            new_theme,
+                        );
                     }
                 }
             });
@@ -1155,6 +1184,32 @@ pub fn build_window(app: &adw::Application) {
                     let open_settings = open_settings.clone();
                     move || {
                         open_settings();
+                    }
+                }),
+            },
+            Command {
+                name: "Toggle Markdown Preview".to_string(),
+                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
+                    "toggle_markdown_preview",
+                    &kb_overrides,
+                )),
+                action: Rc::new({
+                    let tab_view = tab_view.clone();
+                    let settings = settings.clone();
+                    let status_bar = status_bar.clone();
+                    move || {
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child) {
+                                let s = settings.borrow();
+                                let theme = crate::theme::get_theme(&s.color_scheme);
+                                if let Some(is_previewing) =
+                                    editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                                {
+                                    status_bar.borrow().show_preview_button(is_previewing);
+                                }
+                            }
+                        }
                     }
                 }),
             },

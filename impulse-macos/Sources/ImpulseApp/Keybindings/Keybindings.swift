@@ -138,6 +138,14 @@ enum Keybindings {
             keyEquivalent: "g",
             modifierFlags: [.command]
         ),
+        BuiltinKeybinding(
+            id: "toggle_markdown_preview",
+            description: "Toggle Markdown Preview",
+            category: "Editor",
+            defaultShortcut: "Cmd+Shift+M",
+            keyEquivalent: "m",
+            modifierFlags: [.command, .shift]
+        ),
         // -- Navigation --
         BuiltinKeybinding(
             id: "toggle_sidebar",

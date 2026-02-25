@@ -151,6 +151,20 @@ final class ImpulseCore {
         return (try? JSONDecoder().decode([SearchResult].self, from: data)) ?? []
     }
 
+    // MARK: - Markdown Preview
+
+    /// Render markdown source into a full HTML document with themed CSS and
+    /// highlight.js code highlighting.
+    ///
+    /// - Parameters:
+    ///   - source: The markdown text to render.
+    ///   - themeJSON: JSON-serialized `MarkdownThemeColors`.
+    ///   - highlightJsPath: Absolute file:// path to highlight.min.js.
+    /// - Returns: A full HTML string, or `nil` on failure.
+    static func renderMarkdownPreview(source: String, themeJSON: String, highlightJsPath: String) -> String? {
+        return consumeCString(impulse_render_markdown_preview(source, themeJSON, highlightJsPath))
+    }
+
     // MARK: - Git
 
     /// Returns the current git branch for the directory at `path`, or `nil`

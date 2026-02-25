@@ -5,10 +5,11 @@ use std::path::PathBuf;
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
-pub const MONACO_VERSION: &str = "0.55.1+fonts2";
+pub const MONACO_VERSION: &str = "0.55.1+fonts2+hljs";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
 static FONTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/fonts");
+static HIGHLIGHT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/highlight");
 
 /// Ensure Monaco editor files are extracted to the local data directory.
 ///
@@ -77,6 +78,9 @@ pub fn ensure_monaco_extracted() -> Result<PathBuf, String> {
 
     // Extract bundled fonts into the Monaco directory (for editor @font-face)
     extract_dir_recursive(&FONTS_DIR, &monaco_dir.join("fonts"))?;
+
+    // Extract highlight.js for markdown preview code highlighting
+    extract_dir_recursive(&HIGHLIGHT_DIR, &monaco_dir.join("highlight"))?;
 
     // Write editor.html and editor.js
     std::fs::write(monaco_dir.join("editor.html"), EDITOR_HTML)
