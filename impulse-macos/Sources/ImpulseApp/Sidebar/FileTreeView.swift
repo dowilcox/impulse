@@ -1366,13 +1366,13 @@ extension FileTreeView: NSOutlineViewDelegate {
 
         let textField = NSTextField(labelWithString: "")
         textField.translatesAutoresizingMaskIntoConstraints = false
-        textField.font = NSFont.systemFont(ofSize: 13)
+        textField.font = NSFont.appFont(ofSize: 13)
         textField.cell?.truncatesLastVisibleLine = true
         textField.lineBreakMode = .byTruncatingMiddle
 
         let badge = NSTextField(labelWithString: "")
         badge.translatesAutoresizingMaskIntoConstraints = false
-        badge.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+        badge.font = NSFont.appFont(ofSize: 11, weight: .semibold)
         badge.alignment = .center
         badge.tag = FileTreeView.gitBadgeTag
 

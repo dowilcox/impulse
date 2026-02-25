@@ -34,7 +34,7 @@ enum SettingsFormSheet {
 
         // -- Title label --
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.boldSystemFont(ofSize: 15)
+        titleLabel.font = NSFont.appFont(ofSize: 15, weight: .bold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -50,7 +50,7 @@ enum SettingsFormSheet {
 
         for field in fields {
             let label = NSTextField(labelWithString: field.label)
-            label.font = NSFont.systemFont(ofSize: 13)
+            label.font = NSFont.appFont(ofSize: 13)
             label.alignment = .right
             label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 

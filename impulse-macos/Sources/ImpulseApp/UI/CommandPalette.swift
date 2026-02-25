@@ -75,7 +75,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = "Type a command..."
         searchField.focusRingType = .none
-        searchField.font = NSFont.systemFont(ofSize: 14)
+        searchField.font = NSFont.appFont(ofSize: 14)
         searchField.delegate = self
         searchField.target = self
         searchField.action = #selector(searchFieldAction(_:))
@@ -342,7 +342,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
             } else {
                 cell = NSTextField(labelWithString: "")
                 cell.identifier = cellId
-                cell.font = NSFont.systemFont(ofSize: 13)
+                cell.font = NSFont.appFont(ofSize: 13)
                 cell.lineBreakMode = .byTruncatingTail
             }
             cell.stringValue = command.title
@@ -357,7 +357,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
             } else {
                 cell = NSTextField(labelWithString: "")
                 cell.identifier = cellId
-                cell.font = NSFont.systemFont(ofSize: 12)
+                cell.font = NSFont.appFont(ofSize: 12)
                 cell.alignment = .right
                 cell.lineBreakMode = .byClipping
             }

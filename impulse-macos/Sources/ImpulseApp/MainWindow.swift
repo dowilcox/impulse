@@ -52,7 +52,7 @@ private final class SidebarToggleButton: NSButton {
         self.title = title
         isBordered = false
         bezelStyle = .inline
-        font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        font = NSFont.appFont(ofSize: 12, weight: .semibold)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 6
@@ -891,7 +891,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         termSearchField.sendsSearchStringImmediately = true
         termSearchField.target = self
         termSearchField.action = #selector(termSearchFieldChanged(_:))
-        termSearchField.font = NSFont.systemFont(ofSize: 13)
+        termSearchField.font = NSFont.appFont(ofSize: 13)
 
         let prevButton = NSButton(title: "\u{25C0}", target: self, action: #selector(termSearchPrev(_:)))
         prevButton.translatesAutoresizingMaskIntoConstraints = false

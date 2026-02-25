@@ -123,7 +123,7 @@ private final class TabItemView: NSView {
         // Build or reuse cached attributed string
         if cachedAttributedTitle == nil || lastTitle != title || lastTintColor != textColor {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                .font: NSFont.appFont(ofSize: 13, weight: .medium),
                 .foregroundColor: textColor,
             ]
             let str = NSAttributedString(string: title, attributes: attrs)

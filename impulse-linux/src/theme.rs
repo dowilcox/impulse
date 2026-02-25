@@ -328,6 +328,11 @@ fn parse_color(hex: &str) -> gdk::RGBA {
 pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
     let css = format!(
         r#"
+        /* --- Global font --- */
+        window, popover, menu {{
+            font-family: 'JetBrains Mono', monospace;
+        }}
+
         /* --- Sidebar --- */
         .sidebar {{
             background-color: {bg_dark};
@@ -398,7 +403,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .git-badge {{
             font-size: 11px;
             font-weight: 600;
-            font-family: monospace;
+            font-family: 'JetBrains Mono', monospace;
             margin-right: 4px;
             min-width: 14px;
         }}
@@ -653,12 +658,12 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .project-search-line-num {{
             color: {comment};
             font-size: 11px;
-            font-family: monospace;
+            font-family: 'JetBrains Mono', monospace;
         }}
         .project-search-line-content {{
             color: {fg};
             font-size: 12px;
-            font-family: monospace;
+            font-family: 'JetBrains Mono', monospace;
         }}
         "#,
         bg_dark = theme.bg_dark,

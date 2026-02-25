@@ -426,13 +426,15 @@ pub(super) fn setup_shortcut_controller(
     {
         let tab_view = tab_view.clone();
         let font_size = term_ctx.font_size.clone();
+        let settings = settings.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_increase", &kb_overrides),
             move || {
                 let new_size = font_size.get() + 1;
                 font_size.set(new_size);
-                super::apply_font_size_to_all_terminals(&tab_view, new_size);
+                let family = settings.borrow().terminal_font_family.clone();
+                super::apply_font_size_to_all_terminals(&tab_view, new_size, &family);
             },
         );
     }
@@ -441,6 +443,7 @@ pub(super) fn setup_shortcut_controller(
     {
         let tab_view = tab_view.clone();
         let font_size = term_ctx.font_size.clone();
+        let settings = settings.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("font_decrease", &kb_overrides),
@@ -448,7 +451,8 @@ pub(super) fn setup_shortcut_controller(
                 let new_size = font_size.get() - 1;
                 if new_size > 0 {
                     font_size.set(new_size);
-                    super::apply_font_size_to_all_terminals(&tab_view, new_size);
+                    let family = settings.borrow().terminal_font_family.clone();
+                    super::apply_font_size_to_all_terminals(&tab_view, new_size, &family);
                 }
             },
         );
@@ -463,9 +467,12 @@ pub(super) fn setup_shortcut_controller(
             &shortcut_controller,
             &keybindings::get_accel("font_reset", &kb_overrides),
             move || {
-                let default_size = settings.borrow().terminal_font_size;
+                let s = settings.borrow();
+                let default_size = s.terminal_font_size;
+                let family = s.terminal_font_family.clone();
+                drop(s);
                 font_size.set(default_size);
-                super::apply_font_size_to_all_terminals(&tab_view, default_size);
+                super::apply_font_size_to_all_terminals(&tab_view, default_size, &family);
             },
         );
     }

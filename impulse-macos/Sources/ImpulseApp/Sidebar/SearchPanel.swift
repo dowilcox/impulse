@@ -69,7 +69,7 @@ final class SearchPanel: NSView {
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = NSFont.systemFont(ofSize: 13)
+        field.font = NSFont.appFont(ofSize: 13)
         field.delegate = self
         self.searchField = field
 
@@ -84,7 +84,7 @@ final class SearchPanel: NSView {
         caseBtn.state = .off
         caseBtn.wantsLayer = true
         caseBtn.layer?.cornerRadius = 4
-        caseBtn.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        caseBtn.font = NSFont.appFont(ofSize: 12, weight: .medium)
         self.caseSensitiveButton = caseBtn
 
         // Search row: icon + field + case toggle, acts as themed container
@@ -132,7 +132,7 @@ final class SearchPanel: NSView {
 
         // --- Status label ---
         let label = NSTextField(labelWithString: "")
-        label.font = NSFont.systemFont(ofSize: 11)
+        label.font = NSFont.appFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         label.alignment = .center
@@ -189,7 +189,7 @@ final class SearchPanel: NSView {
             string: "Search files and content...",
             attributes: [
                 .foregroundColor: theme.comment,
-                .font: searchField.font ?? NSFont.systemFont(ofSize: 13),
+                .font: searchField.font ?? NSFont.appFont(ofSize: 13),
             ]
         )
     }
@@ -373,20 +373,20 @@ extension SearchPanel: NSTableViewDelegate {
         // Primary label: file name
         let nameLabel = NSTextField(labelWithString: "")
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        nameLabel.font = NSFont.appFont(ofSize: 12, weight: .medium)
         nameLabel.lineBreakMode = .byTruncatingMiddle
 
         // Secondary label: content or path
         let contentLabel = NSTextField(labelWithString: "")
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        contentLabel.font = NSFont.appFont(ofSize: 11)
         contentLabel.lineBreakMode = .byTruncatingTail
         contentLabel.tag = 100
 
         // Tertiary label: path (for content results)
         let pathLabel = NSTextField(labelWithString: "")
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.font = NSFont.systemFont(ofSize: 10)
+        pathLabel.font = NSFont.appFont(ofSize: 10)
         pathLabel.textColor = .tertiaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingHead
         pathLabel.tag = 101

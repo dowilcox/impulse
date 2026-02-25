@@ -52,7 +52,7 @@ final class StatusBar: NSView {
                          blameLabel, cursorPositionLabel, languageLabel,
                          encodingLabel, indentInfoLabel]
         for label in allLabels {
-            label.font = NSFont.systemFont(ofSize: 11)
+            label.font = NSFont.appFont(ofSize: 11)
             label.drawsBackground = false
             label.isBezeled = false
             label.isEditable = false

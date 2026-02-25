@@ -1365,12 +1365,17 @@ pub fn build_window(app: &adw::Application) {
     window.present();
 }
 
-fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32) {
+fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_family: &str) {
+    let family = if font_family.is_empty() {
+        "JetBrains Mono"
+    } else {
+        font_family
+    };
     let n = tab_view.n_pages();
     for i in 0..n {
         let page = tab_view.nth_page(i);
         for term in terminal_container::collect_terminals(&page.child()) {
-            let mut font_desc = gtk4::pango::FontDescription::from_string("Monospace");
+            let mut font_desc = gtk4::pango::FontDescription::from_string(family);
             font_desc.set_size(size * 1024);
             term.set_font_desc(Some(&font_desc));
         }

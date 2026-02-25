@@ -1,5 +1,24 @@
 import AppKit
 
+// MARK: - App Font Helper
+
+extension NSFont {
+    /// Returns JetBrains Mono at the given size/weight, falling back to the
+    /// system monospaced font if the bundled font isn't available yet.
+    static func appFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        // Map NSFont.Weight to the closest JetBrains Mono style name.
+        let name: String
+        switch weight {
+        case .bold: name = "JetBrainsMono-Bold"
+        case .semibold: name = "JetBrainsMono-Bold"
+        case .medium: name = "JetBrainsMono-Medium"
+        default: name = "JetBrainsMono-Regular"
+        }
+        return NSFont(name: name, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+}
+
 // MARK: - NSColor Hex Helpers
 
 extension NSColor {

@@ -501,7 +501,7 @@ final class SettingsWindowController: NSWindowController {
         // Terminal palette row
         let paletteLabel = NSTextField(labelWithString: "Terminal Palette:")
         paletteLabel.textColor = theme.fg
-        paletteLabel.font = NSFont.systemFont(ofSize: 11)
+        paletteLabel.font = NSFont.appFont(ofSize: 11)
         stack.addArrangedSubview(paletteLabel)
 
         let paletteRow = NSStackView()
@@ -755,7 +755,7 @@ final class SettingsWindowController: NSWindowController {
         let npmAvailable = ImpulseCore.npmIsAvailable()
         let npmLabel = NSTextField(labelWithString:
             npmAvailable ? "npm is available" : "npm not found — install Node.js to manage web language servers")
-        npmLabel.font = NSFont.systemFont(ofSize: 13)
+        npmLabel.font = NSFont.appFont(ofSize: 13)
         npmLabel.textColor = npmAvailable ? .systemGreen : .systemOrange
         npmLabel.isBezeled = false
         npmLabel.drawsBackground = false
@@ -830,7 +830,7 @@ final class SettingsWindowController: NSWindowController {
 
             let label = NSTextField(labelWithString:
                 installed ? "\(command) — \(resolvedPath ?? "")" : "\(command) — Not found in PATH")
-            label.font = NSFont.systemFont(ofSize: 13)
+            label.font = NSFont.appFont(ofSize: 13)
             label.textColor = installed ? .labelColor : .secondaryLabelColor
             label.isBezeled = false
             label.drawsBackground = false
@@ -896,7 +896,7 @@ final class SettingsWindowController: NSWindowController {
 
     private func makeLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 13)
+        label.font = NSFont.appFont(ofSize: 13)
         label.alignment = .right
         return label
     }
@@ -909,12 +909,12 @@ final class SettingsWindowController: NSWindowController {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.boldSystemFont(ofSize: 13)
+        titleLabel.font = NSFont.appFont(ofSize: 13, weight: .bold)
         stack.addArrangedSubview(titleLabel)
 
         if let subtitle = subtitle {
             let subtitleLabel = NSTextField(labelWithString: subtitle)
-            subtitleLabel.font = NSFont.systemFont(ofSize: 11)
+            subtitleLabel.font = NSFont.appFont(ofSize: 11)
             subtitleLabel.textColor = .secondaryLabelColor
             stack.addArrangedSubview(subtitleLabel)
         }
@@ -933,7 +933,7 @@ final class SettingsWindowController: NSWindowController {
 
     private func makeRow(label: String, control: NSView) -> NSStackView {
         let labelView = NSTextField(labelWithString: label)
-        labelView.font = NSFont.systemFont(ofSize: 13)
+        labelView.font = NSFont.appFont(ofSize: 13)
         labelView.alignment = .right
         labelView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         labelView.translatesAutoresizingMaskIntoConstraints = false
