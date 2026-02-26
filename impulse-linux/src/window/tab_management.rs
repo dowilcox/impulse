@@ -588,7 +588,7 @@ pub(super) fn setup_tab_switch_handler(
                     // Refresh git diff decorations (they may be stale after
                     // terminal git operations like commit/stash/checkout).
                     if let Some(handle) = editor::get_handle_for_widget(&child) {
-                        super::send_diff_decorations(&handle, &file_path);
+                        super::send_diff_decorations(&file_path);
                     }
                     // Cursor position is updated via CursorMoved events from Monaco
                     // Show language and encoding for editor tabs

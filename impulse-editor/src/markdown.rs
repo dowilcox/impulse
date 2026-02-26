@@ -1,3 +1,4 @@
+use crate::css::sanitize_css_color;
 use pulldown_cmark::{Options, Parser};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -34,30 +35,6 @@ const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"]
 pub fn is_markdown_file(path: &str) -> bool {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     MARKDOWN_EXTENSIONS.contains(&ext.as_str())
-}
-
-/// Sanitise a CSS color value.  Accepts `#hex`, `rgb(…)`, `rgba(…)`, and
-/// common named colours.  Anything else is replaced by the fallback.
-fn sanitize_css_color(value: &str, fallback: &str) -> String {
-    let v = value.trim();
-    // Hex: #abc, #aabbcc, #aabbccdd
-    if v.starts_with('#')
-        && (v.len() == 4 || v.len() == 7 || v.len() == 9)
-        && v[1..].chars().all(|c| c.is_ascii_hexdigit())
-    {
-        return v.to_string();
-    }
-    // rgb(…) / rgba(…)
-    if (v.starts_with("rgb(") || v.starts_with("rgba(")) && v.ends_with(')') {
-        let inner = &v[v.find('(').unwrap() + 1..v.len() - 1];
-        if inner
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == ',' || c == '.' || c == ' ' || c == '%')
-        {
-            return v.to_string();
-        }
-    }
-    fallback.to_string()
 }
 
 /// Sanitise a CSS font-family value by stripping dangerous chars.

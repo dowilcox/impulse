@@ -742,7 +742,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Toggle between Monaco editor and rendered preview (markdown or SVG).
     ///
     /// Returns the new `isPreviewing` state, or `nil` if the file is not previewable.
-    func togglePreview(themeJSON: String) -> Bool? {
+    /// - Parameters:
+    ///   - themeJSON: JSON string with markdown theme colors.
+    ///   - bgColor: Background color hex string for SVG preview (avoids re-parsing themeJSON).
+    func togglePreview(themeJSON: String, bgColor: String) -> Bool? {
         guard let fp = filePath, EditorTab.isPreviewableFile(fp) else { return nil }
 
         if isPreviewing {
@@ -753,31 +756,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return false
         }
 
-        // Render preview HTML based on file type
-        let html: String
-        if EditorTab.isSvgFile(fp) {
-            // SVG preview — extract bg color from themeJSON
-            let bgColor = Self.extractBgColor(from: themeJSON)
-            guard let svgHtml = ImpulseCore.renderSvgPreview(source: content, bgColor: bgColor) else {
-                return nil
-            }
-            html = svgHtml
-        } else {
-            // Markdown preview
-            let hljs: String
-            if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
-                hljs = "file://\(monacoDir)/highlight/highlight.min.js"
-            } else {
-                hljs = ""
-            }
-            guard let mdHtml = ImpulseCore.renderMarkdownPreview(
-                source: content,
-                themeJSON: themeJSON,
-                highlightJsPath: hljs
-            ) else {
-                return nil
-            }
-            html = mdHtml
+        guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else {
+            return nil
         }
 
         // Create or reuse preview WebView
@@ -808,41 +788,31 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
 
     /// Re-render the preview with new theme colors (for theme changes).
-    func refreshPreview(themeJSON: String) {
+    func refreshPreview(themeJSON: String, bgColor: String) {
         guard isPreviewing, let fp = filePath else { return }
-
-        let html: String
-        if EditorTab.isSvgFile(fp) {
-            let bgColor = Self.extractBgColor(from: themeJSON)
-            guard let svgHtml = ImpulseCore.renderSvgPreview(source: content, bgColor: bgColor) else { return }
-            html = svgHtml
-        } else {
-            let hljs: String
-            if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
-                hljs = "file://\(monacoDir)/highlight/highlight.min.js"
-            } else {
-                hljs = ""
-            }
-            guard let mdHtml = ImpulseCore.renderMarkdownPreview(
-                source: content,
-                themeJSON: themeJSON,
-                highlightJsPath: hljs
-            ) else { return }
-            html = mdHtml
-        }
-
+        guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else { return }
         let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
         previewWebView?.loadHTMLString(html, baseURL: baseURL)
     }
 
-    /// Extract the "bg" color from the markdown theme JSON dictionary.
-    private static func extractBgColor(from themeJSON: String) -> String {
-        guard let data = themeJSON.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let bg = dict["bg"] else {
-            return "#1a1b26"
+    /// Render preview HTML for a file (markdown or SVG). Returns `nil` on failure
+    /// or if the source exceeds size limits.
+    private func renderPreviewHTML(filePath fp: String, themeJSON: String, bgColor: String) -> String? {
+        if EditorTab.isSvgFile(fp) {
+            return ImpulseCore.renderSvgPreview(source: content, bgColor: bgColor)
         }
-        return bg
+        // Markdown preview
+        let hljs: String
+        if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
+            hljs = "file://\(monacoDir)/highlight/highlight.min.js"
+        } else {
+            hljs = ""
+        }
+        return ImpulseCore.renderMarkdownPreview(
+            source: content,
+            themeJSON: themeJSON,
+            highlightJsPath: hljs
+        )
     }
 
     /// Explicitly release resources held by the WebView. Must be called before

@@ -169,7 +169,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             log::warn!("LSP request channel full, dropping request: {}", e);
                                         }
                                         // Send initial diff decorations
-                                        send_diff_decorations(handle, &path);
+                                        send_diff_decorations(&path);
                                     }
                                     impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
                                         // Update tab title based on modified state (O(1) lookup)
@@ -255,7 +255,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 log::warn!("LSP request channel full, dropping request: {}", e);
                                             }
                                             // Refresh diff decorations after save
-                                            send_diff_decorations(handle, &path);
+                                            send_diff_decorations(&path);
                                             // Refresh sidebar to update git status badges
                                             sidebar_state.refresh();
                                             // Run commands-on-save in a background thread
@@ -307,7 +307,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
                                                     log::warn!("LSP request channel full, dropping request: {}", e);
                                                 }
-                                                send_diff_decorations(handle, &path);
+                                                send_diff_decorations(&path);
                                                 sidebar_state.refresh();
                                             }
                                         }

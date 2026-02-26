@@ -1434,7 +1434,7 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_fam
     }
 }
 
-pub fn send_diff_decorations(_handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
+pub fn send_diff_decorations(file_path: &str) {
     let file_path_owned = file_path.to_string();
     gtk4::glib::spawn_future_local(async move {
         let fp = file_path_owned.clone();
@@ -1521,7 +1521,7 @@ pub(super) fn spawn_commands_on_save(path: String, commands: Vec<crate::settings
                             let lang = handle.language.borrow().clone();
                             handle.suppress_next_modify.set(true);
                             handle.open_file(&reload_path, &new_content, &lang);
-                            send_diff_decorations(&handle, &reload_path);
+                            send_diff_decorations(&reload_path);
                         }
                     }
                 });

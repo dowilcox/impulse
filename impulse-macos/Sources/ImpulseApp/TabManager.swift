@@ -773,7 +773,7 @@ final class TabManager: NSObject {
             minimapEnabled: settings.minimapEnabled,
             lineNumbers: settings.showLineNumbers ? "on" : "off",
             renderWhitespace: settings.renderWhitespace,
-            renderLineHighlight: settings.highlightCurrentLine ? "all" : "none",
+            renderLineHighlight: settings.highlightCurrentLine ? "line" : "none",
             rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
             stickyScroll: settings.stickyScroll,
             bracketPairColorization: settings.bracketPairColorization,

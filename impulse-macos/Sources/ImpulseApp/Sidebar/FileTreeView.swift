@@ -247,8 +247,9 @@ final class FileTreeView: NSView {
         // Start root watcher first — this stops all previous watchers.
         startWatching(path: path)
 
-        // Show existing nodes (may be empty on first load) while background
-        // build runs, so the UI isn't frozen.
+        // Clear stale nodes so the UI doesn't briefly show the previous
+        // directory's contents while the background build runs.
+        rootNodes = []
         outlineView.reloadData()
 
         let hidden = showHidden
@@ -287,7 +288,7 @@ final class FileTreeView: NSView {
     /// Accept a pre-built tree (constructed off the main thread) and update
     /// the UI. Call this from a `DispatchQueue.main.async` block after
     /// building the tree on a background queue.
-    func updateTree(nodes: [FileTreeNode], rootPath: String) {
+    func updateTree(nodes: [FileTreeNode], rootPath: String, skipGitRefresh: Bool = false) {
         // Preserve expansion state from the current tree, the incoming
         // (possibly cached) tree, and persisted UserDefaults.
         let expandedPaths = collectExpandedPaths(rootNodes)
@@ -317,7 +318,9 @@ final class FileTreeView: NSView {
         watchExpandedSubdirectories(rootNodes)
 
         // Children loaded during bulk restore skipped git status — refresh now.
-        refreshGitStatus()
+        if !skipGitRefresh {
+            refreshGitStatus()
+        }
     }
 
     /// Re-fetch git status for the current tree and reload visible cells to

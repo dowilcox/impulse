@@ -1071,7 +1071,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         let themeJSON = markdownThemeJSON()
         for tab in tabManager.tabs {
             if case .editor(let editor) = tab {
-                editor.refreshPreview(themeJSON: themeJSON)
+                editor.refreshPreview(themeJSON: themeJSON, bgColor: theme.bgHex)
             }
         }
     }
@@ -1977,7 +1977,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
               EditorTab.isPreviewableFile(fp) else { return }
 
         let themeJSON = markdownThemeJSON()
-        if let isPreviewing = editor.togglePreview(themeJSON: themeJSON) {
+        if let isPreviewing = editor.togglePreview(themeJSON: themeJSON, bgColor: theme.bgHex) {
             statusBar.showPreviewButton(isPreviewing: isPreviewing)
         }
     }
@@ -2114,9 +2114,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             )
         }
 
-        // Show cached tree instantly if available.
+        // Show cached tree instantly if available. Skip git refresh since the
+        // background rebuild below will fetch fresh git status anyway.
         if let cached = fileTreeCache[dir] {
-            fileTreeView.updateTree(nodes: cached, rootPath: dir)
+            fileTreeView.updateTree(nodes: cached, rootPath: dir, skipGitRefresh: true)
             fileTreeCacheTouch(key: dir)
         }
 

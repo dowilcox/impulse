@@ -504,7 +504,7 @@ pub fn build_sidebar(
                                 handle.suppress_next_modify.set(true);
                                 handle.open_file(&path, &content, &lang);
                                 // Refresh diff decorations (should now be empty)
-                                crate::window::send_diff_decorations(&handle, &path);
+                                crate::window::send_diff_decorations(&path);
                             }
                         }
                         refresh_tree(
@@ -849,6 +849,7 @@ pub fn build_sidebar(
         _refresh_in_progress: refresh_in_progress.clone(),
         _git_poll_timer: Rc::new(RefCell::new(None)),
         _last_git_status_hash: Rc::new(Cell::new(0)),
+        _git_poll_in_flight: Rc::new(Cell::new(false)),
     };
 
     // Wire up New File / New Folder toolbar buttons
@@ -1123,6 +1124,8 @@ pub struct SidebarState {
     _git_poll_timer: Rc<RefCell<Option<glib::SourceId>>>,
     /// Hash of the last git status map, used to skip redundant refreshes.
     _last_git_status_hash: Rc<Cell<u64>>,
+    /// Guard to prevent overlapping git poll tasks from stacking up.
+    _git_poll_in_flight: Rc<Cell<bool>>,
 }
 
 impl SidebarState {
@@ -1156,8 +1159,8 @@ impl SidebarState {
                             expanded: false,
                         })
                         .collect();
-                    *tree_nodes.borrow_mut() = nodes.clone();
-                    render_tree(&list, &nodes, &icon_cache.borrow());
+                    *tree_nodes.borrow_mut() = nodes;
+                    render_tree(&list, &tree_nodes.borrow(), &icon_cache.borrow());
                 }
                 _ => {
                     tree_nodes.borrow_mut().clear();
@@ -1242,7 +1245,6 @@ impl SidebarState {
                     // Re-arm dirty so next tick retries
                     dirty.store(true, Ordering::Relaxed);
                 } else {
-                    refresh_in_progress.set(true);
                     refresh_tree(
                         &tree_nodes,
                         &file_tree_list,
@@ -1348,14 +1350,22 @@ impl SidebarState {
         let current_path = self.current_path.clone();
         let icon_cache = self.icon_cache.clone();
         let last_hash = self._last_git_status_hash.clone();
+        let in_flight = self._git_poll_in_flight.clone();
 
         let timer_id = glib::timeout_add_local(Duration::from_secs(2), move || {
+            // Skip if previous poll is still running to avoid stacking tasks.
+            if in_flight.get() {
+                return glib::ControlFlow::Continue;
+            }
+
             let root = git_root.clone();
             let tree_nodes = tree_nodes.clone();
             let file_tree_list = file_tree_list.clone();
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
             let last_hash = last_hash.clone();
+            let in_flight = in_flight.clone();
+            in_flight.set(true);
 
             glib::spawn_future_local(async move {
                 let result = gio::spawn_blocking(move || {
@@ -1384,13 +1394,12 @@ impl SidebarState {
 
                 if let Ok((statuses, hash)) = result {
                     let previous = last_hash.get();
-                    if hash == previous {
-                        return;
+                    if hash != previous {
+                        last_hash.set(hash);
+                        refresh_git_status(&tree_nodes, &file_tree_list, &current_path, icon_cache, &statuses);
                     }
-                    last_hash.set(hash);
-
-                    refresh_git_status(&tree_nodes, &file_tree_list, &current_path, icon_cache, &statuses);
                 }
+                in_flight.set(false);
             });
 
             glib::ControlFlow::Continue
@@ -1616,6 +1625,12 @@ fn refresh_tree(
     refresh_in_progress: Rc<Cell<bool>>,
     watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
 ) {
+    // Guard against concurrent refreshes regardless of caller.
+    if refresh_in_progress.get() {
+        return;
+    }
+    refresh_in_progress.set(true);
+
     let path = current_path.borrow().clone();
     if path.is_empty() {
         refresh_in_progress.set(false);
@@ -1711,8 +1726,8 @@ fn refresh_tree(
                     }
                 }
 
-                *tree_nodes.borrow_mut() = nodes.clone();
-                render_tree(&file_tree_list, &nodes, &icon_cache.borrow());
+                *tree_nodes.borrow_mut() = nodes;
+                render_tree(&file_tree_list, &tree_nodes.borrow(), &icon_cache.borrow());
 
                 refresh_in_progress.set(false);
 
@@ -1728,25 +1743,55 @@ fn refresh_tree(
     });
 }
 
+/// Git status CSS classes applied to filename labels and badge labels.
+const GIT_STATUS_LABEL_CLASSES: &[&str] = &[
+    "file-entry-git-modified",
+    "file-entry-git-added",
+    "file-entry-git-untracked",
+    "file-entry-git-deleted",
+    "file-entry-git-renamed",
+    "file-entry-git-conflict",
+];
+const GIT_BADGE_CLASSES: &[&str] = &[
+    "git-modified",
+    "git-added",
+    "git-untracked",
+    "git-deleted",
+    "git-renamed",
+    "git-conflict",
+];
+
+/// Map a git status string to (label CSS class, badge CSS class).
+fn git_status_classes(status: &str) -> Option<(&'static str, &'static str)> {
+    match status {
+        "M" => Some(("file-entry-git-modified", "git-modified")),
+        "A" => Some(("file-entry-git-added", "git-added")),
+        "?" => Some(("file-entry-git-untracked", "git-untracked")),
+        "D" => Some(("file-entry-git-deleted", "git-deleted")),
+        "R" => Some(("file-entry-git-renamed", "git-renamed")),
+        "C" => Some(("file-entry-git-conflict", "git-conflict")),
+        _ => None,
+    }
+}
+
 /// Lightweight git status refresh: update git_status fields on existing tree nodes
-/// from a pre-computed batch status map, then re-render.
+/// from a pre-computed batch status map, then update only changed rows in-place.
 /// Unlike `refresh_tree`, this does NOT re-read directory contents or rebuild the tree.
 fn refresh_git_status(
     tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
     file_tree_list: &gtk4::ListBox,
     current_path: &Rc<RefCell<String>>,
-    icon_cache: Rc<RefCell<IconCache>>,
+    _icon_cache: Rc<RefCell<IconCache>>,
     statuses: &HashMap<String, HashMap<String, String>>,
 ) {
-    let root = current_path.borrow().clone();
-    if root.is_empty() {
+    if current_path.borrow().is_empty() {
         return;
     }
 
-    // Walk tree nodes and update git_status from the batch map.
+    // Walk tree nodes and update git_status, tracking which row indices changed.
     let mut nodes = tree_nodes.borrow_mut();
-    for node in nodes.iter_mut() {
-        // Determine the parent directory for this node's status lookup.
+    let mut changed_rows: Vec<(usize, Option<String>)> = Vec::new();
+    for (i, node) in nodes.iter_mut().enumerate() {
         let parent_dir = Path::new(&node.entry.path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
@@ -1755,12 +1800,80 @@ fn refresh_git_status(
             .get(&parent_dir)
             .and_then(|dir_map| dir_map.get(&node.entry.name))
             .cloned();
-        node.entry.git_status = new_status;
+        if node.entry.git_status != new_status {
+            node.entry.git_status = new_status.clone();
+            changed_rows.push((i, new_status));
+        }
     }
-
-    let snapshot: Vec<TreeNode> = nodes.clone();
     drop(nodes);
-    render_tree(file_tree_list, &snapshot, &icon_cache.borrow());
+
+    // Update only the rows that actually changed, avoiding a full tree rebuild.
+    for (row_idx, new_status) in changed_rows {
+        let row = match file_tree_list.row_at_index(row_idx as i32) {
+            Some(r) => r,
+            None => continue,
+        };
+        let content_box = match row.child().and_then(|c| c.downcast::<gtk4::Box>().ok()) {
+            Some(b) => b,
+            None => continue,
+        };
+
+        // Find the name label (the Label with hexpand) and optional badge label.
+        let mut name_label: Option<gtk4::Label> = None;
+        let mut badge_label: Option<gtk4::Label> = None;
+        let mut child = content_box.first_child();
+        while let Some(widget) = child {
+            if let Ok(lbl) = widget.clone().downcast::<gtk4::Label>() {
+                if lbl.hexpands() {
+                    name_label = Some(lbl);
+                } else if lbl.has_css_class("git-badge") {
+                    badge_label = Some(lbl);
+                }
+            }
+            child = widget.next_sibling();
+        }
+
+        // Update the name label's git status CSS class.
+        if let Some(ref lbl) = name_label {
+            for cls in GIT_STATUS_LABEL_CLASSES {
+                lbl.remove_css_class(cls);
+            }
+            if let Some(ref status) = new_status {
+                if let Some((label_cls, _)) = git_status_classes(status) {
+                    lbl.add_css_class(label_cls);
+                }
+            }
+        }
+
+        // Update or add/remove the badge label.
+        match (&new_status, badge_label) {
+            (Some(status), Some(badge)) => {
+                // Update existing badge
+                badge.set_label(status);
+                for cls in GIT_BADGE_CLASSES {
+                    badge.remove_css_class(cls);
+                }
+                if let Some((_, badge_cls)) = git_status_classes(status) {
+                    badge.add_css_class(badge_cls);
+                }
+            }
+            (Some(status), None) => {
+                // Add new badge
+                let badge = gtk4::Label::new(Some(status));
+                badge.add_css_class("git-badge");
+                badge.set_halign(gtk4::Align::End);
+                if let Some((_, badge_cls)) = git_status_classes(status) {
+                    badge.add_css_class(badge_cls);
+                }
+                content_box.append(&badge);
+            }
+            (None, Some(badge)) => {
+                // Remove old badge
+                content_box.remove(&badge);
+            }
+            (None, None) => {}
+        }
+    }
 }
 
 /// Collapse all expanded directories back to root-level only.

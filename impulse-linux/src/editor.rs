@@ -170,7 +170,7 @@ pub fn go_to_position(widget: &gtk4::Widget, line: u32, column: u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown preview
+// File preview (markdown, SVG)
 // ---------------------------------------------------------------------------
 
 /// Check whether a file path is an SVG file.
