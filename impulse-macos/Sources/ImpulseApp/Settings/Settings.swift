@@ -427,6 +427,29 @@ extension Settings {
         }
     }
 
+    /// Migrates `format_on_save` entries from `FileTypeOverride` into
+    /// `CommandOnSave` entries with `reloadFile: true`, then clears the
+    /// originals. Matches the Linux `migrate_format_on_save` behavior.
+    mutating func migrateFormatOnSave() {
+        var migrated = false
+        for i in fileTypeOverrides.indices {
+            if let fmt = fileTypeOverrides[i].formatOnSave, !fmt.command.isEmpty {
+                commandsOnSave.append(CommandOnSave(
+                    name: "Format (\(fileTypeOverrides[i].pattern))",
+                    command: fmt.command,
+                    args: fmt.args,
+                    filePattern: fileTypeOverrides[i].pattern,
+                    reloadFile: true
+                ))
+                fileTypeOverrides[i].formatOnSave = nil
+                migrated = true
+            }
+        }
+        if migrated {
+            save()
+        }
+    }
+
     /// Loads settings from disk, falling back to defaults for any missing or
     /// corrupt data.
     static func load() -> Settings {
@@ -440,6 +463,7 @@ extension Settings {
         }
         do {
             var settings = try JSONDecoder().decode(Settings.self, from: data)
+            settings.migrateFormatOnSave()
             settings.migrateDefaultFont()
             settings.validate()
             return settings
@@ -480,6 +504,23 @@ extension Settings {
     /// Static variant for callers that don't hold an instance.
     static func save(_ settings: Settings) {
         settings.save()
+    }
+}
+
+// MARK: - Terminal Settings Factory
+
+extension Settings {
+    /// Constructs a `TerminalSettings` value from the current settings.
+    func terminalSettings(directory: String? = nil) -> TerminalSettings {
+        return TerminalSettings(
+            terminalFontSize: terminalFontSize,
+            terminalFontFamily: terminalFontFamily,
+            terminalCursorShape: terminalCursorShape,
+            terminalCursorBlink: terminalCursorBlink,
+            terminalScrollback: terminalScrollback,
+            lastDirectory: directory ?? lastDirectory,
+            terminalCopyOnSelect: terminalCopyOnSelect
+        )
     }
 }
 

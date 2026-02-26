@@ -104,14 +104,24 @@ final class ImpulseCore {
         return consumeCString(impulse_get_shell_integration_script(shell))
     }
 
+    /// Cached login shell path (computed once, shell doesn't change at runtime).
+    private static let cachedShell: String = {
+        consumeCString(impulse_get_user_login_shell()) ?? "/bin/zsh"
+    }()
+
+    /// Cached login shell name (computed once, shell doesn't change at runtime).
+    private static let cachedShellName: String = {
+        consumeCString(impulse_get_user_login_shell_name()) ?? "zsh"
+    }()
+
     /// Returns the user's default login shell path (e.g. `/bin/zsh`).
     static func getUserLoginShell() -> String {
-        return consumeCString(impulse_get_user_login_shell()) ?? "/bin/zsh"
+        return cachedShell
     }
 
     /// Returns the user's default login shell name (e.g. `"fish"`, `"zsh"`).
     static func getUserLoginShellName() -> String {
-        return consumeCString(impulse_get_user_login_shell_name()) ?? "zsh"
+        return cachedShellName
     }
 
     // MARK: - Search

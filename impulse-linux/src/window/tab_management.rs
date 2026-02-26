@@ -13,7 +13,7 @@ use crate::sidebar;
 use crate::terminal;
 use crate::terminal_container;
 
-use super::{file_path_to_uri, run_guarded_ui, uri_to_file_path, ClosedTab, MAX_CLOSED_TABS};
+use super::{ensure_file_uri, run_guarded_ui, uri_to_file_path, ClosedTab, MAX_CLOSED_TABS};
 
 /// Create the closure that connects CWD-change and child-exited signals on a terminal.
 pub(super) fn make_setup_terminal_signals(
@@ -223,6 +223,34 @@ pub(super) fn setup_tab_context_menu(
     window.insert_action_group("tab", Some(&tab_actions));
 }
 
+fn validate_lsp_response(
+    uri: &str,
+    request_id: u64,
+    version: i32,
+    latest_req: &RefCell<std::collections::HashMap<String, u64>>,
+    doc_versions: &RefCell<std::collections::HashMap<String, i32>>,
+    tab_view: &adw::TabView,
+) -> Option<(String, Rc<crate::editor_webview::MonacoEditorHandle>)> {
+    let source_path = uri_to_file_path(uri);
+    let latest = latest_req.borrow().get(&source_path).copied().unwrap_or(0);
+    if latest != request_id {
+        return None;
+    }
+    let current_version = *doc_versions.borrow().get(&source_path).unwrap_or(&0);
+    if current_version != version {
+        return None;
+    }
+    if let Some(page) = tab_view.selected_page() {
+        let child = page.child();
+        if editor::is_editor(&child) && child.widget_name().as_str() == source_path {
+            if let Some(handle) = editor::get_handle_for_widget(&child) {
+                return Some((source_path, handle));
+            }
+        }
+    }
+    None
+}
+
 /// Poll LSP responses on the GTK main loop and dispatch them.
 pub(super) fn setup_lsp_response_polling(
     ctx: &super::context::WindowContext,
@@ -230,7 +258,6 @@ pub(super) fn setup_lsp_response_polling(
     lsp_install_result_rx: &Rc<RefCell<std::sync::mpsc::Receiver<Result<String, String>>>>,
 ) {
     let tab_view = ctx.tab_view.clone();
-    let _sidebar_state = ctx.sidebar_state.clone();
     let lsp_gtk_rx = lsp_gtk_rx.clone();
     let doc_versions = ctx.lsp.doc_versions.clone();
     let latest_completion_req = ctx.lsp.latest_completion_req.clone();
@@ -277,7 +304,6 @@ pub(super) fn setup_lsp_response_polling(
                                 continue;
                             }
                         }
-                        // O(1) lookup via editor_tab_pages
                         if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
                             let child = page.child();
                             if let Some(handle) = editor::get_handle_for_widget(&child) {
@@ -308,11 +334,6 @@ pub(super) fn setup_lsp_response_polling(
                             continue;
                         }
 
-                        // Look up Monaco's original request_id and resolve the
-                        // pending definition promise. Monaco shows an underline
-                        // on hover; actual navigation happens on Ctrl+click
-                        // (same-file: Monaco navigates directly; cross-file:
-                        // Monaco fires OpenFileRequested via registerEditorOpener).
                         let monaco_id = definition_monaco_ids.borrow_mut().remove(&request_id);
                         if let Some(monaco_id) = monaco_id {
                             if let Some(handle) = editor::get_handle(&source_path) {
@@ -334,6 +355,7 @@ pub(super) fn setup_lsp_response_polling(
                             server_id,
                             client_key
                         );
+                        lsp_error_toast_dedupe.borrow_mut().clear();
                     }
                     LspResponse::ServerError {
                         client_key,
@@ -378,30 +400,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         items,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_completion_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        // Resolve completion into the Monaco editor
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_completions(request_id, &items);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_completion_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_completions(request_id, &items);
                         }
                     }
                     LspResponse::HoverResult {
@@ -410,31 +417,16 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         contents,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_hover_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        // Resolve hover into the Monaco editor
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    let text = crate::lsp_hover::extract_hover_text(&contents);
-                                    handle.resolve_hover(request_id, &text);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_hover_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            let text = crate::lsp_hover::extract_hover_text(&contents);
+                            handle.resolve_hover(request_id, &text);
                         }
                     }
                     LspResponse::FormattingResult {
@@ -443,29 +435,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         edits,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_formatting_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_formatting(request_id, &edits);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_formatting_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_formatting(request_id, &edits);
                         }
                     }
                     LspResponse::SignatureHelpResult {
@@ -474,32 +452,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         signature_help,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_signature_help_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_signature_help(
-                                        request_id,
-                                        signature_help.as_ref(),
-                                    );
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_signature_help_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_signature_help(request_id, signature_help.as_ref());
                         }
                     }
                     LspResponse::ReferencesResult {
@@ -508,29 +469,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         locations,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_references_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_references(request_id, &locations);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_references_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_references(request_id, &locations);
                         }
                     }
                     LspResponse::CodeActionResult {
@@ -539,29 +486,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         actions,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_code_action_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_code_actions(request_id, &actions);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_code_action_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_code_actions(request_id, &actions);
                         }
                     }
                     LspResponse::RenameResult {
@@ -570,29 +503,15 @@ pub(super) fn setup_lsp_response_polling(
                         version,
                         edits,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_rename_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_rename(request_id, &edits);
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_rename_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_rename(request_id, &edits);
                         }
                     }
                     LspResponse::PrepareRenameResult {
@@ -602,33 +521,19 @@ pub(super) fn setup_lsp_response_polling(
                         range,
                         placeholder,
                     } => {
-                        let source_path = uri_to_file_path(&uri);
-                        let latest = latest_rename_req
-                            .borrow()
-                            .get(&source_path)
-                            .copied()
-                            .unwrap_or(0);
-                        if latest != request_id {
-                            continue;
-                        }
-                        let current_version =
-                            *doc_versions.borrow().get(&source_path).unwrap_or(&0);
-                        if current_version != version {
-                            continue;
-                        }
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            if editor::is_editor(&child)
-                                && child.widget_name().as_str() == source_path
-                            {
-                                if let Some(handle) = editor::get_handle_for_widget(&child) {
-                                    handle.resolve_prepare_rename(
-                                        request_id,
-                                        range.as_ref(),
-                                        placeholder.as_deref(),
-                                    );
-                                }
-                            }
+                        if let Some((_path, handle)) = validate_lsp_response(
+                            &uri,
+                            request_id,
+                            version,
+                            &latest_rename_req,
+                            &doc_versions,
+                            &tab_view,
+                        ) {
+                            handle.resolve_prepare_rename(
+                                request_id,
+                                range.as_ref(),
+                                placeholder.as_deref(),
+                            );
                         }
                     }
                 }
@@ -720,7 +625,7 @@ pub(super) fn setup_tab_switch_handler(
 pub(super) fn setup_tab_close_handler(
     ctx: &super::context::WindowContext,
     create_tab: &(impl Fn() + Clone + 'static),
-    closed_tabs: &Rc<RefCell<Vec<ClosedTab>>>,
+    closed_tabs: &Rc<RefCell<std::collections::VecDeque<ClosedTab>>>,
 ) {
     let window_ref = ctx.window.clone();
     let sidebar_state = ctx.sidebar_state.clone();
@@ -730,6 +635,7 @@ pub(super) fn setup_tab_close_handler(
     let completion_req_for_close = ctx.lsp.latest_completion_req.clone();
     let hover_req_for_close = ctx.lsp.latest_hover_req.clone();
     let definition_req_for_close = ctx.lsp.latest_definition_req.clone();
+    let definition_monaco_ids = ctx.lsp.definition_monaco_ids.clone();
     let closed_tabs_for_close = closed_tabs.clone();
     let open_editor_paths = ctx.open_editor_paths.clone();
     let editor_tab_pages = ctx.editor_tab_pages.clone();
@@ -767,18 +673,18 @@ pub(super) fn setup_tab_close_handler(
             let path = child.widget_name().to_string();
             if !path.is_empty() && path != "GtkBox" {
                 let mut stack = closed_tabs_for_close.borrow_mut();
-                stack.push(ClosedTab::Editor(path));
+                stack.push_back(ClosedTab::Editor(path));
                 if stack.len() > MAX_CLOSED_TABS {
-                    stack.remove(0);
+                    stack.pop_front();
                 }
             }
         } else if editor::is_image_preview(&child) {
             let path = child.widget_name().to_string();
             if !path.is_empty() && path != "GtkBox" {
                 let mut stack = closed_tabs_for_close.borrow_mut();
-                stack.push(ClosedTab::ImagePreview(path));
+                stack.push_back(ClosedTab::ImagePreview(path));
                 if stack.len() > MAX_CLOSED_TABS {
-                    stack.remove(0);
+                    stack.pop_front();
                 }
             }
         }
@@ -789,7 +695,10 @@ pub(super) fn setup_tab_close_handler(
             doc_versions_for_close.borrow_mut().remove(&path);
             completion_req_for_close.borrow_mut().remove(&path);
             hover_req_for_close.borrow_mut().remove(&path);
-            definition_req_for_close.borrow_mut().remove(&path);
+            // Remove definition req and any pending definition_monaco_ids for this file
+            if let Some(seq) = definition_req_for_close.borrow_mut().remove(&path) {
+                definition_monaco_ids.borrow_mut().remove(&seq);
+            }
         }
 
         // Remove from dedup set and page map
@@ -837,8 +746,7 @@ pub(super) fn setup_tab_close_handler(
                     "save" => {
                         // Save then close
                         let path = child.widget_name().to_string();
-                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                            .unwrap_or_else(|| format!("file://{}", path));
+                        let uri = ensure_file_uri(&path);
                         if let Some(text) = editor::get_editor_text(&child) {
                             if std::fs::write(&path, &text).is_ok() {
                                 if let Err(e) =
@@ -864,8 +772,7 @@ pub(super) fn setup_tab_close_handler(
                     "discard" => {
                         let path = child.widget_name().to_string();
                         editor::unregister_handle(&path);
-                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                            .unwrap_or_else(|| format!("file://{}", path));
+                        let uri = ensure_file_uri(&path);
                         if let Err(e) = lsp_tx.try_send(LspRequest::DidClose { uri }) {
                             log::warn!("LSP request channel full, dropping request: {}", e);
                         }
@@ -895,8 +802,7 @@ pub(super) fn setup_tab_close_handler(
             let path = child.widget_name().to_string();
             editor::unregister_handle(&path);
             if let Err(e) = lsp_tx.try_send(LspRequest::DidClose {
-                uri: file_path_to_uri(std::path::Path::new(&path))
-                    .unwrap_or_else(|| format!("file://{}", path)),
+                uri: ensure_file_uri(&path),
             }) {
                 log::warn!("LSP request channel full, dropping request: {}", e);
             }

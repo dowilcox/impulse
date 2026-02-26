@@ -522,15 +522,14 @@ pub fn build_sidebar(
     }
     action_group.add_action(&discard_action);
 
-    // "new-file" action - create a new file in a directory
-    let new_file_action = gio::SimpleAction::new("new-file", None);
-    {
+    // Helper: build the activate callback for new-file / new-folder context menu actions
+    let make_new_entry_action = |is_folder: bool| {
         let clicked_path = clicked_path.clone();
         let tree_nodes = tree_nodes.clone();
         let file_tree_list = file_tree_list.clone();
         let current_path = current_path.clone();
         let icon_cache = icon_cache.clone();
-        new_file_action.connect_activate(move |_, _| {
+        move |_: &gio::SimpleAction, _: Option<&glib::Variant>| {
             let clicked = clicked_path.borrow().clone();
             if clicked.is_empty() {
                 return;
@@ -548,62 +547,32 @@ pub fn build_sidebar(
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
             let dir_path2 = dir_path.clone();
-            show_new_entry_dialog(false, &dir_path, &file_tree_list, move |name, new_path| {
-                insert_new_entry_into_tree(
-                    &tree_nodes,
-                    &file_tree_list2,
-                    &current_path,
-                    &dir_path2,
-                    &name,
-                    &new_path,
-                    false,
-                    &icon_cache.borrow(),
-                );
-            });
-        });
-    }
+            show_new_entry_dialog(
+                is_folder,
+                &dir_path,
+                &file_tree_list,
+                move |name, new_path| {
+                    insert_new_entry_into_tree(
+                        &tree_nodes,
+                        &file_tree_list2,
+                        &current_path,
+                        &dir_path2,
+                        &name,
+                        &new_path,
+                        is_folder,
+                        &icon_cache.borrow(),
+                    );
+                },
+            );
+        }
+    };
+
+    let new_file_action = gio::SimpleAction::new("new-file", None);
+    new_file_action.connect_activate(make_new_entry_action(false));
     action_group.add_action(&new_file_action);
 
-    // "new-folder" action - create a new folder in a directory
     let new_folder_action = gio::SimpleAction::new("new-folder", None);
-    {
-        let clicked_path = clicked_path.clone();
-        let tree_nodes = tree_nodes.clone();
-        let file_tree_list = file_tree_list.clone();
-        let current_path = current_path.clone();
-        let icon_cache = icon_cache.clone();
-        new_folder_action.connect_activate(move |_, _| {
-            let clicked = clicked_path.borrow().clone();
-            if clicked.is_empty() {
-                return;
-            }
-            let dir_path = if std::path::Path::new(&clicked).is_dir() {
-                clicked
-            } else {
-                std::path::Path::new(&clicked)
-                    .parent()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            };
-            let tree_nodes = tree_nodes.clone();
-            let file_tree_list2 = file_tree_list.clone();
-            let current_path = current_path.clone();
-            let icon_cache = icon_cache.clone();
-            let dir_path2 = dir_path.clone();
-            show_new_entry_dialog(true, &dir_path, &file_tree_list, move |name, new_path| {
-                insert_new_entry_into_tree(
-                    &tree_nodes,
-                    &file_tree_list2,
-                    &current_path,
-                    &dir_path2,
-                    &name,
-                    &new_path,
-                    true,
-                    &icon_cache.borrow(),
-                );
-            });
-        });
-    }
+    new_folder_action.connect_activate(make_new_entry_action(true));
     action_group.add_action(&new_folder_action);
 
     file_tree_list.insert_action_group("filetree", Some(&action_group));
@@ -861,13 +830,13 @@ pub fn build_sidebar(
         _refresh_timer: Rc::new(RefCell::new(None)),
     };
 
-    // Wire up New File toolbar button (creates in selected/root directory)
-    {
+    // Wire up New File / New Folder toolbar buttons
+    for (btn, is_folder) in [(&new_file_btn, false), (&new_folder_btn, true)] {
         let tree_nodes = state.tree_nodes.clone();
         let file_tree_list = state.file_tree_list.clone();
         let current_path = state.current_path.clone();
         let icon_cache = icon_cache.clone();
-        new_file_btn.connect_clicked(move |btn| {
+        btn.connect_clicked(move |btn| {
             let dir_path = selected_directory(&file_tree_list, &tree_nodes, &current_path);
             if dir_path.is_empty() {
                 return;
@@ -877,7 +846,7 @@ pub fn build_sidebar(
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
             let dir_path2 = dir_path.clone();
-            show_new_entry_dialog(false, &dir_path, btn, move |name, new_path| {
+            show_new_entry_dialog(is_folder, &dir_path, btn, move |name, new_path| {
                 insert_new_entry_into_tree(
                     &tree_nodes,
                     &file_tree_list2,
@@ -885,38 +854,7 @@ pub fn build_sidebar(
                     &dir_path2,
                     &name,
                     &new_path,
-                    false,
-                    &icon_cache.borrow(),
-                );
-            });
-        });
-    }
-
-    // Wire up New Folder toolbar button (creates in selected/root directory)
-    {
-        let tree_nodes = state.tree_nodes.clone();
-        let file_tree_list = state.file_tree_list.clone();
-        let current_path = state.current_path.clone();
-        let icon_cache = icon_cache.clone();
-        new_folder_btn.connect_clicked(move |btn| {
-            let dir_path = selected_directory(&file_tree_list, &tree_nodes, &current_path);
-            if dir_path.is_empty() {
-                return;
-            }
-            let tree_nodes = tree_nodes.clone();
-            let file_tree_list2 = file_tree_list.clone();
-            let current_path = current_path.clone();
-            let icon_cache = icon_cache.clone();
-            let dir_path2 = dir_path.clone();
-            show_new_entry_dialog(true, &dir_path, btn, move |name, new_path| {
-                insert_new_entry_into_tree(
-                    &tree_nodes,
-                    &file_tree_list2,
-                    &current_path,
-                    &dir_path2,
-                    &name,
-                    &new_path,
-                    true,
+                    is_folder,
                     &icon_cache.borrow(),
                 );
             });

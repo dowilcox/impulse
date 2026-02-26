@@ -713,7 +713,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         sendCommand(.openFile(filePath: path, content: newContent, language: language))
         // Force WebView repaint immediately — WKWebView may defer visual updates
         // when the view isn't first responder (e.g. user is focused elsewhere).
-        webView?.setNeedsDisplay(webView!.bounds)
+        if let wv = webView { wv.setNeedsDisplay(wv.bounds) }
         // Restart the watcher: after an atomic write (temp → rename) the old fd
         // points to a stale inode.  Re-opening gives us the new one.
         startFileWatching()

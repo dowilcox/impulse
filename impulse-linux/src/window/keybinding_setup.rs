@@ -11,8 +11,7 @@ use crate::terminal;
 use crate::terminal_container;
 
 use super::{
-    add_shortcut, build_window, file_path_to_uri, get_active_cwd, run_commands_on_save,
-    send_diff_decorations, show_go_to_line_dialog, Command,
+    add_shortcut, build_window, ensure_file_uri, get_active_cwd, show_go_to_line_dialog, Command,
 };
 
 /// Install the capture-phase EventControllerKey on the window.
@@ -118,10 +117,13 @@ pub(super) fn setup_capture_phase_keys(
     let md_preview_tab_view = tab_view.clone();
     let md_preview_status_bar = ctx.status_bar.clone();
 
-    let split_setup = setup_terminal_signals.clone();
-    let split_settings = settings.clone();
-    let split_copy_flag = term_ctx.copy_on_select.clone();
-    let split_shell_cache = term_ctx.shell_cache.clone();
+    let capture_split = super::make_split_terminal(
+        &tab_view,
+        setup_terminal_signals,
+        settings,
+        &term_ctx.copy_on_select,
+        &term_ctx.shell_cache,
+    );
 
     let capture_key_ctrl = gtk4::EventControllerKey::new();
     capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -171,35 +173,13 @@ pub(super) fn setup_capture_phase_keys(
             if terminal_container::get_active_terminal(&child).is_some() {
                 if let Some(ref accel) = split_h_accel {
                     if keybindings::matches_key(accel, key, modifiers) {
-                        let setup = split_setup.clone();
-                        let s = split_settings.borrow();
-                        let theme = crate::theme::get_theme(&s.color_scheme);
-                        terminal_container::split_terminal(
-                            &child,
-                            gtk4::Orientation::Vertical,
-                            &|term| setup(term),
-                            &s,
-                            theme,
-                            split_copy_flag.clone(),
-                            &split_shell_cache,
-                        );
+                        capture_split(gtk4::Orientation::Vertical);
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
                 if let Some(ref accel) = split_v_accel {
                     if keybindings::matches_key(accel, key, modifiers) {
-                        let setup = split_setup.clone();
-                        let s = split_settings.borrow();
-                        let theme = crate::theme::get_theme(&s.color_scheme);
-                        terminal_container::split_terminal(
-                            &child,
-                            gtk4::Orientation::Horizontal,
-                            &|term| setup(term),
-                            &s,
-                            theme,
-                            split_copy_flag.clone(),
-                            &split_shell_cache,
-                        );
+                        capture_split(gtk4::Orientation::Horizontal);
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
@@ -461,9 +441,11 @@ pub(super) fn setup_shortcut_controller(
             &keybindings::get_accel("font_increase", &kb_overrides),
             move || {
                 let new_size = font_size.get() + 1;
-                font_size.set(new_size);
-                let family = settings.borrow().terminal_font_family.clone();
-                super::apply_font_size_to_all_terminals(&tab_view, new_size, &family);
+                if (6..=72).contains(&new_size) {
+                    font_size.set(new_size);
+                    let family = settings.borrow().terminal_font_family.clone();
+                    super::apply_font_size_to_all_terminals(&tab_view, new_size, &family);
+                }
             },
         );
     }
@@ -478,7 +460,7 @@ pub(super) fn setup_shortcut_controller(
             &keybindings::get_accel("font_decrease", &kb_overrides),
             move || {
                 let new_size = font_size.get() - 1;
-                if new_size > 0 {
+                if (6..=72).contains(&new_size) {
                     font_size.set(new_size);
                     let family = settings.borrow().terminal_font_family.clone();
                     super::apply_font_size_to_all_terminals(&tab_view, new_size, &family);
@@ -577,8 +559,7 @@ pub(super) fn setup_shortcut_controller(
                                     page.set_title(filename);
                                     // LSP: send didSave
                                     if let Err(e) = lsp_tx.try_send(LspRequest::DidSave {
-                                        uri: file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path)),
+                                        uri: ensure_file_uri(&path),
                                     }) {
                                         log::warn!(
                                             "LSP request channel full, dropping request: {}",
@@ -590,52 +571,7 @@ pub(super) fn setup_shortcut_controller(
                                     toast_overlay.add_toast(toast);
                                     // Run commands-on-save in a background thread
                                     let commands = settings.borrow().commands_on_save.clone();
-                                    let save_path = path.clone();
-                                    std::thread::spawn(move || {
-                                        if let Err(e) = std::panic::catch_unwind(
-                                            std::panic::AssertUnwindSafe(|| {
-                                                let needs_reload =
-                                                    run_commands_on_save(&save_path, &commands);
-                                                if needs_reload {
-                                                    let reload_path = save_path.clone();
-                                                    gtk4::glib::MainContext::default().invoke(
-                                                        move || {
-                                                            if let Some(handle) =
-                                                                crate::editor::get_handle(
-                                                                    &reload_path,
-                                                                )
-                                                            {
-                                                                if let Ok(new_content) =
-                                                                    std::fs::read_to_string(
-                                                                        &reload_path,
-                                                                    )
-                                                                {
-                                                                    let lang = handle
-                                                                        .language
-                                                                        .borrow()
-                                                                        .clone();
-                                                                    handle
-                                                                        .suppress_next_modify
-                                                                        .set(true);
-                                                                    handle.open_file(
-                                                                        &reload_path,
-                                                                        &new_content,
-                                                                        &lang,
-                                                                    );
-                                                                    send_diff_decorations(
-                                                                        &handle,
-                                                                        &reload_path,
-                                                                    );
-                                                                }
-                                                            }
-                                                        },
-                                                    );
-                                                }
-                                            }),
-                                        ) {
-                                            log::error!("Background thread panicked: {:?}", e);
-                                        }
-                                    });
+                                    super::spawn_commands_on_save(path.clone(), commands);
                                 }
                                 Err(e) => {
                                     let toast = adw::Toast::new(&format!("Error saving: {}", e));
@@ -652,65 +588,33 @@ pub(super) fn setup_shortcut_controller(
 
     // Ctrl+Shift+E: Split terminal horizontally (top/bottom)
     {
-        let tab_view = tab_view.clone();
-        let setup_terminal_signals = setup_terminal_signals.clone();
-        let settings = settings.clone();
-        let copy_on_select_flag = term_ctx.copy_on_select.clone();
-        let shell_cache = term_ctx.shell_cache.clone();
+        let split = super::make_split_terminal(
+            tab_view,
+            setup_terminal_signals,
+            settings,
+            &term_ctx.copy_on_select,
+            &term_ctx.shell_cache,
+        );
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("split_horizontal", &kb_overrides),
-            move || {
-                if let Some(page) = tab_view.selected_page() {
-                    let child = page.child();
-                    let setup = setup_terminal_signals.clone();
-                    let s = settings.borrow();
-                    let theme = crate::theme::get_theme(&s.color_scheme);
-                    terminal_container::split_terminal(
-                        &child,
-                        gtk4::Orientation::Vertical,
-                        &|term| {
-                            setup(term);
-                        },
-                        &s,
-                        theme,
-                        copy_on_select_flag.clone(),
-                        &shell_cache,
-                    );
-                }
-            },
+            move || split(gtk4::Orientation::Vertical),
         );
     }
 
     // Ctrl+Shift+O: Split terminal vertically (side by side)
     {
-        let tab_view = tab_view.clone();
-        let setup_terminal_signals = setup_terminal_signals.clone();
-        let settings = settings.clone();
-        let copy_on_select_flag = term_ctx.copy_on_select.clone();
-        let shell_cache = term_ctx.shell_cache.clone();
+        let split = super::make_split_terminal(
+            tab_view,
+            setup_terminal_signals,
+            settings,
+            &term_ctx.copy_on_select,
+            &term_ctx.shell_cache,
+        );
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("split_vertical", &kb_overrides),
-            move || {
-                if let Some(page) = tab_view.selected_page() {
-                    let child = page.child();
-                    let setup = setup_terminal_signals.clone();
-                    let s = settings.borrow();
-                    let theme = crate::theme::get_theme(&s.color_scheme);
-                    terminal_container::split_terminal(
-                        &child,
-                        gtk4::Orientation::Horizontal,
-                        &|term| {
-                            setup(term);
-                        },
-                        &s,
-                        theme,
-                        copy_on_select_flag.clone(),
-                        &shell_cache,
-                    );
-                }
-            },
+            move || split(gtk4::Orientation::Horizontal),
         );
     }
 

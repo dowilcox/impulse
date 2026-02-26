@@ -209,15 +209,7 @@ final class TabManager: NSObject {
     /// support) and makes it active.
     func addTerminalTab(directory: String? = nil) {
         let dir = directory ?? NSHomeDirectory()
-        let termSettings = TerminalSettings(
-            terminalFontSize: settings.terminalFontSize,
-            terminalFontFamily: settings.terminalFontFamily,
-            terminalCursorShape: settings.terminalCursorShape,
-            terminalCursorBlink: settings.terminalCursorBlink,
-            terminalScrollback: settings.terminalScrollback,
-            lastDirectory: dir,
-            terminalCopyOnSelect: settings.terminalCopyOnSelect
-        )
+        let termSettings = settings.terminalSettings(directory: dir)
         let termTheme = TerminalTheme(
             bg: theme.bgHex,
             fg: theme.fgHex,
@@ -465,8 +457,32 @@ final class TabManager: NSObject {
     }
 
     /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
+    /// If any closeable editors have unsaved changes, a single confirmation
+    /// alert is shown listing all unsaved files.
     func closeOtherTabs(keepIndex: Int) {
         guard keepIndex >= 0, keepIndex < tabs.count else { return }
+
+        // Collect modified editors that would be closed.
+        var unsavedNames: [String] = []
+        for (i, tab) in tabs.enumerated() {
+            if i == keepIndex || pinnedTabs[i] { continue }
+            if case .editor(let e) = tab, e.isModified {
+                let name = e.filePath.map { ($0 as NSString).lastPathComponent } ?? "Untitled"
+                unsavedNames.append(name)
+            }
+        }
+
+        if !unsavedNames.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Unsaved Changes"
+            alert.informativeText = "The following files have unsaved changes:\n\(unsavedNames.joined(separator: "\n"))\n\nDiscard changes and close?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Discard & Close")
+            alert.addButton(withTitle: "Cancel")
+
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else { return }
+        }
 
         // Remember the tab entry to keep so we can find it after removal.
         let keepView = tabs[keepIndex].view
@@ -580,6 +596,28 @@ final class TabManager: NSObject {
         entry.focus()
 
         NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+    }
+
+    // MARK: - Selected Tab Helpers
+
+    /// The currently selected tab entry, or `nil` if no tabs are open.
+    var selectedTab: TabEntry? {
+        guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
+        return tabs[selectedIndex]
+    }
+
+    /// The currently selected terminal container, or `nil` if the selection is
+    /// not a terminal tab.
+    var selectedTerminal: TerminalContainer? {
+        if case .terminal(let tc) = selectedTab { return tc }
+        return nil
+    }
+
+    /// The currently selected editor tab, or `nil` if the selection is not an
+    /// editor tab.
+    var selectedEditor: EditorTab? {
+        if case .editor(let et) = selectedTab { return et }
+        return nil
     }
 
     // MARK: - Ownership Queries

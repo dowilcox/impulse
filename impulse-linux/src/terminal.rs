@@ -8,6 +8,16 @@ use vte4::prelude::*;
 
 use crate::theme::ThemeColors;
 
+const FILTERED_LD_VARS: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "LD_DEBUG",
+    "LD_PROFILE",
+    "LD_DYNAMIC_WEAK",
+    "LD_BIND_NOW",
+];
+
 /// Cached shell spawn parameters, computed once and reused for every new tab.
 pub struct ShellSpawnCache {
     shell_name: String,
@@ -66,44 +76,14 @@ pub fn create_terminal(
 ) -> vte4::Terminal {
     let terminal = vte4::Terminal::new();
 
-    // Appearance
-    let palette = theme.terminal_palette_rgba();
-    let palette_refs: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
-    terminal.set_colors(
-        Some(&theme.fg_rgba()),
-        Some(&theme.bg_rgba()),
-        &palette_refs,
-    );
-    let font_family = if !settings.terminal_font_family.is_empty() {
-        &settings.terminal_font_family
-    } else {
-        "monospace"
-    };
-    let mut font_desc = gtk4::pango::FontDescription::from_string(font_family);
-    font_desc.set_size(settings.terminal_font_size * 1024);
-    terminal.set_font_desc(Some(&font_desc));
-    let cursor_blink = if settings.terminal_cursor_blink {
-        vte4::CursorBlinkMode::On
-    } else {
-        vte4::CursorBlinkMode::Off
-    };
-    terminal.set_cursor_blink_mode(cursor_blink);
-    let cursor_shape = match settings.terminal_cursor_shape.as_str() {
-        "ibeam" => vte4::CursorShape::Ibeam,
-        "underline" => vte4::CursorShape::Underline,
-        _ => vte4::CursorShape::Block,
-    };
-    terminal.set_cursor_shape(cursor_shape);
-    terminal.set_scrollback_lines(settings.terminal_scrollback);
-    terminal.set_scroll_on_output(settings.terminal_scroll_on_output);
+    // Apply shared visual properties (font, colors, scrollback, cursor, etc.)
+    apply_settings(&terminal, settings, theme, &copy_on_select_flag);
+
+    // Immutable init-time properties
     terminal.set_scroll_on_keystroke(true);
     terminal.set_mouse_autohide(true);
-    terminal.set_allow_hyperlink(settings.terminal_allow_hyperlink);
-    terminal.set_bold_is_bright(settings.terminal_bold_is_bright);
-    terminal.set_audible_bell(settings.terminal_bell);
 
     // Copy-on-select: always connect the signal, check the flag inside
-    copy_on_select_flag.set(settings.terminal_copy_on_select);
     {
         let flag = copy_on_select_flag;
         terminal.connect_selection_changed(move |term| {
@@ -261,18 +241,7 @@ pub fn spawn_command(
     // Inherit current environment, filtering out dangerous linker
     // environment variables to prevent library injection in child processes
     let envv: Vec<String> = std::env::vars()
-        .filter(|(k, _)| {
-            !matches!(
-                k.as_str(),
-                "LD_PRELOAD"
-                    | "LD_LIBRARY_PATH"
-                    | "LD_AUDIT"
-                    | "LD_DEBUG"
-                    | "LD_PROFILE"
-                    | "LD_DYNAMIC_WEAK"
-                    | "LD_BIND_NOW"
-            )
-        })
+        .filter(|(k, _)| !FILTERED_LD_VARS.contains(&k.as_str()))
         .map(|(k, v)| format!("{}={}", k, v))
         .collect();
     let envv_refs: Vec<&str> = envv.iter().map(|s| s.as_str()).collect();
@@ -308,16 +277,7 @@ fn build_spawn_params(
     // Inherit current environment, filtering out dangerous linker
     // environment variables to prevent library injection in child processes
     for (key, value) in std::env::vars() {
-        if matches!(
-            key.as_str(),
-            "LD_PRELOAD"
-                | "LD_LIBRARY_PATH"
-                | "LD_AUDIT"
-                | "LD_DEBUG"
-                | "LD_PROFILE"
-                | "LD_DYNAMIC_WEAK"
-                | "LD_BIND_NOW"
-        ) {
+        if FILTERED_LD_VARS.contains(&key.as_str()) {
             continue;
         }
         envv.push(format!("{}={}", key, value));

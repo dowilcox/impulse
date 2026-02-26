@@ -238,38 +238,50 @@ final class FileTreeView: NSView {
         return rootPath
     }
 
-    /// Set (or change) the root project directory. Rebuilds the entire tree,
-    /// fetches git status, reloads the outline view, starts watching for
-    /// filesystem changes, and restores previously expanded folders.
+    /// Set (or change) the root project directory. Shows the current (possibly
+    /// empty) state immediately, then rebuilds the tree on a background queue
+    /// to avoid blocking the main thread on large directories.
     func setRootPath(_ path: String) {
         rootPath = path
-        rootNodes = FileTreeNode.buildTree(rootPath: path, showHidden: showHidden)
 
         // Start root watcher first — this stops all previous watchers.
         startWatching(path: path)
 
-        // Suppress expand/collapse animations and heavy delegate work
-        // during the full reload so the tree doesn't visibly flash.
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0
-        isBulkRestoring = true
+        // Show existing nodes (may be empty on first load) while background
+        // build runs, so the UI isn't frozen.
         outlineView.reloadData()
 
-        // Restore persisted expansion state.
-        let savedPaths = loadExpandedPaths()
-        if !savedPaths.isEmpty {
-            restoreExpandedPaths(savedPaths, in: rootNodes)
+        let hidden = showHidden
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let nodes = FileTreeNode.buildTree(rootPath: path, showHidden: hidden)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.rootPath == path else { return }
+                self.rootNodes = nodes
+
+                // Suppress expand/collapse animations and heavy delegate work
+                // during the full reload so the tree doesn't visibly flash.
+                NSAnimationContext.beginGrouping()
+                NSAnimationContext.current.duration = 0
+                self.isBulkRestoring = true
+                self.outlineView.reloadData()
+
+                // Restore persisted expansion state.
+                let savedPaths = self.loadExpandedPaths()
+                if !savedPaths.isEmpty {
+                    self.restoreExpandedPaths(savedPaths, in: self.rootNodes)
+                }
+                self.isBulkRestoring = false
+                NSAnimationContext.endGrouping()
+
+                self.rebuildNodeIndex()
+
+                // Batch-set up subdirectory watchers for all expanded directories.
+                self.watchExpandedSubdirectories(self.rootNodes)
+
+                // Children loaded during bulk restore skipped git status — refresh now.
+                self.refreshGitStatus()
+            }
         }
-        isBulkRestoring = false
-        NSAnimationContext.endGrouping()
-
-        rebuildNodeIndex()
-
-        // Batch-set up subdirectory watchers for all expanded directories.
-        watchExpandedSubdirectories(rootNodes)
-
-        // Children loaded during bulk restore skipped git status — refresh now.
-        refreshGitStatus()
     }
 
     /// Accept a pre-built tree (constructed off the main thread) and update

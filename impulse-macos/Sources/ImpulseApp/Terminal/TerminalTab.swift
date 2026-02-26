@@ -142,27 +142,13 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         }
 
         // Build a space-separated, shell-escaped list of file paths.
-        let paths = urls.map { shellEscape($0.path) }.joined(separator: " ")
+        let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
         guard !paths.isEmpty else { return false }
 
         // Send the escaped paths directly to the terminal.
         let bytes = Array(paths.utf8)
         terminalView.send(data: bytes[...])
         return true
-    }
-
-    /// Characters considered safe for shell paths (no escaping needed).
-    private static let shellSafeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-"))
-
-    /// Shell-escapes a file path for safe pasting into a terminal.
-    private func shellEscape(_ path: String) -> String {
-        // If the path contains no special characters, return as-is.
-        if path.unicodeScalars.allSatisfy({ Self.shellSafeChars.contains($0) }) {
-            return path
-        }
-        // Otherwise, wrap in single quotes with internal single quotes escaped.
-        let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
-        return "'\(escaped)'"
     }
 
     // MARK: Auto Layout

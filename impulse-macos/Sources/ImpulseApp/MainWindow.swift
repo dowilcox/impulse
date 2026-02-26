@@ -937,9 +937,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Toggles the terminal search bar visibility.
     func toggleTerminalSearch() {
         // Only allow terminal search on terminal tabs.
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .terminal = tabManager.tabs[tabManager.selectedIndex] else { return }
+        guard tabManager.selectedTerminal != nil else { return }
 
         termSearchBarVisible.toggle()
         if termSearchBarVisible {
@@ -959,9 +957,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         termSearchField.stringValue = ""
 
         // Return focus to the active terminal.
-        if tabManager.selectedIndex >= 0,
-           tabManager.selectedIndex < tabManager.tabs.count,
-           case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+        if let container = tabManager.selectedTerminal,
            let terminal = container.activeTerminal {
             // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
             terminal.focus()
@@ -969,9 +965,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func termSearchFieldChanged(_ sender: NSSearchField) {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+        guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
 
         // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
@@ -979,18 +973,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func termSearchNext(_ sender: Any?) {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+        guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
         // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
         let _ = termSearchField.stringValue
     }
 
     @objc private func termSearchPrev(_ sender: Any?) {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+        guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
         // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
         let _ = termSearchField.stringValue
@@ -1025,9 +1015,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 useSpaces: settings.useSpaces
             )
             // Show/hide preview button based on file type
-            if tabManager.selectedIndex >= 0,
-               tabManager.selectedIndex < tabManager.tabs.count,
-               case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
+            if let editor = tabManager.selectedEditor,
                let fp = editor.filePath,
                EditorTab.isPreviewableFile(fp) {
                 statusBar.showPreviewButton(isPreviewing: editor.isPreviewing)
@@ -1172,6 +1160,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             guard let window = self.window else { return }
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard let self else { return }
+                // Re-find the tab by identity — the index may be stale if
+                // other tabs were closed while the alert was visible.
+                guard let currentIndex = self.tabManager.tabs.firstIndex(where: {
+                    if case .editor(let e) = $0 { return e === editor }
+                    return false
+                }) else { return }
                 switch response {
                 case .alertFirstButtonReturn:
                     // Save & Close
@@ -1180,14 +1174,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                         self.untrackEditorTab(forPath: path)
                     }
                     self.lspDidClose(editor: editor)
-                    self.tabManager.closeTab(index: index)
+                    self.tabManager.closeTab(index: currentIndex)
                 case .alertSecondButtonReturn:
                     // Don't Save
                     if let path = editor.filePath {
                         self.untrackEditorTab(forPath: path)
                     }
                     self.lspDidClose(editor: editor)
-                    self.tabManager.closeTab(index: index)
+                    self.tabManager.closeTab(index: currentIndex)
                 default:
                     // Cancel — do nothing
                     break
@@ -1223,17 +1217,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 // If a directory was specified (e.g. "Open in Terminal" from file tree),
                 // navigate the new terminal to that directory.
                 if let dir = notification.userInfo?["directory"] as? String,
-                   self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                   case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex],
+                   let container = self.tabManager.selectedTerminal,
                    let terminal = container.activeTerminal {
-                    let escapedDir: String
-                    if dir.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-")).contains($0) }) {
-                        escapedDir = dir
-                    } else {
-                        escapedDir = "'" + dir.replacingOccurrences(of: "'", with: "'\\''") + "'"
-                    }
-                    terminal.sendCommand("cd \(escapedDir)")
+                    terminal.sendCommand("cd \(dir.shellEscaped)")
                 }
             }
         )
@@ -1264,62 +1250,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 // Rebuild the file tree when the active tab's directory context differs
                 // from the current root. Terminal tabs use their CWD; editor tabs use
                 // the parent directory of the open file.
-                if self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                    let tab = self.tabManager.tabs[self.tabManager.selectedIndex]
+                if let tab = self.tabManager.selectedTab {
                     let dir: String?
                     switch tab {
                     case .terminal(let container):
                         dir = container.activeTerminal?.currentWorkingDirectory
                     case .editor(let editor):
-                        // Restore the sidebar directory that was active when this
-                        // editor tab was opened, so each editor keeps its context.
                         dir = editor.projectDirectory
                     case .imagePreview:
                         dir = nil
                     }
                     if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
-                        // Save the current tree into the cache before switching away.
-                        if !self.fileTreeRootPath.isEmpty {
-                            self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
-                        }
-                        self.fileTreeRootPath = dir
-                        self.searchPanel.setRootPath(dir)
-
-                        // If we have a cached tree for this directory, show it
-                        // immediately and refresh in the background.
-                        if let cached = self.fileTreeCache[dir] {
-                            self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
-                            self.fileTreeCacheTouch(key: dir)
-                        }
-
-                        let showHidden = self.fileTreeView.showHidden
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self else { return }
-                                // Only update if we're still on this directory.
-                                guard self.fileTreeRootPath == dir else { return }
-                                self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
-                                self.fileTreeCacheInsert(key: dir, nodes: nodes)
-                            }
-                        }
+                        self.switchFileTreeRoot(dir, updateStatusBar: false)
                     }
                 }
                 // Refresh git diff decorations for the newly-active editor tab
                 // (they may be stale after terminal git operations).
-                if self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                   case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                if let editor = self.tabManager.selectedEditor {
                     self.applyGitDiffDecorations(editor: editor)
                 }
                 // Hide terminal search bar when switching away from a terminal tab.
-                if self.termSearchBarVisible,
-                   self.tabManager.selectedIndex >= 0,
-                   self.tabManager.selectedIndex < self.tabManager.tabs.count {
-                    if case .terminal = self.tabManager.tabs[self.tabManager.selectedIndex] {
-                        // Still on a terminal tab — keep search bar visible.
-                    } else {
+                if self.termSearchBarVisible {
+                    if self.tabManager.selectedTerminal == nil {
                         self.hideTerminalSearch()
                     }
                 }
@@ -1332,9 +1284,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     self.tabManager.addEditorTab(path: path, projectDirectory: self.fileTreeRootPath)
                     self.lspDidOpenIfNeeded(path: path)
                     // Navigate to specific line if provided (e.g. from search results).
-                    if self.tabManager.selectedIndex >= 0,
-                       self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                       case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                    if let editor = self.tabManager.selectedEditor {
                         // Track the editor tab in the path dictionary.
                         self.trackEditorTab(editor, forPath: path)
                         if let line = notification.userInfo?["line"] as? UInt32 {
@@ -1351,6 +1301,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .editorFileOpened, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
                 if let editor = notification.object as? EditorTab {
+                    guard self.tabManager.ownsEditor(editor) else { return }
                     // Send LSP didOpen now that the tab and Monaco model are ready.
                     if let path = editor.filePath {
                         self.lspDidOpenIfNeeded(path: path)
@@ -1395,18 +1346,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .impulseFocusPrevSplit, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true else { return }
-                guard self.tabManager.selectedIndex >= 0,
-                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                      case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+                guard let container = self.tabManager.selectedTerminal else { return }
                 container.focusPreviousSplit()
             }
         )
         notificationObservers.append(
             nc.addObserver(forName: .impulseFocusNextSplit, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true else { return }
-                guard self.tabManager.selectedIndex >= 0,
-                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                      case .terminal(let container) = self.tabManager.tabs[self.tabManager.selectedIndex] else { return }
+                guard let container = self.tabManager.selectedTerminal else { return }
                 container.focusNextSplit()
             }
         )
@@ -1426,43 +1373,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 guard let terminal = notification.object as? TerminalTab,
                       self.tabManager.ownsTerminal(terminal) else { return }
                 if let dir = notification.userInfo?["directory"] as? String {
-                    // Save current tree to cache before switching.
-                    if !self.fileTreeRootPath.isEmpty {
-                        self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
-                    }
-                    self.fileTreeRootPath = dir
-                    self.searchPanel.setRootPath(dir)
-                    self.invalidateGitBranchCache()
-                    // Immediate UI update with no branch yet.
-                    self.statusBar.updateForTerminal(
-                        cwd: dir,
-                        gitBranch: nil,
-                        shellName: ImpulseCore.getUserLoginShellName()
-                    )
-
-                    // Show cached tree instantly if available.
-                    if let cached = self.fileTreeCache[dir] {
-                        self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
-                        self.fileTreeCacheTouch(key: dir)
-                    }
-
-                    // Refresh from disk in the background.
-                    let showHidden = self.fileTreeView.showHidden
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                        let branch = ImpulseCore.gitBranch(path: dir)
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self else { return }
-                            guard self.fileTreeRootPath == dir else { return }
-                            self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
-                            self.fileTreeCacheInsert(key: dir, nodes: nodes)
-                            self.statusBar.updateForTerminal(
-                                cwd: dir,
-                                gitBranch: branch,
-                                shellName: ImpulseCore.getUserLoginShellName()
-                            )
-                        }
-                    }
+                    self.switchFileTreeRoot(dir)
                 }
             }
         )
@@ -1472,6 +1383,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             nc.addObserver(forName: .impulseShowCommandPalette, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true, let window = self.window else { return }
                 self.commandPalette.show(relativeTo: window)
+            }
+        )
+
+        // Quick Open — show sidebar in search mode
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseQuickOpen, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                if !self.sidebarVisible {
+                    self.toggleSidebar()
+                }
+                self.searchToggleClicked(nil)
+            }
+        )
+
+        // Install LSP — install managed web LSP servers
+        notificationObservers.append(
+            nc.addObserver(forName: .impulseInstallLsp, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = ImpulseCore.lspInstall()
+                    DispatchQueue.main.async {
+                        let alert = NSAlert()
+                        switch result {
+                        case .success(let path):
+                            alert.messageText = "LSP Servers Installed"
+                            alert.informativeText = "Web LSP servers installed to \(path)"
+                            alert.alertStyle = .informational
+                        case .failure(let error):
+                            alert.messageText = "LSP Install Failed"
+                            alert.informativeText = error.message
+                            alert.alertStyle = .warning
+                        }
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
+                }
             }
         )
 
@@ -1490,9 +1437,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
                 // Menu path: save the currently selected editor tab.
                 guard self.window?.isKeyWindow == true else { return }
-                guard self.tabManager.selectedIndex >= 0,
-                      self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
-                if case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex] {
+                if let editor = self.tabManager.selectedEditor {
                     self.saveEditorTab(editor)
                 }
             }
@@ -1502,11 +1447,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         notificationObservers.append(
             nc.addObserver(forName: .impulseFind, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true else { return }
-                guard self.tabManager.selectedIndex >= 0,
-                      self.tabManager.selectedIndex < self.tabManager.tabs.count else { return }
-                switch self.tabManager.tabs[self.tabManager.selectedIndex] {
+                guard let tab = self.tabManager.selectedTab else { return }
+                switch tab {
                 case .editor(let editor):
-                    editor.webView.evaluateJavaScript(
+                    editor.webView?.evaluateJavaScript(
                         "editor.getAction('actions.find').run()",
                         completionHandler: nil
                     )
@@ -1525,9 +1469,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 guard let line = notification.userInfo?["line"] as? UInt32,
                       let col = notification.userInfo?["column"] as? UInt32 else { return }
                 // Only update if the notification came from the active editor tab
-                guard self.tabManager.selectedIndex >= 0,
-                      self.tabManager.selectedIndex < self.tabManager.tabs.count,
-                      case .editor(let editor) = self.tabManager.tabs[self.tabManager.selectedIndex],
+                guard let editor = self.tabManager.selectedEditor,
                       editor === notification.object as? EditorTab else { return }
                 let filePath = editor.filePath ?? ""
                 let cwd = editor.projectDirectory
@@ -1579,37 +1521,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                                 let activeTerminal = container.terminals[container.activeTerminalIndex]
                                 let dir = activeTerminal.currentWorkingDirectory
                                 if !dir.isEmpty {
-                                    if !self.fileTreeRootPath.isEmpty {
-                                        self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
-                                    }
-                                    self.fileTreeRootPath = dir
-                                    self.searchPanel.setRootPath(dir)
-                                    self.invalidateGitBranchCache()
-                                    self.statusBar.updateForTerminal(
-                                        cwd: dir,
-                                        gitBranch: nil,
-                                        shellName: ImpulseCore.getUserLoginShellName()
-                                    )
-                                    if let cached = self.fileTreeCache[dir] {
-                                        self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
-                                        self.fileTreeCacheTouch(key: dir)
-                                    }
-                                    let showHidden = self.fileTreeView.showHidden
-                                    DispatchQueue.global(qos: .userInitiated).async {
-                                        let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-                                        let branch = ImpulseCore.gitBranch(path: dir)
-                                        DispatchQueue.main.async { [weak self] in
-                                            guard let self else { return }
-                                            guard self.fileTreeRootPath == dir else { return }
-                                            self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
-                                            self.fileTreeCacheInsert(key: dir, nodes: nodes)
-                                            self.statusBar.updateForTerminal(
-                                                cwd: dir,
-                                                gitBranch: branch,
-                                                shellName: ImpulseCore.getUserLoginShellName()
-                                            )
-                                        }
-                                    }
+                                    self.switchFileTreeRoot(dir)
                                 }
                             }
                         }
@@ -1994,29 +1906,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Executes a custom keybinding command by opening a new terminal tab
     /// with the command running in it, using the active tab's working directory.
     private func executeCustomCommand(command: String, args: [String]) {
-        // Shell-escape arguments that contain special characters.
-        let escapedArgs = args.map { arg -> String in
-            if arg.rangeOfCharacter(from: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_.-")).inverted) != nil {
-                return "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
-            }
-            return arg
-        }
-        let escapedCommand: String
-        if command.rangeOfCharacter(from: CharacterSet.alphanumerics
-            .union(CharacterSet(charactersIn: "/_.-")).inverted) != nil {
-            escapedCommand = "'" + command.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        } else {
-            escapedCommand = command
-        }
-        let fullCommand = ([escapedCommand] + escapedArgs).joined(separator: " ")
+        let fullCommand = ([command.shellEscaped] + args.map(\.shellEscaped)).joined(separator: " ")
 
         // Get the CWD from the active tab (terminal CWD or editor file's parent)
         let cwd = getActiveCwd()
 
         tabManager.addTerminalTab(directory: cwd)
-        if tabManager.selectedIndex >= 0,
-           tabManager.selectedIndex < tabManager.tabs.count,
-           case .terminal(let container) = tabManager.tabs[tabManager.selectedIndex],
+        if let container = tabManager.selectedTerminal,
            let terminal = container.activeTerminal {
             terminal.sendCommand(fullCommand)
         }
@@ -2025,9 +1921,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Returns the current working directory from the active tab:
     /// terminal CWD, or the parent directory of the active editor file.
     private func getActiveCwd() -> String? {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count else { return nil }
-        switch tabManager.tabs[tabManager.selectedIndex] {
+        guard let tab = tabManager.selectedTab else { return nil }
+        switch tab {
         case .terminal(let container):
             if let cwd = container.activeTerminal?.currentWorkingDirectory, !cwd.isEmpty {
                 return cwd
@@ -2077,9 +1972,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Toggle preview for the active editor tab (markdown or SVG).
     private func togglePreview() {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
+        guard let editor = tabManager.selectedEditor,
               let fp = editor.filePath,
               EditorTab.isPreviewableFile(fp) else { return }
 
@@ -2090,9 +1983,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     private func showGoToLineDialog() {
-        guard tabManager.selectedIndex >= 0,
-              tabManager.selectedIndex < tabManager.tabs.count,
-              case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex] else { return }
+        guard let editor = tabManager.selectedEditor else { return }
 
         let alert = NSAlert()
         alert.messageText = "Go to Line"
@@ -2153,15 +2044,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             fontSize: UInt32(settings.fontSize),
             fontFamily: settings.fontFamily
         )
-        let termSettings = TerminalSettings(
-            terminalFontSize: settings.terminalFontSize,
-            terminalFontFamily: settings.terminalFontFamily,
-            terminalCursorShape: settings.terminalCursorShape,
-            terminalCursorBlink: settings.terminalCursorBlink,
-            terminalScrollback: settings.terminalScrollback,
-            lastDirectory: settings.lastDirectory,
-            terminalCopyOnSelect: settings.terminalCopyOnSelect
-        )
+        let termSettings = settings.terminalSettings()
 
         for tab in tabManager.tabs {
             switch tab {
@@ -2180,38 +2063,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Re-applies all settings to every open tab. Called when settings change
     /// via the preferences window.
     private func applyAllSettings() {
-        let editorOptions = EditorOptions(
-            fontSize: UInt32(settings.fontSize),
-            fontFamily: settings.fontFamily,
-            tabSize: UInt32(settings.tabWidth),
-            insertSpaces: settings.useSpaces,
-            wordWrap: settings.wordWrap ? "on" : "off",
-            minimapEnabled: settings.minimapEnabled,
-            lineNumbers: settings.showLineNumbers ? "on" : "off",
-            renderWhitespace: settings.renderWhitespace,
-            renderLineHighlight: settings.highlightCurrentLine ? "line" : "none",
-            rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
-            stickyScroll: settings.stickyScroll,
-            bracketPairColorization: settings.bracketPairColorization,
-            indentGuides: settings.indentGuides,
-            fontLigatures: settings.fontLigatures,
-            folding: settings.folding,
-            scrollBeyondLastLine: settings.scrollBeyondLastLine,
-            smoothScrolling: settings.smoothScrolling,
-            cursorStyle: settings.editorCursorStyle,
-            cursorBlinking: settings.editorCursorBlinking,
-            lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
-            autoClosingBrackets: settings.editorAutoClosingBrackets
-        )
-        let termSettings = TerminalSettings(
-            terminalFontSize: settings.terminalFontSize,
-            terminalFontFamily: settings.terminalFontFamily,
-            terminalCursorShape: settings.terminalCursorShape,
-            terminalCursorBlink: settings.terminalCursorBlink,
-            terminalScrollback: settings.terminalScrollback,
-            lastDirectory: settings.lastDirectory,
-            terminalCopyOnSelect: settings.terminalCopyOnSelect
-        )
+        let editorOptions = tabManager.editorOptionsFromSettings()
+        let termSettings = settings.terminalSettings()
 
         for tab in tabManager.tabs {
             switch tab {
@@ -2237,6 +2090,57 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         }
     }
 
+    // MARK: - File Tree Root Switching
+
+    /// Switches the sidebar file tree to a new directory. Caches the current
+    /// tree, shows a cached tree instantly if available, then rebuilds from
+    /// disk on a background queue and updates the status bar with the git
+    /// branch.
+    private func switchFileTreeRoot(_ dir: String, updateStatusBar: Bool = true) {
+        // Cache current tree before switching away.
+        if !fileTreeRootPath.isEmpty {
+            fileTreeCacheInsert(key: fileTreeRootPath, nodes: fileTreeView.rootNodes)
+        }
+        fileTreeRootPath = dir
+        searchPanel.setRootPath(dir)
+        invalidateGitBranchCache()
+
+        // Immediate UI update with no branch yet.
+        if updateStatusBar {
+            statusBar.updateForTerminal(
+                cwd: dir,
+                gitBranch: nil,
+                shellName: ImpulseCore.getUserLoginShellName()
+            )
+        }
+
+        // Show cached tree instantly if available.
+        if let cached = fileTreeCache[dir] {
+            fileTreeView.updateTree(nodes: cached, rootPath: dir)
+            fileTreeCacheTouch(key: dir)
+        }
+
+        // Refresh from disk in the background.
+        let showHidden = fileTreeView.showHidden
+        DispatchQueue.global(qos: .userInitiated).async {
+            let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+            let branch = ImpulseCore.gitBranch(path: dir)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.fileTreeRootPath == dir else { return }
+                self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                self.fileTreeCacheInsert(key: dir, nodes: nodes)
+                if updateStatusBar {
+                    self.statusBar.updateForTerminal(
+                        cwd: dir,
+                        gitBranch: branch,
+                        shellName: ImpulseCore.getUserLoginShellName()
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - Git Branch Cache
 
     /// Returns the git branch for a directory, using a cache to avoid
@@ -2245,9 +2149,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         if dir == cachedGitBranchDir {
             return cachedGitBranch
         }
+        // Cache miss — dispatch the FFI call to a background queue so we don't
+        // block the main thread (this is called on every cursor move for editors).
+        // Return nil immediately and update the status bar asynchronously.
         cachedGitBranchDir = dir
-        cachedGitBranch = ImpulseCore.gitBranch(path: dir)
-        return cachedGitBranch
+        cachedGitBranch = nil
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let branch = ImpulseCore.gitBranch(path: dir)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.cachedGitBranchDir == dir else { return }
+                self.cachedGitBranch = branch
+                // Refresh the status bar with the resolved branch.
+                self.updateStatusBar()
+            }
+        }
+        return nil
     }
 
     /// Invalidates the git branch cache (e.g. after a save or CWD change).
@@ -2302,9 +2218,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func windowDidBecomeKey(_ notification: Notification) {
         // Refresh git diff decorations for the active editor tab when the
         // window regains focus (git state may have changed externally).
-        if tabManager.selectedIndex >= 0,
-           tabManager.selectedIndex < tabManager.tabs.count,
-           case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex] {
+        if let editor = tabManager.selectedEditor {
             applyGitDiffDecorations(editor: editor)
         }
     }

@@ -7,9 +7,27 @@ use crate::lsp_completion::LspRequest;
 use crate::terminal_container;
 
 use super::{
-    file_path_to_uri, language_from_uri, run_commands_on_save, run_guarded_ui,
-    send_diff_decorations, uri_to_file_path,
+    ensure_file_uri, language_from_uri, run_guarded_ui, send_diff_decorations, uri_to_file_path,
 };
+
+fn dispatch_lsp_request(
+    path: &str,
+    lsp_request_seq: &std::cell::Cell<u64>,
+    doc_versions: &std::cell::RefCell<std::collections::HashMap<String, i32>>,
+    latest_req: &std::cell::RefCell<std::collections::HashMap<String, u64>>,
+    lsp_tx: &tokio::sync::mpsc::Sender<LspRequest>,
+    build_request: impl FnOnce(u64, String, i32) -> LspRequest,
+) -> u64 {
+    let uri = ensure_file_uri(path);
+    let version = doc_versions.borrow().get(path).copied().unwrap_or(1);
+    let seq = lsp_request_seq.get() + 1;
+    lsp_request_seq.set(seq);
+    latest_req.borrow_mut().insert(path.to_string(), seq);
+    if let Err(e) = lsp_tx.try_send(build_request(seq, uri, version)) {
+        log::warn!("LSP request channel full, dropping request: {}", e);
+    }
+    seq
+}
 
 /// Wire up sidebar file activation, project search result activation,
 /// and "Open in Terminal" context menu callbacks.
@@ -124,6 +142,9 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                             let toast_overlay = toast_overlay_for_editor.clone();
                             let editor_tab_pages = editor_tab_pages.clone();
                             let path = path.to_string();
+                            let blame_timer_id: std::rc::Rc<
+                                std::cell::RefCell<Option<gtk4::glib::SourceId>>,
+                            > = std::rc::Rc::new(std::cell::RefCell::new(None));
                             move |handle, event| {
                                 match event {
                                     impulse_editor::protocol::EditorEvent::Ready => {
@@ -133,8 +154,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         // Flush any pending go-to-position from cross-file navigation.
                                         handle.flush_pending_position();
                                         // Send LSP didOpen
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let uri = ensure_file_uri(&path);
                                         let language_id = language_from_uri(&uri);
                                         let content = handle.get_content();
                                         let mut versions = doc_versions.borrow_mut();
@@ -165,8 +185,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             }
                                         }
                                         // Send LSP didChange
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
+                                        let uri = ensure_file_uri(&path);
                                         let mut versions = doc_versions.borrow_mut();
                                         let version = versions.entry(path.clone()).or_insert(0);
                                         *version += 1;
@@ -180,27 +199,38 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                     }
                                     impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
                                         status_bar.borrow().update_cursor_position(line as i32 - 1, column as i32 - 1);
-                                        // Git blame — debounced + off main thread
+                                        // Git blame — debounced (300ms) + off main thread
                                         {
+                                            if let Some(prev) = blame_timer_id.borrow_mut().take() {
+                                                prev.remove();
+                                            }
                                             let path = path.clone();
                                             let status_bar = status_bar.clone();
-                                            gtk4::glib::spawn_future_local(async move {
-                                                let result = gtk4::gio::spawn_blocking(move || {
-                                                    impulse_core::git::get_line_blame(&path, line)
-                                                }).await;
-                                                match result {
-                                                    Ok(Ok(blame)) => {
-                                                        let text = format!(
-                                                            "{} \u{2022} {} \u{2022} {}",
-                                                            blame.author, blame.date, blame.summary
-                                                        );
-                                                        status_bar.borrow().update_blame(&text);
-                                                    }
-                                                    _ => {
-                                                        status_bar.borrow().clear_blame();
-                                                    }
-                                                }
-                                            });
+                                            let timer_id = blame_timer_id.clone();
+                                            let id = gtk4::glib::timeout_add_local_once(
+                                                std::time::Duration::from_millis(300),
+                                                move || {
+                                                    timer_id.borrow_mut().take();
+                                                    gtk4::glib::spawn_future_local(async move {
+                                                        let result = gtk4::gio::spawn_blocking(move || {
+                                                            impulse_core::git::get_line_blame(&path, line)
+                                                        }).await;
+                                                        match result {
+                                                            Ok(Ok(blame)) => {
+                                                                let text = format!(
+                                                                    "{} \u{2022} {} \u{2022} {}",
+                                                                    blame.author, blame.date, blame.summary
+                                                                );
+                                                                status_bar.borrow().update_blame(&text);
+                                                            }
+                                                            _ => {
+                                                                status_bar.borrow().clear_blame();
+                                                            }
+                                                        }
+                                                    });
+                                                },
+                                            );
+                                            *blame_timer_id.borrow_mut() = Some(id);
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::SaveRequested => {
@@ -220,8 +250,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                     .unwrap_or(&path);
                                                 page.set_title(filename);
                                             }
-                                            let uri = file_path_to_uri(std::path::Path::new(&path))
-                                                .unwrap_or_else(|| format!("file://{}", path));
+                                            let uri = ensure_file_uri(&path);
                                             if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
                                                 log::warn!("LSP request channel full, dropping request: {}", e);
                                             }
@@ -231,80 +260,21 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             sidebar_state.refresh();
                                             // Run commands-on-save in a background thread
                                             let commands = settings.borrow().commands_on_save.clone();
-                                            let save_path = path.clone();
-                                            std::thread::spawn(move || {
-                                                if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                                    let needs_reload = run_commands_on_save(&save_path, &commands);
-                                                    if needs_reload {
-                                                        let reload_path = save_path.clone();
-                                                        gtk4::glib::MainContext::default().invoke(move || {
-                                                            if let Some(handle) = crate::editor::get_handle(&reload_path) {
-                                                                if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
-                                                                    let lang = handle.language.borrow().clone();
-                                                                    handle.suppress_next_modify.set(true);
-                                                                    handle.open_file(&reload_path, &new_content, &lang);
-                                                                    send_diff_decorations(&handle, &reload_path);
-                                                                }
-                                                            }
-                                                        });
-                                                    }
-                                                })) {
-                                                    log::error!("Background thread panicked: {:?}", e);
-                                                }
-                                            });
+                                            super::spawn_commands_on_save(path.clone(), commands);
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::CompletionRequested { request_id: _, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_completion_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::Completion {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_completion_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Completion { request_id: seq, uri, version, line, character });
                                     }
                                     impulse_editor::protocol::EditorEvent::HoverRequested { request_id: _, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_hover_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::Hover {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_hover_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Hover { request_id: seq, uri, version, line, character });
                                     }
                                     impulse_editor::protocol::EditorEvent::DefinitionRequested { request_id: monaco_id, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_definition_req.borrow_mut().insert(path.clone(), seq);
+                                        let seq = dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_definition_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Definition { request_id: seq, uri, version, line, character });
                                         definition_monaco_ids.borrow_mut().insert(seq, monaco_id);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::Definition {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
                                     }
                                     impulse_editor::protocol::EditorEvent::OpenFileRequested { uri, line, character } => {
                                         let file_path = uri_to_file_path(&uri);
@@ -333,8 +303,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                         .unwrap_or(&path);
                                                     page.set_title(filename);
                                                 }
-                                                let uri = file_path_to_uri(std::path::Path::new(&path))
-                                                    .unwrap_or_else(|| format!("file://{}", path));
+                                                let uri = ensure_file_uri(&path);
                                                 if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
                                                     log::warn!("LSP request channel full, dropping request: {}", e);
                                                 }
@@ -344,64 +313,18 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::FormattingRequested { request_id: _, tab_size, insert_spaces } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_formatting_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::Formatting {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            tab_size,
-                                            insert_spaces,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_formatting_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Formatting { request_id: seq, uri, version, tab_size, insert_spaces });
                                     }
                                     impulse_editor::protocol::EditorEvent::SignatureHelpRequested { request_id: _, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_signature_help_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::SignatureHelp {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_signature_help_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::SignatureHelp { request_id: seq, uri, version, line, character });
                                     }
                                     impulse_editor::protocol::EditorEvent::ReferencesRequested { request_id: _, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_references_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::References {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_references_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::References { request_id: seq, uri, version, line, character });
                                     }
                                     impulse_editor::protocol::EditorEvent::CodeActionRequested { request_id: _, start_line, start_column, end_line, end_column, diagnostics } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_code_action_req.borrow_mut().insert(path.clone(), seq);
-                                        // Convert MonacoDiagnostic to DiagnosticInfo
                                         let diag_infos: Vec<crate::lsp_completion::DiagnosticInfo> = diagnostics.into_iter().map(|d| {
                                             crate::lsp_completion::DiagnosticInfo {
                                                 line: d.start_line,
@@ -417,53 +340,18 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 message: d.message,
                                             }
                                         }).collect();
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::CodeAction {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            start_line,
-                                            start_column,
-                                            end_line,
-                                            end_column,
-                                            diagnostics: diag_infos,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_code_action_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::CodeAction {
+                                                request_id: seq, uri, version, start_line, start_column, end_line, end_column, diagnostics: diag_infos,
+                                            });
                                     }
                                     impulse_editor::protocol::EditorEvent::RenameRequested { request_id: _, line, character, new_name } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_rename_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::Rename {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                            new_name,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_rename_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Rename { request_id: seq, uri, version, line, character, new_name });
                                     }
                                     impulse_editor::protocol::EditorEvent::PrepareRenameRequested { request_id: _, line, character } => {
-                                        let uri = file_path_to_uri(std::path::Path::new(&path))
-                                            .unwrap_or_else(|| format!("file://{}", path));
-                                        let version = doc_versions.borrow().get(&path).copied().unwrap_or(1);
-                                        let seq = lsp_request_seq.get() + 1;
-                                        lsp_request_seq.set(seq);
-                                        latest_rename_req.borrow_mut().insert(path.clone(), seq);
-                                        if let Err(e) = lsp_tx.try_send(LspRequest::PrepareRename {
-                                            request_id: seq,
-                                            uri,
-                                            version,
-                                            line,
-                                            character,
-                                        }) {
-                                            log::warn!("LSP request channel full, dropping request: {}", e);
-                                        }
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_rename_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::PrepareRename { request_id: seq, uri, version, line, character });
                                     }
                                 }
                             }

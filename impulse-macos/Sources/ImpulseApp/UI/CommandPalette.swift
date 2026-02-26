@@ -181,6 +181,26 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
             ))
         }
 
+        // Quick Open File
+        result.append(PaletteCommand(
+            id: "quick_open",
+            title: "Quick Open File",
+            shortcut: Keybindings.shortcutDisplay(forId: "quick_open"),
+            action: {
+                NotificationCenter.default.post(name: .impulseQuickOpen, object: nil)
+            }
+        ))
+
+        // Install Web LSP Servers
+        result.append(PaletteCommand(
+            id: "install_lsp",
+            title: "Install Web LSP Servers",
+            shortcut: nil,
+            action: {
+                NotificationCenter.default.post(name: .impulseInstallLsp, object: nil)
+            }
+        ))
+
         commands = result
         filteredCommands = result
     }

@@ -131,4 +131,11 @@ extension Notification.Name {
     /// Posted when the user selects a file in the file tree. The `userInfo`
     /// dictionary contains `"path"` (String) and optionally `"line"` (Int).
     static let impulseOpenFile = Notification.Name("dev.impulse.openFile")
+
+    // MARK: Command Palette Actions
+
+    /// Requests opening the Quick Open file search panel.
+    static let impulseQuickOpen = Notification.Name("impulseQuickOpen")
+    /// Requests installing managed web LSP servers.
+    static let impulseInstallLsp = Notification.Name("impulseInstallLsp")
 }

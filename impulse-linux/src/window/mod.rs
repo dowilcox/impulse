@@ -13,7 +13,7 @@ use libadwaita::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use crate::editor;
@@ -67,16 +67,16 @@ pub fn build_window(app: &adw::Application) {
     let shell_cache = Rc::new(terminal::ShellSpawnCache::new());
 
     // Stack of recently closed tabs for "reopen closed tab" (Ctrl+Shift+T)
-    let closed_tabs: Rc<RefCell<Vec<ClosedTab>>> = Rc::new(RefCell::new(Vec::new()));
+    let closed_tabs: Rc<RefCell<VecDeque<ClosedTab>>> = Rc::new(RefCell::new(VecDeque::new()));
 
     // --- LSP Bridge: GTK <-> Tokio ---
     // Channel for sending requests from GTK to the LSP tokio runtime
     let (lsp_request_tx, mut lsp_request_rx) = tokio::sync::mpsc::channel::<LspRequest>(256);
     let lsp_request_tx = Rc::new(lsp_request_tx);
 
-    // Channel for sending responses from the LSP runtime back to GTK
-    // We use std::sync::mpsc since glib::MainContext::channel is not available in this version.
-    // A glib timeout polls the receiver periodically.
+    // Channel for sending responses from the LSP runtime back to GTK.
+    // NOTE: glib::MainContext::channel was removed in glib 0.21; we use
+    // std::sync::mpsc with a 100ms polling timer instead.
     let (lsp_gtk_tx, lsp_gtk_rx) = std::sync::mpsc::channel::<LspResponse>();
     let lsp_gtk_rx = Rc::new(RefCell::new(lsp_gtk_rx));
 
@@ -89,8 +89,7 @@ pub fn build_window(app: &adw::Application) {
         } else {
             impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string())
         };
-        let root_uri = file_path_to_uri(std::path::Path::new(&initial_dir))
-            .unwrap_or_else(|| "file:///".to_string());
+        let root_uri = ensure_file_uri(&initial_dir);
         let gtk_tx = lsp_gtk_tx.clone();
 
         std::thread::spawn(move || {
@@ -880,7 +879,7 @@ pub fn build_window(app: &adw::Application) {
         let closed_tabs = closed_tabs.clone();
         let sidebar_state = sidebar_state.clone();
         Rc::new(move || {
-            let closed = closed_tabs.borrow_mut().pop();
+            let closed = closed_tabs.borrow_mut().pop_back();
             if let Some(entry) = closed {
                 let path = match &entry {
                     ClosedTab::Editor(p) | ClosedTab::ImagePreview(p) => p.clone(),
@@ -922,9 +921,7 @@ pub fn build_window(app: &adw::Application) {
                 if editor::is_editor(&child) {
                     let s = settings.borrow();
                     let theme = crate::theme::get_theme(&s.color_scheme);
-                    if let Some(is_previewing) =
-                        editor::toggle_preview(child.upcast_ref(), theme)
-                    {
+                    if let Some(is_previewing) = editor::toggle_preview(child.upcast_ref(), theme) {
                         status_bar_for_click
                             .borrow()
                             .show_preview_button(is_previewing);
@@ -1116,30 +1113,14 @@ pub fn build_window(app: &adw::Application) {
                     &kb_overrides,
                 )),
                 action: Rc::new({
-                    let tab_view = tab_view.clone();
-                    let setup_terminal_signals = setup_terminal_signals.clone();
-                    let settings = settings.clone();
-                    let copy_on_select_flag = copy_on_select_flag.clone();
-                    let shell_cache = shell_cache.clone();
-                    move || {
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            let setup = setup_terminal_signals.clone();
-                            let s = settings.borrow();
-                            let theme = crate::theme::get_theme(&s.color_scheme);
-                            terminal_container::split_terminal(
-                                &child,
-                                gtk4::Orientation::Horizontal,
-                                &|term| {
-                                    setup(term);
-                                },
-                                &s,
-                                theme,
-                                copy_on_select_flag.clone(),
-                                &shell_cache,
-                            );
-                        }
-                    }
+                    let split = make_split_terminal(
+                        &tab_view,
+                        &setup_terminal_signals,
+                        &settings,
+                        &copy_on_select_flag,
+                        &shell_cache,
+                    );
+                    move || split(gtk4::Orientation::Horizontal)
                 }),
             },
             Command {
@@ -1149,30 +1130,14 @@ pub fn build_window(app: &adw::Application) {
                     &kb_overrides,
                 )),
                 action: Rc::new({
-                    let tab_view = tab_view.clone();
-                    let setup_terminal_signals = setup_terminal_signals.clone();
-                    let settings = settings.clone();
-                    let copy_on_select_flag = copy_on_select_flag.clone();
-                    let shell_cache = shell_cache.clone();
-                    move || {
-                        if let Some(page) = tab_view.selected_page() {
-                            let child = page.child();
-                            let setup = setup_terminal_signals.clone();
-                            let s = settings.borrow();
-                            let theme = crate::theme::get_theme(&s.color_scheme);
-                            terminal_container::split_terminal(
-                                &child,
-                                gtk4::Orientation::Vertical,
-                                &|term| {
-                                    setup(term);
-                                },
-                                &s,
-                                theme,
-                                copy_on_select_flag.clone(),
-                                &shell_cache,
-                            );
-                        }
-                    }
+                    let split = make_split_terminal(
+                        &tab_view,
+                        &setup_terminal_signals,
+                        &settings,
+                        &copy_on_select_flag,
+                        &shell_cache,
+                    );
+                    move || split(gtk4::Orientation::Vertical)
                 }),
             },
             Command {
@@ -1421,6 +1386,37 @@ pub fn build_window(app: &adw::Application) {
     window.present();
 }
 
+pub(super) fn make_split_terminal(
+    tab_view: &adw::TabView,
+    setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
+    settings: &Rc<RefCell<crate::settings::Settings>>,
+    copy_on_select_flag: &Rc<Cell<bool>>,
+    shell_cache: &Rc<terminal::ShellSpawnCache>,
+) -> impl Fn(gtk4::Orientation) + Clone {
+    let tab_view = tab_view.clone();
+    let setup_terminal_signals = setup_terminal_signals.clone();
+    let settings = settings.clone();
+    let copy_on_select_flag = copy_on_select_flag.clone();
+    let shell_cache = shell_cache.clone();
+    move |orientation| {
+        if let Some(page) = tab_view.selected_page() {
+            let child = page.child();
+            let setup = setup_terminal_signals.clone();
+            let s = settings.borrow();
+            let theme = crate::theme::get_theme(&s.color_scheme);
+            terminal_container::split_terminal(
+                &child,
+                orientation,
+                &|term| setup(term),
+                &s,
+                theme,
+                copy_on_select_flag.clone(),
+                &shell_cache,
+            );
+        }
+    }
+}
+
 fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_family: &str) {
     let family = if font_family.is_empty() {
         "JetBrains Mono"
@@ -1438,7 +1434,7 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_fam
     }
 }
 
-pub fn send_diff_decorations(handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
+pub fn send_diff_decorations(_handle: &crate::editor_webview::MonacoEditorHandle, file_path: &str) {
     let file_path_owned = file_path.to_string();
     gtk4::glib::spawn_future_local(async move {
         let fp = file_path_owned.clone();
@@ -1511,6 +1507,29 @@ fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave])
         }
     }
     needs_reload
+}
+
+pub(super) fn spawn_commands_on_save(path: String, commands: Vec<crate::settings::CommandOnSave>) {
+    std::thread::spawn(move || {
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let needs_reload = run_commands_on_save(&path, &commands);
+            if needs_reload {
+                let reload_path = path.clone();
+                gtk4::glib::MainContext::default().invoke(move || {
+                    if let Some(handle) = crate::editor::get_handle(&reload_path) {
+                        if let Ok(new_content) = std::fs::read_to_string(&reload_path) {
+                            let lang = handle.language.borrow().clone();
+                            handle.suppress_next_modify.set(true);
+                            handle.open_file(&reload_path, &new_content, &lang);
+                            send_diff_decorations(&handle, &reload_path);
+                        }
+                    }
+                });
+            }
+        })) {
+            log::error!("Background thread panicked: {:?}", e);
+        }
+    });
 }
 
 fn add_shortcut(controller: &gtk4::ShortcutController, accel: &str, callback: impl Fn() + 'static) {
@@ -1649,6 +1668,10 @@ fn get_active_cwd(tab_view: &adw::TabView) -> Option<String> {
 
 fn file_path_to_uri(path: &std::path::Path) -> Option<String> {
     impulse_core::util::file_path_to_uri(path)
+}
+
+fn ensure_file_uri(path: &str) -> String {
+    file_path_to_uri(std::path::Path::new(path)).unwrap_or_else(|| format!("file://{}", path))
 }
 
 fn uri_to_file_path(uri: &str) -> String {
