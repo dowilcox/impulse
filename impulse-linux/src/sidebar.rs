@@ -2,8 +2,9 @@ use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -158,6 +159,10 @@ pub fn build_sidebar(
     // Create shared state early so context menu actions can reference it
     let tree_nodes: Rc<RefCell<Vec<TreeNode>>> = Rc::new(RefCell::new(Vec::new()));
     let current_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let watcher_rc: Rc<RefCell<Option<notify::RecommendedWatcher>>> =
+        Rc::new(RefCell::new(None));
+    let refresh_in_progress: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     // --- Right-click context menu for file tree ---
     let clicked_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
@@ -450,6 +455,8 @@ pub fn build_sidebar(
         let current_path = current_path.clone();
         let file_tree_scroll = file_tree_scroll.clone();
         let show_hidden = show_hidden.clone();
+        let refresh_in_progress = refresh_in_progress.clone();
+        let watcher_rc = watcher_rc.clone();
         discard_action.connect_activate(move |_, _| {
             let path = clicked_path.borrow().clone();
             if path.is_empty() {
@@ -481,6 +488,8 @@ pub fn build_sidebar(
             let current_path = current_path.clone();
             let icon_cache = icon_cache.clone();
             let show_hidden = show_hidden.clone();
+            let refresh_in_progress = refresh_in_progress.clone();
+            let watcher_rc = watcher_rc.clone();
             dialog.connect_response(None, move |_dialog, response| {
                 if response != "discard" {
                     return;
@@ -505,6 +514,8 @@ pub fn build_sidebar(
                             &current_path,
                             *show_hidden.borrow(),
                             icon_cache.clone(),
+                            refresh_in_progress.clone(),
+                            watcher_rc.clone(),
                         );
                     }
                     Err(e) => {
@@ -678,6 +689,8 @@ pub fn build_sidebar(
         let show_hidden = show_hidden.clone();
         let icon_cache = icon_cache.clone();
         let highlight = internal_highlight.clone();
+        let refresh_in_progress = refresh_in_progress.clone();
+        let watcher_rc = watcher_rc.clone();
         drop_target_internal.connect_drop(move |_target, value, _x, y| {
             remove_drop_highlight(&file_tree_list, &highlight);
             if let Ok(source_path) = value.get::<String>() {
@@ -692,6 +705,8 @@ pub fn build_sidebar(
                                 &current_path,
                                 *show_hidden.borrow(),
                                 icon_cache.clone(),
+                                refresh_in_progress.clone(),
+                                watcher_rc.clone(),
                             );
                             return true;
                         }
@@ -736,6 +751,8 @@ pub fn build_sidebar(
         let show_hidden = show_hidden.clone();
         let icon_cache = icon_cache.clone();
         let highlight = external_highlight.clone();
+        let refresh_in_progress = refresh_in_progress.clone();
+        let watcher_rc = watcher_rc.clone();
         drop_target_external.connect_drop(move |_target, value, _x, y| {
             remove_drop_highlight(&file_tree_list, &highlight);
             if let Ok(file_list) = value.get::<gtk4::gdk::FileList>() {
@@ -761,6 +778,8 @@ pub fn build_sidebar(
                             &current_path,
                             *show_hidden.borrow(),
                             icon_cache.clone(),
+                            refresh_in_progress.clone(),
+                            watcher_rc.clone(),
                         );
                         return true;
                     }
@@ -822,12 +841,14 @@ pub fn build_sidebar(
         active_tab: Rc::new(RefCell::new(None)),
         show_hidden: show_hidden.clone(),
         icon_cache: icon_cache.clone(),
-        #[allow(clippy::arc_with_non_send_sync)]
-        _watcher: Rc::new(RefCell::new(None)),
+        _watcher: watcher_rc.clone(),
         #[allow(clippy::arc_with_non_send_sync)]
         _git_index_watcher: Rc::new(RefCell::new(None)),
         _refresh_dirty: Arc::new(AtomicBool::new(false)),
         _refresh_timer: Rc::new(RefCell::new(None)),
+        _refresh_in_progress: refresh_in_progress.clone(),
+        _git_poll_timer: Rc::new(RefCell::new(None)),
+        _last_git_status_hash: Rc::new(Cell::new(0)),
     };
 
     // Wire up New File / New Folder toolbar buttons
@@ -869,6 +890,8 @@ pub fn build_sidebar(
         let state_file_tree_scroll = state.file_tree_scroll.clone();
         let state_show_hidden = state.show_hidden.clone();
         let icon_cache = icon_cache.clone();
+        let refresh_in_progress = state._refresh_in_progress.clone();
+        let watcher_rc = state._watcher.clone();
         refresh_btn.connect_clicked(move |_| {
             refresh_tree(
                 &state_tree_nodes,
@@ -877,6 +900,8 @@ pub fn build_sidebar(
                 &state_current_path,
                 *state_show_hidden.borrow(),
                 icon_cache.clone(),
+                refresh_in_progress.clone(),
+                watcher_rc.clone(),
             );
         });
     }
@@ -900,6 +925,8 @@ pub fn build_sidebar(
         let show_hidden = show_hidden.clone();
         let settings = settings.clone();
         let icon_cache = icon_cache.clone();
+        let refresh_in_progress = state._refresh_in_progress.clone();
+        let watcher_rc = state._watcher.clone();
         hidden_btn.connect_toggled(move |btn| {
             let active = btn.is_active();
             *show_hidden.borrow_mut() = active;
@@ -919,6 +946,8 @@ pub fn build_sidebar(
                 &state_current_path,
                 active,
                 icon_cache.clone(),
+                refresh_in_progress.clone(),
+                watcher_rc.clone(),
             );
         });
     }
@@ -1088,6 +1117,12 @@ pub struct SidebarState {
     _refresh_dirty: Arc<AtomicBool>,
     /// Source ID for the coalesced refresh timer.
     _refresh_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    /// Guard to prevent concurrent refresh_tree() calls from racing.
+    _refresh_in_progress: Rc<Cell<bool>>,
+    /// Source ID for the periodic 2s git status poll timer.
+    _git_poll_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    /// Hash of the last git status map, used to skip redundant refreshes.
+    _last_git_status_hash: Rc<Cell<u64>>,
 }
 
 impl SidebarState {
@@ -1133,16 +1168,20 @@ impl SidebarState {
     }
 
     /// Set up a filesystem watcher for the given directory.
-    /// Both the FS watcher and .git/index watcher set a shared dirty flag;
+    /// Both the FS watcher and .git watcher set a shared dirty flag;
     /// a single 300ms timer checks the flag and triggers `refresh_tree`.
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
-        // Cancel previous refresh timer.
+        // Cancel previous refresh timer and git poll timer.
         if let Some(id) = self._refresh_timer.borrow_mut().take() {
             id.remove();
         }
+        if let Some(id) = self._git_poll_timer.borrow_mut().take() {
+            id.remove();
+        }
         self._refresh_dirty.store(false, Ordering::Relaxed);
+        self._refresh_in_progress.set(false);
 
         let dirty = self._refresh_dirty.clone();
         let mut watcher =
@@ -1183,10 +1222,10 @@ impl SidebarState {
 
         *self._watcher.borrow_mut() = Some(watcher);
 
-        // Start .git/index watcher (also sets the same dirty flag).
-        self.setup_git_index_watcher(path);
+        // Start .git/ directory watcher (also sets the same dirty flag).
+        self.setup_git_watcher(path);
 
-        // Single coalesced 300ms timer for both FS and git index changes.
+        // Single coalesced 300ms timer for both FS and git changes.
         let dirty = self._refresh_dirty.clone();
         let tree_nodes = self.tree_nodes.clone();
         let file_tree_list = self.file_tree_list.clone();
@@ -1194,30 +1233,46 @@ impl SidebarState {
         let current_path = self.current_path.clone();
         let show_hidden = self.show_hidden.clone();
         let icon_cache = self.icon_cache.clone();
+        let refresh_in_progress = self._refresh_in_progress.clone();
+        let watcher_for_timer = self._watcher.clone();
 
         let timer_id = glib::timeout_add_local(Duration::from_millis(300), move || {
             if dirty.swap(false, Ordering::Relaxed) {
-                refresh_tree(
-                    &tree_nodes,
-                    &file_tree_list,
-                    &file_tree_scroll,
-                    &current_path,
-                    *show_hidden.borrow(),
-                    icon_cache.clone(),
-                );
+                if refresh_in_progress.get() {
+                    // Re-arm dirty so next tick retries
+                    dirty.store(true, Ordering::Relaxed);
+                } else {
+                    refresh_in_progress.set(true);
+                    refresh_tree(
+                        &tree_nodes,
+                        &file_tree_list,
+                        &file_tree_scroll,
+                        &current_path,
+                        *show_hidden.borrow(),
+                        icon_cache.clone(),
+                        refresh_in_progress.clone(),
+                        watcher_for_timer.clone(),
+                    );
+                }
             }
             glib::ControlFlow::Continue
         });
 
         *self._refresh_timer.borrow_mut() = Some(timer_id);
+
+        // Start periodic 2s git status poll timer.
+        self.setup_git_poll_timer(path);
     }
 
-    /// Watch `.git/index` for staging/commit/reset/checkout changes.
+    /// Watch the `.git/` directory for index, HEAD, and ref changes.
     /// Sets the shared dirty flag instead of running its own timer.
-    fn setup_git_index_watcher(&self, path: &str) {
+    /// Watching `.git/` (NonRecursive) catches `.git/index`, `.git/HEAD`,
+    /// and handles atomic file replacement (where the old file is removed
+    /// and a new one is created) without losing the watch.
+    fn setup_git_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
-        // Stop any previous git index watcher.
+        // Stop any previous git watcher.
         *self._git_index_watcher.borrow_mut() = None;
 
         // Find the git repo root via libgit2 (no subprocess).
@@ -1226,8 +1281,8 @@ impl SidebarState {
             None => return,
         };
 
-        let index_path = format!("{}/.git/index", git_root);
-        if !Path::new(&index_path).exists() {
+        let git_dir = format!("{}/.git", git_root);
+        if !Path::new(&git_dir).is_dir() {
             return;
         }
 
@@ -1235,29 +1290,113 @@ impl SidebarState {
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
-                    if matches!(
+                    if !matches!(
                         event.kind,
                         notify::EventKind::Create(_)
                             | notify::EventKind::Modify(_)
                             | notify::EventKind::Remove(_)
                     ) {
+                        return;
+                    }
+                    // Filter to relevant paths inside .git/
+                    let dominated_by_relevant = event.paths.iter().any(|p| {
+                        let name = p
+                            .file_name()
+                            .map(|n| n.to_string_lossy())
+                            .unwrap_or_default();
+                        matches!(name.as_ref(), "index" | "HEAD" | "MERGE_HEAD" | "REBASE_HEAD")
+                            || p.parent()
+                                .and_then(|pp| pp.file_name())
+                                .map(|n| n == "refs")
+                                .unwrap_or(false)
+                    });
+                    if dominated_by_relevant {
                         dirty.store(true, Ordering::Relaxed);
                     }
                 }
             }) {
                 Ok(w) => w,
                 Err(e) => {
-                    log::warn!("Failed to create git index watcher: {}", e);
+                    log::warn!("Failed to create git watcher: {}", e);
                     return;
                 }
             };
 
-        if let Err(e) = watcher.watch(Path::new(&index_path), RecursiveMode::NonRecursive) {
-            log::warn!("Failed to watch .git/index: {}", e);
+        if let Err(e) = watcher.watch(Path::new(&git_dir), RecursiveMode::NonRecursive) {
+            log::warn!("Failed to watch .git/ directory: {}", e);
             return;
         }
 
         *self._git_index_watcher.borrow_mut() = Some(watcher);
+    }
+
+    /// Start a repeating 2-second timer that polls git status and triggers
+    /// a lightweight tree update (badges only) when the status map changes.
+    fn setup_git_poll_timer(&self, path: &str) {
+        // Stop any previous poll timer.
+        if let Some(id) = self._git_poll_timer.borrow_mut().take() {
+            id.remove();
+        }
+
+        let git_root = match impulse_core::git::get_git_root(path) {
+            Some(root) => root,
+            None => return,
+        };
+
+        let tree_nodes = self.tree_nodes.clone();
+        let file_tree_list = self.file_tree_list.clone();
+        let current_path = self.current_path.clone();
+        let icon_cache = self.icon_cache.clone();
+        let last_hash = self._last_git_status_hash.clone();
+
+        let timer_id = glib::timeout_add_local(Duration::from_secs(2), move || {
+            let root = git_root.clone();
+            let tree_nodes = tree_nodes.clone();
+            let file_tree_list = file_tree_list.clone();
+            let current_path = current_path.clone();
+            let icon_cache = icon_cache.clone();
+            let last_hash = last_hash.clone();
+
+            glib::spawn_future_local(async move {
+                let result = gio::spawn_blocking(move || {
+                    let statuses =
+                        impulse_core::filesystem::get_all_git_statuses(&root).unwrap_or_default();
+
+                    // Compute a stable hash from sorted status entries.
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    let mut dir_keys: Vec<&String> = statuses.keys().collect();
+                    dir_keys.sort();
+                    for dir_path in dir_keys {
+                        dir_path.hash(&mut hasher);
+                        let entries = &statuses[dir_path];
+                        let mut names: Vec<&String> = entries.keys().collect();
+                        names.sort();
+                        for name in names {
+                            name.hash(&mut hasher);
+                            entries[name].hash(&mut hasher);
+                        }
+                    }
+                    let hash = std::hash::Hasher::finish(&hasher);
+
+                    (statuses, hash)
+                })
+                .await;
+
+                if let Ok((statuses, hash)) = result {
+                    let previous = last_hash.get();
+                    if hash == previous {
+                        return;
+                    }
+                    last_hash.set(hash);
+
+                    refresh_git_status(&tree_nodes, &file_tree_list, &current_path, icon_cache, &statuses);
+                }
+            });
+
+            glib::ControlFlow::Continue
+        });
+
+        *self._git_poll_timer.borrow_mut() = Some(timer_id);
     }
 
     /// Save the current tree state for the active tab.
@@ -1342,6 +1481,8 @@ impl SidebarState {
             &self.current_path,
             *self.show_hidden.borrow(),
             self.icon_cache.clone(),
+            self._refresh_in_progress.clone(),
+            self._watcher.clone(),
         );
     }
 }
@@ -1464,6 +1605,7 @@ fn find_sorted_insert_position(
 }
 
 /// Refresh the tree while preserving expansion state and scroll position.
+#[allow(clippy::too_many_arguments)]
 fn refresh_tree(
     tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
     file_tree_list: &gtk4::ListBox,
@@ -1471,9 +1613,12 @@ fn refresh_tree(
     current_path: &Rc<RefCell<String>>,
     show_hidden: bool,
     icon_cache: Rc<RefCell<IconCache>>,
+    refresh_in_progress: Rc<Cell<bool>>,
+    watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
 ) {
     let path = current_path.borrow().clone();
     if path.is_empty() {
+        refresh_in_progress.set(false);
         return;
     }
 
@@ -1549,16 +1694,73 @@ fn refresh_tree(
         })
         .await;
 
-        if let Ok(Ok(nodes)) = result {
-            *tree_nodes.borrow_mut() = nodes.clone();
-            render_tree(&file_tree_list, &nodes, &icon_cache.borrow());
+        match result {
+            Ok(Ok(nodes)) => {
+                // Re-sync watcher: add watches for newly expanded dirs
+                {
+                    use notify::{RecursiveMode, Watcher};
+                    if let Some(ref mut w) = *watcher.borrow_mut() {
+                        for node in &nodes {
+                            if node.entry.is_dir && node.expanded {
+                                let _ = w.watch(
+                                    Path::new(&node.entry.path),
+                                    RecursiveMode::NonRecursive,
+                                );
+                            }
+                        }
+                    }
+                }
 
-            // Restore scroll position
-            glib::idle_add_local_once(move || {
-                file_tree_scroll.vadjustment().set_value(scroll_pos);
-            });
+                *tree_nodes.borrow_mut() = nodes.clone();
+                render_tree(&file_tree_list, &nodes, &icon_cache.borrow());
+
+                refresh_in_progress.set(false);
+
+                // Restore scroll position
+                glib::idle_add_local_once(move || {
+                    file_tree_scroll.vadjustment().set_value(scroll_pos);
+                });
+            }
+            _ => {
+                refresh_in_progress.set(false);
+            }
         }
     });
+}
+
+/// Lightweight git status refresh: update git_status fields on existing tree nodes
+/// from a pre-computed batch status map, then re-render.
+/// Unlike `refresh_tree`, this does NOT re-read directory contents or rebuild the tree.
+fn refresh_git_status(
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    file_tree_list: &gtk4::ListBox,
+    current_path: &Rc<RefCell<String>>,
+    icon_cache: Rc<RefCell<IconCache>>,
+    statuses: &HashMap<String, HashMap<String, String>>,
+) {
+    let root = current_path.borrow().clone();
+    if root.is_empty() {
+        return;
+    }
+
+    // Walk tree nodes and update git_status from the batch map.
+    let mut nodes = tree_nodes.borrow_mut();
+    for node in nodes.iter_mut() {
+        // Determine the parent directory for this node's status lookup.
+        let parent_dir = Path::new(&node.entry.path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let new_status = statuses
+            .get(&parent_dir)
+            .and_then(|dir_map| dir_map.get(&node.entry.name))
+            .cloned();
+        node.entry.git_status = new_status;
+    }
+
+    let snapshot: Vec<TreeNode> = nodes.clone();
+    drop(nodes);
+    render_tree(file_tree_list, &snapshot, &icon_cache.borrow());
 }
 
 /// Collapse all expanded directories back to root-level only.
