@@ -1024,12 +1024,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 tabWidth: settings.tabWidth,
                 useSpaces: settings.useSpaces
             )
-            // Show/hide markdown preview button based on file type
+            // Show/hide preview button based on file type
             if tabManager.selectedIndex >= 0,
                tabManager.selectedIndex < tabManager.tabs.count,
                case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
                let fp = editor.filePath,
-               EditorTab.isMarkdownFile(fp) {
+               EditorTab.isPreviewableFile(fp) {
                 statusBar.showPreviewButton(isPreviewing: editor.isPreviewing)
             } else {
                 statusBar.hidePreviewButton()
@@ -1079,11 +1079,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
 
-        // Re-render markdown previews with updated theme
+        // Re-render previews with updated theme
         let themeJSON = markdownThemeJSON()
         for tab in tabManager.tabs {
             if case .editor(let editor) = tab {
-                editor.refreshMarkdownPreview(themeJSON: themeJSON)
+                editor.refreshPreview(themeJSON: themeJSON)
             }
         }
     }
@@ -1647,11 +1647,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
 
-        // Toggle Markdown Preview
+        // Toggle Preview (Markdown / SVG)
         notificationObservers.append(
             nc.addObserver(forName: .impulseToggleMarkdownPreview, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true else { return }
-                self.toggleMarkdownPreview()
+                self.togglePreview()
             }
         )
 
@@ -2034,19 +2034,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func previewButtonClicked(_ sender: Any?) {
-        toggleMarkdownPreview()
+        togglePreview()
     }
 
-    /// Toggle markdown preview for the active editor tab.
-    private func toggleMarkdownPreview() {
+    /// Toggle preview for the active editor tab (markdown or SVG).
+    private func togglePreview() {
         guard tabManager.selectedIndex >= 0,
               tabManager.selectedIndex < tabManager.tabs.count,
               case .editor(let editor) = tabManager.tabs[tabManager.selectedIndex],
               let fp = editor.filePath,
-              EditorTab.isMarkdownFile(fp) else { return }
+              EditorTab.isPreviewableFile(fp) else { return }
 
         let themeJSON = markdownThemeJSON()
-        if let isPreviewing = editor.toggleMarkdownPreview(themeJSON: themeJSON) {
+        if let isPreviewing = editor.togglePreview(themeJSON: themeJSON) {
             statusBar.showPreviewButton(isPreviewing: isPreviewing)
         }
     }

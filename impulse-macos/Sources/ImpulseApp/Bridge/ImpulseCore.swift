@@ -171,6 +171,22 @@ final class ImpulseCore {
         return impulse_is_markdown_file(path)
     }
 
+    /// Check whether a file path has an SVG extension.
+    static func isSvgFile(_ path: String) -> Bool {
+        return impulse_is_svg_file(path)
+    }
+
+    /// Check whether a file path is a previewable type (markdown or SVG).
+    static func isPreviewableFile(_ path: String) -> Bool {
+        return impulse_is_previewable_file(path)
+    }
+
+    /// Render an SVG source string to a themed HTML preview document.
+    /// Returns `nil` if the source exceeds the size limit.
+    static func renderSvgPreview(source: String, bgColor: String) -> String? {
+        return consumeCString(impulse_render_svg_preview(source, bgColor))
+    }
+
     // MARK: - Git
 
     /// Returns the current git branch for the directory at `path`, or `nil`

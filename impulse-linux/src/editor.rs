@@ -173,9 +173,14 @@ pub fn go_to_position(widget: &gtk4::Widget, line: u32, column: u32) {
 // Markdown preview
 // ---------------------------------------------------------------------------
 
-/// Check whether a file path is a markdown file.
-pub fn is_markdown_file(path: &str) -> bool {
-    markdown::is_markdown_file(path)
+/// Check whether a file path is an SVG file.
+fn is_svg_file(path: &str) -> bool {
+    impulse_editor::svg::is_svg_file(path)
+}
+
+/// Check whether a file path is a previewable type (markdown or SVG).
+pub fn is_previewable_file(path: &str) -> bool {
+    impulse_editor::is_previewable_file(path)
 }
 
 /// Map the application theme to markdown preview colors.
@@ -199,14 +204,14 @@ pub fn theme_to_markdown_colors(theme: &ThemeColors) -> markdown::MarkdownThemeC
     }
 }
 
-/// Toggle markdown preview for an editor widget.
+/// Toggle preview for an editor widget (markdown or SVG).
 ///
 /// Returns the new `is_previewing` state, or `None` if the widget is not a
-/// markdown editor or doesn't have a stack.
-pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool> {
+/// previewable file type or doesn't have a stack.
+pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool> {
     let handle = get_handle_for_widget(widget)?;
     let file_path = handle.file_path.borrow().clone();
-    if !is_markdown_file(&file_path) {
+    if !is_previewable_file(&file_path) {
         return None;
     }
 
@@ -223,20 +228,27 @@ pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Op
 
     // Switch to preview: render current content
     let content = handle.get_content();
-    let md_colors = theme_to_markdown_colors(theme);
 
-    // Resolve the highlight.js path
-    let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
-        Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
-        Err(e) => {
-            log::warn!("Failed to resolve highlight.js path: {}", e);
-            String::new()
+    let html = if is_svg_file(&file_path) {
+        // SVG preview — embed raw SVG in themed HTML
+        match impulse_editor::svg::render_svg_preview(&content, theme.bg) {
+            Some(h) => h,
+            None => return None,
         }
-    };
-
-    let html = match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
-        Some(h) => h,
-        None => return None, // source too large
+    } else {
+        // Markdown preview
+        let md_colors = theme_to_markdown_colors(theme);
+        let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
+            Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
+            Err(e) => {
+                log::warn!("Failed to resolve highlight.js path: {}", e);
+                String::new()
+            }
+        };
+        match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
+            Some(h) => h,
+            None => return None,
+        }
     };
 
     // Create or reuse the preview WebView
@@ -299,8 +311,8 @@ pub fn toggle_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Op
     Some(true)
 }
 
-/// Re-render the markdown preview with new theme colors (for theme changes).
-pub fn refresh_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
+/// Re-render the preview with new theme colors (for theme changes).
+pub fn refresh_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
     let handle = match get_handle_for_widget(widget) {
         Some(h) => h,
         None => return,
@@ -316,14 +328,23 @@ pub fn refresh_markdown_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
     };
 
     let content = handle.get_content();
-    let md_colors = theme_to_markdown_colors(theme);
-    let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
-        Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
-        Err(_) => String::new(),
-    };
-    let html = match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
-        Some(h) => h,
-        None => return,
+    let file_path = handle.file_path.borrow().clone();
+
+    let html = if is_svg_file(&file_path) {
+        match impulse_editor::svg::render_svg_preview(&content, theme.bg) {
+            Some(h) => h,
+            None => return,
+        }
+    } else {
+        let md_colors = theme_to_markdown_colors(theme);
+        let hljs_path = match impulse_editor::assets::ensure_monaco_extracted() {
+            Ok(dir) => format!("file://{}/highlight/highlight.min.js", dir.display()),
+            Err(_) => String::new(),
+        };
+        match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
+            Some(h) => h,
+            None => return,
+        }
     };
 
     if let Some(preview_widget) = stack.child_by_name("preview") {
@@ -349,7 +370,7 @@ pub fn is_image_file(path: &str) -> bool {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     matches!(
         ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "tiff" | "tif"
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tiff" | "tif"
     )
 }
 

@@ -923,7 +923,7 @@ pub fn build_window(app: &adw::Application) {
                     let s = settings.borrow();
                     let theme = crate::theme::get_theme(&s.color_scheme);
                     if let Some(is_previewing) =
-                        editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                        editor::toggle_preview(child.upcast_ref(), theme)
                     {
                         status_bar_for_click
                             .borrow()
@@ -974,8 +974,8 @@ pub fn build_window(app: &adw::Application) {
                     } else if crate::editor::is_editor(&child) {
                         crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
                         crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
-                        // Re-render markdown preview if currently previewing
-                        crate::editor::refresh_markdown_preview(
+                        // Re-render preview if currently previewing
+                        crate::editor::refresh_preview(
                             child.upcast_ref::<gtk4::Widget>(),
                             new_theme,
                         );
@@ -1189,7 +1189,7 @@ pub fn build_window(app: &adw::Application) {
                 }),
             },
             Command {
-                name: "Toggle Markdown Preview".to_string(),
+                name: "Toggle Preview".to_string(),
                 shortcut: keybindings::accel_to_display(&keybindings::get_accel(
                     "toggle_markdown_preview",
                     &kb_overrides,
@@ -1205,7 +1205,7 @@ pub fn build_window(app: &adw::Application) {
                                 let s = settings.borrow();
                                 let theme = crate::theme::get_theme(&s.color_scheme);
                                 if let Some(is_previewing) =
-                                    editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                                    editor::toggle_preview(child.upcast_ref(), theme)
                                 {
                                     status_bar.borrow().show_preview_button(is_previewing);
                                 }

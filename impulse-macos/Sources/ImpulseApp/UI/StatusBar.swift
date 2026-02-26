@@ -24,11 +24,11 @@ final class StatusBar: NSView {
 
     private let topBorder = NSView()
 
-    /// Button to toggle markdown preview, visible only for .md files.
+    /// Button to toggle preview, visible only for previewable files (markdown, SVG).
     /// Styled as a green-outlined pill that fills solid green when toggled.
     let previewButton: PreviewToggleButton = {
         let btn = PreviewToggleButton()
-        btn.toolTip = "Toggle Markdown Preview (⌘⇧M)"
+        btn.toolTip = "Toggle Preview (⌘⇧M)"
         btn.isHidden = true
         btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         btn.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)

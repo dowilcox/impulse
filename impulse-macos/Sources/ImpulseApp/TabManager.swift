@@ -822,7 +822,7 @@ final class TabManager: NSObject {
     static func isImageFile(_ path: String) -> Bool {
         let ext = (path as NSString).pathExtension.lowercased()
         switch ext {
-        case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "tiff", "tif":
+        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif":
             return true
         default:
             return false

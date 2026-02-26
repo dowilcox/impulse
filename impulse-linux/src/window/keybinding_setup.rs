@@ -144,7 +144,7 @@ pub(super) fn setup_capture_phase_keys(
             return gtk4::glib::Propagation::Stop;
         }
 
-        // Toggle Markdown Preview (Ctrl+Shift+M by default, WebView eats it)
+        // Toggle Preview (Ctrl+Shift+M by default, WebView eats it)
         if let Some(ref accel) = md_preview_accel {
             if keybindings::matches_key(accel, key, modifiers) {
                 if let Some(page) = md_preview_tab_view.selected_page() {
@@ -153,7 +153,7 @@ pub(super) fn setup_capture_phase_keys(
                         let s = md_preview_settings.borrow();
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         if let Some(is_previewing) =
-                            editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                            editor::toggle_preview(child.upcast_ref(), theme)
                         {
                             md_preview_status_bar
                                 .borrow()
@@ -760,7 +760,7 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
-    // Ctrl+Shift+M: Toggle Markdown Preview (also handled in capture phase for WebView)
+    // Ctrl+Shift+M: Toggle Preview (also handled in capture phase for WebView)
     {
         let tab_view = tab_view.clone();
         let settings = settings.clone();
@@ -775,7 +775,7 @@ pub(super) fn setup_shortcut_controller(
                         let s = settings.borrow();
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         if let Some(is_previewing) =
-                            editor::toggle_markdown_preview(child.upcast_ref(), theme)
+                            editor::toggle_preview(child.upcast_ref(), theme)
                         {
                             status_bar.borrow().show_preview_button(is_previewing);
                         }

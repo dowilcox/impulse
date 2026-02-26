@@ -42,6 +42,13 @@ char *impulse_system_lsp_status(void);
 char *impulse_render_markdown_preview(const char *source, const char *theme_json, const char *highlight_js_path);
 bool impulse_is_markdown_file(const char *path);
 
+// SVG preview
+char *impulse_render_svg_preview(const char *source, const char *bg_color);
+bool impulse_is_svg_file(const char *path);
+
+// Previewable file detection (markdown or SVG)
+bool impulse_is_previewable_file(const char *path);
+
 // Git
 char *impulse_git_branch(const char *path);
 char *impulse_git_status_for_directory(const char *path);

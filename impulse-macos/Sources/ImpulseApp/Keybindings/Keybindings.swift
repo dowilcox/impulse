@@ -140,7 +140,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "toggle_markdown_preview",
-            description: "Toggle Markdown Preview",
+            description: "Toggle Preview",
             category: "Editor",
             defaultShortcut: "Cmd+Shift+M",
             keyEquivalent: "m",

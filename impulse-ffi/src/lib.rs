@@ -1092,3 +1092,62 @@ pub extern "C" fn impulse_is_markdown_file(path: *const c_char) -> bool {
         }),
     )
 }
+
+/// Render an SVG source string to a themed HTML preview document.
+///
+/// Returns a newly allocated HTML string (caller must free with `impulse_free_string`),
+/// or null on failure.
+#[no_mangle]
+pub extern "C" fn impulse_render_svg_preview(
+    source: *const c_char,
+    bg_color: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let source = match to_rust_str(source) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let bg_color = match to_rust_str(bg_color) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let html = match impulse_editor::svg::render_svg_preview(&source, &bg_color) {
+                Some(h) => h,
+                None => return std::ptr::null_mut(),
+            };
+            to_c_string(&html)
+        }),
+    )
+}
+
+/// Check whether a file path has an SVG extension.
+#[no_mangle]
+pub extern "C" fn impulse_is_svg_file(path: *const c_char) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return false,
+            };
+            impulse_editor::svg::is_svg_file(&path)
+        }),
+    )
+}
+
+/// Check whether a file path is a previewable type (markdown or SVG).
+#[no_mangle]
+pub extern "C" fn impulse_is_previewable_file(path: *const c_char) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return false,
+            };
+            impulse_editor::is_previewable_file(&path)
+        }),
+    )
+}

@@ -98,7 +98,7 @@ pub const BUILTIN_KEYBINDINGS: &[BuiltinKeybinding] = &[
     },
     BuiltinKeybinding {
         id: "toggle_markdown_preview",
-        description: "Toggle Markdown Preview",
+        description: "Toggle Preview",
         category: "Editor",
         default_accel: "<Ctrl><Shift>m",
     },

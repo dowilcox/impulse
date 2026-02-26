@@ -683,8 +683,8 @@ pub(super) fn setup_tab_switch_handler(
                     if let Some(indent) = editor::get_editor_indent_info(&child) {
                         status_bar.borrow().update_indent_info(&indent);
                     }
-                    // Show/hide markdown preview button based on file type
-                    if editor::is_markdown_file(&file_path) {
+                    // Show/hide preview button based on file type
+                    if editor::is_previewable_file(&file_path) {
                         let is_previewing = editor::get_handle_for_widget(&child)
                             .map(|h| h.is_previewing.get())
                             .unwrap_or(false);
