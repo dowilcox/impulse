@@ -1574,6 +1574,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                         } else {
                             container.removeTerminal(at: termIndex)
                             self.tabManager.refreshSegmentLabels()
+                            // Update sidebar/status bar to the surviving terminal's CWD
+                            if container.activeTerminalIndex < container.terminals.count {
+                                let activeTerminal = container.terminals[container.activeTerminalIndex]
+                                let dir = activeTerminal.currentWorkingDirectory
+                                if !dir.isEmpty {
+                                    if !self.fileTreeRootPath.isEmpty {
+                                        self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
+                                    }
+                                    self.fileTreeRootPath = dir
+                                    self.searchPanel.setRootPath(dir)
+                                    self.invalidateGitBranchCache()
+                                    self.statusBar.updateForTerminal(
+                                        cwd: dir,
+                                        gitBranch: nil,
+                                        shellName: ImpulseCore.getUserLoginShellName()
+                                    )
+                                    if let cached = self.fileTreeCache[dir] {
+                                        self.fileTreeView.updateTree(nodes: cached, rootPath: dir)
+                                        self.fileTreeCacheTouch(key: dir)
+                                    }
+                                    let showHidden = self.fileTreeView.showHidden
+                                    DispatchQueue.global(qos: .userInitiated).async {
+                                        let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+                                        let branch = ImpulseCore.gitBranch(path: dir)
+                                        DispatchQueue.main.async { [weak self] in
+                                            guard let self else { return }
+                                            guard self.fileTreeRootPath == dir else { return }
+                                            self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
+                                            self.fileTreeCacheInsert(key: dir, nodes: nodes)
+                                            self.statusBar.updateForTerminal(
+                                                cwd: dir,
+                                                gitBranch: branch,
+                                                shellName: ImpulseCore.getUserLoginShellName()
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         break
                     }

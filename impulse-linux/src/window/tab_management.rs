@@ -73,6 +73,9 @@ pub(super) fn make_setup_terminal_signals(
         {
             let tab_view = tab_view.clone();
             let term_clone = term.clone();
+            let status_bar = status_bar.clone();
+            let sidebar_state = sidebar_state.clone();
+            let project_search_root = project_search_root.clone();
             term.connect_child_exited(move |_terminal, _status| {
                 run_guarded_ui("terminal-child-exited", || {
                     let n = tab_view.n_pages();
@@ -86,6 +89,17 @@ pub(super) fn make_setup_terminal_signals(
                                 tab_view.close_page(&page);
                             } else {
                                 crate::terminal_container::remove_terminal(&container, &term_clone);
+                                // Update sidebar/status bar to the surviving terminal's CWD
+                                if let Some(active) =
+                                    crate::terminal_container::get_active_terminal(&container)
+                                {
+                                    if let Some(uri) = active.current_directory_uri() {
+                                        let path = uri_to_file_path(&uri.to_string());
+                                        status_bar.borrow().update_cwd(&path);
+                                        sidebar_state.load_directory(&path);
+                                        *project_search_root.borrow_mut() = path.to_string();
+                                    }
+                                }
                             }
                             break;
                         }
