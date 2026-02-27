@@ -1085,7 +1085,7 @@ checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
 name = "impulse-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "dirs",
  "git2",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-editor"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "ammonia",
  "dirs",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-ffi"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "git2",
  "impulse-core",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-linux"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "dirs",
  "env_logger",
