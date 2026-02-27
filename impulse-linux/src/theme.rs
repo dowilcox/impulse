@@ -487,6 +487,32 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
     }
 }
 
+/// Convert a theme ID like `"tokyo-night-storm"` to a display name like `"Tokyo Night Storm"`.
+pub fn theme_display_name(id: &str) -> String {
+    match id {
+        "rose-pine" => "Rosé Pine".to_string(),
+        "catppuccin-mocha" => "Catppuccin Mocha".to_string(),
+        "catppuccin-latte" => "Catppuccin Latte".to_string(),
+        "github-dark" => "GitHub Dark".to_string(),
+        "github-light" => "GitHub Light".to_string(),
+        "monokai-pro" => "Monokai Pro".to_string(),
+        _ => id
+            .split('-')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(c) => {
+                        let upper: String = c.to_uppercase().collect();
+                        format!("{}{}", upper, chars.as_str())
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
 /// Return the list of built-in theme names.
 pub fn get_available_themes() -> Vec<&'static str> {
     vec![

@@ -1129,21 +1129,13 @@ pub fn show_settings_window(
     let theme_group = adw::PreferencesGroup::new();
     theme_group.set_title("Theme");
 
-    let theme_labels = [
-        "Kanagawa",
-        "Rosé Pine",
-        "Nord",
-        "Gruvbox",
-        "Tokyo Night",
-        "Tokyo Night Storm",
-        "Catppuccin Mocha",
-        "Dracula",
-        "Solarized Dark",
-        "One Dark",
-        "Ayu Dark",
-    ];
     let available_themes = theme::get_available_themes();
-    let theme_model = gtk4::StringList::new(&theme_labels);
+    let theme_labels: Vec<String> = available_themes
+        .iter()
+        .map(|id| theme::theme_display_name(id))
+        .collect();
+    let theme_label_refs: Vec<&str> = theme_labels.iter().map(|s| s.as_str()).collect();
+    let theme_model = gtk4::StringList::new(&theme_label_refs);
 
     let current_theme = settings.borrow().color_scheme.clone();
     let theme_index = available_themes

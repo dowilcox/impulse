@@ -1,3 +1,4 @@
+use super::tab_management;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use vte4::prelude::*;
