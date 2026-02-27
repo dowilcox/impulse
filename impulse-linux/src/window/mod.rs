@@ -959,6 +959,14 @@ pub fn build_window(app: &adw::Application) {
                 let new_provider = crate::theme::load_css(new_theme);
                 *css_provider.borrow_mut() = new_provider;
 
+                // Switch light/dark window chrome based on theme base
+                let style_manager = libadwaita::StyleManager::default();
+                if new_theme.base == "vs" {
+                    style_manager.set_color_scheme(libadwaita::ColorScheme::ForceLight);
+                } else {
+                    style_manager.set_color_scheme(libadwaita::ColorScheme::ForceDark);
+                }
+
                 // Update sidebar file icons for the new theme
                 sidebar_state.update_theme(new_theme);
 

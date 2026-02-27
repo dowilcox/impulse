@@ -15,6 +15,10 @@ pub struct ThemeColors {
     pub yellow: &'static str,
     pub orange: &'static str,
     pub comment: &'static str,
+    /// Monaco base theme: `"vs-dark"` for dark themes, `"vs"` for light themes.
+    pub base: &'static str,
+    /// Editor selection background — a hex color with alpha (e.g. `"#7E9CD850"`).
+    pub selection: &'static str,
     pub terminal_palette: [&'static str; 16],
 }
 
@@ -55,6 +59,8 @@ pub static KANAGAWA: ThemeColors = ThemeColors {
     yellow: "#E6C384",
     orange: "#FFA066",
     comment: "#727169",
+    base: "vs-dark",
+    selection: "#7E9CD850",
     terminal_palette: [
         "#090618", "#C34043", "#76946A", "#C0A36E", "#7E9CD8", "#957FB8", "#6A9589", "#C8C093",
         "#727169", "#E82424", "#98BB6C", "#E6C384", "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
@@ -76,6 +82,8 @@ pub static ROSE_PINE: ThemeColors = ThemeColors {
     yellow: "#f6c177",
     orange: "#ebbcba",
     comment: "#6e6a86",
+    base: "vs-dark",
+    selection: "#c4a7e740",
     terminal_palette: [
         "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
         "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
@@ -97,6 +105,8 @@ pub static NORD: ThemeColors = ThemeColors {
     yellow: "#EBCB8B",
     orange: "#D08770",
     comment: "#4C566A",
+    base: "vs-dark",
+    selection: "#81A1C150",
     terminal_palette: [
         "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
         "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
@@ -118,6 +128,8 @@ pub static GRUVBOX: ThemeColors = ThemeColors {
     yellow: "#fabd2f",
     orange: "#fe8019",
     comment: "#928374",
+    base: "vs-dark",
+    selection: "#83a59850",
     terminal_palette: [
         "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
         "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
@@ -139,6 +151,8 @@ pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
     yellow: "#e0af68",
     orange: "#ff9e64",
     comment: "#565f89",
+    base: "vs-dark",
+    selection: "#7aa2f740",
     terminal_palette: [
         "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
         "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
@@ -160,6 +174,8 @@ pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
     yellow: "#e0af68",
     orange: "#ff9e64",
     comment: "#565f89",
+    base: "vs-dark",
+    selection: "#7aa2f740",
     terminal_palette: [
         "#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
         "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
@@ -181,6 +197,8 @@ pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
     yellow: "#f9e2af",
     orange: "#fab387",
     comment: "#6c7086",
+    base: "vs-dark",
+    selection: "#89b4fa40",
     terminal_palette: [
         "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#bac2de",
         "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#cdd6f4",
@@ -202,6 +220,8 @@ pub static DRACULA: ThemeColors = ThemeColors {
     yellow: "#f1fa8c",
     orange: "#ffb86c",
     comment: "#6272a4",
+    base: "vs-dark",
+    selection: "#bd93f940",
     terminal_palette: [
         "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
         "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
@@ -223,6 +243,8 @@ pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
     yellow: "#b58900",
     orange: "#cb4b16",
     comment: "#586e75",
+    base: "vs-dark",
+    selection: "#268bd240",
     terminal_palette: [
         "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
         "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
@@ -244,6 +266,8 @@ pub static ONE_DARK: ThemeColors = ThemeColors {
     yellow: "#e5c07b",
     orange: "#d19a66",
     comment: "#5c6370",
+    base: "vs-dark",
+    selection: "#61afef40",
     terminal_palette: [
         "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
         "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
@@ -265,9 +289,172 @@ pub static AYU_DARK: ThemeColors = ThemeColors {
     yellow: "#ffb454",
     orange: "#ff8f40",
     comment: "#565b66",
+    base: "vs-dark",
+    selection: "#59c2ff30",
     terminal_palette: [
         "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
         "#565b66", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#ffffff",
+    ],
+};
+
+/// Everforest Dark — soft green tones inspired by nature.
+pub static EVERFOREST_DARK: ThemeColors = ThemeColors {
+    bg: "#2d353b",
+    bg_dark: "#272e33",
+    bg_highlight: "#3d484d",
+    fg: "#d3c6aa",
+    fg_dark: "#9da9a0",
+    cyan: "#83c092",
+    blue: "#7fbbb3",
+    green: "#a7c080",
+    magenta: "#d699b6",
+    red: "#e67e80",
+    yellow: "#dbbc7f",
+    orange: "#e69875",
+    comment: "#7a8478",
+    base: "vs-dark",
+    selection: "#7fbbb340",
+    terminal_palette: [
+        "#272e33", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#9da9a0",
+        "#7a8478", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#d3c6aa",
+    ],
+};
+
+/// GitHub Dark — GitHub's official dark theme.
+pub static GITHUB_DARK: ThemeColors = ThemeColors {
+    bg: "#0d1117",
+    bg_dark: "#010409",
+    bg_highlight: "#161b22",
+    fg: "#e6edf3",
+    fg_dark: "#8b949e",
+    cyan: "#79c0ff",
+    blue: "#79c0ff",
+    green: "#7ee787",
+    magenta: "#d2a8ff",
+    red: "#ff7b72",
+    yellow: "#ffa657",
+    orange: "#f0883e",
+    comment: "#8b949e",
+    base: "vs-dark",
+    selection: "#79c0ff30",
+    terminal_palette: [
+        "#010409", "#ff7b72", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#8b949e",
+        "#6e7681", "#ffa198", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#e6edf3",
+    ],
+};
+
+/// Monokai Pro — iconic warm dark theme with vibrant syntax colors.
+pub static MONOKAI_PRO: ThemeColors = ThemeColors {
+    bg: "#2d2a2e",
+    bg_dark: "#221f22",
+    bg_highlight: "#403e41",
+    fg: "#fcfcfa",
+    fg_dark: "#939293",
+    cyan: "#78dce8",
+    blue: "#78dce8",
+    green: "#a9dc76",
+    magenta: "#ab9df2",
+    red: "#ff6188",
+    yellow: "#ffd866",
+    orange: "#fc9867",
+    comment: "#727072",
+    base: "vs-dark",
+    selection: "#ab9df240",
+    terminal_palette: [
+        "#221f22", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#939293",
+        "#727072", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#fcfcfa",
+    ],
+};
+
+/// Palenight — Material Design-inspired dark theme with purple tones.
+pub static PALENIGHT: ThemeColors = ThemeColors {
+    bg: "#292d3e",
+    bg_dark: "#1b1e2b",
+    bg_highlight: "#32374d",
+    fg: "#a6accd",
+    fg_dark: "#676e95",
+    cyan: "#89ddff",
+    blue: "#82aaff",
+    green: "#c3e88d",
+    magenta: "#c792ea",
+    red: "#f07178",
+    yellow: "#ffcb6b",
+    orange: "#f78c6c",
+    comment: "#676e95",
+    base: "vs-dark",
+    selection: "#82aaff35",
+    terminal_palette: [
+        "#1b1e2b", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#676e95",
+        "#676e95", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#a6accd",
+    ],
+};
+
+/// Solarized Light — precision-engineered light palette with balanced contrast.
+pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
+    bg: "#fdf6e3",
+    bg_dark: "#eee8d5",
+    bg_highlight: "#eee8d5",
+    fg: "#657b83",
+    fg_dark: "#93a1a1",
+    cyan: "#2aa198",
+    blue: "#268bd2",
+    green: "#859900",
+    magenta: "#d33682",
+    red: "#dc322f",
+    yellow: "#b58900",
+    orange: "#cb4b16",
+    comment: "#93a1a1",
+    base: "vs",
+    selection: "#268bd230",
+    terminal_palette: [
+        "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+        "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+    ],
+};
+
+/// Catppuccin Latte — warm pastel light theme.
+pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
+    bg: "#eff1f5",
+    bg_dark: "#e6e9ef",
+    bg_highlight: "#dce0e8",
+    fg: "#4c4f69",
+    fg_dark: "#6c6f85",
+    cyan: "#179299",
+    blue: "#1e66f5",
+    green: "#40a02b",
+    magenta: "#8839ef",
+    red: "#d20f39",
+    yellow: "#df8e1d",
+    orange: "#fe640b",
+    comment: "#9ca0b0",
+    base: "vs",
+    selection: "#1e66f525",
+    terminal_palette: [
+        "#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#acb0be",
+        "#6c6f85", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#4c4f69",
+    ],
+};
+
+/// GitHub Light — GitHub's official light theme.
+pub static GITHUB_LIGHT: ThemeColors = ThemeColors {
+    bg: "#ffffff",
+    bg_dark: "#f6f8fa",
+    bg_highlight: "#f0f2f4",
+    fg: "#1f2328",
+    fg_dark: "#656d76",
+    cyan: "#0a3069",
+    blue: "#0969da",
+    green: "#1a7f37",
+    magenta: "#8250df",
+    red: "#cf222e",
+    yellow: "#9a6700",
+    orange: "#bc4c00",
+    comment: "#6e7781",
+    base: "vs",
+    selection: "#0969da25",
+    terminal_palette: [
+        "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#0a3069", "#6e7781",
+        "#57606a", "#a40e26", "#2da44e", "#bf8700", "#218bff", "#a475f9", "#0a3069", "#1f2328",
     ],
 };
 
@@ -289,6 +476,13 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
         "solarized-dark" | "solarized_dark" | "solarizeddark" => &SOLARIZED_DARK,
         "one-dark" | "one_dark" | "onedark" => &ONE_DARK,
         "ayu-dark" | "ayu_dark" | "ayudark" => &AYU_DARK,
+        "everforest-dark" | "everforest_dark" | "everforestdark" => &EVERFOREST_DARK,
+        "github-dark" | "github_dark" | "githubdark" => &GITHUB_DARK,
+        "monokai-pro" | "monokai_pro" | "monokaipro" => &MONOKAI_PRO,
+        "palenight" => &PALENIGHT,
+        "solarized-light" | "solarized_light" | "solarizedlight" => &SOLARIZED_LIGHT,
+        "catppuccin-latte" | "catppuccin_latte" | "catppuccinlatte" => &CATPPUCCIN_LATTE,
+        "github-light" | "github_light" | "githublight" => &GITHUB_LIGHT,
         _ => &NORD,
     }
 }
@@ -307,6 +501,13 @@ pub fn get_available_themes() -> Vec<&'static str> {
         "solarized-dark",
         "one-dark",
         "ayu-dark",
+        "everforest-dark",
+        "github-dark",
+        "monokai-pro",
+        "palenight",
+        "solarized-light",
+        "catppuccin-latte",
+        "github-light",
     ]
 }
 

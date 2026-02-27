@@ -408,7 +408,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
     /// Applies the given theme colors to the command palette.
     func applyTheme(_ theme: Theme) {
         guard let container = contentView as? NSVisualEffectView else { return }
-        container.appearance = NSAppearance(named: .darkAqua)
+        container.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         tableView.reloadData()
     }
 }

@@ -81,6 +81,10 @@ struct Theme {
     let yellow: NSColor
     let orange: NSColor
     let comment: NSColor
+    /// Monaco base theme: `"vs-dark"` for dark themes, `"vs"` for light themes.
+    let base: String
+    /// Editor selection background — a hex color with alpha (e.g. `"#7E9CD850"`).
+    let selection: String
     let terminalPalette: [NSColor]
 
     /// Returns the hex string for the background color (used for WKWebView).
@@ -97,6 +101,8 @@ struct Theme {
     var yellowHex: String { yellow.hexString }
     var orangeHex: String { orange.hexString }
     var commentHex: String { comment.hexString }
+    /// Whether this is a light theme.
+    var isLight: Bool { base == "vs" }
 }
 
 // MARK: - Built-in Themes
@@ -107,7 +113,9 @@ enum ThemeManager {
     static func availableThemes() -> [String] {
         ["kanagawa", "rose-pine", "nord", "gruvbox", "tokyo-night",
          "tokyo-night-storm", "catppuccin-mocha", "dracula",
-         "solarized-dark", "one-dark", "ayu-dark"]
+         "solarized-dark", "one-dark", "ayu-dark",
+         "everforest-dark", "github-dark", "monokai-pro", "palenight",
+         "solarized-light", "catppuccin-latte", "github-light"]
     }
 
     /// Returns the theme matching `name` (case-insensitive). Falls back to Nord.
@@ -135,6 +143,20 @@ enum ThemeManager {
             return oneDark
         case "ayu-dark", "ayu_dark", "ayudark":
             return ayuDark
+        case "everforest-dark", "everforest_dark", "everforestdark":
+            return everforestDark
+        case "github-dark", "github_dark", "githubdark":
+            return githubDark
+        case "monokai-pro", "monokai_pro", "monokaipro":
+            return monokaiPro
+        case "palenight":
+            return palenight
+        case "solarized-light", "solarized_light", "solarizedlight":
+            return solarizedLight
+        case "catppuccin-latte", "catppuccin_latte", "catppuccinlatte":
+            return catppuccinLatte
+        case "github-light", "github_light", "githublight":
+            return githubLight
         default:
             return nord
         }
@@ -162,6 +184,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#E6C384"),
         orange: NSColor(hex: "#FFA066"),
         comment: NSColor(hex: "#727169"),
+        base: "vs-dark",
+        selection: "#7E9CD850",
         terminalPalette: [
             "#090618", "#C34043", "#76946A", "#C0A36E", "#7E9CD8", "#957FB8", "#6A9589", "#C8C093",
             "#727169", "#E82424", "#98BB6C", "#E6C384", "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
@@ -185,6 +209,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#f6c177"),
         orange: NSColor(hex: "#ebbcba"),
         comment: NSColor(hex: "#6e6a86"),
+        base: "vs-dark",
+        selection: "#c4a7e740",
         terminalPalette: [
             "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
             "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
@@ -208,6 +234,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#EBCB8B"),
         orange: NSColor(hex: "#D08770"),
         comment: NSColor(hex: "#4C566A"),
+        base: "vs-dark",
+        selection: "#81A1C150",
         terminalPalette: [
             "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
             "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
@@ -231,6 +259,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#fabd2f"),
         orange: NSColor(hex: "#fe8019"),
         comment: NSColor(hex: "#928374"),
+        base: "vs-dark",
+        selection: "#83a59850",
         terminalPalette: [
             "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
             "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
@@ -254,6 +284,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#e0af68"),
         orange: NSColor(hex: "#ff9e64"),
         comment: NSColor(hex: "#565f89"),
+        base: "vs-dark",
+        selection: "#7aa2f740",
         terminalPalette: [
             "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
             "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
@@ -277,6 +309,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#e0af68"),
         orange: NSColor(hex: "#ff9e64"),
         comment: NSColor(hex: "#565f89"),
+        base: "vs-dark",
+        selection: "#7aa2f740",
         terminalPalette: [
             "#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
             "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
@@ -300,6 +334,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#f9e2af"),
         orange: NSColor(hex: "#fab387"),
         comment: NSColor(hex: "#6c7086"),
+        base: "vs-dark",
+        selection: "#89b4fa40",
         terminalPalette: [
             "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#bac2de",
             "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#cdd6f4",
@@ -323,6 +359,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#f1fa8c"),
         orange: NSColor(hex: "#ffb86c"),
         comment: NSColor(hex: "#6272a4"),
+        base: "vs-dark",
+        selection: "#bd93f940",
         terminalPalette: [
             "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
             "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
@@ -346,6 +384,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#b58900"),
         orange: NSColor(hex: "#cb4b16"),
         comment: NSColor(hex: "#586e75"),
+        base: "vs-dark",
+        selection: "#268bd240",
         terminalPalette: [
             "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
             "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
@@ -369,6 +409,8 @@ enum ThemeManager {
         yellow: NSColor(hex: "#e5c07b"),
         orange: NSColor(hex: "#d19a66"),
         comment: NSColor(hex: "#5c6370"),
+        base: "vs-dark",
+        selection: "#61afef40",
         terminalPalette: [
             "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
             "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
@@ -392,9 +434,186 @@ enum ThemeManager {
         yellow: NSColor(hex: "#ffb454"),
         orange: NSColor(hex: "#ff8f40"),
         comment: NSColor(hex: "#565b66"),
+        base: "vs-dark",
+        selection: "#59c2ff30",
         terminalPalette: [
             "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
             "#565b66", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#ffffff",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Everforest Dark
+
+    static let everforestDark = Theme(
+        name: "everforest-dark",
+        bg: NSColor(hex: "#2d353b"),
+        bgDark: NSColor(hex: "#272e33"),
+        bgHighlight: NSColor(hex: "#3d484d"),
+        fg: NSColor(hex: "#d3c6aa"),
+        fgDark: NSColor(hex: "#9da9a0"),
+        cyan: NSColor(hex: "#83c092"),
+        blue: NSColor(hex: "#7fbbb3"),
+        green: NSColor(hex: "#a7c080"),
+        magenta: NSColor(hex: "#d699b6"),
+        red: NSColor(hex: "#e67e80"),
+        yellow: NSColor(hex: "#dbbc7f"),
+        orange: NSColor(hex: "#e69875"),
+        comment: NSColor(hex: "#7a8478"),
+        base: "vs-dark",
+        selection: "#7fbbb340",
+        terminalPalette: [
+            "#272e33", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#9da9a0",
+            "#7a8478", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#d3c6aa",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: GitHub Dark
+
+    static let githubDark = Theme(
+        name: "github-dark",
+        bg: NSColor(hex: "#0d1117"),
+        bgDark: NSColor(hex: "#010409"),
+        bgHighlight: NSColor(hex: "#161b22"),
+        fg: NSColor(hex: "#e6edf3"),
+        fgDark: NSColor(hex: "#8b949e"),
+        cyan: NSColor(hex: "#79c0ff"),
+        blue: NSColor(hex: "#79c0ff"),
+        green: NSColor(hex: "#7ee787"),
+        magenta: NSColor(hex: "#d2a8ff"),
+        red: NSColor(hex: "#ff7b72"),
+        yellow: NSColor(hex: "#ffa657"),
+        orange: NSColor(hex: "#f0883e"),
+        comment: NSColor(hex: "#8b949e"),
+        base: "vs-dark",
+        selection: "#79c0ff30",
+        terminalPalette: [
+            "#010409", "#ff7b72", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#8b949e",
+            "#6e7681", "#ffa198", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#e6edf3",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Monokai Pro
+
+    static let monokaiPro = Theme(
+        name: "monokai-pro",
+        bg: NSColor(hex: "#2d2a2e"),
+        bgDark: NSColor(hex: "#221f22"),
+        bgHighlight: NSColor(hex: "#403e41"),
+        fg: NSColor(hex: "#fcfcfa"),
+        fgDark: NSColor(hex: "#939293"),
+        cyan: NSColor(hex: "#78dce8"),
+        blue: NSColor(hex: "#78dce8"),
+        green: NSColor(hex: "#a9dc76"),
+        magenta: NSColor(hex: "#ab9df2"),
+        red: NSColor(hex: "#ff6188"),
+        yellow: NSColor(hex: "#ffd866"),
+        orange: NSColor(hex: "#fc9867"),
+        comment: NSColor(hex: "#727072"),
+        base: "vs-dark",
+        selection: "#ab9df240",
+        terminalPalette: [
+            "#221f22", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#939293",
+            "#727072", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#fcfcfa",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Palenight
+
+    static let palenight = Theme(
+        name: "palenight",
+        bg: NSColor(hex: "#292d3e"),
+        bgDark: NSColor(hex: "#1b1e2b"),
+        bgHighlight: NSColor(hex: "#32374d"),
+        fg: NSColor(hex: "#a6accd"),
+        fgDark: NSColor(hex: "#676e95"),
+        cyan: NSColor(hex: "#89ddff"),
+        blue: NSColor(hex: "#82aaff"),
+        green: NSColor(hex: "#c3e88d"),
+        magenta: NSColor(hex: "#c792ea"),
+        red: NSColor(hex: "#f07178"),
+        yellow: NSColor(hex: "#ffcb6b"),
+        orange: NSColor(hex: "#f78c6c"),
+        comment: NSColor(hex: "#676e95"),
+        base: "vs-dark",
+        selection: "#82aaff35",
+        terminalPalette: [
+            "#1b1e2b", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#676e95",
+            "#676e95", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#a6accd",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Solarized Light
+
+    static let solarizedLight = Theme(
+        name: "solarized-light",
+        bg: NSColor(hex: "#fdf6e3"),
+        bgDark: NSColor(hex: "#eee8d5"),
+        bgHighlight: NSColor(hex: "#eee8d5"),
+        fg: NSColor(hex: "#657b83"),
+        fgDark: NSColor(hex: "#93a1a1"),
+        cyan: NSColor(hex: "#2aa198"),
+        blue: NSColor(hex: "#268bd2"),
+        green: NSColor(hex: "#859900"),
+        magenta: NSColor(hex: "#d33682"),
+        red: NSColor(hex: "#dc322f"),
+        yellow: NSColor(hex: "#b58900"),
+        orange: NSColor(hex: "#cb4b16"),
+        comment: NSColor(hex: "#93a1a1"),
+        base: "vs",
+        selection: "#268bd230",
+        terminalPalette: [
+            "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+            "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: Catppuccin Latte
+
+    static let catppuccinLatte = Theme(
+        name: "catppuccin-latte",
+        bg: NSColor(hex: "#eff1f5"),
+        bgDark: NSColor(hex: "#e6e9ef"),
+        bgHighlight: NSColor(hex: "#dce0e8"),
+        fg: NSColor(hex: "#4c4f69"),
+        fgDark: NSColor(hex: "#6c6f85"),
+        cyan: NSColor(hex: "#179299"),
+        blue: NSColor(hex: "#1e66f5"),
+        green: NSColor(hex: "#40a02b"),
+        magenta: NSColor(hex: "#8839ef"),
+        red: NSColor(hex: "#d20f39"),
+        yellow: NSColor(hex: "#df8e1d"),
+        orange: NSColor(hex: "#fe640b"),
+        comment: NSColor(hex: "#9ca0b0"),
+        base: "vs",
+        selection: "#1e66f525",
+        terminalPalette: [
+            "#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#acb0be",
+            "#6c6f85", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#4c4f69",
+        ].map { NSColor(hex: $0) }
+    )
+
+    // MARK: GitHub Light
+
+    static let githubLight = Theme(
+        name: "github-light",
+        bg: NSColor(hex: "#ffffff"),
+        bgDark: NSColor(hex: "#f6f8fa"),
+        bgHighlight: NSColor(hex: "#f0f2f4"),
+        fg: NSColor(hex: "#1f2328"),
+        fgDark: NSColor(hex: "#656d76"),
+        cyan: NSColor(hex: "#0a3069"),
+        blue: NSColor(hex: "#0969da"),
+        green: NSColor(hex: "#1a7f37"),
+        magenta: NSColor(hex: "#8250df"),
+        red: NSColor(hex: "#cf222e"),
+        yellow: NSColor(hex: "#9a6700"),
+        orange: NSColor(hex: "#bc4c00"),
+        comment: NSColor(hex: "#6e7781"),
+        base: "vs",
+        selection: "#0969da25",
+        terminalPalette: [
+            "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#0a3069", "#6e7781",
+            "#57606a", "#a40e26", "#2da44e", "#bf8700", "#218bff", "#a475f9", "#0a3069", "#1f2328",
         ].map { NSColor(hex: $0) }
     )
 }
@@ -406,7 +625,7 @@ extension Theme {
     /// for sending to the Monaco WebView via `EditorCommand.setTheme`.
     func monacoThemeDefinition() -> MonacoThemeDefinition {
         MonacoThemeDefinition(
-            base: "vs-dark",
+            base: base,
             inherit: true,
             rules: [
                 // Comments (italic)
@@ -477,18 +696,18 @@ extension Theme {
                 editorBackground: bgHex,
                 editorForeground: fgHex,
                 editorLineHighlightBackground: bgHighlightHex,
-                editorSelectionBackground: bgHighlightHex,
+                editorSelectionBackground: selection,
                 editorCursorForeground: cyanHex,
                 editorLineNumberForeground: commentHex,
-                editorLineNumberActiveForeground: fgDarkHex,
+                editorLineNumberActiveForeground: fgHex,
                 editorWidgetBackground: bgDarkHex,
                 editorSuggestWidgetBackground: bgDarkHex,
                 editorSuggestWidgetSelectedBackground: bgHighlightHex,
                 editorHoverWidgetBackground: bgDarkHex,
-                editorGutterBackground: bgDarkHex,
+                editorGutterBackground: bgHex,
                 minimapBackground: bgDarkHex,
-                scrollbarSliderBackground: commentHex,
-                scrollbarSliderHoverBackground: fgDarkHex,
+                scrollbarSliderBackground: commentHex + "40",
+                scrollbarSliderHoverBackground: commentHex + "80",
                 diffAddedColor: greenHex,
                 diffModifiedColor: yellowHex,
                 diffDeletedColor: redHex

@@ -396,7 +396,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         window.backgroundColor = theme.bgDark
 
         super.init(window: window)
@@ -1028,6 +1028,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Re-applies theme colors to all child views.
     func handleThemeChange(_ newTheme: Theme) {
         theme = newTheme
+
+        // Switch window chrome between light and dark appearance
+        window?.appearance = NSAppearance(named: newTheme.isLight ? .aqua : .darkAqua)
 
         // Window background — use bgDark so the titlebar blends with the tab bar
         window?.backgroundColor = newTheme.bgDark

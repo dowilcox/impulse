@@ -187,8 +187,13 @@ fn main() {
     let app = adw::Application::builder().application_id(app_id).build();
 
     app.connect_startup(move |_app| {
+        let initial_theme = theme::get_theme(&settings::load().color_scheme);
         let style_manager = adw::StyleManager::default();
-        style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+        if initial_theme.base == "vs" {
+            style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
+        } else {
+            style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+        }
 
         // Install application icon into user icon theme and set as default
         install_app_icon();

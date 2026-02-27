@@ -995,7 +995,7 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
     let strip = |c: &str| c.trim_start_matches('#').to_string();
 
     MonacoThemeDefinition {
-        base: "vs-dark".to_string(),
+        base: theme.base.to_string(),
         inherit: true,
         rules: vec![
             // Comments (italic)
@@ -1274,8 +1274,8 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
             editor_background: format!("#{}", strip(theme.bg)),
             editor_foreground: format!("#{}", strip(theme.fg)),
             editor_line_highlight_background: format!("#{}", strip(theme.bg_highlight)),
-            editor_selection_background: format!("#{}80", strip(theme.blue)),
-            editor_cursor_foreground: format!("#{}", strip(theme.fg)),
+            editor_selection_background: format!("#{}", strip(theme.selection)),
+            editor_cursor_foreground: format!("#{}", strip(theme.cyan)),
             editor_line_number_foreground: format!("#{}", strip(theme.comment)),
             editor_line_number_active_foreground: format!("#{}", strip(theme.fg)),
             editor_widget_background: format!("#{}", strip(theme.bg_dark)),
@@ -1285,7 +1285,7 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
             editor_gutter_background: format!("#{}", strip(theme.bg)),
             minimap_background: format!("#{}", strip(theme.bg_dark)),
             scrollbar_slider_background: format!("#{}40", strip(theme.comment)),
-            scrollbar_slider_hover_background: format!("#{}60", strip(theme.comment)),
+            scrollbar_slider_hover_background: format!("#{}80", strip(theme.comment)),
             diff_added_color: format!("#{}", strip(theme.green)),
             diff_modified_color: format!("#{}", strip(theme.yellow)),
             diff_deleted_color: format!("#{}", strip(theme.red)),
