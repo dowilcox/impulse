@@ -95,7 +95,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                 if editor::is_image_file(path) {
                     // Open image preview
                     let preview = editor::create_image_preview(path);
-                    let page = tab_view.append(&preview);
+                    let page = tab_management::insert_after_selected(&tab_view, &preview);
                     page.set_title(&filename);
                     if let Some(texture) = icon_cache.borrow().get_toolbar_icon("image") {
                         page.set_icon(Some(texture));
@@ -357,7 +357,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                             }
                         },
                     );
-                    let page = tab_view.append(&editor_widget);
+                    let page = tab_management::insert_after_selected(&tab_view, &editor_widget);
                     page.set_title(&filename);
                     if let Some(texture) = icon_cache.borrow().get(&filename, false, false) {
                         page.set_icon(Some(texture));

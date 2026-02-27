@@ -76,7 +76,7 @@ pub(super) fn setup_capture_phase_keys(
                         setup_terminal_signals(&term);
                         terminal::spawn_command(&term, &command, &args, cwd.as_deref());
                         let container = terminal_container::TerminalContainer::new(&term);
-                        let page = tab_view.append(&container.widget);
+                        let page = tab_management::insert_after_selected(&tab_view, &container.widget);
                         page.set_title(&kb_name);
                         if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
                             page.set_icon(Some(texture));
@@ -752,7 +752,7 @@ pub(super) fn setup_shortcut_controller(
                 terminal::spawn_command(&term, &command, &args, cwd.as_deref());
 
                 let container = terminal_container::TerminalContainer::new(&term);
-                let page = tab_view.append(&container.widget);
+                let page = tab_management::insert_after_selected(&tab_view, &container.widget);
                 page.set_title(&kb_name);
                 if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
                     page.set_icon(Some(texture));

@@ -110,6 +110,28 @@ pub(super) fn make_setup_terminal_signals(
     })
 }
 
+/// Insert a widget into the tab view immediately after the currently selected tab.
+/// Falls back to `append()` if no tab is selected.
+pub(super) fn insert_after_selected(
+    tab_view: &adw::TabView,
+    widget: &impl gtk4::prelude::IsA<gtk4::Widget>,
+) -> adw::TabPage {
+    if let Some(selected) = tab_view.selected_page() {
+        let abs_pos = tab_view.page_position(&selected);
+        let n_pinned = tab_view.n_pinned_pages();
+        if abs_pos < n_pinned {
+            // Selected tab is pinned — insert at the first unpinned slot (position 0).
+            tab_view.insert(widget, 0)
+        } else {
+            // Position relative to unpinned pages, +1 to insert after.
+            let unpinned_pos = abs_pos - n_pinned + 1;
+            tab_view.insert(widget, unpinned_pos)
+        }
+    } else {
+        tab_view.append(widget)
+    }
+}
+
 /// Create the closure that spawns a new terminal tab.
 pub(super) fn make_create_tab(
     tab_view: &adw::TabView,
@@ -133,7 +155,7 @@ pub(super) fn make_create_tab(
         terminal::spawn_shell(&term, &shell_cache);
 
         let container = terminal_container::TerminalContainer::new(&term);
-        let page = tab_view.append(&container.widget);
+        let page = insert_after_selected(&tab_view, &container.widget);
         page.set_title(shell_cache.shell_name());
         if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
             page.set_icon(Some(texture));

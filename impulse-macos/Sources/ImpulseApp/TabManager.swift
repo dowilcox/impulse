@@ -340,10 +340,14 @@ final class TabManager: NSObject {
         insertTab(entry)
     }
 
-    /// Inserts a new tab at the end and selects it.
+    /// Inserts a new tab after the currently selected tab and selects it.
+    /// If no tab is selected, appends at the end.
     private func insertTab(_ entry: TabEntry) {
-        tabs.append(entry)
-        pinnedTabs.append(false)
+        let insertionIndex = (selectedIndex >= 0 && selectedIndex < tabs.count)
+            ? selectedIndex + 1
+            : tabs.count
+        tabs.insert(entry, at: insertionIndex)
+        pinnedTabs.insert(false, at: insertionIndex)
 
         // Track open file paths for O(1) deduplication.
         switch entry {
@@ -356,7 +360,7 @@ final class TabManager: NSObject {
         }
 
         rebuildSegments()
-        selectTab(index: tabs.count - 1)
+        selectTab(index: insertionIndex)
     }
 
     // MARK: - Removing Tabs
