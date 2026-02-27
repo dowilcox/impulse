@@ -57,6 +57,7 @@ Platform-agnostic backend logic.
 - **git.rs** — Git operations: branch detection, diff computation for gutter markers.
 - **lsp.rs** — LSP client management: spawning language servers, JSON-RPC communication, managed web LSP installation/status.
 - **search.rs** — File name and content search using the `ignore` crate for gitignore-aware walking.
+- **util.rs** — Shared utilities: `language_from_uri()` for language ID detection, `file_path_to_uri()` / `uri_to_file_path()` conversions, file pattern matching for settings overrides.
 - **shell_integration/\*.sh** — Shell scripts emitting OSC 133 and OSC 7 escape sequences.
 
 ### impulse-editor (library, Monaco assets)
@@ -65,11 +66,20 @@ Bundles the vendored Monaco editor and defines the WebView communication protoco
 
 - **assets.rs** — Embeds the Monaco vendor directory and editor HTML via `include_dir!` / `include_str!`.
 - **protocol.rs** — `EditorCommand` and `EditorEvent` enums for bidirectional JSON messaging between Rust and the Monaco WebView.
+- **css.rs** — CSS color sanitizer validating `#hex`, `rgb()`, and `rgba()` color formats with fallbacks for theme customization.
+- **markdown.rs** — Markdown preview renderer using `pulldown_cmark` with themed HTML output and highlight.js syntax highlighting.
+- **svg.rs** — SVG preview renderer embedding SVG sources in themed HTML documents with centered layout.
 
 ### impulse-linux (binary, GTK4 frontend)
 
 - **main.rs** — `adw::Application` setup with app ID `dev.impulse.Impulse`, CLI flags (`--install-lsp-servers`, `--check-lsp-servers`).
-- **window.rs** — The main window builder. Contains keybinding setup, tab management (libadwaita `TabView`), sidebar toggling, editor/terminal search, command palette, and signal wiring.
+- **window/** — Main window module, split into submodules:
+  - **mod.rs** — The main window builder. Assembles layout, wires signals, and coordinates all submodules.
+  - **context.rs** — `WindowContext`, `LspState`, and `TerminalContext` structs bundling shared `Rc<RefCell<T>>` state passed between window functions.
+  - **tab_management.rs** — Tab creation (terminal, editor, image), context menus, tab switch/close handlers, and LSP response polling.
+  - **keybinding_setup.rs** — Capture-phase and shortcut-controller keybinding setup, including custom command keybindings.
+  - **sidebar_signals.rs** — Sidebar file tree click handlers, editor/image tab opening, and search panel wiring.
+  - **dialogs.rs** — Quick-open file picker (Ctrl+P) with searchable file list dialog.
 - **keybindings.rs** — Built-in keybinding registry, accel parsing, and override resolution.
 - **terminal.rs** — Creates configured VTE terminals with shell integration and drag-and-drop support.
 - **terminal_container.rs** — Wraps VTE terminals in a `gtk4::Box` and handles horizontal/vertical splitting via `gtk4::Paned`.
@@ -97,7 +107,11 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates w
 - **ImpulseApp.swift** — App entry point.
 - **AppDelegate.swift** — NSApplication delegate, app lifecycle.
 - **MainWindow.swift** — Main window setup, layout, and signal wiring.
+- **MainWindowController+LSP.swift** — LSP integration extension: background polling of LSP events (diagnostics, completions), batched processing, and main-thread dispatch.
 - **TabManager.swift** — Tab management (custom tab bar mixing terminal and editor tabs).
+- **Notifications.swift** — Centralized `NSNotification.Name` constants for theme/settings changes, tab management events, and search operations.
+- **ResourceBundle.swift** — Bundle resource locator handling both packaged `.app` and development contexts for SwiftPM resources.
+- **ShellEscape.swift** — String extension for shell-escaping arguments.
 - **Terminal/TerminalContainer.swift** — Terminal view with splitting support.
 - **Terminal/TerminalTab.swift** — Terminal tab using SwiftTerm for terminal emulation.
 - **Editor/EditorTab.swift** — Monaco editor tab via WKWebView.
