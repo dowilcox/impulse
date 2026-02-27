@@ -44,6 +44,7 @@ private final class SidebarToggleButton: NSButton {
 
     // Theme colors
     private var bgHighlight: NSColor = .controlAccentColor
+    private var fgColor: NSColor = .labelColor
     private var fgDarkColor: NSColor = .secondaryLabelColor
     private var accentColor: NSColor = .systemCyan
 
@@ -63,8 +64,9 @@ private final class SidebarToggleButton: NSButton {
         fatalError("init(coder:) is not supported")
     }
 
-    func applyTheme(bgHighlight: NSColor, fgDark: NSColor, cyan: NSColor) {
+    func applyTheme(bgHighlight: NSColor, fg: NSColor, fgDark: NSColor, cyan: NSColor) {
         self.bgHighlight = bgHighlight
+        self.fgColor = fg
         self.fgDarkColor = fgDark
         self.accentColor = cyan
         updateVisualState()
@@ -76,7 +78,7 @@ private final class SidebarToggleButton: NSButton {
             contentTintColor = accentColor
         } else if isHovered {
             layer?.backgroundColor = bgHighlight.cgColor
-            contentTintColor = fgDarkColor
+            contentTintColor = fgColor
         } else {
             layer?.backgroundColor = NSColor.clear.cgColor
             contentTintColor = fgDarkColor
@@ -407,8 +409,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         filesToggle.isActive = true
         searchToggle.target = self
         searchToggle.action = #selector(searchToggleClicked(_:))
-        filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
-        searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fgDark: theme.fgDark, cyan: theme.cyan)
+        filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.cyan)
+        searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.cyan)
 
         // Set toolbar button icons from shared SVG icon cache, falling back to
         // SF Symbols if the cache hasn't loaded (e.g. missing bundle resources).
@@ -1044,8 +1046,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         sidebarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
 
         // Sidebar toggle buttons
-        filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
-        searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
+        filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
+        searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
 
         // Sidebar toolbar buttons
         newFileButton.contentTintColor = newTheme.fgDark

@@ -306,7 +306,28 @@ pub fn get_all_git_statuses(
         }
     }
 
-    Ok(result)
+    // Remap keys to use the caller's path prefix instead of repo_root.
+    // This is necessary because repo.workdir() may return a canonicalized path
+    // with different casing than what the caller used (macOS case-insensitive FS).
+    let repo_root_str = repo_root.to_string_lossy();
+    let repo_root_prefix = repo_root_str.trim_end_matches('/');
+    let caller_prefix = path.trim_end_matches('/');
+
+    if repo_root_prefix != caller_prefix {
+        let remapped = result
+            .into_iter()
+            .map(|(key, val)| {
+                if let Some(suffix) = key.strip_prefix(repo_root_prefix) {
+                    (format!("{}{}", caller_prefix, suffix), val)
+                } else {
+                    (key, val)
+                }
+            })
+            .collect();
+        Ok(remapped)
+    } else {
+        Ok(result)
+    }
 }
 
 /// Read directory contents with git status from a pre-computed batch status map.
@@ -513,27 +534,25 @@ mod tests {
         fs::write(&root_file, "modified").unwrap();
         fs::write(&nested_file, "modified").unwrap();
 
-        let result = get_all_git_statuses(dir.path().to_str().unwrap()).unwrap();
+        let input_path = dir.path().to_str().unwrap();
+        let result = get_all_git_statuses(input_path).unwrap();
 
-        // Root directory should have root.txt=M and subdir=M (propagated)
-        let root_key = fs::canonicalize(dir.path())
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        // Root directory should have root.txt=M and subdir=M (propagated).
+        // Keys use the caller's path (not canonicalized) to match the caller's
+        // path casing on case-insensitive filesystems.
+        let root_key = input_path.trim_end_matches('/');
         let root_map = result
-            .get(&root_key)
+            .get(root_key)
             .expect("root directory should be in result");
         assert_eq!(root_map.get("root.txt").map(String::as_str), Some("M"));
         assert_eq!(root_map.get("subdir").map(String::as_str), Some("M"));
 
         // Subdirectory should have nested.txt=M
-        let sub_key = fs::canonicalize(&sub_dir)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let sub_key = format!("{}/subdir", root_key);
         let sub_map = result
             .get(&sub_key)
             .expect("subdirectory should be in result");
         assert_eq!(sub_map.get("nested.txt").map(String::as_str), Some("M"));
     }
 }
+

@@ -107,7 +107,7 @@ private final class TabItemView: NSView {
         // Background color
         let fillColor: NSColor
         if isSelected {
-            fillColor = bgHighlight     // same as hover for visual consistency
+            fillColor = bgColor         // match Linux: selected tab uses bg
         } else if isHovered {
             fillColor = bgHighlight     // theme.bgHighlight
         } else {
@@ -116,8 +116,8 @@ private final class TabItemView: NSView {
         fillColor.setFill()
         tabPath.fill()
 
-        // Text color: selected = accent (cyan), others = fgDark
-        let textColor = isSelected ? accentColor : fgDarkColor
+        // Text color: selected = accent (cyan), hovered = fg (bright), others = fgDark
+        let textColor = isSelected ? accentColor : (isHovered ? fgColor : fgDarkColor)
         let y = bounds.midY
 
         // Build or reuse cached attributed string
@@ -162,7 +162,7 @@ private final class TabItemView: NSView {
                 height: iconSize
             )
             if icon.isTemplate {
-                let tintColor = isSelected ? accentColor : fgDarkColor
+                let tintColor = isSelected ? accentColor : (isHovered ? fgColor : fgDarkColor)
                 // Reuse cached tinted icon if valid
                 if cachedTintedIcon == nil || lastIcon !== icon || lastTintColor != tintColor {
                     let size = NSSize(width: iconSize, height: iconSize)
@@ -203,7 +203,7 @@ private final class TabItemView: NSView {
                 let pinX = bounds.width - padding - pinSize
                 let pinY = y - pinSize / 2
                 let pinRect = NSRect(x: pinX, y: pinY, width: pinSize, height: pinSize)
-                let tintColor = isSelected ? accentColor : fgDarkColor
+                let tintColor = isSelected ? accentColor : (isHovered ? fgColor : fgDarkColor)
                 let tinted = NSImage(size: NSSize(width: pinSize, height: pinSize), flipped: false) { [tintColor] rect in
                     pinImg.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
                     tintColor.set()

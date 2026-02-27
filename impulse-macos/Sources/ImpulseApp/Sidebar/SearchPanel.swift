@@ -182,13 +182,13 @@ final class SearchPanel: NSView {
 
         // Style the search row container and field to match the theme
         searchRowStack.layer?.backgroundColor = theme.bgHighlight.cgColor
-        searchIcon.contentTintColor = theme.comment
+        searchIcon.contentTintColor = theme.fgDark
         searchField.textColor = theme.fg
         (searchField.currentEditor() as? NSTextView)?.insertionPointColor = theme.fg
         searchField.placeholderAttributedString = NSAttributedString(
             string: "Search files and content...",
             attributes: [
-                .foregroundColor: theme.comment,
+                .foregroundColor: theme.fgDark,
                 .font: searchField.font ?? NSFont.appFont(ofSize: 13),
             ]
         )

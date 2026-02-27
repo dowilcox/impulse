@@ -75,7 +75,7 @@ pub static ROSE_PINE: ThemeColors = ThemeColors {
     fg: "#e0def4",
     fg_dark: "#908caa",
     cyan: "#9ccfd8",
-    blue: "#31748f",
+    blue: "#4392b5",
     green: "#9ccfd8",
     magenta: "#c4a7e7",
     red: "#eb6f92",
@@ -211,9 +211,9 @@ pub static DRACULA: ThemeColors = ThemeColors {
     bg_dark: "#21222c",
     bg_highlight: "#44475a",
     fg: "#f8f8f2",
-    fg_dark: "#6272a4",
+    fg_dark: "#8490b7",
     cyan: "#8be9fd",
-    blue: "#6272a4",
+    blue: "#7c89b4",
     green: "#50fa7b",
     magenta: "#ff79c6",
     red: "#ff5555",
@@ -234,7 +234,7 @@ pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
     bg_dark: "#001e26",
     bg_highlight: "#073642",
     fg: "#839496",
-    fg_dark: "#586e75",
+    fg_dark: "#748e97",
     cyan: "#2aa198",
     blue: "#268bd2",
     green: "#859900",
@@ -257,7 +257,7 @@ pub static ONE_DARK: ThemeColors = ThemeColors {
     bg_dark: "#21252b",
     bg_highlight: "#2c313a",
     fg: "#abb2bf",
-    fg_dark: "#5c6370",
+    fg_dark: "#8c93a1",
     cyan: "#56b6c2",
     blue: "#61afef",
     green: "#98c379",
@@ -280,7 +280,7 @@ pub static AYU_DARK: ThemeColors = ThemeColors {
     bg_dark: "#07090d",
     bg_highlight: "#131721",
     fg: "#bfbdb6",
-    fg_dark: "#565b66",
+    fg_dark: "#797f8e",
     cyan: "#73b8ff",
     blue: "#59c2ff",
     green: "#aad94c",
@@ -372,7 +372,7 @@ pub static PALENIGHT: ThemeColors = ThemeColors {
     bg_dark: "#1b1e2b",
     bg_highlight: "#32374d",
     fg: "#a6accd",
-    fg_dark: "#676e95",
+    fg_dark: "#868bab",
     cyan: "#89ddff",
     blue: "#82aaff",
     green: "#c3e88d",
@@ -395,9 +395,9 @@ pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
     bg_dark: "#eee8d5",
     bg_highlight: "#eee8d5",
     fg: "#657b83",
-    fg_dark: "#93a1a1",
-    cyan: "#2aa198",
-    blue: "#268bd2",
+    fg_dark: "#576464",
+    cyan: "#217e77",
+    blue: "#1d6da3",
     green: "#859900",
     magenta: "#d33682",
     red: "#dc322f",
@@ -418,9 +418,9 @@ pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
     bg_dark: "#e6e9ef",
     bg_highlight: "#dce0e8",
     fg: "#4c4f69",
-    fg_dark: "#6c6f85",
-    cyan: "#179299",
-    blue: "#1e66f5",
+    fg_dark: "#65677c",
+    cyan: "#137a80",
+    blue: "#1559de",
     green: "#40a02b",
     magenta: "#8839ef",
     red: "#d20f39",
@@ -555,7 +555,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             min-height: 26px;
         }}
         .sidebar-tab:hover {{
-            color: {fg_dark};
+            color: {fg};
             background-color: {bg_highlight};
         }}
         .sidebar-tab-active {{
@@ -569,7 +569,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 11px;
             font-weight: bold;
             letter-spacing: 1px;
-            color: {comment};
+            color: {fg_dark};
         }}
         .sidebar-toolbar-btn {{
             min-width: 24px;
@@ -661,7 +661,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         .search-result-path {{
             font-size: 11px;
-            color: {comment};
+            color: {fg_dark};
         }}
         .search-result-line {{
             font-size: 12px;
@@ -776,7 +776,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         tabbar tab:hover:not(:selected) {{
             background-color: {bg_highlight};
-            color: {fg_dark};
+            color: {fg};
         }}
         tabbar tab image {{
             margin-right: 2px;
@@ -823,7 +823,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding: 2px 6px;
         }}
         .terminal-search-bar .dim-label {{
-            color: {comment};
+            color: {fg_dark};
             font-size: 11px;
             margin: 0 4px;
         }}
@@ -857,7 +857,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         .project-search-count {{
             font-size: 11px;
-            color: {comment};
+            color: {fg_dark};
             padding: 2px 8px;
         }}
         .project-search-results {{
@@ -879,14 +879,14 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-weight: bold;
         }}
         .project-search-match-count {{
-            color: {comment};
+            color: {fg_dark};
             font-size: 11px;
         }}
         .project-search-match {{
             padding: 2px 8px 2px 16px;
         }}
         .project-search-line-num {{
-            color: {comment};
+            color: {fg_dark};
             font-size: 11px;
             font-family: 'JetBrains Mono', monospace;
         }}
