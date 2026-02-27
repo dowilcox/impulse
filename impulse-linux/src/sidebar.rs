@@ -1482,6 +1482,7 @@ impl SidebarState {
     }
 
     /// Refresh the file tree to pick up git status changes (e.g. after saving a file).
+    #[allow(dead_code)]
     pub fn refresh(&self) {
         refresh_tree(
             &self.tree_nodes,
