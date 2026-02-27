@@ -256,8 +256,8 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                             }
                                             // Refresh diff decorations after save
                                             send_diff_decorations(&path);
-                                            // Refresh sidebar to update git status badges
-                                            sidebar_state.refresh();
+                                            // Refresh sidebar git badges without rebuilding tree (preserves scroll)
+                                            sidebar_state.refresh_git_only();
                                             // Run commands-on-save in a background thread
                                             let commands = settings.borrow().commands_on_save.clone();
                                             super::spawn_commands_on_save(path.clone(), commands);
@@ -308,7 +308,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                     log::warn!("LSP request channel full, dropping request: {}", e);
                                                 }
                                                 send_diff_decorations(&path);
-                                                sidebar_state.refresh();
+                                                sidebar_state.refresh_git_only();
                                             }
                                         }
                                     }

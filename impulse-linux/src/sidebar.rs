@@ -1494,6 +1494,36 @@ impl SidebarState {
             self._watcher.clone(),
         );
     }
+
+    /// Lightweight git-status-only refresh: updates badges in-place without
+    /// rebuilding the tree or disturbing the scroll position.
+    pub fn refresh_git_only(&self) {
+        let tree_nodes = self.tree_nodes.clone();
+        let file_tree_list = self.file_tree_list.clone();
+        let current_path = self.current_path.clone();
+        let icon_cache = self.icon_cache.clone();
+        let root = current_path.borrow().clone();
+        if root.is_empty() {
+            return;
+        }
+
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                impulse_core::filesystem::get_all_git_statuses(&root).unwrap_or_default()
+            })
+            .await;
+
+            if let Ok(statuses) = result {
+                refresh_git_status(
+                    &tree_nodes,
+                    &file_tree_list,
+                    &current_path,
+                    icon_cache,
+                    &statuses,
+                );
+            }
+        });
+    }
 }
 
 /// Insert a newly created file or folder into the tree at the correct position.

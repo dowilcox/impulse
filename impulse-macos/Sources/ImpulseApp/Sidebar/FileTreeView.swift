@@ -147,6 +147,9 @@ final class FileTreeView: NSView {
     private var gitStatusTimer: DispatchSourceTimer?
     private var lastGitStatusHash: Int = 0
 
+    // Scroll position to restore after a full tree reload + git status refresh.
+    private var pendingScrollRestore: NSPoint?
+
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -386,6 +389,8 @@ final class FileTreeView: NSView {
             let newNodes = FileTreeNode.buildTree(rootPath: root, showHidden: hidden)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                // Save scroll position before reloading.
+                let savedOrigin = self.scrollView.contentView.bounds.origin
                 self.rootNodes = newNodes
                 NSAnimationContext.beginGrouping()
                 NSAnimationContext.current.duration = 0
@@ -396,6 +401,11 @@ final class FileTreeView: NSView {
                 NSAnimationContext.endGrouping()
                 self.rebuildNodeIndex()
                 self.watchExpandedSubdirectories(self.rootNodes)
+                // Restore scroll after AppKit finishes its layout pass.
+                self.pendingScrollRestore = savedOrigin
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyPendingScrollRestore()
+                }
                 // Single git status refresh after expansion restoration ensures
                 // all expanded children are covered by the batch API call.
                 self.refreshGitStatus()
@@ -990,15 +1000,22 @@ final class FileTreeView: NSView {
     }
 
     private func reloadVisibleRows() {
-        outlineView.sizeLastColumnToFit()
         let visibleRange = outlineView.rows(in: outlineView.visibleRect)
-        guard visibleRange.length > 0 else {
-            outlineView.reloadData()
-            return
+        if visibleRange.length > 0 {
+            let indexSet = IndexSet(integersIn: visibleRange.location ..< (visibleRange.location + visibleRange.length))
+            let columnSet = IndexSet(integer: 0)
+            outlineView.reloadData(forRowIndexes: indexSet, columnIndexes: columnSet)
         }
-        let indexSet = IndexSet(integersIn: visibleRange.location ..< (visibleRange.location + visibleRange.length))
-        let columnSet = IndexSet(integer: 0)
-        outlineView.reloadData(forRowIndexes: indexSet, columnIndexes: columnSet)
+        outlineView.sizeLastColumnToFit()
+        applyPendingScrollRestore()
+    }
+
+    /// Restore scroll position saved before a full tree reload.
+    private func applyPendingScrollRestore() {
+        guard let origin = pendingScrollRestore else { return }
+        pendingScrollRestore = nil
+        scrollView.contentView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }
 
