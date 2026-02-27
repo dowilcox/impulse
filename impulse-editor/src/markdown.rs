@@ -150,7 +150,7 @@ pub fn render_markdown_preview(
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file: data: https:; font-src file:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file: data:; font-src file:;">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{

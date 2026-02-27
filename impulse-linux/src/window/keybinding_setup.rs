@@ -548,7 +548,7 @@ pub(super) fn setup_shortcut_controller(
                     if editor::is_editor(&child) {
                         let path = child.widget_name().to_string();
                         if let Some(text) = editor::get_editor_text(&child) {
-                            match std::fs::write(&path, &text) {
+                            match super::atomic_write(&path, &text) {
                                 Ok(()) => {
                                     editor::set_unmodified(&child);
                                     // Revert tab title

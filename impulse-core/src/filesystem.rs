@@ -555,4 +555,3 @@ mod tests {
         assert_eq!(sub_map.get("nested.txt").map(String::as_str), Some("M"));
     }
 }
-

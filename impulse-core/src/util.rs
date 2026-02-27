@@ -1,9 +1,17 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use url::Url;
 
 use crate::pty::url_decode;
+
+/// Maximum number of outstanding (timed-out) background threads before we
+/// refuse to spawn new ones, preventing unbounded resource exhaustion.
+const MAX_OUTSTANDING_TIMEOUT_THREADS: usize = 10;
+
+/// Tracks how many timeout threads are currently running in the background.
+static OUTSTANDING_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 /// Run a blocking closure with a timeout. Returns `Err` if the operation
 /// exceeds the deadline.
@@ -19,6 +27,9 @@ use crate::pty::url_decode;
 /// - If the closure never returns (e.g. a permanently blocked syscall), the
 ///   thread is leaked for the lifetime of the process.
 ///
+/// A cap of [`MAX_OUTSTANDING_TIMEOUT_THREADS`] prevents unbounded thread
+/// accumulation from repeated timeouts.
+///
 /// Callers should ensure the wrapped operation will eventually complete (e.g.
 /// by using operations that respect OS-level timeouts or can be interrupted by
 /// closing an underlying file descriptor).
@@ -27,14 +38,28 @@ pub fn run_with_timeout<T: Send + 'static>(
     label: &str,
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
+    let current = OUTSTANDING_THREADS.load(Ordering::Relaxed);
+    if current >= MAX_OUTSTANDING_TIMEOUT_THREADS {
+        return Err(format!(
+            "{}: too many outstanding timeout threads ({}), refusing to spawn more",
+            label, current
+        ));
+    }
+
+    OUTSTANDING_THREADS.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = std::sync::mpsc::channel();
     let label_owned = label.to_string();
     std::thread::Builder::new()
         .name(format!("timeout-{}", label_owned))
         .spawn(move || {
-            let _ = tx.send(f());
+            let result = f();
+            OUTSTANDING_THREADS.fetch_sub(1, Ordering::Relaxed);
+            let _ = tx.send(result);
         })
-        .map_err(|e| format!("Failed to spawn timeout thread: {}", e))?;
+        .map_err(|e| {
+            OUTSTANDING_THREADS.fetch_sub(1, Ordering::Relaxed);
+            format!("Failed to spawn timeout thread: {}", e)
+        })?;
     rx.recv_timeout(timeout).map_err(|_| {
         log::warn!(
             "{} timed out after {:?} — the background thread will continue running \

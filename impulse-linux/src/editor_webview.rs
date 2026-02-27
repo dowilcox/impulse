@@ -589,6 +589,30 @@ pub fn warm_up_editor() {
             }
         });
 
+        // Block navigation to external URLs; open them in the default browser.
+        webview.connect_decide_policy(|_wv, decision, decision_type| {
+            if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+                if let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() {
+                    if let Some(mut action) = nav.navigation_action() {
+                        if let Some(request) = action.request() {
+                            if let Some(uri) = request.uri() {
+                                let scheme = uri.split(':').next().unwrap_or("");
+                                if scheme != "file" && scheme != "about" {
+                                    let _ = gtk4::gio::AppInfo::launch_default_for_uri(
+                                        &uri,
+                                        gtk4::gio::AppLaunchContext::NONE,
+                                    );
+                                    decision.ignore();
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        });
+
         let uri = format!("file://{}/editor.html", monaco_dir.display());
         webview.load_uri(&uri);
 
@@ -778,6 +802,30 @@ where
         }
         wk_settings.set_allow_file_access_from_file_urls(false);
     }
+
+    // Block navigation to external URLs; open them in the default browser.
+    webview.connect_decide_policy(|_wv, decision, decision_type| {
+        if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+            if let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() {
+                if let Some(mut action) = nav.navigation_action() {
+                    if let Some(request) = action.request() {
+                        if let Some(uri) = request.uri() {
+                            let scheme = uri.split(':').next().unwrap_or("");
+                            if scheme != "file" && scheme != "about" {
+                                let _ = gtk4::gio::AppInfo::launch_default_for_uri(
+                                    &uri,
+                                    gtk4::gio::AppLaunchContext::NONE,
+                                );
+                                decision.ignore();
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    });
 
     // Create the handle
     let handle = Rc::new(MonacoEditorHandle {

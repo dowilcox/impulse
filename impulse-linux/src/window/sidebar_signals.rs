@@ -235,7 +235,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                     }
                                     impulse_editor::protocol::EditorEvent::SaveRequested => {
                                         let content = handle.get_content();
-                                        if let Err(e) = std::fs::write(&path, &content) {
+                                        if let Err(e) = super::atomic_write(&path, &content) {
                                             log::error!("Failed to save {}: {}", path, e);
                                             let toast = adw::Toast::new(&format!("Error saving: {}", e));
                                             toast.set_timeout(4);
@@ -277,21 +277,26 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         definition_monaco_ids.borrow_mut().insert(seq, monaco_id);
                                     }
                                     impulse_editor::protocol::EditorEvent::OpenFileRequested { uri, line, character } => {
-                                        let file_path = uri_to_file_path(&uri);
-                                        if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
-                                            cb(&file_path);
-                                        }
-                                        // Navigate to position once the tab is created (O(1) lookup)
-                                        if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
-                                            editor::go_to_position(&page.child(), line + 1, character + 1);
-                                            tab_view.set_selected_page(page);
+                                        // Block non-file URIs (e.g. from malicious LSP responses)
+                                        if !uri.starts_with("file://") && uri.contains("://") {
+                                            log::warn!("Blocked opening non-file URI: {}", uri);
+                                        } else {
+                                            let file_path = uri_to_file_path(&uri);
+                                            if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                                cb(&file_path);
+                                            }
+                                            // Navigate to position once the tab is created (O(1) lookup)
+                                            if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
+                                                editor::go_to_position(&page.child(), line + 1, character + 1);
+                                                tab_view.set_selected_page(page);
+                                            }
                                         }
                                     }
                                     impulse_editor::protocol::EditorEvent::FocusChanged { focused } => {
                                         // Auto-save on focus loss
                                         if !focused && settings.borrow().auto_save && handle.is_modified.get() {
                                             let content = handle.get_content();
-                                            if let Err(e) = std::fs::write(&path, &content) {
+                                            if let Err(e) = super::atomic_write(&path, &content) {
                                                 log::error!("Auto-save failed for {}: {}", path, e);
                                             } else {
                                                 handle.is_modified.set(false);

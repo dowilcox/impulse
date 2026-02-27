@@ -1114,6 +1114,7 @@ dependencies = [
  "include_dir",
  "log",
  "pulldown-cmark",
+ "regex",
  "serde",
  "serde_json",
 ]

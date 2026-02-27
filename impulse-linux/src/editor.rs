@@ -263,8 +263,9 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&preview_wv) {
             wk_settings.set_enable_javascript(true);
-            // Do NOT enable allowFileAccessFromFileURLs — the base URI
-            // handles relative image resolution and the CSP restricts scripts.
+            // Explicitly disable file-from-file access — the base URI handles
+            // relative image resolution and the CSP restricts scripts.
+            wk_settings.set_allow_file_access_from_file_urls(false);
         }
 
         // Block navigation to external URLs; open them in the default browser.

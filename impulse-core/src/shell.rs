@@ -33,6 +33,14 @@ pub fn get_user_login_shell() -> Option<String> {
 #[cfg(target_os = "macos")]
 fn get_user_login_shell_macos() -> Option<String> {
     let username = std::env::var("USER").ok()?;
+    // Validate username to prevent path traversal in the dscl argument
+    if !username
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        log::warn!("Refusing $USER with unexpected characters: {:?}", username);
+        return None;
+    }
     let output = std::process::Command::new("dscl")
         .args([".", "-read", &format!("/Users/{}", username), "UserShell"])
         .output()
@@ -109,8 +117,7 @@ fn write_secure_file(path: &std::path::Path, content: &str) -> Result<(), std::i
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true) // O_EXCL: fail if file exists (prevents symlink attacks)
         .mode(0o600)
         .open(path)?;
     file.write_all(content.as_bytes())
@@ -244,6 +251,10 @@ pub fn build_shell_command(
     cmd.env_remove("LD_PRELOAD");
     cmd.env_remove("LD_LIBRARY_PATH");
     cmd.env_remove("LD_AUDIT");
+    // macOS equivalents: prevent dylib injection into child shells
+    cmd.env_remove("DYLD_INSERT_LIBRARIES");
+    cmd.env_remove("DYLD_LIBRARY_PATH");
+    cmd.env_remove("DYLD_FRAMEWORK_PATH");
 
     Ok((cmd, temp_files))
 }

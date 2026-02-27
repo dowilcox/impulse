@@ -256,9 +256,15 @@ impl PtyManager {
             }
         }
 
-        let mut sessions = self.sessions.lock();
+        // Remove from the map first, then drop the lock before joining the
+        // reader thread. This avoids blocking all other PTY operations if the
+        // thread takes time to exit.
+        let session = {
+            let mut sessions = self.sessions.lock();
+            sessions.remove(id)
+        };
 
-        if let Some(mut session) = sessions.remove(id) {
+        if let Some(mut session) = session {
             let _ = session.child.kill();
             let _ = session.child.wait();
             // Join the reader thread — it should exit promptly since the PTY fd
@@ -284,17 +290,22 @@ impl Drop for PtyManager {
         }
         drop(flags);
 
-        let mut sessions = self.sessions.lock();
-        let ids: Vec<String> = sessions.keys().cloned().collect();
-        for id in ids {
-            if let Some(mut session) = sessions.remove(&id) {
-                let _ = session.child.kill();
-                let _ = session.child.wait();
-                // Join the reader thread after the child has exited
-                if let Some(handle) = session.reader_thread.take() {
-                    if let Err(e) = handle.join() {
-                        log::warn!("PTY reader thread for session {} panicked: {:?}", id, e);
-                    }
+        // Drain all sessions from the map, then drop the lock before joining
+        // threads (avoids holding the lock during potentially slow joins).
+        let drained: Vec<(String, PtySession)> = {
+            let mut sessions = self.sessions.lock();
+            let ids: Vec<String> = sessions.keys().cloned().collect();
+            ids.into_iter()
+                .filter_map(|id| sessions.remove(&id).map(|s| (id, s)))
+                .collect()
+        };
+
+        for (id, mut session) in drained {
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+            if let Some(handle) = session.reader_thread.take() {
+                if let Err(e) = handle.join() {
+                    log::warn!("PTY reader thread for session {} panicked: {:?}", id, e);
                 }
             }
         }

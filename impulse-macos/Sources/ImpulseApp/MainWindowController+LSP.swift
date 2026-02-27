@@ -910,9 +910,11 @@ extension MainWindowController {
             case "\n": result += "\\n"
             case "\r": result += "\\r"
             case "\t": result += "\\t"
+            case "\u{2028}": result += "\\u2028" // LINE SEPARATOR
+            case "\u{2029}": result += "\\u2029" // PARAGRAPH SEPARATOR
             default:
-                if char.asciiValue.map({ $0 < 32 }) == true {
-                    result += String(format: "\\u%04x", char.asciiValue!)
+                if let ascii = char.asciiValue, ascii < 32 {
+                    result += String(format: "\\u%04x", ascii)
                 } else {
                     result.append(char)
                 }

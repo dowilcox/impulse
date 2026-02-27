@@ -858,8 +858,16 @@ private class PreviewNavigationDelegate: NSObject, WKNavigationDelegate {
             return
         }
         let scheme = url.scheme ?? ""
-        if scheme == "file" || scheme == "about" || scheme == "data" {
+        if scheme == "file" || scheme == "about" {
             decisionHandler(.allow)
+        } else if scheme == "data" {
+            // Only allow data: URIs for images (block data:text/html, etc.)
+            let urlString = url.absoluteString
+            if urlString.hasPrefix("data:image/") {
+                decisionHandler(.allow)
+            } else {
+                decisionHandler(.cancel)
+            }
         } else {
             // Open in the default browser
             NSWorkspace.shared.open(url)

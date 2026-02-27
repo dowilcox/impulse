@@ -122,7 +122,9 @@ pub fn create_terminal(
         let term = terminal.clone();
         drop_target_text.connect_drop(move |_target, value, _x, _y| {
             if let Ok(text) = value.get::<String>() {
-                let escaped = shell_escape(&text);
+                // Strip newlines/carriage returns to prevent unintended command execution
+                let sanitized = text.replace('\n', " ").replace('\r', "");
+                let escaped = shell_escape(&sanitized);
                 term.feed_child(escaped.as_bytes());
                 return true;
             }

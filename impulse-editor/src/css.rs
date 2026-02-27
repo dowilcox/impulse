@@ -62,10 +62,7 @@ mod tests {
             "x"
         );
         assert_eq!(
-            sanitize_css_color(
-                "rgb(0, 0, 0)</style><script>alert(1)</script>",
-                "x"
-            ),
+            sanitize_css_color("rgb(0, 0, 0)</style><script>alert(1)</script>", "x"),
             "x"
         );
     }

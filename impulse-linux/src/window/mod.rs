@@ -1517,6 +1517,35 @@ fn run_commands_on_save(path: &str, commands: &[crate::settings::CommandOnSave])
     needs_reload
 }
 
+/// Atomically write content to a file via temp file + rename to prevent
+/// data loss on crash or power failure.
+pub(super) fn atomic_write(path: &str, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let dest = std::path::Path::new(path);
+    let parent = dest.parent().unwrap_or(std::path::Path::new("."));
+    let tmp_path = parent.join(format!(
+        ".{}.impulse-save-tmp",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+    ));
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+    }
+    // Preserve original permissions if the file already exists
+    if let Ok(meta) = std::fs::metadata(dest) {
+        let _ = std::fs::set_permissions(&tmp_path, meta.permissions());
+    }
+    std::fs::rename(&tmp_path, dest)?;
+    Ok(())
+}
+
 pub(super) fn spawn_commands_on_save(path: String, commands: Vec<crate::settings::CommandOnSave>) {
     std::thread::spawn(move || {
         if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

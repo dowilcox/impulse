@@ -770,7 +770,7 @@ pub(super) fn setup_tab_close_handler(
                         let path = child.widget_name().to_string();
                         let uri = ensure_file_uri(&path);
                         if let Some(text) = editor::get_editor_text(&child) {
-                            if std::fs::write(&path, &text).is_ok() {
+                            if super::atomic_write(&path, &text).is_ok() {
                                 if let Err(e) =
                                     lsp_tx.try_send(LspRequest::DidSave { uri: uri.clone() })
                                 {

@@ -295,17 +295,24 @@ pub fn replace_in_file(
             .parent()
             .ok_or_else(|| format!("Cannot determine parent directory of '{}'", path))?;
         let tmp_path = parent.join(format!(
-            ".{}.impulse-tmp",
+            ".{}.{}.impulse-tmp",
             original_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "file".to_string())
+                .unwrap_or_else(|| "file".to_string()),
+            uuid::Uuid::new_v4()
         ));
 
         {
-            let mut tmp_file = File::create(&tmp_path).map_err(|e| {
-                format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
-            })?;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true) // O_EXCL: fail if file exists (prevents symlink attacks)
+                .mode(0o600)
+                .open(&tmp_path)
+                .map_err(|e| {
+                    format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
+                })?;
             tmp_file.write_all(new_content.as_bytes()).map_err(|e| {
                 // Clean up temp file on write failure
                 let _ = std::fs::remove_file(&tmp_path);

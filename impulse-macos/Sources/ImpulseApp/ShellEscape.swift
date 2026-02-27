@@ -13,6 +13,7 @@ extension String {
     /// returned as-is; otherwise it is wrapped in single quotes with internal
     /// single quotes escaped using the `'\''` idiom.
     var shellEscaped: String {
+        if isEmpty { return "''" }
         if unicodeScalars.allSatisfy({ Self.shellSafeChars.contains($0) }) {
             return self
         }
