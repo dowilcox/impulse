@@ -1,6 +1,19 @@
 import AppKit
 import os.log
 
+// MARK: - Themed Split View
+
+/// NSSplitView subclass that allows a custom divider color to match the app theme.
+private final class ThemedSplitView: NSSplitView {
+    var customDividerColor: NSColor? {
+        didSet { needsDisplay = true }
+    }
+
+    override var dividerColor: NSColor {
+        customDividerColor ?? super.dividerColor
+    }
+}
+
 // MARK: - Pointer Button
 
 /// NSButton subclass that shows a pointing hand cursor on hover.
@@ -170,7 +183,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
-    private let splitView = NSSplitView()
+    private let splitView = ThemedSplitView()
     private let sidebarContainer: NSView = {
         let v = NSView()
         v.wantsLayer = true
@@ -462,9 +475,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         setupNotificationObservers()
         setupCustomKeybindingMonitor()
 
-        // Apply initial theme to sidebar views.
+        // Apply initial theme to sidebar views and split divider.
         fileTreeView.applyTheme(theme)
         searchPanel.applyTheme(theme)
+        splitView.customDividerColor = theme.bgHighlight
 
         // Set initial root path for the file tree and search panel.
         // Always start at home; the sidebar will update once the terminal's CWD
@@ -598,7 +612,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         statusBar.previewButton.action = #selector(previewButtonClicked(_:))
 
         contentContainer.addSubview(tabContentView)
-        contentContainer.addSubview(statusBar)
 
         let searchHeight = termSearchBar.heightAnchor.constraint(equalToConstant: 0)
         termSearchHeightConstraint = searchHeight
@@ -612,11 +625,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             tabContentView.topAnchor.constraint(equalTo: termSearchBar.bottomAnchor),
             tabContentView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             tabContentView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            tabContentView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
-
-            statusBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            tabContentView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
 
         splitView.addArrangedSubview(sidebarContainer)
@@ -634,6 +643,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
         contentView.addSubview(tabBarContainer)
         contentView.addSubview(splitView)
+        contentView.addSubview(statusBar)
 
         NSLayoutConstraint.activate([
             // Pin to safe area top (below the titlebar) — clicks work reliably here
@@ -663,7 +673,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             splitView.topAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            splitView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+
+            // Status bar: full width, pinned to bottom of window
+            statusBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
         // Start with sidebar hidden; apply the saved state after layout
@@ -1060,8 +1075,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         fileTreeView.applyTheme(newTheme)
         searchPanel.applyTheme(newTheme)
 
-        // Status bar
+        // Status bar + split view divider (same border color)
         statusBar.applyTheme(newTheme)
+        splitView.customDividerColor = newTheme.bgHighlight
 
         // Content background
         contentContainer.layer?.backgroundColor = newTheme.bg.cgColor
