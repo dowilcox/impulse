@@ -114,6 +114,12 @@ pub(super) fn setup_capture_phase_keys(
         &capture_kb_overrides,
     ));
 
+    let new_file_accel = keybindings::parse_accel(&keybindings::get_accel(
+        "new_file",
+        &capture_kb_overrides,
+    ));
+    let new_file_window = ctx.window.clone();
+
     let md_preview_accel = keybindings::parse_accel(&keybindings::get_accel(
         "toggle_markdown_preview",
         &capture_kb_overrides,
@@ -224,6 +230,16 @@ pub(super) fn setup_capture_phase_keys(
                 return gtk4::glib::Propagation::Stop;
             }
 
+            // Ctrl+N: new file (VTE eats this as "cursor down")
+            if let Some(ref accel) = new_file_accel {
+                if keybindings::matches_key(accel, key, modifiers) {
+                    let _ = gtk4::prelude::ActionGroupExt::activate_action(
+                        &new_file_window, "new-file", None,
+                    );
+                    return gtk4::glib::Propagation::Stop;
+                }
+            }
+
             // Ctrl+T: new tab (VTE eats this as "transpose chars")
             if ctrl
                 && !shift
@@ -304,7 +320,8 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
-    // Ctrl+N: New untitled editor tab
+    // Ctrl+N: New untitled editor tab — registered as a window action so
+    // both the shortcut controller and the capture-phase handler can invoke it.
     {
         let tab_view = tab_view.clone();
         let settings = settings.clone();
@@ -327,11 +344,13 @@ pub(super) fn setup_shortcut_controller(
         let open_editor_paths = ctx.open_editor_paths.clone();
         let editor_tab_pages = ctx.editor_tab_pages.clone();
         let window_for_new = window.clone();
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("new_file", &kb_overrides),
-            move || {
-                let cwd = get_active_cwd(&tab_view);
+        let new_file_action = gtk4::gio::SimpleAction::new("new-file", None);
+        new_file_action.connect_activate(move |_, _| {
+                let cwd = get_active_cwd(&tab_view)
+                    .or_else(|| {
+                        let p = sidebar_state_for_new.current_path.borrow().clone();
+                        if p.is_empty() { None } else { Some(p) }
+                    });
                 let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                 let (editor_widget, _handle) = editor::create_untitled_editor(
                     &settings.borrow(),
@@ -422,13 +441,15 @@ pub(super) fn setup_shortcut_controller(
                                 }
                                 impulse_editor::protocol::EditorEvent::SaveRequested => {
                                     if is_untitled {
-                                        show_save_dialog_for_untitled(
-                                            &window, handle, &tab_view,
-                                            &editor_tab_pages, &open_editor_paths,
-                                            &lsp_tx, &doc_versions,
-                                            &sidebar_state, &toast_overlay,
-                                            &icon_cache, &settings,
-                                        );
+                                        if let Some(rc_handle) = editor::get_handle(&path) {
+                                            show_save_dialog_for_untitled(
+                                                &window, &rc_handle, &tab_view,
+                                                &editor_tab_pages, &open_editor_paths,
+                                                &lsp_tx, &doc_versions,
+                                                &sidebar_state, &toast_overlay,
+                                                &icon_cache, &settings,
+                                            );
+                                        }
                                     } else {
                                         let content = handle.get_content();
                                         if let Err(e) = super::atomic_write(&path, &content) {
@@ -576,6 +597,14 @@ pub(super) fn setup_shortcut_controller(
                 let sentinel = editor_widget.widget_name().to_string();
                 editor_tab_pages.borrow_mut().insert(sentinel.clone(), page.clone());
                 tab_view.set_selected_page(&page);
+        });
+        window.add_action(&new_file_action);
+        let window_for_shortcut = window.clone();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("new_file", &kb_overrides),
+            move || {
+                let _ = gtk4::prelude::ActionGroupExt::activate_action(&window_for_shortcut, "new-file", None);
             },
         );
     }

@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use vte4::prelude::*;
 
 use crate::terminal;
 

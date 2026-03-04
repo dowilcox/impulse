@@ -599,7 +599,17 @@ pub(super) fn setup_tab_switch_handler(
                     // Editor tab: focus the editor and show its parent directory
                     child.grab_focus();
                     let file_path = child.widget_name().to_string();
-                    if let Some(parent) = std::path::Path::new(&file_path).parent() {
+                    if editor::is_untitled_path(&file_path) {
+                        // Untitled editor: use the stored CWD from when it was created
+                        if let Some(handle) = editor::get_handle(&file_path) {
+                            if let Some(cwd) = handle.untitled_cwd.borrow().clone() {
+                                sidebar_state.switch_to_tab(&child, &cwd);
+                                status_bar.borrow().update_cwd(&cwd);
+                            } else {
+                                sidebar_state.set_active_tab(&child);
+                            }
+                        }
+                    } else if let Some(parent) = std::path::Path::new(&file_path).parent() {
                         let dir = parent.to_string_lossy().to_string();
                         sidebar_state.switch_to_tab(&child, &dir);
                         // Use the sidebar's restored current_path for the status bar,
