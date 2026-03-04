@@ -139,12 +139,15 @@ Clone and build using the macOS build script:
 git clone https://github.com/dowilcox/impulse.git
 cd impulse
 ./impulse-macos/build.sh                           # produces dist/Impulse.app
+./impulse-macos/build.sh --dev                     # produces dist/Impulse Dev.app (separate bundle ID)
 ./impulse-macos/build.sh --dmg                     # also creates dist/Impulse-X.Y.Z.dmg
 ./impulse-macos/build.sh --sign                    # build + codesign with Developer ID
 ./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
 ```
 
 The build script handles all steps automatically: building the Rust FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle. Code signing auto-detects your Developer ID from the keychain, or you can set `IMPULSE_SIGN_IDENTITY` explicitly.
+
+The `--dev` flag builds with bundle ID `dev.impulse.Impulse.Devel`, allowing the dev build to run side-by-side with an installed release. The dev instance shows "[DEV]" in the window title.
 
 To run the built app:
 

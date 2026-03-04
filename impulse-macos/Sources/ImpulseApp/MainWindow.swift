@@ -405,12 +405,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             backing: .buffered,
             defer: false
         )
-        window.title = "Impulse"
+        window.title = AppState.isDev ? "Impulse [DEV]" : "Impulse"
         window.minSize = NSSize(width: 600, height: 400)
         window.center()
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titleVisibility = AppState.isDev ? .visible : .hidden
         window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         window.backgroundColor = theme.bgDark
 

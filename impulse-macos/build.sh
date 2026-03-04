@@ -20,6 +20,7 @@ set -euo pipefail
 #   ./impulse-macos/build.sh --dmg                     # build .app + .dmg
 #   ./impulse-macos/build.sh --sign                    # build + codesign
 #   ./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
+#   ./impulse-macos/build.sh --dev                     # build dev variant (separate bundle ID)
 #   ./impulse-macos/build.sh --release                 # same as default (release build)
 #
 # Environment variables for signing:
@@ -35,11 +36,13 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CREATE_DMG=false
 SIGN=false
 NOTARIZE=false
+DEV_BUILD=false
 for arg in "$@"; do
     case "$arg" in
         --dmg) CREATE_DMG=true ;;
         --sign) SIGN=true ;;
         --notarize) NOTARIZE=true; SIGN=true ;;
+        --dev) DEV_BUILD=true ;;
     esac
 done
 
@@ -124,6 +127,17 @@ if [[ "${SIGN}" == true ]]; then
     fi
 fi
 
+# ── Dev mode configuration ────────────────────────────────────────────
+
+if [[ "${DEV_BUILD}" == true ]]; then
+    APP_NAME="Impulse Dev"
+    BUNDLE_ID="dev.impulse.Impulse.Devel"
+    echo "Building in DEV mode (bundle ID: ${BUNDLE_ID})"
+else
+    APP_NAME="Impulse"
+    BUNDLE_ID="dev.impulse.Impulse"
+fi
+
 # ── Version detection ─────────────────────────────────────────────────
 
 # Read version from impulse-core/Cargo.toml (single source of truth).
@@ -192,9 +206,9 @@ echo "    OK: ${SWIFT_BIN}"
 
 # ── Step 4: Create .app bundle ────────────────────────────────────────
 
-echo "==> Creating Impulse.app bundle..."
+echo "==> Creating ${APP_NAME}.app bundle..."
 
-APP_DIR="dist/Impulse.app"
+APP_DIR="dist/${APP_NAME}.app"
 CONTENTS="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
@@ -203,7 +217,7 @@ rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES}"
 
 # Copy binary
-cp "${SWIFT_BIN}" "${MACOS_DIR}/Impulse"
+cp "${SWIFT_BIN}" "${MACOS_DIR}/${APP_NAME}"
 
 # Copy SwiftPM bundle resources (Monaco assets, icons, etc.)
 # Place in Contents/Resources/ — the standard macOS location for app resources.
@@ -219,17 +233,17 @@ cat > "${CONTENTS}/Info.plist" << PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Impulse</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>Impulse</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.impulse.Impulse</string>
+    <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
-    <string>Impulse</string>
+    <string>${APP_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
@@ -623,7 +637,7 @@ echo "    OK: ${APP_DIR}"
 # ── Step 4b: Code Signing (optional) ─────────────────────────────────
 
 if [[ "${SIGN}" == true ]]; then
-    echo "==> Signing Impulse.app with Developer ID..."
+    echo "==> Signing ${APP_NAME}.app with Developer ID..."
 
     ENTITLEMENTS="impulse-macos/Impulse.entitlements"
 
@@ -672,9 +686,10 @@ fi
 # ── Step 5: Create .dmg (optional) ────────────────────────────────────
 
 if [[ "${CREATE_DMG}" == true ]]; then
-    echo "==> Creating Impulse-${VERSION}.dmg..."
+    DMG_BASE_NAME="${APP_NAME// /-}"
+    echo "==> Creating ${DMG_BASE_NAME}-${VERSION}.dmg..."
 
-    DMG_NAME="Impulse-${VERSION}.dmg"
+    DMG_NAME="${DMG_BASE_NAME}-${VERSION}.dmg"
     DMG_PATH="dist/${DMG_NAME}"
 
     # Convert background SVG to PNG for the DMG window background
@@ -699,9 +714,9 @@ if [[ "${CREATE_DMG}" == true ]]; then
         --window-size 660 400
         --window-pos 200 120
         --icon-size 100
-        --icon "Impulse.app" 180 200
+        --icon "${APP_NAME}.app" 180 200
         --app-drop-link 480 200
-        --hide-extension "Impulse.app"
+        --hide-extension "${APP_NAME}.app"
         --format UDZO
         --no-internet-enable
     )
@@ -738,11 +753,12 @@ if [[ "${NOTARIZE}" == true ]]; then
     echo "==> Notarizing with Apple..."
 
     # Determine what to submit: prefer DMG, fall back to zipped .app
-    if [[ "${CREATE_DMG}" == true && -f "dist/Impulse-${VERSION}.dmg" ]]; then
-        NOTARIZE_TARGET="dist/Impulse-${VERSION}.dmg"
+    NOTARIZE_ZIP="dist/${APP_NAME// /-}-${VERSION}.zip"
+    if [[ "${CREATE_DMG}" == true && -f "${DMG_PATH}" ]]; then
+        NOTARIZE_TARGET="${DMG_PATH}"
     else
         echo "    Creating zip for notarization..."
-        NOTARIZE_TARGET="dist/Impulse-${VERSION}.zip"
+        NOTARIZE_TARGET="${NOTARIZE_ZIP}"
         ditto -c -k --keepParent "${APP_DIR}" "${NOTARIZE_TARGET}"
     fi
 
@@ -756,13 +772,13 @@ if [[ "${NOTARIZE}" == true ]]; then
     echo "    Stapling notarization ticket..."
     xcrun stapler staple "${APP_DIR}"
 
-    if [[ "${CREATE_DMG}" == true && -f "dist/Impulse-${VERSION}.dmg" ]]; then
-        xcrun stapler staple "dist/Impulse-${VERSION}.dmg"
+    if [[ "${CREATE_DMG}" == true && -f "${DMG_PATH}" ]]; then
+        xcrun stapler staple "${DMG_PATH}"
     fi
 
     # Clean up temporary zip if we created one
-    if [[ "${CREATE_DMG}" != true && -f "dist/Impulse-${VERSION}.zip" ]]; then
-        rm -f "dist/Impulse-${VERSION}.zip"
+    if [[ "${CREATE_DMG}" != true && -f "${NOTARIZE_ZIP}" ]]; then
+        rm -f "${NOTARIZE_ZIP}"
     fi
 
     # Verify Gatekeeper acceptance (requires notarization on modern macOS)
@@ -783,7 +799,7 @@ if [[ "${NOTARIZE}" == true ]]; then
     echo "    Notarized:  yes"
 fi
 if [[ "${CREATE_DMG}" == true ]]; then
-    echo "    Disk image: dist/Impulse-${VERSION}.dmg"
+    echo "    Disk image: ${DMG_PATH}"
 fi
 echo ""
 echo "To run: open ${APP_DIR}"

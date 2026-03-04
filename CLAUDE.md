@@ -31,6 +31,7 @@ cargo test -p impulse-core         # Test only the core crate
 
 # macOS (Swift Package, built separately)
 ./impulse-macos/build.sh           # Build .app bundle (builds impulse-ffi + Swift app)
+./impulse-macos/build.sh --dev     # Build dev variant (separate bundle ID, runs side-by-side)
 ./impulse-macos/build.sh --dmg     # Build .app + .dmg disk image
 ./impulse-macos/build.sh --sign    # Build + codesign with Developer ID
 ./impulse-macos/build.sh --sign --notarize --dmg  # Full release build
@@ -105,6 +106,7 @@ C-compatible wrappers around `impulse-core` and `impulse-editor` for the macOS S
 The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
 
 - **ImpulseApp.swift** — App entry point.
+- **AppState.swift** — Global static flags (`isDev`) set once at startup.
 - **AppDelegate.swift** — NSApplication delegate, app lifecycle.
 - **MainWindow.swift** — Main window setup, layout, and signal wiring.
 - **MainWindowController+LSP.swift** — LSP integration extension: background polling of LSP events (diagnostics, completions), batched processing, and main-thread dispatch.

@@ -15,6 +15,9 @@ struct ImpulseApp {
     static func main() {
         let args = CommandLine.arguments
 
+        // Detect --dev mode before anything else.
+        AppState.isDev = args.contains("--dev")
+
         // Handle CLI-only LSP management flags before launching the GUI.
         if args.contains("--install-lsp-servers") {
             let result = ImpulseCore.lspInstall()
