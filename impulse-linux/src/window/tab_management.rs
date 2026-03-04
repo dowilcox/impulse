@@ -152,7 +152,7 @@ pub(super) fn make_create_tab(
         let term =
             terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
         setup_terminal_signals(&term);
-        terminal::spawn_shell(&term, &shell_cache);
+        terminal::spawn_shell(&term, &shell_cache, None);
 
         let container = terminal_container::TerminalContainer::new(&term);
         let page = insert_after_selected(&tab_view, &container.widget);

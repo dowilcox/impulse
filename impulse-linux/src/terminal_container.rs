@@ -46,10 +46,15 @@ pub fn split_terminal(
     let parent_widget = focused.parent()?;
     let parent_box = parent_widget.downcast_ref::<gtk4::Box>()?;
 
+    // Capture the focused terminal's CWD so the new split inherits it.
+    let cwd = focused
+        .current_directory_uri()
+        .map(|uri| impulse_core::util::uri_to_file_path(&uri.to_string()));
+
     // Create a new terminal and let the caller set up its signals.
     let new_term = terminal::create_terminal(settings, theme, copy_on_select_flag);
     setup_terminal(&new_term);
-    terminal::spawn_shell(&new_term, shell_cache);
+    terminal::spawn_shell(&new_term, shell_cache, cwd.as_deref());
 
     // Build a Paned to hold the original and new terminal.
     let paned = gtk4::Paned::new(orientation);
