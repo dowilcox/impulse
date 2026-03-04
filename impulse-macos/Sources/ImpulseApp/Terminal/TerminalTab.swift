@@ -82,21 +82,77 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// the tab is removed from the view hierarchy to ensure child processes
     /// (and any programs running inside the shell) are cleaned up.
     func terminateProcess() {
-        // Kill the entire process group so child processes (lazygit, vim, etc.)
-        // are terminated, not just the shell. SwiftTerm's terminate() only sends
-        // SIGTERM to the shell PID.
-        // Use getpgid() to get the actual process group ID rather than assuming
-        // PID == PGID, which may not hold if setpgrp() was not called.
         let pid = terminalView.process?.shellPid ?? 0
         if pid > 0 {
+            // Collect all descendant PIDs before sending any signals, so we have
+            // the full tree even if intermediate processes exit during cleanup.
+            let descendants = collectDescendants(of: pid)
+
+            // Send SIGHUP to the shell's process group (covers same-group children).
             let pgid = getpgid(pid)
             if pgid > 0 {
                 killpg(pgid, SIGHUP)
             } else {
                 kill(pid, SIGHUP)
             }
+
+            // Send SIGTERM to each descendant individually — catches processes
+            // that called setpgid()/setsid() and left the shell's process group.
+            for desc in descendants {
+                kill(desc, SIGTERM)
+            }
+
+            // Schedule escalation: SIGKILL stragglers after a grace period.
+            if !descendants.isEmpty {
+                escalateKill(shellPid: pid, descendants: descendants)
+            }
         }
         terminalView.terminate()
+    }
+
+    /// Recursively collect all descendant PIDs of a given process using
+    /// `proc_listchildpids()`. Returns PIDs in leaf-first order so callers
+    /// can kill bottom-up.
+    private func collectDescendants(of pid: pid_t) -> [pid_t] {
+        // First call with 0 buffer to get the count of children.
+        let count = proc_listchildpids(pid, nil, 0)
+        guard count > 0 else { return [] }
+
+        let bufferSize = Int(count) * MemoryLayout<pid_t>.size
+        var pids = [pid_t](repeating: 0, count: Int(count))
+        let actual = pids.withUnsafeMutableBufferPointer { buf in
+            proc_listchildpids(pid, buf.baseAddress, Int32(bufferSize))
+        }
+        let childCount = Int(actual) / MemoryLayout<pid_t>.size
+        guard childCount > 0 else { return [] }
+
+        var result: [pid_t] = []
+        for i in 0..<childCount {
+            let child = pids[i]
+            guard child > 0 else { continue }
+            // Recurse into grandchildren first (leaf-first ordering).
+            result.append(contentsOf: collectDescendants(of: child))
+            result.append(child)
+        }
+        return result
+    }
+
+    /// After a grace period, SIGKILL any descendants still alive and reap zombies.
+    private func escalateKill(shellPid: pid_t, descendants: [pid_t]) {
+        let allPids = descendants + [shellPid]
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
+            for pid in allPids {
+                // Probe whether the process is still alive.
+                if kill(pid, 0) == 0 {
+                    kill(pid, SIGKILL)
+                }
+            }
+            // Reap zombies so they don't linger in the process table.
+            for pid in allPids {
+                var status: Int32 = 0
+                waitpid(pid, &status, WNOHANG)
+            }
+        }
     }
 
     // MARK: Copy on Select

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <libproc.h>
 
 // Opaque handle for LSP registry
 typedef struct LspRegistryHandle LspRegistryHandle;
