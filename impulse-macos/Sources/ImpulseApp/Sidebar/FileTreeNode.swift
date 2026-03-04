@@ -27,6 +27,7 @@ final class FileTreeNode {
         case deleted
         case renamed
         case conflict
+        case ignored
     }
 
     // MARK: Initialisation
@@ -162,6 +163,7 @@ final class FileTreeNode {
         case "R":  return .renamed
         case "C":  return .conflict
         case "?":  return .untracked
+        case "I":  return .ignored
         default:   return .modified
         }
     }

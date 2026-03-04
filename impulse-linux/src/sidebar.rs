@@ -2146,26 +2146,29 @@ fn build_tree_row(node: &TreeNode, icon_cache: &IconCache) -> gtk4::Box {
             "D" => label.add_css_class("file-entry-git-deleted"),
             "R" => label.add_css_class("file-entry-git-renamed"),
             "C" => label.add_css_class("file-entry-git-conflict"),
+            "I" => label.add_css_class("file-entry-git-ignored"),
             _ => {}
         }
     }
     row.append(&label);
 
-    // Git status indicator badge (right-aligned letter)
+    // Git status indicator badge (right-aligned letter) — skip for ignored files
     if let Some(ref status) = node.entry.git_status {
-        let status_label = gtk4::Label::new(Some(status));
-        status_label.add_css_class("git-badge");
-        status_label.set_halign(gtk4::Align::End);
-        match status.as_str() {
-            "M" => status_label.add_css_class("git-modified"),
-            "A" => status_label.add_css_class("git-added"),
-            "?" => status_label.add_css_class("git-untracked"),
-            "D" => status_label.add_css_class("git-deleted"),
-            "R" => status_label.add_css_class("git-renamed"),
-            "C" => status_label.add_css_class("git-conflict"),
-            _ => {}
+        if status != "I" {
+            let status_label = gtk4::Label::new(Some(status));
+            status_label.add_css_class("git-badge");
+            status_label.set_halign(gtk4::Align::End);
+            match status.as_str() {
+                "M" => status_label.add_css_class("git-modified"),
+                "A" => status_label.add_css_class("git-added"),
+                "?" => status_label.add_css_class("git-untracked"),
+                "D" => status_label.add_css_class("git-deleted"),
+                "R" => status_label.add_css_class("git-renamed"),
+                "C" => status_label.add_css_class("git-conflict"),
+                _ => {}
+            }
+            row.append(&status_label);
         }
-        row.append(&status_label);
     }
 
     row

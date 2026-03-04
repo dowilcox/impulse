@@ -1443,6 +1443,7 @@ extension FileTreeView: NSOutlineViewDelegate {
         case .deleted:    return NSColor.systemRed
         case .renamed:    return NSColor.systemBlue
         case .conflict:   return NSColor.systemOrange
+        case .ignored:    return NSColor.secondaryLabelColor
         }
     }
 
@@ -1455,6 +1456,7 @@ extension FileTreeView: NSOutlineViewDelegate {
         case .deleted:    return ("D", NSColor.systemRed)
         case .renamed:    return ("R", NSColor.systemBlue)
         case .conflict:   return ("C", NSColor.systemOrange)
+        case .ignored:    return (nil, .labelColor)
         }
     }
 }

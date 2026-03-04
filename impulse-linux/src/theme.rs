@@ -670,6 +670,9 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .file-entry-git-conflict {{
             color: {orange};
         }}
+        .file-entry-git-ignored {{
+            color: {fg_dark};
+        }}
         .drop-target {{
             background-color: alpha({cyan}, 0.10);
             outline: 1px dashed {cyan};

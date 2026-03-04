@@ -92,7 +92,8 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
-        .include_unmodified(false);
+        .include_unmodified(false)
+        .include_ignored(true);
 
     // Restrict to the requested directory relative to the repo root.
     // When at the repo root (empty relative path), skip pathspec entirely
@@ -191,13 +192,16 @@ fn git_status_priority(code: &str) -> u8 {
         "?" => 3, // untracked
         "R" => 2, // renamed
         "M" => 1, // modified
+        "I" => 0, // ignored
         _ => 0,
     }
 }
 
 /// Convert a `git2::Status` bitflags value to a single-character status code.
 fn status_to_code(s: git2::Status) -> Option<&'static str> {
-    if s.intersects(git2::Status::CONFLICTED) {
+    if s.intersects(git2::Status::IGNORED) {
+        Some("I")
+    } else if s.intersects(git2::Status::CONFLICTED) {
         Some("C")
     } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
         if s.contains(git2::Status::INDEX_NEW) {
@@ -243,7 +247,8 @@ pub fn get_all_git_statuses(
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
-        .include_unmodified(false);
+        .include_unmodified(false)
+        .include_ignored(true);
 
     let statuses = repo
         .statuses(Some(&mut opts))
