@@ -6,14 +6,18 @@ use vte4::prelude::*;
 use std::rc::Rc;
 
 use crate::editor;
+use crate::editor_webview::MonacoEditorHandle;
 use crate::keybindings;
 use crate::lsp_completion::LspRequest;
 use crate::terminal;
 use crate::terminal_container;
 
 use super::{
-    add_shortcut, build_window, ensure_file_uri, get_active_cwd, show_go_to_line_dialog, Command,
+    add_shortcut, build_window, ensure_file_uri, get_active_cwd, language_from_uri,
+    send_diff_decorations, show_go_to_line_dialog, uri_to_file_path, Command,
 };
+
+use super::sidebar_signals::dispatch_lsp_request;
 
 /// Install the capture-phase EventControllerKey on the window.
 ///
@@ -300,6 +304,282 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
+    // Ctrl+N: New untitled editor tab
+    {
+        let tab_view = tab_view.clone();
+        let settings = settings.clone();
+        let status_bar = ctx.status_bar.clone();
+        let icon_cache = sidebar_state.icon_cache.clone();
+        let toast_overlay = toast_overlay.clone();
+        let lsp_tx = lsp_request_tx.clone();
+        let doc_versions = ctx.lsp.doc_versions.clone();
+        let lsp_request_seq = ctx.lsp.request_seq.clone();
+        let latest_completion_req = ctx.lsp.latest_completion_req.clone();
+        let latest_hover_req = ctx.lsp.latest_hover_req.clone();
+        let latest_definition_req = ctx.lsp.latest_definition_req.clone();
+        let definition_monaco_ids = ctx.lsp.definition_monaco_ids.clone();
+        let latest_formatting_req = ctx.lsp.latest_formatting_req.clone();
+        let latest_signature_help_req = ctx.lsp.latest_signature_help_req.clone();
+        let latest_references_req = ctx.lsp.latest_references_req.clone();
+        let latest_code_action_req = ctx.lsp.latest_code_action_req.clone();
+        let latest_rename_req = ctx.lsp.latest_rename_req.clone();
+        let sidebar_state_for_new = sidebar_state.clone();
+        let open_editor_paths = ctx.open_editor_paths.clone();
+        let editor_tab_pages = ctx.editor_tab_pages.clone();
+        let window_for_new = window.clone();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("new_file", &kb_overrides),
+            move || {
+                let cwd = get_active_cwd(&tab_view);
+                let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+                let (editor_widget, _handle) = editor::create_untitled_editor(
+                    &settings.borrow(),
+                    theme,
+                    cwd.clone(),
+                    {
+                        let lsp_tx = lsp_tx.clone();
+                        let doc_versions = doc_versions.clone();
+                        let status_bar = status_bar.clone();
+                        let tab_view = tab_view.clone();
+                        let settings = settings.clone();
+                        let lsp_request_seq = lsp_request_seq.clone();
+                        let latest_completion_req = latest_completion_req.clone();
+                        let latest_hover_req = latest_hover_req.clone();
+                        let latest_definition_req = latest_definition_req.clone();
+                        let definition_monaco_ids = definition_monaco_ids.clone();
+                        let latest_formatting_req = latest_formatting_req.clone();
+                        let latest_signature_help_req = latest_signature_help_req.clone();
+                        let latest_references_req = latest_references_req.clone();
+                        let latest_code_action_req = latest_code_action_req.clone();
+                        let latest_rename_req = latest_rename_req.clone();
+                        let sidebar_state = sidebar_state_for_new.clone();
+                        let toast_overlay = toast_overlay.clone();
+                        let editor_tab_pages = editor_tab_pages.clone();
+                        let open_editor_paths = open_editor_paths.clone();
+                        let window = window_for_new.clone();
+                        let icon_cache = icon_cache.clone();
+                        move |handle, event| {
+                            let path = handle.file_path.borrow().clone();
+                            let is_untitled = editor::is_untitled_path(&path);
+                            match event {
+                                impulse_editor::protocol::EditorEvent::Ready => {}
+                                impulse_editor::protocol::EditorEvent::FileOpened => {
+                                    handle.flush_pending_position();
+                                    if !is_untitled {
+                                        let uri = ensure_file_uri(&path);
+                                        let language_id = language_from_uri(&uri);
+                                        let content = handle.get_content();
+                                        let mut versions = doc_versions.borrow_mut();
+                                        let version = versions.entry(path.clone()).or_insert(0);
+                                        *version += 1;
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::DidOpen {
+                                            uri, language_id, version: *version, text: content,
+                                        }) {
+                                            log::warn!("LSP request channel full: {}", e);
+                                        }
+                                        send_diff_decorations(&path);
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
+                                    if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                        if is_untitled {
+                                            if handle.is_modified.get() {
+                                                page.set_title("\u{25CF} Untitled");
+                                            } else {
+                                                page.set_title("Untitled");
+                                            }
+                                        } else {
+                                            let filename = std::path::Path::new(&path)
+                                                .file_name()
+                                                .and_then(|n| n.to_str())
+                                                .unwrap_or(&path);
+                                            if handle.is_modified.get() {
+                                                page.set_title(&format!("\u{25CF} {}", filename));
+                                            } else {
+                                                page.set_title(filename);
+                                            }
+                                        }
+                                    }
+                                    if !is_untitled {
+                                        let uri = ensure_file_uri(&path);
+                                        let mut versions = doc_versions.borrow_mut();
+                                        let version = versions.entry(path.clone()).or_insert(0);
+                                        *version += 1;
+                                        if let Err(e) = lsp_tx.try_send(LspRequest::DidChange {
+                                            uri, version: *version, text: content,
+                                        }) {
+                                            log::warn!("LSP request channel full: {}", e);
+                                        }
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
+                                    status_bar.borrow().update_cursor_position(line as i32 - 1, column as i32 - 1);
+                                    if !is_untitled {
+                                        // Git blame (same debounce pattern as sidebar_signals.rs)
+                                        // Omitted for untitled files — no file to blame.
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::SaveRequested => {
+                                    if is_untitled {
+                                        show_save_dialog_for_untitled(
+                                            &window, handle, &tab_view,
+                                            &editor_tab_pages, &open_editor_paths,
+                                            &lsp_tx, &doc_versions,
+                                            &sidebar_state, &toast_overlay,
+                                            &icon_cache, &settings,
+                                        );
+                                    } else {
+                                        let content = handle.get_content();
+                                        if let Err(e) = super::atomic_write(&path, &content) {
+                                            log::error!("Failed to save {}: {}", path, e);
+                                            let toast = adw::Toast::new(&format!("Error saving: {}", e));
+                                            toast.set_timeout(4);
+                                            toast_overlay.add_toast(toast);
+                                        } else {
+                                            handle.is_modified.set(false);
+                                            if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                                let filename = std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or(&path);
+                                                page.set_title(filename);
+                                            }
+                                            let uri = ensure_file_uri(&path);
+                                            if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
+                                                log::warn!("LSP request channel full: {}", e);
+                                            }
+                                            send_diff_decorations(&path);
+                                            sidebar_state.refresh_git_only();
+                                            let commands = settings.borrow().commands_on_save.clone();
+                                            super::spawn_commands_on_save(path.clone(), commands);
+                                        }
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::FocusChanged { focused } => {
+                                    if !is_untitled && !focused && settings.borrow().auto_save && handle.is_modified.get() {
+                                        let content = handle.get_content();
+                                        if let Err(e) = super::atomic_write(&path, &content) {
+                                            log::error!("Auto-save failed for {}: {}", path, e);
+                                        } else {
+                                            handle.is_modified.set(false);
+                                            if let Some(page) = editor_tab_pages.borrow().get(&path) {
+                                                let filename = std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or(&path);
+                                                page.set_title(filename);
+                                            }
+                                            let uri = ensure_file_uri(&path);
+                                            if let Err(e) = lsp_tx.try_send(LspRequest::DidSave { uri }) {
+                                                log::warn!("LSP request channel full: {}", e);
+                                            }
+                                            send_diff_decorations(&path);
+                                            sidebar_state.refresh_git_only();
+                                        }
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::CompletionRequested { request_id: _, line, character } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_completion_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Completion { request_id: seq, uri, version, line, character });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::HoverRequested { request_id: _, line, character } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_hover_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Hover { request_id: seq, uri, version, line, character });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::DefinitionRequested { request_id: monaco_id, line, character } => {
+                                    if !is_untitled {
+                                        let seq = dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_definition_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Definition { request_id: seq, uri, version, line, character });
+                                        definition_monaco_ids.borrow_mut().insert(seq, monaco_id);
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::OpenFileRequested { uri, line, character } => {
+                                    if !uri.starts_with("file://") && uri.contains("://") {
+                                        log::warn!("Blocked opening non-file URI: {}", uri);
+                                    } else {
+                                        let file_path = uri_to_file_path(&uri);
+                                        if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                                            cb(&file_path);
+                                        }
+                                        if let Some(page) = editor_tab_pages.borrow().get(&file_path) {
+                                            editor::go_to_position(&page.child(), line + 1, character + 1);
+                                            tab_view.set_selected_page(page);
+                                        }
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::FormattingRequested { request_id: _, tab_size, insert_spaces } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_formatting_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Formatting { request_id: seq, uri, version, tab_size, insert_spaces });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::SignatureHelpRequested { request_id: _, line, character } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_signature_help_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::SignatureHelp { request_id: seq, uri, version, line, character });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::ReferencesRequested { request_id: _, line, character } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_references_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::References { request_id: seq, uri, version, line, character });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::CodeActionRequested { request_id: _, start_line, start_column, end_line, end_column, diagnostics } => {
+                                    if !is_untitled {
+                                        let diag_infos: Vec<crate::lsp_completion::DiagnosticInfo> = diagnostics.into_iter().map(|d| {
+                                            crate::lsp_completion::DiagnosticInfo {
+                                                line: d.start_line, character: d.start_column,
+                                                end_line: d.end_line, end_character: d.end_column,
+                                                severity: match d.severity {
+                                                    8 => crate::lsp_completion::DiagnosticSeverity::Error,
+                                                    4 => crate::lsp_completion::DiagnosticSeverity::Warning,
+                                                    2 => crate::lsp_completion::DiagnosticSeverity::Information,
+                                                    _ => crate::lsp_completion::DiagnosticSeverity::Hint,
+                                                },
+                                                message: d.message,
+                                            }
+                                        }).collect();
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_code_action_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::CodeAction {
+                                                request_id: seq, uri, version, start_line, start_column, end_line, end_column, diagnostics: diag_infos,
+                                            });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::RenameRequested { request_id: _, line, character, new_name } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_rename_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::Rename { request_id: seq, uri, version, line, character, new_name });
+                                    }
+                                }
+                                impulse_editor::protocol::EditorEvent::PrepareRenameRequested { request_id: _, line, character } => {
+                                    if !is_untitled {
+                                        dispatch_lsp_request(&path, &lsp_request_seq, &doc_versions, &latest_rename_req, &lsp_tx,
+                                            |seq, uri, version| LspRequest::PrepareRename { request_id: seq, uri, version, line, character });
+                                    }
+                                }
+                            }
+                        }
+                    },
+                );
+                let page = tab_management::insert_after_selected(&tab_view, &editor_widget);
+                page.set_title("Untitled");
+                if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                    page.set_icon(Some(texture));
+                }
+                // Track the sentinel path in the dedup/page maps so Ctrl+S can find the page.
+                let sentinel = editor_widget.widget_name().to_string();
+                editor_tab_pages.borrow_mut().insert(sentinel.clone(), page.clone());
+                tab_view.set_selected_page(&page);
+            },
+        );
+    }
+
     // Ctrl+W: Close current tab
     {
         let tab_view = tab_view.clone();
@@ -540,6 +820,12 @@ pub(super) fn setup_shortcut_controller(
         let toast_overlay = toast_overlay.clone();
         let lsp_tx = lsp_request_tx.clone();
         let settings = settings.clone();
+        let window_for_save = window.clone();
+        let editor_tab_pages_save = ctx.editor_tab_pages.clone();
+        let open_editor_paths_save = ctx.open_editor_paths.clone();
+        let doc_versions_save = ctx.lsp.doc_versions.clone();
+        let sidebar_state_save = sidebar_state.clone();
+        let icon_cache_save = sidebar_state.icon_cache.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("save", &kb_overrides),
@@ -548,6 +834,19 @@ pub(super) fn setup_shortcut_controller(
                     let child = page.child();
                     if editor::is_editor(&child) {
                         let path = child.widget_name().to_string();
+                        // Untitled files: show save-as dialog instead
+                        if editor::is_untitled_path(&path) {
+                            if let Some(handle) = editor::get_handle(&path) {
+                                show_save_dialog_for_untitled(
+                                    &window_for_save, &handle, &tab_view,
+                                    &editor_tab_pages_save, &open_editor_paths_save,
+                                    &lsp_tx, &doc_versions_save,
+                                    &sidebar_state_save, &toast_overlay,
+                                    &icon_cache_save, &settings,
+                                );
+                            }
+                            return;
+                        }
                         if let Some(text) = editor::get_editor_text(&child) {
                             match super::atomic_write(&path, &text) {
                                 Ok(()) => {
@@ -765,4 +1064,138 @@ pub(super) fn setup_shortcut_controller(
     }
 
     window.add_controller(shortcut_controller);
+}
+
+/// Show a save-as dialog for an untitled editor, then transition it to a
+/// file-backed editor on successful save.
+#[allow(clippy::too_many_arguments)]
+fn show_save_dialog_for_untitled(
+    window: &adw::ApplicationWindow,
+    handle: &Rc<MonacoEditorHandle>,
+    tab_view: &adw::TabView,
+    editor_tab_pages: &Rc<std::cell::RefCell<std::collections::HashMap<String, adw::TabPage>>>,
+    open_editor_paths: &Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
+    lsp_tx: &Rc<tokio::sync::mpsc::Sender<LspRequest>>,
+    doc_versions: &Rc<std::cell::RefCell<std::collections::HashMap<String, i32>>>,
+    sidebar_state: &Rc<crate::sidebar::SidebarState>,
+    toast_overlay: &adw::ToastOverlay,
+    icon_cache: &Rc<std::cell::RefCell<crate::file_icons::IconCache>>,
+    settings: &Rc<std::cell::RefCell<crate::settings::Settings>>,
+) {
+    let dialog = gtk4::FileDialog::new();
+    dialog.set_title("Save As");
+    dialog.set_initial_name(Some("Untitled"));
+    if let Some(cwd) = handle.untitled_cwd.borrow().as_deref() {
+        dialog.set_initial_folder(Some(&gtk4::gio::File::for_path(cwd)));
+    }
+
+    let handle = handle.clone();
+    let tab_view = tab_view.clone();
+    let editor_tab_pages = editor_tab_pages.clone();
+    let open_editor_paths = open_editor_paths.clone();
+    let lsp_tx = lsp_tx.clone();
+    let doc_versions = doc_versions.clone();
+    let sidebar_state = sidebar_state.clone();
+    let toast_overlay = toast_overlay.clone();
+    let icon_cache = icon_cache.clone();
+    let settings = settings.clone();
+
+    dialog.save(
+        Some(window),
+        gtk4::gio::Cancellable::NONE,
+        move |result| {
+            let file = match result {
+                Ok(f) => f,
+                Err(_) => return, // user cancelled
+            };
+            let chosen_path = match file.path() {
+                Some(p) => p.to_string_lossy().to_string(),
+                None => return,
+            };
+
+            // Write content to disk
+            let content = handle.get_content();
+            if let Err(e) = super::atomic_write(&chosen_path, &content) {
+                let toast = adw::Toast::new(&format!("Error saving: {}", e));
+                toast.set_timeout(4);
+                toast_overlay.add_toast(toast);
+                return;
+            }
+
+            // Transition: unregister old sentinel, register new path
+            let old_sentinel = handle.file_path.borrow().clone();
+            editor::unregister_handle(&old_sentinel);
+            editor_tab_pages.borrow_mut().remove(&old_sentinel);
+
+            // Update the handle to point to the new path
+            *handle.file_path.borrow_mut() = chosen_path.clone();
+            *handle.untitled_cwd.borrow_mut() = None;
+            handle.is_modified.set(false);
+
+            // Detect language and re-open in Monaco with correct URI + language
+            let uri = ensure_file_uri(&chosen_path);
+            let language_id = language_from_uri(&uri);
+            *handle.language.borrow_mut() = language_id.clone();
+            handle.open_file(&chosen_path, &content, &language_id);
+
+            // Register the handle at the new path
+            editor::register_handle(&chosen_path, handle.clone());
+
+            // Update the widget_name on the container so is_editor() and get_handle_for_widget() work
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                child.set_widget_name(&chosen_path);
+
+                // Update tab title and icon
+                let filename = std::path::Path::new(&chosen_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&chosen_path);
+                page.set_title(filename);
+                if let Some(texture) = icon_cache.borrow().get(filename, false, false) {
+                    page.set_icon(Some(texture));
+                }
+
+                // Track in dedup set and page map
+                open_editor_paths.borrow_mut().insert(chosen_path.clone());
+                editor_tab_pages.borrow_mut().insert(chosen_path.clone(), page.clone());
+            }
+
+            // Setup file watcher for the new path
+            handle.setup_file_watcher();
+
+            // LSP: send didOpen
+            {
+                let content = handle.get_content();
+                let mut versions = doc_versions.borrow_mut();
+                let version = versions.entry(chosen_path.clone()).or_insert(0);
+                *version += 1;
+                if let Err(e) = lsp_tx.try_send(LspRequest::DidOpen {
+                    uri: ensure_file_uri(&chosen_path),
+                    language_id,
+                    version: *version,
+                    text: content,
+                }) {
+                    log::warn!("LSP request channel full: {}", e);
+                }
+            }
+
+            // Send diff decorations
+            send_diff_decorations(&chosen_path);
+            sidebar_state.refresh_git_only();
+
+            // Run commands-on-save
+            let commands = settings.borrow().commands_on_save.clone();
+            super::spawn_commands_on_save(chosen_path.clone(), commands);
+
+            // Toast
+            let filename = std::path::Path::new(&chosen_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&chosen_path);
+            let toast = adw::Toast::new(&format!("Saved {}", filename));
+            toast.set_timeout(2);
+            toast_overlay.add_toast(toast);
+        },
+    );
 }

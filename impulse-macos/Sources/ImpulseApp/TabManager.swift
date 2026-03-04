@@ -307,6 +307,34 @@ final class TabManager: NSObject {
         }
     }
 
+    /// Creates a new untitled editor tab with no file on disk.
+    func addUntitledEditorTab(cwd: String?) {
+        let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        editorTab.untitledCwd = cwd
+        editorTab.projectDirectory = cwd
+        editorTab.openBlank()
+        editorTab.loadEditor()
+
+        let editorOptions = editorOptionsFromSettings()
+        editorTab.applySettings(editorOptions)
+        let themeDef = theme.monacoThemeDefinition()
+        editorTab.applyTheme(themeDef)
+
+        let entry = TabEntry.editor(editorTab)
+        insertTab(entry)
+        // filePath is nil, so insertTab won't add to openFilePaths — correct.
+    }
+
+    /// Register a file path in the open-file dedup set (e.g. after save-as).
+    func registerOpenFilePath(_ path: String) {
+        openFilePaths.insert(path)
+    }
+
+    /// Detect the Monaco language ID for a file path.
+    func detectLanguage(forPath path: String) -> String {
+        languageIdForPath(path)
+    }
+
     /// Creates an image preview tab with a scrollable NSImageView.
     private func addImagePreviewTab(path: String) {
         let container = NSView()

@@ -115,6 +115,14 @@ enum Keybindings {
         ),
         // -- Editor --
         BuiltinKeybinding(
+            id: "new_file",
+            description: "New File",
+            category: "Editor",
+            defaultShortcut: "Cmd+N",
+            keyEquivalent: "n",
+            modifierFlags: [.command]
+        ),
+        BuiltinKeybinding(
             id: "save",
             description: "Save File",
             category: "Editor",

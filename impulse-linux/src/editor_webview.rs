@@ -48,6 +48,9 @@ pub struct MonacoEditorHandle {
     pub is_previewing: Cell<bool>,
     /// The gtk4::Stack wrapping editor and preview children (set during create).
     pub stack: RefCell<Option<gtk4::Stack>>,
+    /// CWD captured at the time of Ctrl+N for untitled editors; used as default directory
+    /// in the save-as dialog.
+    pub untitled_cwd: RefCell<Option<String>>,
 }
 
 impl MonacoEditorHandle {
@@ -714,6 +717,7 @@ where
             _file_watcher_timer: RefCell::new(None),
             is_previewing: Cell::new(false),
             stack: RefCell::new(None),
+            untitled_cwd: RefCell::new(None),
         });
 
         // Connect the real signal handler for ongoing events.
@@ -844,6 +848,7 @@ where
         _file_watcher_timer: RefCell::new(None),
         is_previewing: Cell::new(false),
         stack: RefCell::new(None),
+        untitled_cwd: RefCell::new(None),
     });
 
     // Store initial content, language, settings, and theme to send after Ready

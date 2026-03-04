@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gtk4::prelude::*;
 use webkit6::prelude::*;
@@ -10,6 +11,17 @@ use crate::settings::Settings;
 use crate::theme::ThemeColors;
 use impulse_editor::markdown;
 use impulse_editor::protocol::EditorEvent;
+
+static UNTITLED_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+pub fn next_untitled_path() -> String {
+    let n = UNTITLED_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("untitled:/{}", n)
+}
+
+pub fn is_untitled_path(name: &str) -> bool {
+    name.starts_with("untitled:/")
+}
 
 // Global handle map keyed by file path.
 // All Monaco editor handles are stored here so that any code path
@@ -84,6 +96,29 @@ where
     register_handle(file_path, handle.clone());
     handle.setup_file_watcher();
 
+    (container, handle)
+}
+
+/// Create a Monaco editor for a new untitled file.
+///
+/// Unlike `create_editor`, this skips reading from disk, file watching,
+/// and large-file checks. The `cwd` is stored on the handle for use as the
+/// default directory in the save-as dialog.
+pub fn create_untitled_editor<F>(
+    settings: &Settings,
+    theme: &ThemeColors,
+    cwd: Option<String>,
+    on_event: F,
+) -> (gtk4::Box, Rc<MonacoEditorHandle>)
+where
+    F: Fn(&MonacoEditorHandle, EditorEvent) + 'static,
+{
+    let sentinel = next_untitled_path();
+    let (container, handle) = editor_webview::create_monaco_editor(
+        &sentinel, "", "plaintext", settings, theme, on_event,
+    );
+    *handle.untitled_cwd.borrow_mut() = cwd;
+    register_handle(&sentinel, handle.clone());
     (container, handle)
 }
 

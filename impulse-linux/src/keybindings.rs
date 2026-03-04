@@ -79,6 +79,12 @@ pub const BUILTIN_KEYBINDINGS: &[BuiltinKeybinding] = &[
     },
     // Editor
     BuiltinKeybinding {
+        id: "new_file",
+        description: "New File",
+        category: "Editor",
+        default_accel: "<Ctrl>n",
+    },
+    BuiltinKeybinding {
         id: "save",
         description: "Save File",
         category: "Editor",

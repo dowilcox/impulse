@@ -11,7 +11,7 @@ use super::{
     ensure_file_uri, language_from_uri, run_guarded_ui, send_diff_decorations, uri_to_file_path,
 };
 
-fn dispatch_lsp_request(
+pub(super) fn dispatch_lsp_request(
     path: &str,
     lsp_request_seq: &std::cell::Cell<u64>,
     doc_versions: &std::cell::RefCell<std::collections::HashMap<String, i32>>,

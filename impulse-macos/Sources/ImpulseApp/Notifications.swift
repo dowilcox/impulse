@@ -17,6 +17,8 @@ extension Notification.Name {
     static let impulseActiveTabDidChange = Notification.Name("impulseActiveTabDidChange")
     /// Requests a new terminal tab in the frontmost window.
     static let impulseNewTerminalTab = Notification.Name("impulseNewTerminalTab")
+    /// Requests a new untitled editor tab in the frontmost window.
+    static let impulseNewFile = Notification.Name("impulseNewFile")
     /// Requests closing the current tab in the frontmost window.
     static let impulseCloseTab = Notification.Name("impulseCloseTab")
     /// Requests reopening the most recently closed tab.

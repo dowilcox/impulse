@@ -34,7 +34,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     // MARK: Properties
 
     /// Absolute path to the file currently open in this editor tab, or nil if untitled.
-    private(set) var filePath: String?
+    var filePath: String?
 
     /// Current editor content, kept in sync via `ContentChanged` events.
     private(set) var content: String = ""
@@ -52,6 +52,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// The sidebar root directory that was active when this editor tab was opened.
     /// Restored when the user switches back to this tab.
     var projectDirectory: String?
+
+    /// CWD captured at the time of Cmd+N for untitled editors; used as the
+    /// default directory in the save-as dialog.
+    var untitledCwd: String?
 
     /// The WKWebView hosting Monaco.
     private(set) var webView: WKWebView!
@@ -480,6 +484,16 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         sendCommand(.openFile(filePath: path, content: content, language: language))
         startFileWatching()
+    }
+
+    /// Open a blank untitled editor (no file on disk).
+    func openBlank() {
+        self.filePath = nil
+        self.content = ""
+        self.language = "plaintext"
+        self.lspLanguage = "plaintext"
+        self.isModified = false
+        sendCommand(.openFile(filePath: "", content: "", language: "plaintext"))
     }
 
     /// Returns the LSP language ID for a file path, which may differ from the Monaco language.

@@ -90,6 +90,13 @@ enum MenuBuilder {
         newTabItem.keyEquivalentModifierMask = [.command]
         menu.addItem(newTabItem)
 
+        let newFileItem = NSMenuItem(title: "New File",
+                                      action: #selector(MenuActions.menuNewFile(_:)),
+                                      keyEquivalent: "n")
+        newFileItem.target = MenuActions.shared
+        newFileItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(newFileItem)
+
         let newWindowItem = NSMenuItem(title: "New Window",
                                        action: #selector(AppDelegate.newWindow(_:)),
                                        keyEquivalent: "N")
@@ -400,6 +407,10 @@ final class MenuActions: NSObject {
 
     @objc func menuNewTab(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseNewTerminalTab, object: nil)
+    }
+
+    @objc func menuNewFile(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseNewFile, object: nil)
     }
 
     @objc func menuCloseTab(_ sender: Any?) {

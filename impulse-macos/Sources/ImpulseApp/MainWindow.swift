@@ -1245,6 +1245,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             }
         )
         notificationObservers.append(
+            nc.addObserver(forName: .impulseNewFile, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true else { return }
+                let cwd = self.getActiveCwd()
+                self.tabManager.addUntitledEditorTab(cwd: cwd)
+            }
+        )
+        notificationObservers.append(
             nc.addObserver(forName: .impulseCloseTab, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.window?.isKeyWindow == true else { return }
                 let index = self.tabManager.selectedIndex
@@ -1796,7 +1803,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// 4. Commands on save
     /// 5. Git diff decoration refresh
     private func saveEditorTab(_ editor: EditorTab) {
-        guard let path = editor.filePath else { return }
+        guard let path = editor.filePath else {
+            showSaveAsDialog(for: editor)
+            return
+        }
 
         // Fetch the latest content from Monaco (content changes are debounced
         // in JS, so the Swift property may be stale when saving via menu Cmd+S).
@@ -1880,6 +1890,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 }
             } else {
                 runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd, completion: nil)
+            }
+        }
+    }
+
+    /// Shows a save-as dialog for an untitled editor tab, then transitions it
+    /// to a file-backed editor on successful save.
+    private func showSaveAsDialog(for editor: EditorTab) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Untitled"
+        panel.canCreateDirectories = true
+
+        if let cwd = editor.untitledCwd ?? editor.projectDirectory {
+            panel.directoryURL = URL(fileURLWithPath: cwd)
+        }
+
+        guard let window = self.window else { return }
+        panel.beginSheetModal(for: window) { [weak self, weak editor] response in
+            guard let self, let editor, response == .OK, let url = panel.url else { return }
+
+            let chosenPath = url.path
+
+            // Set filePath first so fetchContentAndSave writes to the correct location.
+            editor.filePath = chosenPath
+
+            editor.fetchContentAndSave { [weak self, weak editor] success in
+                guard let self, let editor, success else { return }
+
+                // Transition to file-backed editor: re-open in Monaco with correct URI and language
+                let language = self.tabManager.detectLanguage(forPath: chosenPath)
+                editor.untitledCwd = nil
+                editor.projectDirectory = (chosenPath as NSString).deletingLastPathComponent
+                editor.openFile(path: chosenPath, content: editor.content, language: language)
+
+                // Register in dedup set
+                self.tabManager.registerOpenFilePath(chosenPath)
+
+                // Post-save actions (refresh tab bar, LSP didOpen, git diff, etc.)
+                self.postSaveActions(editor: editor, path: chosenPath)
+
+                // Track the editor tab
+                self.trackEditorTab(editor, forPath: chosenPath)
+                self.lspDidOpenIfNeeded(path: chosenPath)
             }
         }
     }
