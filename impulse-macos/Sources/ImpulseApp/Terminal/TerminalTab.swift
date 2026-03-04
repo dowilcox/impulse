@@ -28,6 +28,10 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Local event monitor for copy-on-select behaviour.
     private var mouseUpMonitor: Any?
 
+    /// Local event monitor for forwarding scroll wheel events to TUI apps
+    /// that have enabled mouse reporting.
+    private var scrollMonitor: Any?
+
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
@@ -49,6 +53,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         addSubview(terminalView)
         setupConstraints()
         setupDragAndDrop()
+        setupScrollWheelForwarding()
         // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
         // after configureTerminal() to respect the user's setting.
 
@@ -60,6 +65,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     }
 
     deinit {
+        if let monitor = scrollMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
         if let monitor = mouseUpMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -118,6 +126,51 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 NSEvent.removeMonitor(monitor)
                 mouseUpMonitor = nil
             }
+        }
+    }
+
+    // MARK: Scroll Wheel Forwarding
+
+    /// Installs a local event monitor that intercepts scroll wheel events over
+    /// the terminal view when the running application has enabled mouse reporting.
+    /// SwiftTerm's default `scrollWheel` always scrolls the terminal buffer;
+    /// this monitor forwards scroll events as mouse button 4/5 (scroll up/down)
+    /// so TUI apps (opencode, lazygit, htop, etc.) can receive them.
+    private func setupScrollWheelForwarding() {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            guard event.deltaY != 0 else { return event }
+
+            // Only intercept events that hit our terminal view.
+            let pt = self.terminalView.convert(event.locationInWindow, from: nil)
+            guard self.terminalView.bounds.contains(pt) else { return event }
+
+            // Only forward when the app has requested mouse reporting.
+            let terminal = self.terminalView.terminal!
+            guard self.terminalView.allowMouseReporting,
+                  terminal.mouseMode != .off else {
+                return event
+            }
+
+            // Compute grid position from mouse coordinates.
+            let cellWidth = self.terminalView.frame.width / CGFloat(terminal.cols)
+            let cellHeight = self.terminalView.frame.height / CGFloat(terminal.rows)
+            let col = min(max(0, Int(pt.x / cellWidth)), terminal.cols - 1)
+            let row = min(max(0, Int((self.terminalView.frame.height - pt.y) / cellHeight)), terminal.rows - 1)
+
+            // Terminal protocol: button 4 = scroll up, button 5 = scroll down.
+            let flags = event.modifierFlags
+            let button = event.deltaY > 0 ? 4 : 5
+            let buttonFlags = terminal.encodeButton(
+                button: button, release: false,
+                shift: flags.contains(.shift),
+                meta: flags.contains(.option),
+                control: flags.contains(.control)
+            )
+            terminal.sendEvent(buttonFlags: buttonFlags, x: col, y: row)
+
+            // Consume the event so SwiftTerm doesn't also scroll the buffer.
+            return nil
         }
     }
 
