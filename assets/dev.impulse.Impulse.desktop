@@ -8,4 +8,4 @@ Type=Application
 Categories=Development;IDE;TerminalEmulator;
 Keywords=terminal;editor;code;development;
 StartupWMClass=dev.impulse.Impulse
-MimeType=text/plain;text/x-rust;text/x-python;application/javascript;text/typescript;text/x-typescriptsrc;application/json;application/toml;application/x-yaml;text/markdown;text/html;text/css;text/x-scss;text/x-c;text/x-c++;text/x-chdr;text/x-c++hdr;text/x-go;text/x-ruby;application/x-shellscript;text/x-lua;text/x-java;text/x-kotlin;text/x-swift;application/xml;application/sql;text/x-sql;text/csv;text/x-log;application/x-php;text/x-php;
+MimeType=text/plain;text/x-rust;text/x-python;application/javascript;text/typescript;text/x-typescriptsrc;application/json;application/toml;application/x-yaml;text/markdown;text/html;text/css;text/x-scss;text/x-sass;text/x-less;text/x-c;text/x-c++;text/x-chdr;text/x-c++hdr;text/x-go;text/x-ruby;application/x-shellscript;text/x-lua;text/x-java;text/x-kotlin;text/x-swift;application/xml;application/sql;text/x-sql;text/csv;text/x-log;application/x-php;text/x-php;text/jsx;text/x-graphql;image/svg+xml;text/x-dockerfile;

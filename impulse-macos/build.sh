@@ -276,6 +276,17 @@ cat > "${CONTENTS}/Info.plist" << PLIST
                 <string>public.comma-separated-values-text</string>
                 <string>dev.impulse.toml-source</string>
                 <string>public.php-script</string>
+                <string>dev.impulse.typescript-source</string>
+                <string>dev.impulse.tsx-source</string>
+                <string>dev.impulse.jsx-source</string>
+                <string>dev.impulse.scss-source</string>
+                <string>dev.impulse.sass-source</string>
+                <string>dev.impulse.less-source</string>
+                <string>dev.impulse.sql-source</string>
+                <string>dev.impulse.graphql-source</string>
+                <string>dev.impulse.dockerfile</string>
+                <string>dev.impulse.env-file</string>
+                <string>public.svg-image</string>
             </array>
             <key>CFBundleTypeIconFile</key>
             <string>DocumentIcon</string>
@@ -364,6 +375,177 @@ cat > "${CONTENTS}/Info.plist" << PLIST
                     <string>glsl</string>
                     <string>vert</string>
                     <string>frag</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.typescript-source</string>
+            <key>UTTypeDescription</key>
+            <string>TypeScript Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ts</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.tsx-source</string>
+            <key>UTTypeDescription</key>
+            <string>TypeScript JSX Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>tsx</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.jsx-source</string>
+            <key>UTTypeDescription</key>
+            <string>JavaScript JSX Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>jsx</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.scss-source</string>
+            <key>UTTypeDescription</key>
+            <string>SCSS Stylesheet</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>scss</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.sass-source</string>
+            <key>UTTypeDescription</key>
+            <string>Sass Stylesheet</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sass</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.less-source</string>
+            <key>UTTypeDescription</key>
+            <string>LESS Stylesheet</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>less</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.sql-source</string>
+            <key>UTTypeDescription</key>
+            <string>SQL Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sql</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.graphql-source</string>
+            <key>UTTypeDescription</key>
+            <string>GraphQL Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>graphql</string>
+                    <string>gql</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.dockerfile</string>
+            <key>UTTypeDescription</key>
+            <string>Dockerfile</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>dockerfile</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.env-file</string>
+            <key>UTTypeDescription</key>
+            <string>Environment Configuration</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>env</string>
                 </array>
             </dict>
         </dict>
