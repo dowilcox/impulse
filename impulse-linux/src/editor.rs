@@ -114,9 +114,8 @@ where
     F: Fn(&MonacoEditorHandle, EditorEvent) + 'static,
 {
     let sentinel = next_untitled_path();
-    let (container, handle) = editor_webview::create_monaco_editor(
-        &sentinel, "", "plaintext", settings, theme, on_event,
-    );
+    let (container, handle) =
+        editor_webview::create_monaco_editor(&sentinel, "", "plaintext", settings, theme, on_event);
     *handle.untitled_cwd.borrow_mut() = cwd;
     register_handle(&sentinel, handle.clone());
     (container, handle)

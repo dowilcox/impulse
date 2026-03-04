@@ -731,7 +731,7 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
 pub extern "C" fn impulse_npm_is_available() -> bool {
     ffi_catch(
         false,
-        AssertUnwindSafe(|| impulse_core::lsp::npm_is_available()),
+        AssertUnwindSafe(impulse_core::lsp::npm_is_available),
     )
 }
 

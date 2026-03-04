@@ -643,9 +643,10 @@ impl LspClient {
                     .and_then(|v| v.as_array());
 
                 let result = if let Some(items) = items {
-                    let sections: Vec<&str> = items.iter().map(|item| {
-                        item.get("section").and_then(|s| s.as_str()).unwrap_or("")
-                    }).collect();
+                    let sections: Vec<&str> = items
+                        .iter()
+                        .map(|item| item.get("section").and_then(|s| s.as_str()).unwrap_or(""))
+                        .collect();
                     serde_json::Value::Array(
                         sections
                             .iter()
@@ -1345,7 +1346,7 @@ fn workspace_configuration_for_section(section: &str) -> serde_json::Value {
         "typescript.format" | "javascript.format" => serde_json::json!({
             "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true
         }),
-        _ => serde_json::json!({})
+        _ => serde_json::json!({}),
     }
 }
 

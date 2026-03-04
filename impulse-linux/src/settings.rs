@@ -241,6 +241,8 @@ pub fn load() -> Settings {
     settings.right_margin_position = settings.right_margin_position.clamp(1, 500);
     settings.sidebar_width = settings.sidebar_width.clamp(150, 1000);
     settings.editor_line_height = settings.editor_line_height.min(100);
+    settings.window_width = settings.window_width.clamp(400, 10000);
+    settings.window_height = settings.window_height.clamp(300, 10000);
 
     settings
 }

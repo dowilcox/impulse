@@ -209,7 +209,11 @@ pub fn apply_settings(
 /// Spawn the user's shell inside a VTE terminal using pre-cached spawn parameters.
 /// If `working_dir` is provided, it overrides the cached working directory (used for
 /// split terminals to inherit CWD from the focused terminal).
-pub fn spawn_shell(terminal: &vte4::Terminal, cache: &Rc<ShellSpawnCache>, working_dir: Option<&str>) {
+pub fn spawn_shell(
+    terminal: &vte4::Terminal,
+    cache: &Rc<ShellSpawnCache>,
+    working_dir: Option<&str>,
+) {
     let dir = working_dir.unwrap_or(&cache.working_dir);
     let argv_refs: Vec<&str> = cache.argv.iter().map(|s| s.as_str()).collect();
     let envv_refs: Vec<&str> = cache.envv.iter().map(|s| s.as_str()).collect();

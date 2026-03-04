@@ -880,8 +880,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     {
         let sidebar_state = sidebar_state.clone();
         let status_bar = status_bar.clone();
-        let action =
-            gio::SimpleAction::new("open-file", Some(&*gtk4::glib::VariantTy::STRING));
+        let action = gio::SimpleAction::new("open-file", Some(&*gtk4::glib::VariantTy::STRING));
         action.connect_activate(move |_, param| {
             if let Some(path) = param.and_then(|v| v.get::<String>()) {
                 if std::path::Path::new(&path).exists() {
@@ -891,8 +890,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         if dir != *sidebar_state.current_path.borrow() {
                             sidebar_state.load_directory(&dir);
                             status_bar.borrow().update_cwd(&dir);
-                            *sidebar_state.project_search.current_root.borrow_mut() =
-                                dir;
+                            *sidebar_state.project_search.current_root.borrow_mut() = dir;
                         }
                     }
                     if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
@@ -1590,9 +1588,7 @@ pub(super) fn atomic_write(path: &str, content: &str) -> std::io::Result<()> {
     let parent = dest.parent().unwrap_or(std::path::Path::new("."));
     let tmp_path = parent.join(format!(
         ".{}.impulse-save-tmp",
-        dest.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
+        dest.file_name().and_then(|n| n.to_str()).unwrap_or("file")
     ));
     {
         let mut file = std::fs::OpenOptions::new()

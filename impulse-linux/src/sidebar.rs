@@ -160,8 +160,7 @@ pub fn build_sidebar(
     let tree_nodes: Rc<RefCell<Vec<TreeNode>>> = Rc::new(RefCell::new(Vec::new()));
     let current_path: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
     #[allow(clippy::arc_with_non_send_sync)]
-    let watcher_rc: Rc<RefCell<Option<notify::RecommendedWatcher>>> =
-        Rc::new(RefCell::new(None));
+    let watcher_rc: Rc<RefCell<Option<notify::RecommendedWatcher>>> = Rc::new(RefCell::new(None));
     let refresh_in_progress: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     // --- Right-click context menu for file tree ---
@@ -1306,11 +1305,14 @@ impl SidebarState {
                             .file_name()
                             .map(|n| n.to_string_lossy())
                             .unwrap_or_default();
-                        matches!(name.as_ref(), "index" | "HEAD" | "MERGE_HEAD" | "REBASE_HEAD")
-                            || p.parent()
-                                .and_then(|pp| pp.file_name())
-                                .map(|n| n == "refs")
-                                .unwrap_or(false)
+                        matches!(
+                            name.as_ref(),
+                            "index" | "HEAD" | "MERGE_HEAD" | "REBASE_HEAD"
+                        ) || p
+                            .parent()
+                            .and_then(|pp| pp.file_name())
+                            .map(|n| n == "refs")
+                            .unwrap_or(false)
                     });
                     if dominated_by_relevant {
                         dirty.store(true, Ordering::Relaxed);
@@ -1396,7 +1398,13 @@ impl SidebarState {
                     let previous = last_hash.get();
                     if hash != previous {
                         last_hash.set(hash);
-                        refresh_git_status(&tree_nodes, &file_tree_list, &current_path, icon_cache, &statuses);
+                        refresh_git_status(
+                            &tree_nodes,
+                            &file_tree_list,
+                            &current_path,
+                            icon_cache,
+                            &statuses,
+                        );
                     }
                 }
                 in_flight.set(false);

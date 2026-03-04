@@ -81,7 +81,8 @@ pub(super) fn setup_capture_phase_keys(
                         setup_terminal_signals(&term);
                         terminal::spawn_command(&term, &command, &args, cwd.as_deref());
                         let container = terminal_container::TerminalContainer::new(&term);
-                        let page = tab_management::insert_after_selected(&tab_view, &container.widget);
+                        let page =
+                            tab_management::insert_after_selected(&tab_view, &container.widget);
                         page.set_title(&kb_name);
                         if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
                             page.set_icon(Some(texture));
@@ -114,10 +115,8 @@ pub(super) fn setup_capture_phase_keys(
         &capture_kb_overrides,
     ));
 
-    let new_file_accel = keybindings::parse_accel(&keybindings::get_accel(
-        "new_file",
-        &capture_kb_overrides,
-    ));
+    let new_file_accel =
+        keybindings::parse_accel(&keybindings::get_accel("new_file", &capture_kb_overrides));
     let new_file_window = ctx.window.clone();
 
     let md_preview_accel = keybindings::parse_accel(&keybindings::get_accel(
@@ -234,7 +233,9 @@ pub(super) fn setup_capture_phase_keys(
             if let Some(ref accel) = new_file_accel {
                 if keybindings::matches_key(accel, key, modifiers) {
                     let _ = gtk4::prelude::ActionGroupExt::activate_action(
-                        &new_file_window, "new-file", None,
+                        &new_file_window,
+                        "new-file",
+                        None,
                     );
                     return gtk4::glib::Propagation::Stop;
                 }
@@ -404,7 +405,7 @@ pub(super) fn setup_shortcut_controller(
                                     if let Some(page) = editor_tab_pages.borrow().get(&path) {
                                         if is_untitled {
                                             if handle.is_modified.get() {
-                                                page.set_title("\u{25CF} Untitled");
+                                                page.set_title("Untitled *");
                                             } else {
                                                 page.set_title("Untitled");
                                             }
@@ -414,7 +415,7 @@ pub(super) fn setup_shortcut_controller(
                                                 .and_then(|n| n.to_str())
                                                 .unwrap_or(&path);
                                             if handle.is_modified.get() {
-                                                page.set_title(&format!("\u{25CF} {}", filename));
+                                                page.set_title(&format!("{} *", filename));
                                             } else {
                                                 page.set_title(filename);
                                             }
@@ -604,7 +605,11 @@ pub(super) fn setup_shortcut_controller(
             &shortcut_controller,
             &keybindings::get_accel("new_file", &kb_overrides),
             move || {
-                let _ = gtk4::prelude::ActionGroupExt::activate_action(&window_for_shortcut, "new-file", None);
+                let _ = gtk4::prelude::ActionGroupExt::activate_action(
+                    &window_for_shortcut,
+                    "new-file",
+                    None,
+                );
             },
         );
     }
@@ -867,11 +872,17 @@ pub(super) fn setup_shortcut_controller(
                         if editor::is_untitled_path(&path) {
                             if let Some(handle) = editor::get_handle(&path) {
                                 show_save_dialog_for_untitled(
-                                    &window_for_save, &handle, &tab_view,
-                                    &editor_tab_pages_save, &open_editor_paths_save,
-                                    &lsp_tx, &doc_versions_save,
-                                    &sidebar_state_save, &toast_overlay,
-                                    &icon_cache_save, &settings,
+                                    &window_for_save,
+                                    &handle,
+                                    &tab_view,
+                                    &editor_tab_pages_save,
+                                    &open_editor_paths_save,
+                                    &lsp_tx,
+                                    &doc_versions_save,
+                                    &sidebar_state_save,
+                                    &toast_overlay,
+                                    &icon_cache_save,
+                                    &settings,
                                 );
                             }
                             return;
@@ -1129,102 +1140,100 @@ fn show_save_dialog_for_untitled(
     let icon_cache = icon_cache.clone();
     let settings = settings.clone();
 
-    dialog.save(
-        Some(window),
-        gtk4::gio::Cancellable::NONE,
-        move |result| {
-            let file = match result {
-                Ok(f) => f,
-                Err(_) => return, // user cancelled
-            };
-            let chosen_path = match file.path() {
-                Some(p) => p.to_string_lossy().to_string(),
-                None => return,
-            };
+    dialog.save(Some(window), gtk4::gio::Cancellable::NONE, move |result| {
+        let file = match result {
+            Ok(f) => f,
+            Err(_) => return, // user cancelled
+        };
+        let chosen_path = match file.path() {
+            Some(p) => p.to_string_lossy().to_string(),
+            None => return,
+        };
 
-            // Write content to disk
-            let content = handle.get_content();
-            if let Err(e) = super::atomic_write(&chosen_path, &content) {
-                let toast = adw::Toast::new(&format!("Error saving: {}", e));
-                toast.set_timeout(4);
-                toast_overlay.add_toast(toast);
-                return;
-            }
+        // Write content to disk
+        let content = handle.get_content();
+        if let Err(e) = super::atomic_write(&chosen_path, &content) {
+            let toast = adw::Toast::new(&format!("Error saving: {}", e));
+            toast.set_timeout(4);
+            toast_overlay.add_toast(toast);
+            return;
+        }
 
-            // Transition: unregister old sentinel, register new path
-            let old_sentinel = handle.file_path.borrow().clone();
-            editor::unregister_handle(&old_sentinel);
-            editor_tab_pages.borrow_mut().remove(&old_sentinel);
+        // Transition: unregister old sentinel, register new path
+        let old_sentinel = handle.file_path.borrow().clone();
+        editor::unregister_handle(&old_sentinel);
+        editor_tab_pages.borrow_mut().remove(&old_sentinel);
 
-            // Update the handle to point to the new path
-            *handle.file_path.borrow_mut() = chosen_path.clone();
-            *handle.untitled_cwd.borrow_mut() = None;
-            handle.is_modified.set(false);
+        // Update the handle to point to the new path
+        *handle.file_path.borrow_mut() = chosen_path.clone();
+        *handle.untitled_cwd.borrow_mut() = None;
+        handle.is_modified.set(false);
 
-            // Detect language and re-open in Monaco with correct URI + language
-            let uri = ensure_file_uri(&chosen_path);
-            let language_id = language_from_uri(&uri);
-            *handle.language.borrow_mut() = language_id.clone();
-            handle.open_file(&chosen_path, &content, &language_id);
+        // Detect language and re-open in Monaco with correct URI + language
+        let uri = ensure_file_uri(&chosen_path);
+        let language_id = language_from_uri(&uri);
+        *handle.language.borrow_mut() = language_id.clone();
+        handle.open_file(&chosen_path, &content, &language_id);
 
-            // Register the handle at the new path
-            editor::register_handle(&chosen_path, handle.clone());
+        // Register the handle at the new path
+        editor::register_handle(&chosen_path, handle.clone());
 
-            // Update the widget_name on the container so is_editor() and get_handle_for_widget() work
-            if let Some(page) = tab_view.selected_page() {
-                let child = page.child();
-                child.set_widget_name(&chosen_path);
+        // Update the widget_name on the container so is_editor() and get_handle_for_widget() work
+        if let Some(page) = tab_view.selected_page() {
+            let child = page.child();
+            child.set_widget_name(&chosen_path);
 
-                // Update tab title and icon
-                let filename = std::path::Path::new(&chosen_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(&chosen_path);
-                page.set_title(filename);
-                if let Some(texture) = icon_cache.borrow().get(filename, false, false) {
-                    page.set_icon(Some(texture));
-                }
-
-                // Track in dedup set and page map
-                open_editor_paths.borrow_mut().insert(chosen_path.clone());
-                editor_tab_pages.borrow_mut().insert(chosen_path.clone(), page.clone());
-            }
-
-            // Setup file watcher for the new path
-            handle.setup_file_watcher();
-
-            // LSP: send didOpen
-            {
-                let content = handle.get_content();
-                let mut versions = doc_versions.borrow_mut();
-                let version = versions.entry(chosen_path.clone()).or_insert(0);
-                *version += 1;
-                if let Err(e) = lsp_tx.try_send(LspRequest::DidOpen {
-                    uri: ensure_file_uri(&chosen_path),
-                    language_id,
-                    version: *version,
-                    text: content,
-                }) {
-                    log::warn!("LSP request channel full: {}", e);
-                }
-            }
-
-            // Send diff decorations
-            send_diff_decorations(&chosen_path);
-            sidebar_state.refresh_git_only();
-
-            // Run commands-on-save
-            let commands = settings.borrow().commands_on_save.clone();
-            super::spawn_commands_on_save(chosen_path.clone(), commands);
-
-            // Toast
+            // Update tab title and icon
             let filename = std::path::Path::new(&chosen_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(&chosen_path);
-            let toast = adw::Toast::new(&format!("Saved {}", filename));
-            toast.set_timeout(2);
-            toast_overlay.add_toast(toast);
-        },
-    );
+            page.set_title(filename);
+            if let Some(texture) = icon_cache.borrow().get(filename, false, false) {
+                page.set_icon(Some(texture));
+            }
+
+            // Track in dedup set and page map
+            open_editor_paths.borrow_mut().insert(chosen_path.clone());
+            editor_tab_pages
+                .borrow_mut()
+                .insert(chosen_path.clone(), page.clone());
+        }
+
+        // Setup file watcher for the new path
+        handle.setup_file_watcher();
+
+        // LSP: send didOpen
+        {
+            let content = handle.get_content();
+            let mut versions = doc_versions.borrow_mut();
+            let version = versions.entry(chosen_path.clone()).or_insert(0);
+            *version += 1;
+            if let Err(e) = lsp_tx.try_send(LspRequest::DidOpen {
+                uri: ensure_file_uri(&chosen_path),
+                language_id,
+                version: *version,
+                text: content,
+            }) {
+                log::warn!("LSP request channel full: {}", e);
+            }
+        }
+
+        // Send diff decorations
+        send_diff_decorations(&chosen_path);
+        sidebar_state.refresh_git_only();
+
+        // Run commands-on-save
+        let commands = settings.borrow().commands_on_save.clone();
+        super::spawn_commands_on_save(chosen_path.clone(), commands);
+
+        // Toast
+        let filename = std::path::Path::new(&chosen_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&chosen_path);
+        let toast = adw::Toast::new(&format!("Saved {}", filename));
+        toast.set_timeout(2);
+        toast_overlay.add_toast(toast);
+    });
 }

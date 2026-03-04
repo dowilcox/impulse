@@ -180,7 +180,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                                 .and_then(|n| n.to_str())
                                                 .unwrap_or(&path);
                                             if handle.is_modified.get() {
-                                                page.set_title(&format!("\u{25CF} {}", filename));
+                                                page.set_title(&format!("{} *", filename));
                                             } else {
                                                 page.set_title(filename);
                                             }

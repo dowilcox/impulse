@@ -47,7 +47,7 @@ enum TabEntry {
                 let name = (path as NSString).lastPathComponent
                 return editor.isModified ? "\(name) *" : name
             }
-            return "Untitled"
+            return editor.isModified ? "Untitled *" : "Untitled"
         case .imagePreview(let path, _):
             return (path as NSString).lastPathComponent
         }
@@ -371,9 +371,18 @@ final class TabManager: NSObject {
     /// Inserts a new tab after the currently selected tab and selects it.
     /// If no tab is selected, appends at the end.
     private func insertTab(_ entry: TabEntry) {
-        let insertionIndex = (selectedIndex >= 0 && selectedIndex < tabs.count)
-            ? selectedIndex + 1
-            : tabs.count
+        var insertionIndex: Int
+        if selectedIndex >= 0 && selectedIndex < tabs.count {
+            if pinnedTabs[selectedIndex] {
+                // Selected tab is pinned — insert after the last pinned tab
+                // so new tabs never land between pinned and unpinned sections.
+                insertionIndex = pinnedTabs.lastIndex(of: true).map { $0 + 1 } ?? 0
+            } else {
+                insertionIndex = selectedIndex + 1
+            }
+        } else {
+            insertionIndex = tabs.count
+        }
         tabs.insert(entry, at: insertionIndex)
         pinnedTabs.insert(false, at: insertionIndex)
 
@@ -456,8 +465,9 @@ final class TabManager: NSObject {
         rebuildSegments()
 
         if tabs.isEmpty {
-            selectedIndex = -1
-            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+            // Auto-create a new terminal tab so the window is never empty,
+            // matching the Linux behavior.
+            addTerminalTab()
             return
         }
 
@@ -772,6 +782,12 @@ final class TabManager: NSObject {
         closeOthersItem.target = self
         menu.addItem(closeOthersItem)
 
+        menu.addItem(NSMenuItem.separator())
+
+        let newTabItem = NSMenuItem(title: "New Tab", action: #selector(newTabFromMenu(_:)), keyEquivalent: "")
+        newTabItem.target = self
+        menu.addItem(newTabItem)
+
         return menu
     }
 
@@ -785,6 +801,10 @@ final class TabManager: NSObject {
 
     @objc private func pinTabFromMenu(_ sender: NSMenuItem) {
         togglePin(index: sender.tag)
+    }
+
+    @objc private func newTabFromMenu(_ sender: NSMenuItem) {
+        addTerminalTab()
     }
 
     @objc private func closeOtherTabsFromMenu(_ sender: NSMenuItem) {
