@@ -275,6 +275,7 @@ cat > "${CONTENTS}/Info.plist" << PLIST
                 <string>org.khronos.glsl-source</string>
                 <string>public.comma-separated-values-text</string>
                 <string>dev.impulse.toml-source</string>
+                <string>public.php-script</string>
             </array>
             <key>CFBundleTypeIconFile</key>
             <string>DocumentIcon</string>
