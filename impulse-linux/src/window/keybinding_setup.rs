@@ -1000,7 +1000,7 @@ pub(super) fn setup_shortcut_controller(
             &shortcut_controller,
             &keybindings::get_accel("new_window", &kb_overrides),
             move || {
-                build_window(&app_clone);
+                build_window(&app_clone, None);
             },
         );
     }

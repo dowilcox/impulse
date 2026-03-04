@@ -242,6 +242,58 @@ cat > "${CONTENTS}/Info.plist" << PLIST
     <false/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Source Code</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.source-code</string>
+                <string>public.script</string>
+                <string>public.shell-script</string>
+                <string>public.json</string>
+                <string>public.xml</string>
+                <string>public.yaml</string>
+                <string>public.plain-text</string>
+                <string>com.netscape.javascript-source</string>
+                <string>public.python-script</string>
+                <string>org.rust-lang.rust-source</string>
+                <string>public.c-source</string>
+                <string>public.c-plus-plus-source</string>
+                <string>public.c-header</string>
+                <string>public.swift-source</string>
+                <string>public.ruby-script</string>
+                <string>org.go.go-source</string>
+                <string>public.css</string>
+                <string>public.html</string>
+                <string>com.apple.dt.document.header-file.c-plus-plus</string>
+                <string>org.khronos.glsl-source</string>
+                <string>public.comma-separated-values-text</string>
+                <string>dyn.ah62d4rv4ge80q5db</string>
+            </array>
+            <key>CFBundleTypeIconFile</key>
+            <string>DocumentIcon</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Markdown</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>net.daringfireball.markdown</string>
+            </array>
+            <key>CFBundleTypeIconFile</key>
+            <string>DocumentIcon</string>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST
@@ -277,6 +329,37 @@ if [[ -f assets/impulse-logo.svg ]]; then
     fi
 
     rm -rf "$(dirname "${ICONSET_DIR}")"
+fi
+
+# Generate DocumentIcon.icns from the document icon SVG (for file type associations).
+if [[ -f assets/impulse-doc-icon.svg ]]; then
+    DOC_ICONSET_DIR=$(mktemp -d)/DocumentIcon.iconset
+    mkdir -p "${DOC_ICONSET_DIR}"
+
+    if command -v rsvg-convert >/dev/null 2>&1; then
+        for size in 16 32 64 128 256 512 1024; do
+            rsvg-convert -w ${size} -h ${size} assets/impulse-doc-icon.svg \
+                -o "${DOC_ICONSET_DIR}/icon_${size}x${size}.png" 2>/dev/null || true
+        done
+        for size in 16 32 128 256 512; do
+            double=$((size * 2))
+            if [[ -f "${DOC_ICONSET_DIR}/icon_${double}x${double}.png" ]]; then
+                cp "${DOC_ICONSET_DIR}/icon_${double}x${double}.png" \
+                   "${DOC_ICONSET_DIR}/icon_${size}x${size}@2x.png"
+            fi
+        done
+        if command -v iconutil >/dev/null 2>&1; then
+            iconutil -c icns "${DOC_ICONSET_DIR}" -o "${RESOURCES}/DocumentIcon.icns" 2>/dev/null || true
+        fi
+    fi
+
+    if [[ ! -f "${RESOURCES}/DocumentIcon.icns" ]]; then
+        echo "    Note: Could not generate DocumentIcon.icns (install rsvg-convert for document icon)"
+    else
+        echo "    OK: DocumentIcon.icns"
+    fi
+
+    rm -rf "$(dirname "${DOC_ICONSET_DIR}")"
 fi
 
 echo "    OK: ${APP_DIR}"

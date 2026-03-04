@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The FFI bridge to impulse-core/impulse-editor Rust code.
     let core = ImpulseCore()
 
+    /// File paths to open once the first window is ready (from Finder or CLI).
+    var pendingFiles: [String] = []
+
     /// All open main windows. We keep strong references so they survive the
     /// run loop.
     private var windowControllers: [MainWindowController] = []
@@ -35,9 +38,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let rootUri = URL(fileURLWithPath: rootDir).absoluteString
         core.initializeLsp(rootUri: rootUri)
 
-        openNewWindow()
+        openNewWindow(skipInitialTerminal: !pendingFiles.isEmpty)
+
+        // Open any files queued before the window was created (CLI args or Finder).
+        // Dispatch to the next run loop iteration so the window is fully visible
+        // and the tab manager has completed its initial layout.
+        if !pendingFiles.isEmpty {
+            let files = pendingFiles
+            pendingFiles.removeAll()
+            DispatchQueue.main.async { [weak self] in
+                guard let controller = self?.windowControllers.first else { return }
+                for path in files {
+                    controller.openFile(path: path)
+                }
+            }
+        }
 
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        if let controller = windowControllers.first {
+            for path in filenames {
+                controller.openFile(path: path)
+            }
+            sender.reply(toOpenOrPrint: .success)
+        } else {
+            // Window not yet created — queue for applicationDidFinishLaunching.
+            pendingFiles.append(contentsOf: filenames)
+            sender.reply(toOpenOrPrint: .success)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -64,11 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Window Management
 
     /// Creates and shows a new main window.
-    @objc func openNewWindow() {
+    @objc func openNewWindow(skipInitialTerminal: Bool = false) {
         let controller = MainWindowController(
             settings: settings,
             theme: theme,
-            core: core
+            core: core,
+            skipInitialTerminal: skipInitialTerminal
         )
         windowControllers.append(controller)
         controller.showWindow(nil)

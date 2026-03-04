@@ -48,10 +48,23 @@ struct ImpulseApp {
             exit(0)
         }
 
+        // Collect non-flag arguments as file paths to open.
+        let filePaths = args.dropFirst().filter { !$0.hasPrefix("-") }
+
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 
         let delegate = AppDelegate()
+        if !filePaths.isEmpty {
+            delegate.pendingFiles = filePaths.map { path in
+                // Resolve relative paths against the current working directory.
+                if path.hasPrefix("/") {
+                    return path
+                }
+                let cwd = FileManager.default.currentDirectoryPath
+                return (cwd as NSString).appendingPathComponent(path)
+            }
+        }
         app.delegate = delegate
 
         // Build the shared menu bar before the run loop starts so that it is

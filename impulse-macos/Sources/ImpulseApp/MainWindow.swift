@@ -385,7 +385,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     // MARK: - Initialization
 
-    init(settings: Settings, theme: Theme, core: ImpulseCore) {
+    init(settings: Settings, theme: Theme, core: ImpulseCore, skipInitialTerminal: Bool = false) {
         self.settings = settings
         self.theme = theme
         self.core = core
@@ -509,8 +509,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             self?.requestCloseTab(index: index)
         }
 
-        // Open a default terminal tab.
-        tabManager.addTerminalTab()
+        // Open a default terminal tab (skipped when launching with file arguments).
+        if !skipInitialTerminal {
+            tabManager.addTerminalTab()
+        }
 
         // Start polling for asynchronous LSP events (diagnostics, etc.).
         startLspPolling()
@@ -723,6 +725,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func splitViewDidResizeSubviews(_ notification: Notification) {
         if !sidebarContainer.isHidden && sidebarContainer.frame.width > 0 {
             sidebarTargetWidth = sidebarContainer.frame.width
+        }
+    }
+
+    // MARK: - Public API
+
+    /// Opens a file in an editor tab. Called by AppDelegate for Finder "Open With"
+    /// and CLI file arguments. Bypasses the notification path (which requires
+    /// isKeyWindow) so it works during startup before the window is key.
+    func openFile(path: String) {
+        // Switch the file tree to the file's parent directory.
+        let dir = (path as NSString).deletingLastPathComponent
+        if !dir.isEmpty, dir != fileTreeRootPath {
+            switchFileTreeRoot(dir)
+        }
+        tabManager.addEditorTab(path: path, projectDirectory: fileTreeRootPath)
+        lspDidOpenIfNeeded(path: path)
+        if let editor = tabManager.selectedEditor {
+            trackEditorTab(editor, forPath: path)
         }
     }
 

@@ -14,13 +14,16 @@ mod terminal_container;
 mod theme;
 mod window;
 
+use gtk4::gio;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::backtrace::Backtrace;
+use std::cell::RefCell;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 const APP_ID: &str = "dev.impulse.Impulse";
 const APP_ID_DEVEL: &str = "dev.impulse.Impulse.Devel";
@@ -184,7 +187,14 @@ fn main() {
 
     let devel = is_devel_mode();
     let app_id = if devel { APP_ID_DEVEL } else { APP_ID };
-    let app = adw::Application::builder().application_id(app_id).build();
+    let app = adw::Application::builder()
+        .application_id(app_id)
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .build();
+
+    // Shared storage for file paths received via GIO open (from file managers
+    // or the command line via %F in the .desktop file).
+    let pending_files: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
     app.connect_startup(move |_app| {
         let initial_theme = theme::get_theme(&settings::load().color_scheme);
@@ -204,9 +214,35 @@ fn main() {
         }
     });
 
-    app.connect_activate(move |app| {
-        window::build_window(app);
-    });
+    {
+        let pending_files = pending_files.clone();
+        app.connect_open(move |_app, files, _hint| {
+            let paths: Vec<String> = files
+                .iter()
+                .filter_map(|f| f.path())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            pending_files.borrow_mut().extend(paths);
+            // GIO will call activate after open, which creates/raises the window.
+            _app.activate();
+        });
+    }
+
+    {
+        let pending_files = pending_files.clone();
+        app.connect_activate(move |app| {
+            // Only build a new window if none exists (avoid duplicates on re-activate).
+            if app.active_window().is_none() {
+                let files = pending_files.borrow_mut().drain(..).collect::<Vec<_>>();
+                let initial = if files.is_empty() { None } else { Some(files) };
+                window::build_window(app, initial);
+            } else if !pending_files.borrow().is_empty() {
+                // Window already exists — open files in it via the sidebar callback.
+                let files = pending_files.borrow_mut().drain(..).collect::<Vec<_>>();
+                window::open_files_in_active_window(app, &files);
+            }
+        });
+    }
 
     // Filter out custom flags so GTK/GLib doesn't reject them.
     let gtk_args: Vec<String> = std::env::args()

@@ -43,7 +43,7 @@ enum ClosedTab {
 /// Maximum number of closed tabs to remember.
 const MAX_CLOSED_TABS: usize = 20;
 
-pub fn build_window(app: &adw::Application) {
+pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) {
     // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
     crate::editor_webview::warm_up_editor();
 
@@ -835,8 +835,31 @@ pub fn build_window(app: &adw::Application) {
         &sidebar_state.icon_cache,
     );
 
-    // Create first tab
-    (create_tab.clone())();
+    // Open files passed via CLI / file manager "Open With"
+    let has_initial_files = initial_files.as_ref().is_some_and(|f| !f.is_empty());
+    if let Some(files) = initial_files {
+        // Switch sidebar to the first file's parent directory.
+        if let Some(first) = files.first() {
+            if let Some(parent) = std::path::Path::new(first).parent() {
+                let dir = parent.to_string_lossy().to_string();
+                sidebar_state.load_directory(&dir);
+                status_bar.borrow().update_cwd(&dir);
+                *sidebar_state.project_search.current_root.borrow_mut() = dir;
+            }
+        }
+        for file_path in &files {
+            if std::path::Path::new(file_path).exists() {
+                if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                    cb(file_path);
+                }
+            }
+        }
+    }
+
+    // Create initial terminal tab (skipped when opening files directly).
+    if !has_initial_files {
+        (create_tab.clone())();
+    }
 
     // Restore previously open editor tabs
     for file_path in &settings.borrow().open_files.clone() {
@@ -848,8 +871,37 @@ pub fn build_window(app: &adw::Application) {
     }
 
     // Switch back to first tab (terminal) after restoring editor tabs
-    if tab_view.n_pages() > 0 {
+    if !has_initial_files && tab_view.n_pages() > 0 {
         tab_view.set_selected_page(&tab_view.nth_page(0));
+    }
+
+    // Register a window-level action so that files can be opened from connect_open
+    // when the window is already visible.
+    {
+        let sidebar_state = sidebar_state.clone();
+        let status_bar = status_bar.clone();
+        let action =
+            gio::SimpleAction::new("open-file", Some(&*gtk4::glib::VariantTy::STRING));
+        action.connect_activate(move |_, param| {
+            if let Some(path) = param.and_then(|v| v.get::<String>()) {
+                if std::path::Path::new(&path).exists() {
+                    // Switch sidebar to the file's parent directory.
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        let dir = parent.to_string_lossy().to_string();
+                        if dir != *sidebar_state.current_path.borrow() {
+                            sidebar_state.load_directory(&dir);
+                            status_bar.borrow().update_cwd(&dir);
+                            *sidebar_state.project_search.current_root.borrow_mut() =
+                                dir;
+                        }
+                    }
+                    if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                        cb(&path);
+                    }
+                }
+            }
+        });
+        window.add_action(&action);
     }
 
     // New tab button
@@ -1111,7 +1163,7 @@ pub fn build_window(app: &adw::Application) {
                 )),
                 action: Rc::new({
                     let app = app.clone();
-                    move || build_window(&app)
+                    move || build_window(&app, None)
                 }),
             },
             Command {
@@ -1392,6 +1444,19 @@ pub fn build_window(app: &adw::Application) {
     }
 
     window.present();
+}
+
+/// Opens files in the active window by activating the GIO "open-file" action.
+/// Used when the app is already running and receives files via `connect_open`.
+pub fn open_files_in_active_window(app: &adw::Application, files: &[String]) {
+    if let Some(win) = app.active_window() {
+        for path in files {
+            if std::path::Path::new(path).exists() {
+                // Actions registered on the window are in the "win" group.
+                win.activate_action("win.open-file", Some(&path.to_variant()));
+            }
+        }
+    }
 }
 
 pub(super) fn make_split_terminal(

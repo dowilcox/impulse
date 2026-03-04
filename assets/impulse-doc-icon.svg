@@ -1,0 +1,23 @@
+<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
+  <!-- Document body with rounded corners -->
+  <path d="M20 8 H80 L108 36 V124 Q108 132 100 132 H20 Q12 132 12 124 V16 Q12 8 20 8 Z"
+        fill="#2E3440" stroke="#4C566A" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Folded corner -->
+  <path d="M80 8 V28 Q80 36 88 36 H108 L80 8 Z"
+        fill="#3B4252" stroke="#4C566A" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Subtle highlight on fold inner edge -->
+  <path d="M80 8 V28 Q80 36 88 36 H108" fill="none" stroke="#ECEFF4" stroke-width="0.5" opacity="0.3"/>
+  <!-- Impulse logo: chevron prompt -->
+  <path d="M36 58 L56 76 L36 94" fill="none" stroke="url(#docGrad)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Impulse logo: cursor lines -->
+  <line x1="64" y1="76" x2="80" y2="76" stroke="#88C0D0" stroke-width="4" stroke-linecap="round"/>
+  <line x1="64" y1="86" x2="76" y2="86" stroke="#88C0D0" stroke-width="2.8" stroke-linecap="round" opacity="0.5"/>
+  <line x1="64" y1="66" x2="74" y2="66" stroke="#88C0D0" stroke-width="2.8" stroke-linecap="round" opacity="0.5"/>
+  <defs>
+    <linearGradient id="docGrad" x1="36" y1="58" x2="56" y2="94" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ECEFF4"/>
+      <stop offset="50%" stop-color="#81A1C1"/>
+      <stop offset="100%" stop-color="#5E81AC"/>
+    </linearGradient>
+  </defs>
+</svg>
