@@ -149,6 +149,11 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
         } else if components.len() > 1 {
             // File is in a subdirectory — mark the immediate child
             // directory with the highest-priority status among its descendants.
+            // Don't propagate ignored status to parent directories — a gitignored
+            // file deep in a tree should not mark its parent as ignored.
+            if code == "I" {
+                continue;
+            }
             let dir_name = components[0].as_os_str().to_string_lossy().to_string();
             status_map
                 .entry(dir_name)
@@ -283,6 +288,12 @@ pub fn get_all_git_statuses(
                     }
                 })
                 .or_insert_with(|| code.to_string());
+        }
+
+        // Don't propagate ignored status to ancestor directories — a gitignored
+        // file deep in a tree should not mark its parent as ignored.
+        if code == "I" {
+            continue;
         }
 
         // Propagate status to ancestor directories up to repo root
@@ -510,6 +521,106 @@ mod tests {
         assert_eq!(result.get("subdir").map(String::as_str), Some("M"));
         // The nested file itself should NOT appear (it's not a direct child)
         assert!(!result.contains_key("nested.txt"));
+    }
+
+    #[test]
+    fn ignored_subdir_does_not_mark_parent_as_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Build a structure mirroring the real project:
+        //   myproject/.build/         (ignored)
+        //   myproject/Package.resolved (ignored)
+        //   myproject/Sources/App/Resources/  (ignored)
+        //   myproject/Sources/App/Code.swift  (tracked)
+        let sub_dir = dir.path().join("myproject");
+        fs::create_dir_all(sub_dir.join(".build")).unwrap();
+        fs::write(sub_dir.join(".build/artifact.o"), "binary").unwrap();
+        fs::write(sub_dir.join("Package.resolved"), "resolved").unwrap();
+        fs::create_dir_all(sub_dir.join("Sources/App/Resources")).unwrap();
+        fs::write(sub_dir.join("Sources/App/Resources/icon.png"), "img").unwrap();
+        fs::create_dir_all(sub_dir.join("Sources/App")).unwrap();
+        fs::write(sub_dir.join("Sources/App/Code.swift"), "code").unwrap();
+
+        // Create .gitignore with multiple patterns under myproject/
+        fs::write(
+            dir.path().join(".gitignore"),
+            "myproject/.build/\nmyproject/Package.resolved\nmyproject/Sources/App/Resources/\n",
+        )
+        .unwrap();
+
+        // Commit the tracked file
+        let file_path = dir.path().join("tracked.txt");
+        fs::write(&file_path, "content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+        index
+            .add_path(std::path::Path::new("myproject/Sources/App/Code.swift"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        // === Test get_git_status_for_directory at root ===
+        let result = get_git_status_for_directory(dir.path().to_str().unwrap()).unwrap();
+        eprintln!("get_git_status_for_directory root: {:?}", result);
+        assert_ne!(
+            result.get("myproject").map(String::as_str),
+            Some("I"),
+            "Parent directory should not be marked as ignored (get_git_status_for_directory)"
+        );
+
+        // === Test get_all_git_statuses at root ===
+        let batch = get_all_git_statuses(dir.path().to_str().unwrap()).unwrap();
+        eprintln!("get_all_git_statuses full map:");
+        for (key, map) in &batch {
+            eprintln!("  [{}] => {:?}", key, map);
+        }
+        let root_key = dir.path().to_str().unwrap().trim_end_matches('/');
+        let root_map = batch.get(root_key).cloned().unwrap_or_default();
+        assert_ne!(
+            root_map.get("myproject").map(String::as_str),
+            Some("I"),
+            "Parent directory should not be marked as ignored (get_all_git_statuses)"
+        );
+
+        // Verify the ignored entries ARE present in their direct parent maps
+        let myproject_key = format!("{}/myproject", root_key);
+        let myproject_map = batch.get(&myproject_key).cloned().unwrap_or_default();
+        eprintln!("myproject map: {:?}", myproject_map);
+        assert_eq!(
+            myproject_map.get(".build").map(String::as_str),
+            Some("I"),
+            ".build should be marked as ignored in its direct parent"
+        );
+        assert_eq!(
+            myproject_map.get("Package.resolved").map(String::as_str),
+            Some("I"),
+            "Package.resolved should be marked as ignored in its direct parent"
+        );
+
+        // Verify intermediate directories are NOT marked as ignored
+        assert_ne!(
+            myproject_map.get("Sources").map(String::as_str),
+            Some("I"),
+            "Sources should not be marked as ignored"
+        );
+
+        // === Test read_directory_with_git_status at root ===
+        let entries = read_directory_with_git_status(dir.path().to_str().unwrap(), true).unwrap();
+        for entry in &entries {
+            eprintln!("  entry: {} -> {:?}", entry.name, entry.git_status);
+            if entry.name == "myproject" {
+                assert_ne!(
+                    entry.git_status.as_deref(),
+                    Some("I"),
+                    "myproject should not be marked as ignored in read_directory_with_git_status"
+                );
+            }
+        }
     }
 
     #[test]
