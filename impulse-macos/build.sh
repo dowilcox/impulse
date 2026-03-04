@@ -274,7 +274,7 @@ cat > "${CONTENTS}/Info.plist" << PLIST
                 <string>com.apple.dt.document.header-file.c-plus-plus</string>
                 <string>org.khronos.glsl-source</string>
                 <string>public.comma-separated-values-text</string>
-                <string>dyn.ah62d4rv4ge80q5db</string>
+                <string>dev.impulse.toml-source</string>
             </array>
             <key>CFBundleTypeIconFile</key>
             <string>DocumentIcon</string>
@@ -292,6 +292,79 @@ cat > "${CONTENTS}/Info.plist" << PLIST
             </array>
             <key>CFBundleTypeIconFile</key>
             <string>DocumentIcon</string>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.rust-lang.rust-source</string>
+            <key>UTTypeDescription</key>
+            <string>Rust Source Code</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rs</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.go.go-source</string>
+            <key>UTTypeDescription</key>
+            <string>Go Source Code</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>go</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.impulse.toml-source</string>
+            <key>UTTypeDescription</key>
+            <string>TOML Configuration</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>toml</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.khronos.glsl-source</string>
+            <key>UTTypeDescription</key>
+            <string>GLSL Shader Source</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.source-code</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>glsl</string>
+                    <string>vert</string>
+                    <string>frag</string>
+                </array>
+            </dict>
         </dict>
     </array>
 </dict>
