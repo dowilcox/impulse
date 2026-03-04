@@ -22,18 +22,24 @@ function sendToHost(msgObj) {
 // always be present so the editor never falls back to a proportional font.
 function normalizeFontFamily(raw) {
   // Split on commas, trim each part, and quote unquoted multi-word names.
-  const parts = raw.split(",").map((s) => {
-    s = s.trim();
-    if (!s) return null;
-    // Already quoted — leave as-is.
-    if ((s.startsWith("'") && s.endsWith("'")) ||
-        (s.startsWith('"') && s.endsWith('"'))) return s;
-    // Generic families (monospace, sans-serif, etc.) must not be quoted.
-    if (/^[a-z-]+$/.test(s)) return s;
-    // Multi-word name without quotes — wrap in single quotes.
-    if (s.includes(" ")) return "'" + s + "'";
-    return s;
-  }).filter(Boolean);
+  const parts = raw
+    .split(",")
+    .map((s) => {
+      s = s.trim();
+      if (!s) return null;
+      // Already quoted — leave as-is.
+      if (
+        (s.startsWith("'") && s.endsWith("'")) ||
+        (s.startsWith('"') && s.endsWith('"'))
+      )
+        return s;
+      // Generic families (monospace, sans-serif, etc.) must not be quoted.
+      if (/^[a-z-]+$/.test(s)) return s;
+      // Multi-word name without quotes — wrap in single quotes.
+      if (s.includes(" ")) return "'" + s + "'";
+      return s;
+    })
+    .filter(Boolean);
   // Ensure a monospace fallback is always present.
   const lower = parts.map((p) => p.toLowerCase().replace(/['"]/g, ""));
   if (!lower.includes("monospace")) parts.push("monospace");
@@ -96,6 +102,23 @@ window.MonacoEnvironment = {
 require(["vs/editor/editor.main"], function () {
   document.getElementById("loading").style.display = "none";
   document.getElementById("container").style.display = "block";
+
+  // ---------------------------------------------------------------------------
+  // Disable Monaco's built-in TypeScript/JavaScript diagnostics.
+  // Impulse uses its own LSP client (typescript-language-server) which provides
+  // diagnostics that respect the project's tsconfig.json. Monaco's built-in
+  // checker runs without project context, producing false positives.
+  // ---------------------------------------------------------------------------
+  monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: true,
+    noSuggestionDiagnostics: true,
+  });
+  monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: true,
+    noSuggestionDiagnostics: true,
+  });
 
   // ---------------------------------------------------------------------------
   // Register JSON/JSONC Monarch tokenizer (the vendored Monaco bundle lacks one)

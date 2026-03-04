@@ -637,13 +637,24 @@ impl LspClient {
     ) {
         match method {
             "workspace/configuration" => {
-                let count = params
+                let items = params
                     .as_ref()
                     .and_then(|p| p.get("items"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.len())
-                    .unwrap_or(0);
-                let result = serde_json::Value::Array(vec![serde_json::json!({}); count]);
+                    .and_then(|v| v.as_array());
+
+                let result = if let Some(items) = items {
+                    let sections: Vec<&str> = items.iter().map(|item| {
+                        item.get("section").and_then(|s| s.as_str()).unwrap_or("")
+                    }).collect();
+                    serde_json::Value::Array(
+                        sections
+                            .iter()
+                            .map(|section| workspace_configuration_for_section(section))
+                            .collect(),
+                    )
+                } else {
+                    serde_json::Value::Array(vec![])
+                };
                 send_jsonrpc_result(sender, id, result);
             }
             "window/workDoneProgress/create" => {
@@ -879,6 +890,18 @@ impl LspClient {
         }
 
         self.notify("initialized", lsp_types::InitializedParams {})?;
+
+        // Push workspace configuration to the server. Many servers (e.g.
+        // typescript-language-server) use the push model (didChangeConfiguration)
+        // rather than the pull model (workspace/configuration) for their main
+        // settings. Sending this after `initialized` ensures servers pick up
+        // our defaults for things like implicit project config, formatting, etc.
+        self.notify(
+            "workspace/didChangeConfiguration",
+            serde_json::json!({
+                "settings": default_workspace_settings()
+            }),
+        )?;
 
         let _ = self.event_tx.send(LspEvent::Initialized {
             client_key: self.client_key.clone(),
@@ -1276,11 +1299,88 @@ fn get_default_init_options(server_id: &str) -> Option<serde_json::Value> {
                 "globalStoragePath": storage,
             }))
         }
+        "typescript-language-server" => Some(serde_json::json!({
+            "hostInfo": "Impulse",
+            "preferences": {
+                "quotePreference": "auto",
+                "importModuleSpecifierPreference": "shortest",
+                "jsxAttributeCompletionStyle": "auto"
+            }
+        })),
         "vscode-eslint-language-server" => Some(serde_json::json!({
             "validate": "probe",
         })),
         _ => None,
     }
+}
+
+/// Returns workspace configuration settings for a given section name.
+/// This is used when responding to `workspace/configuration` requests from
+/// LSP servers, providing sensible defaults for TypeScript/JavaScript and
+/// other language servers.
+fn workspace_configuration_for_section(section: &str) -> serde_json::Value {
+    match section {
+        "typescript" | "javascript" => serde_json::json!({
+            "implicitProjectConfiguration": {
+                "checkJs": false,
+                "experimentalDecorators": false,
+                "module": "ESNext",
+                "strictNullChecks": true,
+                "strictFunctionTypes": true,
+                "target": "ES2020"
+            },
+            "suggest": {
+                "autoImports": true,
+                "completeFunctionCalls": false
+            },
+            "preferences": {
+                "quotePreference": "auto",
+                "importModuleSpecifierPreference": "shortest",
+                "jsxAttributeCompletionStyle": "auto"
+            },
+            "format": {
+                "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true
+            }
+        }),
+        "typescript.format" | "javascript.format" => serde_json::json!({
+            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true
+        }),
+        _ => serde_json::json!({})
+    }
+}
+
+/// Returns default workspace settings pushed via `workspace/didChangeConfiguration`.
+/// The typescript-language-server (and many other servers) uses the push model
+/// to receive its main configuration. The settings object mirrors the structure
+/// that VS Code would push, with TypeScript/JavaScript implicit project config
+/// so that files outside a tsconfig.json project still get sensible defaults.
+fn default_workspace_settings() -> serde_json::Value {
+    let ts_js_settings = serde_json::json!({
+        "implicitProjectConfiguration": {
+            "checkJs": false,
+            "experimentalDecorators": false,
+            "module": "ESNext",
+            "strictNullChecks": true,
+            "strictFunctionTypes": true,
+            "target": "ES2020"
+        },
+        "suggest": {
+            "autoImports": true,
+            "completeFunctionCalls": false
+        },
+        "preferences": {
+            "quotePreference": "auto",
+            "importModuleSpecifierPreference": "shortest",
+            "jsxAttributeCompletionStyle": "auto"
+        },
+        "format": {
+            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true
+        }
+    });
+    serde_json::json!({
+        "typescript": ts_js_settings,
+        "javascript": ts_js_settings
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
