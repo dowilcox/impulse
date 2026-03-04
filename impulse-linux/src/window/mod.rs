@@ -1451,7 +1451,7 @@ pub fn open_files_in_active_window(app: &adw::Application, files: &[String]) {
         for path in files {
             if std::path::Path::new(path).exists() {
                 // Actions registered on the window are in the "win" group.
-                win.activate_action("win.open-file", Some(&path.to_variant()));
+                let _ = win.activate_action("win.open-file", Some(&path.to_variant()));
             }
         }
     }
