@@ -729,10 +729,7 @@ pub extern "C" fn impulse_lsp_install() -> *mut c_char {
 /// Check whether npm is available on the system PATH.
 #[no_mangle]
 pub extern "C" fn impulse_npm_is_available() -> bool {
-    ffi_catch(
-        false,
-        AssertUnwindSafe(impulse_core::lsp::npm_is_available),
-    )
+    ffi_catch(false, AssertUnwindSafe(impulse_core::lsp::npm_is_available))
 }
 
 /// Check the installation status of system (non-managed) LSP servers.
@@ -1173,8 +1170,7 @@ pub extern "C" fn impulse_settings_load_json(json: *const c_char) -> *mut c_char
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
             let raw = to_rust_str(json).unwrap_or_default();
-            let settings = impulse_core::settings::Settings::from_json(&raw)
-                .unwrap_or_default();
+            let settings = impulse_core::settings::Settings::from_json(&raw).unwrap_or_default();
             let result = settings
                 .to_json()
                 .unwrap_or_else(|_| impulse_core::settings::Settings::default_json());
@@ -1200,6 +1196,48 @@ pub extern "C" fn impulse_settings_validate_json(json: *const c_char) -> *mut c_
                 .to_json()
                 .unwrap_or_else(|_| impulse_core::settings::Settings::default_json());
             to_c_string(&result)
+        }),
+    )
+}
+
+/// Check for a newer version on GitHub Releases.
+///
+/// Returns a JSON string `{"version":"X.Y.Z","url":"..."}` if an update is
+/// available, an empty string if up-to-date or checked recently, or an
+/// `"ERROR:..."` string on failure. Caller must free with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_check_for_update() -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| match impulse_core::update::check_for_update() {
+            Ok(Some(info)) => {
+                let json = serde_json::json!({
+                    "version": info.version,
+                    "url": info.url,
+                });
+                to_c_string(&json.to_string())
+            }
+            Ok(None) => to_c_string(""),
+            Err(e) => to_c_string(&format!("ERROR:{}", e)),
+        }),
+    )
+}
+
+/// Return the current application version string.
+///
+/// The returned pointer is valid for the lifetime of the process and must
+/// NOT be freed.
+#[no_mangle]
+pub extern "C" fn impulse_get_version() -> *const c_char {
+    ffi_catch(
+        std::ptr::null(),
+        AssertUnwindSafe(|| {
+            static CACHED: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
+            CACHED
+                .get_or_init(|| {
+                    CString::new(impulse_core::update::CURRENT_VERSION).unwrap_or_default()
+                })
+                .as_ptr()
         }),
     )
 }

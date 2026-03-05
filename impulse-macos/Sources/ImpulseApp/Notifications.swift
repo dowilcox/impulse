@@ -140,4 +140,10 @@ extension Notification.Name {
     static let impulseQuickOpen = Notification.Name("impulseQuickOpen")
     /// Requests installing managed web LSP servers.
     static let impulseInstallLsp = Notification.Name("impulseInstallLsp")
+
+    // MARK: Update Notifications
+
+    /// Posted when a newer version is available. The `userInfo` dictionary
+    /// contains `"version"` (String) and `"url"` (String).
+    static let impulseUpdateAvailable = Notification.Name("impulseUpdateAvailable")
 }

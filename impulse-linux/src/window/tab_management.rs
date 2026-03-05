@@ -90,9 +90,7 @@ pub(super) fn make_setup_terminal_signals(
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(&path);
-                        if let Some(page) =
-                            find_terminal_page(terminal, &tab_view, &page_cache)
-                        {
+                        if let Some(page) = find_terminal_page(terminal, &tab_view, &page_cache) {
                             if !is_active {
                                 sidebar_state.remove_tab_state(&page.child());
                             }
@@ -113,12 +111,9 @@ pub(super) fn make_setup_terminal_signals(
             let page_cache = page_cache.clone();
             term.connect_child_exited(move |_terminal, _status| {
                 run_guarded_ui("terminal-child-exited", || {
-                    if let Some(page) =
-                        find_terminal_page(&term_clone, &tab_view, &page_cache)
-                    {
+                    if let Some(page) = find_terminal_page(&term_clone, &tab_view, &page_cache) {
                         let container = page.child();
-                        let terminals =
-                            crate::terminal_container::collect_terminals(&container);
+                        let terminals = crate::terminal_container::collect_terminals(&container);
                         if terminals.len() <= 1 {
                             // Remove all terminals in this page from the cache
                             use gtk4::glib::ObjectExt;

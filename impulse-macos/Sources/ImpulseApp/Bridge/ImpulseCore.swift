@@ -552,4 +552,26 @@ final class ImpulseCore {
             }
         }
     }
+
+    /// Check for a newer version on GitHub Releases.
+    ///
+    /// Returns `(version, url)` if a new version is available, or `nil` if
+    /// up-to-date, checked recently, or on error.
+    static func checkForUpdate() -> (version: String, url: String)? {
+        guard let raw = CImpulseFFI.impulse_check_for_update() else { return nil }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        guard !result.isEmpty, !result.hasPrefix("ERROR:") else { return nil }
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let version = json["version"],
+              let url = json["url"] else { return nil }
+        return (version, url)
+    }
+
+    /// Return the current application version.
+    static func version() -> String {
+        guard let ptr = CImpulseFFI.impulse_get_version() else { return "unknown" }
+        return String(cString: ptr)
+    }
 }

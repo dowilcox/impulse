@@ -1442,6 +1442,20 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         });
     }
 
+    // Check for updates in background if enabled.
+    if settings.borrow().check_for_updates {
+        let status_bar_for_update = Rc::clone(&status_bar);
+        std::thread::spawn(move || {
+            if let Ok(Some(info)) = impulse_core::update::check_for_update() {
+                let version = info.version;
+                let url = info.url;
+                gtk4::glib::idle_add_once(move || {
+                    status_bar_for_update.borrow().show_update(&version, &url);
+                });
+            }
+        });
+    }
+
     window.present();
 }
 

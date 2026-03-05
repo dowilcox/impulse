@@ -65,4 +65,8 @@ char *impulse_settings_load_json(const char *json);
 char *impulse_settings_validate_json(const char *json);
 bool impulse_matches_file_pattern(const char *path, const char *pattern);
 
+// Update checking
+char *impulse_check_for_update(void);
+const char *impulse_get_version(void);
+
 #endif

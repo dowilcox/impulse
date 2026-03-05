@@ -1163,6 +1163,25 @@ pub fn show_settings_window(
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
 
+    let updates_group = adw::PreferencesGroup::new();
+    updates_group.set_title("Updates");
+
+    let updates_row = adw::SwitchRow::new();
+    updates_row.set_title("Check for updates on launch");
+    updates_row.set_active(settings.borrow().check_for_updates);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        updates_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.check_for_updates = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    updates_group.add(&updates_row);
+    appearance_page.add(&updates_group);
+
     preferences_window.add(&appearance_page);
 
     // ── Page 4: Automation ──────────────────────────────────────────────

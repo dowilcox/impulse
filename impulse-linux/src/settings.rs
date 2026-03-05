@@ -56,7 +56,10 @@ pub fn load() -> Settings {
             .and_then(|raw| {
                 serde_json::from_str::<serde_json::Value>(&raw)
                     .ok()
-                    .and_then(|v| v.get("font_family").and_then(|f| f.as_str().map(String::from)))
+                    .and_then(|v| {
+                        v.get("font_family")
+                            .and_then(|f| f.as_str().map(String::from))
+                    })
             })
             .is_some_and(|old| old != default_font);
     if needs_save {

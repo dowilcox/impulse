@@ -22,6 +22,17 @@ final class StatusBar: NSView {
     private let encodingLabel = NSTextField(labelWithString: "UTF-8")
     private let indentInfoLabel = NSTextField(labelWithString: "")
 
+    private let updateButton: NSButton = {
+        let btn = NSButton(title: "", target: nil, action: nil)
+        btn.isBordered = false
+        btn.font = NSFont.appFont(ofSize: 11)
+        btn.isHidden = true
+        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        btn.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        return btn
+    }()
+    private var updateURL: String?
+
     private let topBorder = NSView()
 
     /// Button to toggle preview, visible only for previewable files (markdown, SVG).
@@ -103,12 +114,21 @@ final class StatusBar: NSView {
         // Preview button (hidden by default)
         previewButton.isHidden = true
 
+        // Update button
+        updateButton.target = self
+        updateButton.action = #selector(updateButtonClicked)
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleUpdateAvailable(_:)),
+            name: .impulseUpdateAvailable, object: nil)
+
         // Build the horizontal stack
         let stackView = NSStackView(views: [
             shellNameLabel,
             gitBranchLabel,
             cwdLabel,
             blameLabel,
+            updateButton,
             indentInfoLabel,
             encodingLabel,
             languageLabel,
@@ -243,6 +263,24 @@ final class StatusBar: NSView {
         indentInfoLabel.textColor = theme.fgDark
         blameLabel.textColor = theme.fgDark
         previewButton.applyTheme(borderColor: theme.green, bgDark: theme.bgDark)
+        updateButton.contentTintColor = theme.yellow
+    }
+
+    // MARK: - Update Notification
+
+    @objc private func handleUpdateAvailable(_ note: Notification) {
+        guard let info = note.userInfo,
+              let version = info["version"] as? String,
+              let url = info["url"] as? String else { return }
+        updateURL = url
+        updateButton.title = "⬆ Update v\(version)"
+        updateButton.toolTip = "Click to open release page"
+        updateButton.isHidden = false
+    }
+
+    @objc private func updateButtonClicked() {
+        guard let urlString = updateURL, let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Helpers

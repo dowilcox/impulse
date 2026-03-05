@@ -447,6 +447,16 @@ final class SettingsWindowController: NSWindowController {
             hiddenCheck,
         ])
 
+        // -- Updates Section --
+
+        let updatesCheck = NSButton(checkboxWithTitle: "Check for updates on launch",
+                                     target: self, action: #selector(checkForUpdatesChanged(_:)))
+        updatesCheck.state = settings.checkForUpdates ? .on : .off
+
+        addSection(to: stack, title: "Updates", rows: [
+            updatesCheck,
+        ])
+
         return wrapInScrollView(stack)
     }
 
@@ -1237,6 +1247,11 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func sidebarShowHiddenChanged(_ sender: NSButton) {
         settings.sidebarShowHidden = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func checkForUpdatesChanged(_ sender: NSButton) {
+        settings.checkForUpdates = sender.state == .on
         persistSettings()
     }
 

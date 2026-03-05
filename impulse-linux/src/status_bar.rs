@@ -15,6 +15,7 @@ pub struct StatusBar {
     indent_label: gtk4::Label,
     blame_label: gtk4::Label,
     pub preview_button: gtk4::Button,
+    update_button: gtk4::Button,
 }
 
 impl StatusBar {
@@ -61,10 +62,16 @@ impl StatusBar {
         preview_button.set_visible(false);
         preview_button.set_cursor_from_name(Some("pointer"));
 
+        let update_button = gtk4::Button::with_label("");
+        update_button.add_css_class("status-bar-update-btn");
+        update_button.set_visible(false);
+        update_button.set_cursor_from_name(Some("pointer"));
+
         widget.append(&shell_label);
         widget.append(&branch_label);
         widget.append(&cwd_label);
         widget.append(&blame_label);
+        widget.append(&update_button);
         widget.append(&encoding_label);
         widget.append(&indent_label);
         widget.append(&language_label);
@@ -82,6 +89,7 @@ impl StatusBar {
             indent_label,
             blame_label,
             preview_button,
+            update_button,
         }
     }
 
@@ -153,6 +161,18 @@ impl StatusBar {
     pub fn hide_preview_button(&self) {
         self.preview_button.set_visible(false);
         self.preview_button.remove_css_class("previewing");
+    }
+
+    pub fn show_update(&self, version: &str, url: &str) {
+        self.update_button
+            .set_label(&format!("⬆ Update v{}", version));
+        self.update_button
+            .set_tooltip_text(Some("Click to open release page"));
+        self.update_button.set_visible(true);
+        let url = url.to_string();
+        self.update_button.connect_clicked(move |_| {
+            let _ = open::that(&url);
+        });
     }
 
     pub fn hide_editor_info(&self) {

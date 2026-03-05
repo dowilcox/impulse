@@ -171,7 +171,10 @@ pub fn build_sidebar(
     let file_menu = gio::Menu::new();
     file_menu.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
-    file_menu.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
+    file_menu.append(
+        Some("Copy Relative Path"),
+        Some("filetree.copy-relative-path"),
+    );
     file_menu.append(Some("New File"), Some("filetree.new-file"));
     file_menu.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu.append(Some("Rename"), Some("filetree.rename"));
@@ -180,7 +183,10 @@ pub fn build_sidebar(
     let file_menu_git = gio::Menu::new();
     file_menu_git.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu_git.append(Some("Copy Path"), Some("filetree.copy-path"));
-    file_menu_git.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
+    file_menu_git.append(
+        Some("Copy Relative Path"),
+        Some("filetree.copy-relative-path"),
+    );
     file_menu_git.append(Some("New File"), Some("filetree.new-file"));
     file_menu_git.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu_git.append(Some("Rename"), Some("filetree.rename"));
@@ -190,7 +196,10 @@ pub fn build_sidebar(
     let dir_menu = gio::Menu::new();
     dir_menu.append(Some("Open in Terminal"), Some("filetree.open-terminal"));
     dir_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
-    dir_menu.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
+    dir_menu.append(
+        Some("Copy Relative Path"),
+        Some("filetree.copy-relative-path"),
+    );
     dir_menu.append(Some("New File"), Some("filetree.new-file"));
     dir_menu.append(Some("New Folder"), Some("filetree.new-folder"));
     dir_menu.append(Some("Rename"), Some("filetree.rename"));

@@ -28,6 +28,7 @@ resvg = "0.45"
 dirs = { workspace = true }
 tempfile = "3"
 parking_lot = { workspace = true }
+open = "5"
 
 [package.metadata.deb]
 maintainer = "Impulse Contributors"

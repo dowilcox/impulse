@@ -147,6 +147,9 @@ struct Settings: Codable {
     // -- Per-file-type overrides --
     var fileTypeOverrides: [FileTypeOverride]
 
+    // -- Updates --
+    var checkForUpdates: Bool
+
     // MARK: CodingKeys (snake_case to match Linux JSON)
 
     enum CodingKeys: String, CodingKey {
@@ -195,6 +198,7 @@ struct Settings: Codable {
         case customKeybindings = "custom_keybindings"
         case keybindingOverrides = "keybinding_overrides"
         case fileTypeOverrides = "file_type_overrides"
+        case checkForUpdates = "check_for_updates"
     }
 
     // MARK: Defaults
@@ -245,7 +249,8 @@ struct Settings: Codable {
             commandsOnSave: [],
             customKeybindings: [],
             keybindingOverrides: [:],
-            fileTypeOverrides: []
+            fileTypeOverrides: [],
+            checkForUpdates: true
         )
     }
 
@@ -301,6 +306,7 @@ struct Settings: Codable {
         customKeybindings = (try? c.decode([CustomKeybinding].self, forKey: .customKeybindings)) ?? d.customKeybindings
         keybindingOverrides = (try? c.decode([String: String].self, forKey: .keybindingOverrides)) ?? d.keybindingOverrides
         fileTypeOverrides = (try? c.decode([FileTypeOverride].self, forKey: .fileTypeOverrides)) ?? d.fileTypeOverrides
+        checkForUpdates = (try? c.decode(Bool.self, forKey: .checkForUpdates)) ?? d.checkForUpdates
     }
 
     /// Memberwise initializer used by `Settings.default`.
@@ -319,7 +325,8 @@ struct Settings: Codable {
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          sidebarShowHidden: Bool, colorScheme: String,
          commandsOnSave: [CommandOnSave], customKeybindings: [CustomKeybinding],
-         keybindingOverrides: [String: String], fileTypeOverrides: [FileTypeOverride]) {
+         keybindingOverrides: [String: String], fileTypeOverrides: [FileTypeOverride],
+         checkForUpdates: Bool) {
         self.windowWidth = windowWidth
         self.windowHeight = windowHeight
         self.sidebarVisible = sidebarVisible
@@ -365,6 +372,7 @@ struct Settings: Codable {
         self.customKeybindings = customKeybindings
         self.keybindingOverrides = keybindingOverrides
         self.fileTypeOverrides = fileTypeOverrides
+        self.checkForUpdates = checkForUpdates
     }
 }
 

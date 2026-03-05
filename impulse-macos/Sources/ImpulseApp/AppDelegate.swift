@@ -55,6 +55,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+
+        // Check for updates in background if enabled.
+        if settings.checkForUpdates {
+            DispatchQueue.global(qos: .utility).async {
+                guard let update = ImpulseCore.checkForUpdate() else { return }
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .impulseUpdateAvailable,
+                        object: nil,
+                        userInfo: ["version": update.version, "url": update.url])
+                }
+            }
+        }
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {

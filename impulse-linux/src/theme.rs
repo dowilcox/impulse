@@ -764,6 +764,23 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .status-bar .status-bar-preview-btn.previewing:hover {{
             background: alpha({green}, 0.85);
         }}
+        .status-bar .status-bar-update-btn {{
+            min-height: 16px;
+            min-width: 0;
+            padding: 0 8px;
+            border-radius: 3px;
+            border: none;
+            background: none;
+            box-shadow: none;
+            cursor: pointer;
+        }}
+        .status-bar .status-bar-update-btn label {{
+            font-size: 11px;
+            color: {yellow};
+        }}
+        .status-bar .status-bar-update-btn:hover {{
+            background: alpha({yellow}, 0.1);
+        }}
         /* --- Terminal --- */
         vte-terminal {{
             padding: 8px 12px;

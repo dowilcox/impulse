@@ -114,6 +114,9 @@ pub struct Settings {
 
     // ── Per-file-type overrides ───────────────────────────────────────────
     pub file_type_overrides: Vec<FileTypeOverride>,
+
+    // ── Updates ──────────────────────────────────────────────────────────
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -181,6 +184,9 @@ impl Default for Settings {
 
             // Per-file-type overrides
             file_type_overrides: Vec::new(),
+
+            // Updates
+            check_for_updates: true,
         }
     }
 }
@@ -197,7 +203,8 @@ impl Settings {
 
     /// Serialize settings to pretty-printed JSON.
     pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self).map_err(|e| format!("Failed to serialize settings: {}", e))
+        serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))
     }
 
     /// Serialize default settings to JSON.
@@ -232,10 +239,7 @@ impl Settings {
         if old_defaults.iter().any(|d| self.font_family == *d) {
             self.font_family = String::from("JetBrains Mono");
         }
-        if old_defaults
-            .iter()
-            .any(|d| self.terminal_font_family == *d)
-        {
+        if old_defaults.iter().any(|d| self.terminal_font_family == *d) {
             self.terminal_font_family = String::from("JetBrains Mono");
         }
     }

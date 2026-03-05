@@ -5,4 +5,5 @@ pub mod pty;
 pub mod search;
 pub mod settings;
 pub mod shell;
+pub mod update;
 pub mod util;
