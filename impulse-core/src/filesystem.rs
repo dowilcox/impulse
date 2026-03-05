@@ -39,6 +39,11 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
             continue;
         }
 
+        // Always hide OS metadata files that are never useful in a file tree.
+        if matches!(name.as_str(), ".DS_Store" | "Thumbs.db" | "desktop.ini") {
+            continue;
+        }
+
         let metadata = match entry.metadata() {
             Ok(m) => m,
             Err(e) => {
