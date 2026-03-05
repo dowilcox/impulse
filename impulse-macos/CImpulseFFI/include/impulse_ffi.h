@@ -59,4 +59,10 @@ char *impulse_git_diff_markers(const char *file_path);
 char *impulse_git_blame(const char *file_path, uint32_t line);
 int32_t impulse_git_discard_changes(const char *file_path, const char *workspace_root);
 
+// Settings
+char *impulse_settings_default_json(void);
+char *impulse_settings_load_json(const char *json);
+char *impulse_settings_validate_json(const char *json);
+bool impulse_matches_file_pattern(const char *path, const char *pattern);
+
 #endif

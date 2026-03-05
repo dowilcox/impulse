@@ -1151,3 +1151,77 @@ pub extern "C" fn impulse_is_previewable_file(path: *const c_char) -> bool {
         }),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+/// Return default settings as a JSON string.
+#[no_mangle]
+pub extern "C" fn impulse_settings_default_json() -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| to_c_string(&impulse_core::settings::Settings::default_json())),
+    )
+}
+
+/// Parse, migrate, and validate a raw settings JSON string.
+/// Returns the cleaned JSON. If the input is null or invalid, returns default settings.
+#[no_mangle]
+pub extern "C" fn impulse_settings_load_json(json: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let raw = to_rust_str(json).unwrap_or_default();
+            let settings = impulse_core::settings::Settings::from_json(&raw)
+                .unwrap_or_default();
+            let result = settings
+                .to_json()
+                .unwrap_or_else(|_| impulse_core::settings::Settings::default_json());
+            to_c_string(&result)
+        }),
+    )
+}
+
+/// Validate/clamp a settings JSON string and return the cleaned version.
+#[no_mangle]
+pub extern "C" fn impulse_settings_validate_json(json: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let raw = match to_rust_str(json) {
+                Some(s) => s,
+                None => return to_c_string(&impulse_core::settings::Settings::default_json()),
+            };
+            let mut settings: impulse_core::settings::Settings =
+                serde_json::from_str(&raw).unwrap_or_default();
+            settings.validate();
+            let result = settings
+                .to_json()
+                .unwrap_or_else(|_| impulse_core::settings::Settings::default_json());
+            to_c_string(&result)
+        }),
+    )
+}
+
+/// Check whether a file path matches a glob-style pattern.
+#[no_mangle]
+pub extern "C" fn impulse_matches_file_pattern(
+    path: *const c_char,
+    pattern: *const c_char,
+) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            let path = match to_rust_str(path) {
+                Some(s) => s,
+                None => return false,
+            };
+            let pattern = match to_rust_str(pattern) {
+                Some(s) => s,
+                None => return false,
+            };
+            impulse_core::util::matches_file_pattern(&path, &pattern)
+        }),
+    )
+}

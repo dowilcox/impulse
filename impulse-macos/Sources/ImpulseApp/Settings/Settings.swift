@@ -529,16 +529,9 @@ extension Settings {
 extension Settings {
     /// Check whether a file path matches a glob-like pattern.
     ///
-    /// Supports `"*"` (match all), `"*.ext"` (extension match), and exact
-    /// filename matching.
+    /// Delegates to the shared Rust implementation in impulse-core for
+    /// consistent behaviour across platforms.
     static func matchesFilePattern(_ path: String, pattern: String) -> Bool {
-        if pattern == "*" { return true }
-        if pattern.hasPrefix("*.") {
-            let extPattern = String(pattern.dropFirst(2))
-            let fileExt = (path as NSString).pathExtension
-            return fileExt.caseInsensitiveCompare(extPattern) == .orderedSame
-        }
-        let filename = (path as NSString).lastPathComponent
-        return filename == pattern
+        return ImpulseCore.matchesFilePattern(path: path, pattern: pattern)
     }
 }

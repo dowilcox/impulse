@@ -5,6 +5,7 @@ use libadwaita::prelude::*;
 use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::editor;
@@ -14,6 +15,38 @@ use crate::terminal;
 use crate::terminal_container;
 
 use super::{ensure_file_uri, run_guarded_ui, uri_to_file_path, ClosedTab, MAX_CLOSED_TABS};
+
+/// Find the TabPage containing `terminal`, using a self-populating cache.
+/// First lookup for a terminal is O(n); subsequent lookups are O(1).
+fn find_terminal_page(
+    terminal: &vte4::Terminal,
+    tab_view: &adw::TabView,
+    cache: &RefCell<HashMap<usize, adw::TabPage>>,
+) -> Option<adw::TabPage> {
+    use gtk4::glib::ObjectExt;
+    let key = terminal.as_ptr() as usize;
+
+    // Fast path: cached lookup
+    if let Some(page) = cache.borrow().get(&key) {
+        // Verify the page is still valid (terminal might have been reparented)
+        if terminal.is_ancestor(&page.child()) {
+            return Some(page.clone());
+        }
+        // Stale entry — remove and fall through to O(n) search
+        cache.borrow_mut().remove(&key);
+    }
+
+    // Slow path: O(n) search + cache the result
+    let n = tab_view.n_pages();
+    for i in 0..n {
+        let page = tab_view.nth_page(i);
+        if terminal.is_ancestor(&page.child()) {
+            cache.borrow_mut().insert(key, page.clone());
+            return Some(page);
+        }
+    }
+    None
+}
 
 /// Create the closure that connects CWD-change and child-exited signals on a terminal.
 pub(super) fn make_setup_terminal_signals(
@@ -25,6 +58,9 @@ pub(super) fn make_setup_terminal_signals(
     let status_bar = status_bar.clone();
     let sidebar_state = sidebar_state.clone();
     let project_search_root = sidebar_state.project_search.current_root.clone();
+    // Self-populating cache: first lookup per terminal is O(n), subsequent are O(1).
+    let page_cache: Rc<RefCell<HashMap<usize, adw::TabPage>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     Rc::new(move |term: &vte4::Terminal| {
         // Connect CWD change signal (OSC 7)
         {
@@ -32,6 +68,7 @@ pub(super) fn make_setup_terminal_signals(
             let project_search_root = project_search_root.clone();
             let sidebar_state = sidebar_state.clone();
             let tab_view = tab_view.clone();
+            let page_cache = page_cache.clone();
             term.connect_current_directory_uri_notify(move |terminal| {
                 run_guarded_ui("terminal-cwd-notify", || {
                     if let Some(uri) = terminal.current_directory_uri() {
@@ -48,21 +85,18 @@ pub(super) fn make_setup_terminal_signals(
                             *project_search_root.borrow_mut() = path.to_string();
                         }
 
-                        // Find the terminal's page once and update both tree state and title
+                        // Find the terminal's page (cached) and update tree state + title
                         let dir_name = std::path::Path::new(&path)
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(&path);
-                        let n = tab_view.n_pages();
-                        for i in 0..n {
-                            let page = tab_view.nth_page(i);
-                            if terminal.is_ancestor(&page.child()) {
-                                if !is_active {
-                                    sidebar_state.remove_tab_state(&page.child());
-                                }
-                                page.set_title(dir_name);
-                                break;
+                        if let Some(page) =
+                            find_terminal_page(terminal, &tab_view, &page_cache)
+                        {
+                            if !is_active {
+                                sidebar_state.remove_tab_state(&page.child());
                             }
+                            page.set_title(dir_name);
                         }
                     }
                 });
@@ -76,32 +110,39 @@ pub(super) fn make_setup_terminal_signals(
             let status_bar = status_bar.clone();
             let sidebar_state = sidebar_state.clone();
             let project_search_root = project_search_root.clone();
+            let page_cache = page_cache.clone();
             term.connect_child_exited(move |_terminal, _status| {
                 run_guarded_ui("terminal-child-exited", || {
-                    let n = tab_view.n_pages();
-                    for i in 0..n {
-                        let page = tab_view.nth_page(i);
-                        if term_clone.is_ancestor(&page.child()) {
-                            let container = page.child();
-                            let terminals =
-                                crate::terminal_container::collect_terminals(&container);
-                            if terminals.len() <= 1 {
-                                tab_view.close_page(&page);
-                            } else {
-                                crate::terminal_container::remove_terminal(&container, &term_clone);
-                                // Update sidebar/status bar to the surviving terminal's CWD
-                                if let Some(active) =
-                                    crate::terminal_container::get_active_terminal(&container)
-                                {
-                                    if let Some(uri) = active.current_directory_uri() {
-                                        let path = uri_to_file_path(&uri.to_string());
-                                        status_bar.borrow().update_cwd(&path);
-                                        sidebar_state.load_directory(&path);
-                                        *project_search_root.borrow_mut() = path.to_string();
-                                    }
+                    if let Some(page) =
+                        find_terminal_page(&term_clone, &tab_view, &page_cache)
+                    {
+                        let container = page.child();
+                        let terminals =
+                            crate::terminal_container::collect_terminals(&container);
+                        if terminals.len() <= 1 {
+                            // Remove all terminals in this page from the cache
+                            use gtk4::glib::ObjectExt;
+                            for t in &terminals {
+                                page_cache.borrow_mut().remove(&(t.as_ptr() as usize));
+                            }
+                            tab_view.close_page(&page);
+                        } else {
+                            use gtk4::glib::ObjectExt;
+                            page_cache
+                                .borrow_mut()
+                                .remove(&(term_clone.as_ptr() as usize));
+                            crate::terminal_container::remove_terminal(&container, &term_clone);
+                            // Update sidebar/status bar to the surviving terminal's CWD
+                            if let Some(active) =
+                                crate::terminal_container::get_active_terminal(&container)
+                            {
+                                if let Some(uri) = active.current_directory_uri() {
+                                    let path = uri_to_file_path(&uri.to_string());
+                                    status_bar.borrow().update_cwd(&path);
+                                    sidebar_state.load_directory(&path);
+                                    *project_search_root.borrow_mut() = path.to_string();
                                 }
                             }
-                            break;
                         }
                     }
                 });

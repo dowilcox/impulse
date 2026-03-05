@@ -513,4 +513,43 @@ final class ImpulseCore {
         case .failure: return nil
         }
     }
+
+    // MARK: - Settings
+
+    /// Return default settings as a JSON string.
+    static func settingsDefaultJSON() -> String {
+        guard let raw = CImpulseFFI.impulse_settings_default_json() else { return "{}" }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Parse, migrate, and validate raw settings JSON.
+    static func settingsLoadJSON(_ rawJSON: String) -> String {
+        guard let raw = rawJSON.withCString({ CImpulseFFI.impulse_settings_load_json($0) }) else {
+            return settingsDefaultJSON()
+        }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Validate/clamp settings JSON.
+    static func settingsValidateJSON(_ json: String) -> String {
+        guard let raw = json.withCString({ CImpulseFFI.impulse_settings_validate_json($0) }) else {
+            return json
+        }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Check whether a file path matches a glob-style pattern.
+    static func matchesFilePattern(path: String, pattern: String) -> Bool {
+        return path.withCString { pathPtr in
+            pattern.withCString { patternPtr in
+                CImpulseFFI.impulse_matches_file_pattern(pathPtr, patternPtr)
+            }
+        }
+    }
 }

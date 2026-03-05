@@ -171,6 +171,7 @@ pub fn build_sidebar(
     let file_menu = gio::Menu::new();
     file_menu.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
+    file_menu.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
     file_menu.append(Some("New File"), Some("filetree.new-file"));
     file_menu.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu.append(Some("Rename"), Some("filetree.rename"));
@@ -179,6 +180,7 @@ pub fn build_sidebar(
     let file_menu_git = gio::Menu::new();
     file_menu_git.append(Some("Open in Default App"), Some("filetree.open"));
     file_menu_git.append(Some("Copy Path"), Some("filetree.copy-path"));
+    file_menu_git.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
     file_menu_git.append(Some("New File"), Some("filetree.new-file"));
     file_menu_git.append(Some("New Folder"), Some("filetree.new-folder"));
     file_menu_git.append(Some("Rename"), Some("filetree.rename"));
@@ -188,6 +190,7 @@ pub fn build_sidebar(
     let dir_menu = gio::Menu::new();
     dir_menu.append(Some("Open in Terminal"), Some("filetree.open-terminal"));
     dir_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
+    dir_menu.append(Some("Copy Relative Path"), Some("filetree.copy-relative-path"));
     dir_menu.append(Some("New File"), Some("filetree.new-file"));
     dir_menu.append(Some("New Folder"), Some("filetree.new-folder"));
     dir_menu.append(Some("Rename"), Some("filetree.rename"));
@@ -232,6 +235,35 @@ pub fn build_sidebar(
         });
     }
     action_group.add_action(&copy_action);
+
+    // "copy-relative-path" action - copies relative path to clipboard
+    let copy_rel_action = gio::SimpleAction::new("copy-relative-path", None);
+    {
+        let clicked_path = clicked_path.clone();
+        let current_path = current_path.clone();
+        let list_ref = file_tree_list.clone();
+        copy_rel_action.connect_activate(move |_, _| {
+            let abs_path = clicked_path.borrow().clone();
+            if !abs_path.is_empty() {
+                let root = current_path.borrow().clone();
+                let relative = if !root.is_empty() {
+                    let root_with_sep = if root.ends_with('/') {
+                        root.clone()
+                    } else {
+                        format!("{}/", root)
+                    };
+                    abs_path
+                        .strip_prefix(&root_with_sep)
+                        .unwrap_or(&abs_path)
+                        .to_string()
+                } else {
+                    abs_path.clone()
+                };
+                list_ref.clipboard().set_text(&relative);
+            }
+        });
+    }
+    action_group.add_action(&copy_rel_action);
 
     // "open-terminal" action - opens directory in a new terminal tab
     let open_terminal_action = gio::SimpleAction::new("open-terminal", None);

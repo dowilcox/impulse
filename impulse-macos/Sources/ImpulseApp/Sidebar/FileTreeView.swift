@@ -566,6 +566,24 @@ final class FileTreeView: NSView {
         pb.setString(node.path, forType: .string)
     }
 
+    @objc private func contextCopyRelativePath(_ sender: Any?) {
+        guard let node = clickedNode() else { return }
+        let relative: String
+        if !rootPath.isEmpty {
+            let root = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+            if node.path.hasPrefix(root) {
+                relative = String(node.path.dropFirst(root.count))
+            } else {
+                relative = node.path
+            }
+        } else {
+            relative = node.path
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(relative, forType: .string)
+    }
+
     @objc private func contextOpenInTerminal(_ sender: Any?) {
         guard let node = clickedNode(), node.isDirectory else { return }
         NotificationCenter.default.post(
@@ -1058,6 +1076,9 @@ extension FileTreeView: NSMenuDelegate {
 
         menu.addItem(withTitle: "Copy Path",
                      action: #selector(contextCopyPath(_:)),
+                     keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Copy Relative Path",
+                     action: #selector(contextCopyRelativePath(_:)),
                      keyEquivalent: "").target = self
 
         // "Open in Default App" for files (uses system default application).

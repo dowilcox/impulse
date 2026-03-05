@@ -668,6 +668,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     tab_bar.set_view(Some(&tab_view));
     tab_bar.set_autohide(false);
     tab_bar.set_cursor_from_name(Some("pointer"));
+    tab_view.set_reorderable(true);
 
     // Tab context menu
     let tab_menu = gio::Menu::new();
