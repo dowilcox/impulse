@@ -205,9 +205,24 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             guard let self else { return event }
             guard event.deltaY != 0 else { return event }
 
-            // Only intercept events that hit our terminal view.
-            let pt = self.terminalView.convert(event.locationInWindow, from: nil)
-            guard self.terminalView.bounds.contains(pt) else { return event }
+            // Only intercept events targeting our window, and only when this
+            // terminal is actually visible (not hidden behind another tab).
+            guard let eventWindow = event.window,
+                  eventWindow === self.window,
+                  !self.isHiddenOrHasHiddenAncestor else { return event }
+
+            // Only intercept events that actually hit our terminal view.
+            // Use hitTest for accurate view targeting (respects clipping,
+            // overlapping views, and the responder chain).
+            let windowPt = event.locationInWindow
+            guard let contentView = eventWindow.contentView else { return event }
+            let viewPt = contentView.convert(windowPt, from: nil)
+            guard let hitView = contentView.hitTest(viewPt),
+                  hitView === self.terminalView || hitView.isDescendant(of: self.terminalView) else {
+                return event
+            }
+
+            let pt = self.terminalView.convert(windowPt, from: nil)
 
             // Only forward when the app has requested mouse reporting.
             let terminal = self.terminalView.terminal!
