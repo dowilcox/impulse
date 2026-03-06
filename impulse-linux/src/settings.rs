@@ -30,7 +30,7 @@ pub fn load() -> Settings {
             return Settings::default();
         }
     };
-    let mut settings = match std::fs::read_to_string(&path) {
+    let settings = match std::fs::read_to_string(&path) {
         Ok(contents) => match Settings::from_json(&contents) {
             Ok(s) => s,
             Err(e) => {

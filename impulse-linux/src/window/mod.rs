@@ -668,8 +668,6 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     tab_bar.set_view(Some(&tab_view));
     tab_bar.set_autohide(false);
     tab_bar.set_cursor_from_name(Some("pointer"));
-    tab_view.set_reorderable(true);
-
     // Tab context menu
     let tab_menu = gio::Menu::new();
     tab_menu.append(Some("New Tab"), Some("tab.new"));
@@ -1444,15 +1442,20 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Check for updates in background if enabled.
     if settings.borrow().check_for_updates {
-        let status_bar_for_update = Rc::clone(&status_bar);
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+        let result_writer = std::sync::Arc::clone(&result);
         std::thread::spawn(move || {
             if let Ok(Some(info)) = impulse_core::update::check_for_update() {
-                let version = info.version;
-                let url = info.url;
-                gtk4::glib::idle_add_once(move || {
-                    status_bar_for_update.borrow().show_update(&version, &url);
-                });
+                *result_writer.lock().unwrap() = Some((info.version, info.url));
             }
+        });
+        let status_bar_for_update = Rc::clone(&status_bar);
+        gtk4::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+            if let Some((version, url)) = result.lock().unwrap().take() {
+                status_bar_for_update.borrow().show_update(&version, &url);
+                return gtk4::glib::ControlFlow::Break;
+            }
+            gtk4::glib::ControlFlow::Continue
         });
     }
 

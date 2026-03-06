@@ -23,7 +23,6 @@ fn find_terminal_page(
     tab_view: &adw::TabView,
     cache: &RefCell<HashMap<usize, adw::TabPage>>,
 ) -> Option<adw::TabPage> {
-    use gtk4::glib::ObjectExt;
     let key = terminal.as_ptr() as usize;
 
     // Fast path: cached lookup
@@ -116,13 +115,11 @@ pub(super) fn make_setup_terminal_signals(
                         let terminals = crate::terminal_container::collect_terminals(&container);
                         if terminals.len() <= 1 {
                             // Remove all terminals in this page from the cache
-                            use gtk4::glib::ObjectExt;
                             for t in &terminals {
                                 page_cache.borrow_mut().remove(&(t.as_ptr() as usize));
                             }
                             tab_view.close_page(&page);
                         } else {
-                            use gtk4::glib::ObjectExt;
                             page_cache
                                 .borrow_mut()
                                 .remove(&(term_clone.as_ptr() as usize));
