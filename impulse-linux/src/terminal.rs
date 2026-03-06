@@ -105,9 +105,17 @@ pub fn create_terminal(
         let term = terminal.clone();
         key_controller.connect_key_pressed(move |_, key, _, modifiers| {
             let ctrl = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+            let shift = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
             let is_v = key == gtk4::gdk::Key::v || key == gtk4::gdk::Key::V;
             if ctrl && is_v {
                 paste_from_clipboard(&term);
+                return gtk4::glib::Propagation::Stop;
+            }
+            // Shift+Enter: send CSI u sequence for modified Return key.
+            // This enables multi-line input in tools like Claude Code.
+            let is_return = key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter;
+            if shift && is_return && !ctrl {
+                term.feed_child(b"\x1b[13;2u");
                 return gtk4::glib::Propagation::Stop;
             }
             gtk4::glib::Propagation::Proceed

@@ -32,6 +32,10 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// that have enabled mouse reporting.
     private var scrollMonitor: Any?
 
+    /// Local event monitor for Shift+Enter (sends CSI u sequence for multi-line
+    /// input in tools like Claude Code).
+    private var shiftEnterMonitor: Any?
+
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
@@ -54,6 +58,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         setupConstraints()
         setupDragAndDrop()
         setupScrollWheelForwarding()
+        setupShiftEnter()
         // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
         // after configureTerminal() to respect the user's setting.
 
@@ -69,6 +74,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             NSEvent.removeMonitor(monitor)
         }
         if let monitor = mouseUpMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = shiftEnterMonitor {
             NSEvent.removeMonitor(monitor)
         }
         for path in shellIntegrationTempPaths {
@@ -227,6 +235,35 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
             // Consume the event so SwiftTerm doesn't also scroll the buffer.
             return nil
+        }
+    }
+
+    // MARK: Shift+Enter
+
+    /// Installs a local event monitor that intercepts Shift+Enter and sends the
+    /// CSI u escape sequence (`\e[13;2u`) to the terminal PTY. This enables
+    /// multi-line input in tools like Claude Code that detect Shift+Enter.
+    private func setupShiftEnter() {
+        shiftEnterMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+
+            // Only intercept Shift+Return (without Cmd/Ctrl/Option).
+            guard event.keyCode == 36 || event.keyCode == 76, // Return or numpad Enter
+                  event.modifierFlags.contains(.shift),
+                  !event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.control) else {
+                return event
+            }
+
+            // Only handle when our terminal view is the first responder.
+            guard self.window?.firstResponder === self.terminalView else {
+                return event
+            }
+
+            // Send CSI u sequence for Shift+Return.
+            let bytes: [UInt8] = [0x1B, 0x5B, 0x31, 0x33, 0x3B, 0x32, 0x75] // \e[13;2u
+            self.terminalView.send(data: bytes[...])
+            return nil // consume the event
         }
     }
 
