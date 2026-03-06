@@ -4,7 +4,7 @@ import os.log
 // MARK: - Themed Split View
 
 /// NSSplitView subclass that allows a custom divider color to match the app theme.
-private final class ThemedSplitView: NSSplitView {
+final class ThemedSplitView: NSSplitView {
     var customDividerColor: NSColor? {
         didSet { needsDisplay = true }
     }

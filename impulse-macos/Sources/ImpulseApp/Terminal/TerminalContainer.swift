@@ -21,7 +21,10 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     // MARK: Private Properties
 
-    private var splitView: NSSplitView?
+    private var splitView: ThemedSplitView?
+
+    /// Color used for the split view divider, matching the status bar border.
+    private var dividerColor: NSColor?
 
     /// Settings and theme for creating new terminals when splitting.
     private var currentSettings: TerminalSettings
@@ -81,10 +84,11 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
             existingTerminal.removeFromSuperview()
             removeAllConstraints()
 
-            let split = NSSplitView()
+            let split = ThemedSplitView()
             split.isVertical = isVertical
             split.dividerStyle = .thin
             split.delegate = self
+            split.customDividerColor = dividerColor
 
             split.addArrangedSubview(existingTerminal)
             split.addArrangedSubview(newTerminal)
@@ -109,10 +113,11 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
                     return newTerminal
                 }
 
-                let nestedSplit = NSSplitView()
+                let nestedSplit = ThemedSplitView()
                 nestedSplit.isVertical = isVertical
                 nestedSplit.dividerStyle = .thin
                 nestedSplit.delegate = self
+                nestedSplit.customDividerColor = dividerColor
 
                 let activeIndex = split.arrangedSubviews.firstIndex(of: activeView)
                 activeView.removeFromSuperview()
@@ -232,11 +237,28 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     // MARK: Propagating Settings
 
-    /// Apply a theme to all child terminals.
-    func applyTheme(theme: TerminalTheme) {
+    /// Apply a theme to all child terminals and update split divider colors.
+    func applyTheme(theme: TerminalTheme, dividerColor: NSColor? = nil) {
         currentTheme = theme
+        if let color = dividerColor {
+            self.dividerColor = color
+        }
         for terminal in terminals {
             terminal.applyTheme(theme: theme)
+        }
+        // Update divider color on all split views.
+        if let color = self.dividerColor {
+            applyDividerColor(color, in: self)
+        }
+    }
+
+    /// Recursively set the divider color on all ThemedSplitViews.
+    private func applyDividerColor(_ color: NSColor, in view: NSView) {
+        for subview in view.subviews {
+            if let split = subview as? ThemedSplitView {
+                split.customDividerColor = color
+            }
+            applyDividerColor(color, in: subview)
         }
     }
 

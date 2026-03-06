@@ -696,6 +696,12 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 12px;
             color: {fg};
         }}
+        /* --- Split pane dividers --- */
+        paned > separator {{
+            background-color: {bg_highlight};
+            min-width: 1px;
+            min-height: 1px;
+        }}
         /* --- Status bar --- */
         .status-bar {{
             background-color: {bg_dark};

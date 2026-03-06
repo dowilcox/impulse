@@ -109,7 +109,7 @@ enum TabEntry {
                 fg: theme.fgHex,
                 terminalPalette: theme.terminalPalette.map { $0.hexString }
             )
-            container.applyTheme(theme: termTheme)
+            container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlight)
         case .editor(let editor):
             editor.applyTheme(theme.monacoThemeDefinition())
         case .imagePreview(_, let view):
