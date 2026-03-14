@@ -20,7 +20,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     // MARK: Private Properties
 
-    let terminalView: LocalProcessTerminalView
+    let terminalView: ImpulseTerminalView
 
     /// Cached reference to the vertical scroller to avoid subview iteration on every layout.
     private weak var cachedScroller: NSScroller?
@@ -50,7 +50,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         self.tabTitle = shellName
         self.currentWorkingDirectory = NSHomeDirectory()
 
-        self.terminalView = LocalProcessTerminalView(frame: frameRect)
+        self.terminalView = ImpulseTerminalView(frame: frameRect)
         super.init(frame: frameRect)
 
         terminalView.processDelegate = self
@@ -595,6 +595,19 @@ struct TerminalTheme {
         "#727169", "#E82424", "#98BB6C", "#E6C384",
         "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
     ]
+}
+
+// MARK: - ImpulseTerminalView
+
+/// Subclass of `LocalProcessTerminalView` that fixes alternate screen buffer
+/// restoration. SwiftTerm's default `bufferActivated` only updates the scroller
+/// but never triggers a view redraw, so exiting a TUI app (e.g. vim, Claude Code)
+/// leaves stale content on screen. This override forces a full repaint.
+class ImpulseTerminalView: LocalProcessTerminalView {
+    override func bufferActivated(source: Terminal) {
+        super.bufferActivated(source: source)
+        needsDisplay = true
+    }
 }
 
 // MARK: - Color Helpers
