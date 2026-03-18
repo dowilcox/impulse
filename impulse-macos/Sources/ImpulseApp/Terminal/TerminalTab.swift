@@ -36,6 +36,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
+    /// KVO observation for window's firstResponder changes.
+    private var firstResponderObservation: NSKeyValueObservation?
+
     /// Temp files/directories created for shell integration (cleaned up in deinit).
     private var shellIntegrationTempPaths: [URL] = []
 
@@ -54,8 +57,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         addSubview(terminalView)
         setupConstraints()
         setupDragAndDrop()
-        setupScrollWheelForwarding()
-        setupShiftEnter()
         // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
         // after configureTerminal() to respect the user's setting.
 
@@ -66,7 +67,45 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         fatalError("init(coder:) is not supported")
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        firstResponderObservation?.invalidate()
+        firstResponderObservation = nil
+
+        guard let window else {
+            // Removed from window — tear down monitors.
+            removeScrollAndKeyMonitors()
+            return
+        }
+
+        // Observe first responder changes on the window. Install scroll wheel
+        // and Shift+Enter monitors only while our terminal view is focused,
+        // so we don't accumulate N monitors across N split panes.
+        firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            self.handleFirstResponderChange()
+        }
+        // Handle current state immediately.
+        handleFirstResponderChange()
+    }
+
+    private func handleFirstResponderChange() {
+        let isFocused = window?.firstResponder === terminalView
+        if isFocused {
+            if scrollMonitor == nil { setupScrollWheelForwarding() }
+            if shiftEnterMonitor == nil { setupShiftEnter() }
+        } else {
+            removeScrollAndKeyMonitors()
+        }
+    }
+
+    private func removeScrollAndKeyMonitors() {
+        if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
+        if let m = shiftEnterMonitor { NSEvent.removeMonitor(m); shiftEnterMonitor = nil }
+    }
+
     deinit {
+        firstResponderObservation?.invalidate()
         if let monitor = scrollMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -228,11 +267,15 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 return event
             }
 
-            // Compute grid position from mouse coordinates.
-            let cellWidth = self.terminalView.frame.width / CGFloat(terminal.cols)
-            let cellHeight = self.terminalView.frame.height / CGFloat(terminal.rows)
-            let col = min(max(0, Int(pt.x / cellWidth)), terminal.cols - 1)
-            let row = min(max(0, Int((self.terminalView.frame.height - pt.y) / cellHeight)), terminal.rows - 1)
+            // Compute grid position from mouse coordinates. Subtract the 8px
+            // padding on each side so the grid aligns with actual cell positions.
+            let padding: CGFloat = 8
+            let contentWidth = self.terminalView.frame.width - padding * 2
+            let contentHeight = self.terminalView.frame.height - padding * 2
+            let cellWidth = contentWidth / CGFloat(terminal.cols)
+            let cellHeight = contentHeight / CGFloat(terminal.rows)
+            let col = min(max(0, Int((pt.x - padding) / cellWidth)), terminal.cols - 1)
+            let row = min(max(0, Int((self.terminalView.frame.height - pt.y - padding) / cellHeight)), terminal.rows - 1)
 
             // Terminal protocol: button 4 = scroll up, button 5 = scroll down.
             let flags = event.modifierFlags
@@ -260,7 +303,11 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             guard let self else { return event }
 
             // Only intercept Shift+Return (without Cmd/Ctrl/Option).
-            guard event.keyCode == 36 || event.keyCode == 76, // Return or numpad Enter
+            // Check both keyCode (hardware scan code) and characters for
+            // robustness across keyboard layouts (JIS, ISO, etc.).
+            let isReturn = event.keyCode == 36 || event.keyCode == 76 // Return or numpad Enter
+                || event.charactersIgnoringModifiers == "\r"
+            guard isReturn,
                   event.modifierFlags.contains(.shift),
                   !event.modifierFlags.contains(.command),
                   !event.modifierFlags.contains(.control) else {
@@ -303,9 +350,17 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
         guard !paths.isEmpty else { return false }
 
-        // Send the escaped paths directly to the terminal.
+        // Send the escaped paths to the terminal, wrapped in bracketed paste
+        // if the running program supports it (prevents misinterpretation as
+        // typed input in TUI apps).
         let bytes = Array(paths.utf8)
+        if let terminal = terminalView.terminal, terminal.bracketedPasteMode {
+            terminalView.send(data: EscapeSequences.bracketedPasteStart[0...])
+        }
         terminalView.send(data: bytes[...])
+        if let terminal = terminalView.terminal, terminal.bracketedPasteMode {
+            terminalView.send(data: EscapeSequences.bracketedPasteEnd[0...])
+        }
         return true
     }
 
@@ -603,11 +658,12 @@ class ImpulseTerminalView: LocalProcessTerminalView {
         guard !text.isEmpty else { return }
 
         // Replicate SwiftTerm's paste logic with bracketed paste support
-        if terminal!.bracketedPasteMode {
+        guard let terminal = terminal else { return }
+        if terminal.bracketedPasteMode {
             send(data: EscapeSequences.bracketedPasteStart[0...])
         }
         send(txt: text)
-        if terminal!.bracketedPasteMode {
+        if terminal.bracketedPasteMode {
             send(data: EscapeSequences.bracketedPasteEnd[0...])
         }
     }
