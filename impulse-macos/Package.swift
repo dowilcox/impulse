@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v13)
     ],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.11.2"),
     ],
     targets: [
         .systemLibrary(

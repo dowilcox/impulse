@@ -43,7 +43,15 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         addSubview(initialTerminal)
         constrainChildToFill(initialTerminal)
 
-        initialTerminal.spawnShell(initialDirectory: settings.lastDirectory.isEmpty ? nil : settings.lastDirectory)
+        // Defer shell spawning until after Auto Layout has resolved the
+        // terminal view's frame, ensuring the PTY starts with the correct
+        // column/row dimensions. Spawning synchronously here would use the
+        // pre-layout frame (missing the 8px padding insets), causing a
+        // COLUMNS mismatch that breaks line wrapping and cursor navigation.
+        let dir = settings.lastDirectory.isEmpty ? nil : settings.lastDirectory
+        DispatchQueue.main.async {
+            initialTerminal.spawnShell(initialDirectory: dir)
+        }
     }
 
     @available(*, unavailable)
@@ -77,7 +85,9 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
                 terminals.append(newTerminal)
                 addSubview(newTerminal)
                 constrainChildToFill(newTerminal)
-                newTerminal.spawnShell(initialDirectory: inheritedCwd)
+                DispatchQueue.main.async {
+                    newTerminal.spawnShell(initialDirectory: inheritedCwd)
+                }
                 return newTerminal
             }
 
@@ -109,7 +119,9 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
                 guard let activeView = activeTerminal else {
                     split.addArrangedSubview(newTerminal)
                     terminals.append(newTerminal)
-                    newTerminal.spawnShell(initialDirectory: inheritedCwd)
+                    DispatchQueue.main.async {
+                        newTerminal.spawnShell(initialDirectory: inheritedCwd)
+                    }
                     return newTerminal
                 }
 
@@ -135,7 +147,9 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
         terminals.append(newTerminal)
         activeTerminalIndex = terminals.count - 1
-        newTerminal.spawnShell(initialDirectory: inheritedCwd)
+        DispatchQueue.main.async {
+            newTerminal.spawnShell(initialDirectory: inheritedCwd)
+        }
         newTerminal.focus()
 
         return newTerminal

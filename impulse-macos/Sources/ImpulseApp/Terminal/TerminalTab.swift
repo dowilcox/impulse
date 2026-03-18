@@ -22,9 +22,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     let terminalView: ImpulseTerminalView
 
-    /// Cached reference to the vertical scroller to avoid subview iteration on every layout.
-    private weak var cachedScroller: NSScroller?
-
     /// Local event monitor for copy-on-select behaviour.
     private var mouseUpMonitor: Any?
 
@@ -324,31 +321,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         ])
     }
 
-    // MARK: Scrollbar
-
-    override func layout() {
-        super.layout()
-        // Defer so this runs after SwiftTerm's own layout resets the scroller frame.
-        DispatchQueue.main.async { [weak self] in
-            self?.resizeScroller()
-        }
-    }
-
-    private func resizeScroller() {
-        let scroller = cachedScroller ?? terminalView.subviews.compactMap { $0 as? NSScroller }.first
-        cachedScroller = scroller
-        guard let scroller else { return }
-        scroller.controlSize = .mini
-        let width = NSScroller.scrollerWidth(for: .mini, scrollerStyle: scroller.scrollerStyle)
-        let tvBounds = terminalView.bounds
-        scroller.frame = NSRect(
-            x: tvBounds.maxX - width,
-            y: tvBounds.minY,
-            width: width,
-            height: tvBounds.height
-        )
-    }
-
     // MARK: Configuration
 
     /// Apply visual settings and theme to the terminal view.
@@ -607,6 +579,37 @@ class ImpulseTerminalView: LocalProcessTerminalView {
     override func bufferActivated(source: Terminal) {
         super.bufferActivated(source: source)
         needsDisplay = true
+    }
+
+    /// Override paste to strip trailing newlines/carriage returns from pasted
+    /// text. Clipboard content copied from websites or documents often includes
+    /// a trailing newline that the shell interprets as Enter, causing accidental
+    /// command execution or splitting a single command into multiple commands.
+    override func paste(_ sender: Any) {
+        let clipboard = NSPasteboard.general
+        guard var text = clipboard.string(forType: .string) else { return }
+
+        // Strip trailing newlines and carriage returns. Clipboard content
+        // from web pages and documents commonly includes trailing newlines
+        // that would cause accidental command execution.
+        while text.hasSuffix("\n") || text.hasSuffix("\r") {
+            text.removeLast()
+        }
+
+        // Normalize CRLF and standalone CR to LF for consistent handling.
+        text = text.replacingOccurrences(of: "\r\n", with: "\n")
+        text = text.replacingOccurrences(of: "\r", with: "\n")
+
+        guard !text.isEmpty else { return }
+
+        // Replicate SwiftTerm's paste logic with bracketed paste support
+        if terminal!.bracketedPasteMode {
+            send(data: EscapeSequences.bracketedPasteStart[0...])
+        }
+        send(txt: text)
+        if terminal!.bracketedPasteMode {
+            send(data: EscapeSequences.bracketedPasteEnd[0...])
+        }
     }
 }
 
