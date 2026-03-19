@@ -48,11 +48,12 @@ fn find_terminal_page(
 }
 
 /// Create the closure that connects CWD-change and child-exited signals on a terminal.
+/// Returns the setup closure and the shared page cache (for eviction on tab close).
 pub(super) fn make_setup_terminal_signals(
     tab_view: &adw::TabView,
     status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
     sidebar_state: &Rc<sidebar::SidebarState>,
-) -> Rc<dyn Fn(&vte4::Terminal)> {
+) -> (Rc<dyn Fn(&vte4::Terminal)>, Rc<RefCell<HashMap<usize, adw::TabPage>>>) {
     let tab_view = tab_view.clone();
     let status_bar = status_bar.clone();
     let sidebar_state = sidebar_state.clone();
@@ -60,7 +61,8 @@ pub(super) fn make_setup_terminal_signals(
     // Self-populating cache: first lookup per terminal is O(n), subsequent are O(1).
     let page_cache: Rc<RefCell<HashMap<usize, adw::TabPage>>> =
         Rc::new(RefCell::new(HashMap::new()));
-    Rc::new(move |term: &vte4::Terminal| {
+    let page_cache_ret = page_cache.clone();
+    let setup_fn: Rc<dyn Fn(&vte4::Terminal)> = Rc::new(move |term: &vte4::Terminal| {
         // Connect CWD change signal (OSC 7)
         {
             let status_bar = status_bar.clone();
@@ -140,7 +142,8 @@ pub(super) fn make_setup_terminal_signals(
                 });
             });
         }
-    })
+    });
+    (setup_fn, page_cache_ret)
 }
 
 /// Insert a widget into the tab view immediately after the currently selected tab.
@@ -691,6 +694,7 @@ pub(super) fn setup_tab_close_handler(
     ctx: &super::context::WindowContext,
     create_tab: &(impl Fn() + Clone + 'static),
     closed_tabs: &Rc<RefCell<std::collections::VecDeque<ClosedTab>>>,
+    terminal_page_cache: &Rc<RefCell<HashMap<usize, adw::TabPage>>>,
 ) {
     let window_ref = ctx.window.clone();
     let sidebar_state = ctx.sidebar_state.clone();
@@ -704,6 +708,7 @@ pub(super) fn setup_tab_close_handler(
     let closed_tabs_for_close = closed_tabs.clone();
     let open_editor_paths = ctx.open_editor_paths.clone();
     let editor_tab_pages = ctx.editor_tab_pages.clone();
+    let terminal_page_cache = terminal_page_cache.clone();
     ctx.tab_view.connect_close_page(move |tv, page| {
         // Confirm before closing pinned tabs
         if page.is_pinned() {
@@ -731,6 +736,17 @@ pub(super) fn setup_tab_close_handler(
 
         sidebar_state.remove_tab_state(&page.child());
         let child = page.child();
+
+        // Evict terminal page cache entries for terminals in this tab
+        {
+            let terminals = crate::terminal_container::collect_terminals(&child);
+            if !terminals.is_empty() {
+                let mut cache = terminal_page_cache.borrow_mut();
+                for t in &terminals {
+                    cache.remove(&(t.as_ptr() as usize));
+                }
+            }
+        }
 
         // Record closed tab info for "reopen closed tab" feature.
         // Only editor and image preview tabs can be reopened (terminals cannot).

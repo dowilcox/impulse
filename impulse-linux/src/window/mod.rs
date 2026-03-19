@@ -822,7 +822,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     sidebar_signals::wire_sidebar_signals(&ctx);
 
-    let setup_terminal_signals =
+    let (setup_terminal_signals, terminal_page_cache) =
         tab_management::make_setup_terminal_signals(&tab_view, &status_bar, &sidebar_state);
 
     let create_tab = tab_management::make_create_tab(
@@ -1394,7 +1394,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     tab_management::setup_tab_switch_handler(&tab_view, &status_bar, &sidebar_state);
 
-    tab_management::setup_tab_close_handler(&ctx, &create_tab, &closed_tabs);
+    tab_management::setup_tab_close_handler(&ctx, &create_tab, &closed_tabs, &terminal_page_cache);
 
     // Save settings when window is closed
     {
@@ -1406,9 +1406,9 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let settings = settings.clone();
         let lsp_tx = lsp_request_tx.clone();
         window.connect_close_request(move |window| {
-            // Shutdown LSP servers
-            if let Err(e) = lsp_tx.try_send(LspRequest::Shutdown) {
-                log::warn!("LSP request channel full, dropping shutdown request: {}", e);
+            // Shutdown LSP servers — use blocking_send to ensure delivery during app shutdown
+            if let Err(e) = lsp_tx.blocking_send(LspRequest::Shutdown) {
+                log::warn!("Failed to send LSP shutdown request: {}", e);
             }
             // Collect open editor file paths
             let mut open_files = Vec::new();

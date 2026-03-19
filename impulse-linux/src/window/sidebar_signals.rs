@@ -79,12 +79,16 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
         let editor_tab_pages = ctx.editor_tab_pages.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
-                // O(1) dedup check: if already open, find and select the existing tab
-                if open_editor_paths.borrow().contains(path) {
-                    if let Some(page) = editor_tab_pages.borrow().get(path) {
-                        tab_view.set_selected_page(page);
+                // O(1) dedup check + insert in a single borrow_mut to prevent races
+                {
+                    let mut paths = open_editor_paths.borrow_mut();
+                    if paths.contains(path) {
+                        if let Some(page) = editor_tab_pages.borrow().get(path) {
+                            tab_view.set_selected_page(page);
+                        }
+                        return;
                     }
-                    return;
+                    paths.insert(path.to_string());
                 }
 
                 let filename = std::path::Path::new(path)
@@ -101,8 +105,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get_toolbar_icon("image") {
                         page.set_icon(Some(texture));
                     }
-                    // Track in dedup set and page map
-                    open_editor_paths.borrow_mut().insert(path.to_string());
+                    // Track in page map (dedup set already updated above)
                     editor_tab_pages
                         .borrow_mut()
                         .insert(path.to_string(), page.clone());
@@ -368,8 +371,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get(&filename, false, false) {
                         page.set_icon(Some(texture));
                     }
-                    // Track in dedup set and page map
-                    open_editor_paths.borrow_mut().insert(path.to_string());
+                    // Track in page map (dedup set already updated above)
                     editor_tab_pages
                         .borrow_mut()
                         .insert(path.to_string(), page.clone());
