@@ -63,6 +63,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Whether the Monaco editor has fired its `Ready` event.
     private var isEditorReady: Bool = false
 
+    /// When set, read-only mode is applied as soon as Monaco reports ready,
+    /// before any content is rendered, to avoid a flash of editable content.
+    private var pendingReadOnly: Bool = false
+
     /// Commands queued before the editor was ready.
     private var pendingCommands: [EditorCommand] = []
 
@@ -84,6 +88,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var fileWatchDebounce: DispatchWorkItem?
     /// When true, the next ContentChanged event will not mark the file as modified.
     private var suppressNextModify: Bool = false
+
+    /// Debounce work item for cursor move notifications.
+    private var cursorDebounceWork: DispatchWorkItem?
 
     /// Whether this editor is currently showing markdown preview instead of Monaco.
     private(set) var isPreviewing: Bool = false
@@ -224,6 +231,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 sendCommand(.openFile(filePath: path, content: content, language: language))
             }
 
+            if pendingReadOnly {
+                sendCommand(.setReadOnly(readOnly: true))
+            }
+
         case .fileOpened:
             NotificationCenter.default.post(
                 name: .editorFileOpened,
@@ -245,11 +256,17 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             )
 
         case let .cursorMoved(line, column):
-            NotificationCenter.default.post(
-                name: .editorCursorMoved,
-                object: self,
-                userInfo: ["line": line, "column": column]
-            )
+            cursorDebounceWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                NotificationCenter.default.post(
+                    name: .editorCursorMoved,
+                    object: self,
+                    userInfo: ["line": line, "column": column]
+                )
+            }
+            cursorDebounceWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
 
         case .saveRequested:
             // Route through the main save pipeline so format-on-save, LSP
@@ -587,6 +604,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Set the editor to read-only or read-write mode.
     func setReadOnly(_ readOnly: Bool) {
+        pendingReadOnly = readOnly
         sendCommand(.setReadOnly(readOnly: readOnly))
     }
 
@@ -834,6 +852,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// associated JavaScript context are torn down promptly.
     func cleanup() {
         stopFileWatching()
+        cursorDebounceWork?.cancel()
+        cursorDebounceWork = nil
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
         webView?.navigationDelegate = nil
         webView?.stopLoading()

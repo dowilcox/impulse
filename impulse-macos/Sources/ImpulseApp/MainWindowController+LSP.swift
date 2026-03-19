@@ -157,10 +157,12 @@ extension MainWindowController {
     func handleCompletionRequest(editor: EditorTab, requestId: UInt64, line: UInt32, character: UInt32) {
         guard let path = editor.filePath else { return }
         let uri = filePathToUri(path)
-        latestCompletionReq[uri] = requestId
 
-        // Cancel any previous in-flight completion request for this URI.
+        // Cancel any previous in-flight completion request for this URI
+        // BEFORE setting the new request ID to prevent a stale callback
+        // from racing against the new one.
         completionWorkItems[uri]?.cancel()
+        latestCompletionReq[uri] = requestId
 
         let language = editor.lspLanguage
         let params = """

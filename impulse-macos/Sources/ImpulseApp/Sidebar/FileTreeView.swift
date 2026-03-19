@@ -147,6 +147,9 @@ final class FileTreeView: NSView {
     private var gitStatusTimer: DispatchSourceTimer?
     private var lastGitStatusHash: Int = 0
 
+    // Debounce work item for git status refresh → reload.
+    private var gitRefreshDebounce: DispatchWorkItem?
+
     // Scroll position to restore after a full tree reload + git status refresh.
     private var pendingScrollRestore: NSPoint?
 
@@ -329,14 +332,20 @@ final class FileTreeView: NSView {
     /// Re-fetch git status for the current tree and reload visible cells to
     /// reflect any changes. Heavy work runs on a background queue.
     func refreshGitStatus() {
-        let nodes = rootNodes
-        let root = rootPath
-        DispatchQueue.global(qos: .utility).async {
-            FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
-            DispatchQueue.main.async { [weak self] in
-                self?.reloadVisibleRows()
+        gitRefreshDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let nodes = self.rootNodes
+            let root = self.rootPath
+            DispatchQueue.global(qos: .utility).async {
+                FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
+                DispatchQueue.main.async { [weak self] in
+                    self?.reloadVisibleRows()
+                }
             }
         }
+        gitRefreshDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
     /// Collapse all expanded directories back to root-level only.
@@ -818,6 +827,8 @@ final class FileTreeView: NSView {
     private func stopWatching() {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
+        gitRefreshDebounce?.cancel()
+        gitRefreshDebounce = nil
 
         stopAllSubdirWatchers()
         stopGitIndexWatcher()
