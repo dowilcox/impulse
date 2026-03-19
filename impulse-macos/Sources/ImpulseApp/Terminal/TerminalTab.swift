@@ -426,7 +426,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     // MARK: Shell Spawning
 
     /// Spawn the user's login shell inside this terminal.
-    func spawnShell(initialDirectory: String? = nil) {
+    /// If `initialCommand` is provided, it is sent to the PTY immediately after
+    /// the process starts (the PTY buffers the bytes until the shell reads them).
+    func spawnShell(initialDirectory: String? = nil, initialCommand: String? = nil) {
         let shellPath = ImpulseCore.getUserLoginShell()
         let shellName = (shellPath as NSString).lastPathComponent
 
@@ -540,6 +542,10 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             execName: nil,
             currentDirectory: workingDir
         )
+
+        if let initialCommand {
+            sendCommand(initialCommand)
+        }
     }
 
     /// Send a text string (e.g. a shell command + newline) to the terminal's PTY.

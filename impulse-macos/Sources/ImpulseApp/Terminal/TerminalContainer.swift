@@ -32,7 +32,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     // MARK: Initializer
 
-    init(frame frameRect: NSRect, settings: TerminalSettings, theme: TerminalTheme) {
+    init(frame frameRect: NSRect, settings: TerminalSettings, theme: TerminalTheme, initialCommand: String? = nil) {
         self.currentSettings = settings
         self.currentTheme = theme
         super.init(frame: frameRect)
@@ -50,7 +50,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         // COLUMNS mismatch that breaks line wrapping and cursor navigation.
         let dir = settings.lastDirectory.isEmpty ? nil : settings.lastDirectory
         DispatchQueue.main.async {
-            initialTerminal.spawnShell(initialDirectory: dir)
+            initialTerminal.spawnShell(initialDirectory: dir, initialCommand: initialCommand)
         }
     }
 

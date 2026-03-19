@@ -207,7 +207,7 @@ final class TabManager: NSObject {
 
     /// Creates a new terminal tab (wrapped in a TerminalContainer for split
     /// support) and makes it active.
-    func addTerminalTab(directory: String? = nil) {
+    func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
         let dir = directory ?? NSHomeDirectory()
         let termSettings = settings.terminalSettings(directory: dir)
         let termTheme = TerminalTheme(
@@ -218,7 +218,8 @@ final class TabManager: NSObject {
         let container = TerminalContainer(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             settings: termSettings,
-            theme: termTheme
+            theme: termTheme,
+            initialCommand: initialCommand
         )
         let entry = TabEntry.terminal(container)
         insertTab(entry)

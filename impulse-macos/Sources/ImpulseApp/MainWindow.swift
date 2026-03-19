@@ -2004,11 +2004,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Get the CWD from the active tab (terminal CWD or editor file's parent)
         let cwd = getActiveCwd()
 
-        tabManager.addTerminalTab(directory: cwd)
-        if let container = tabManager.selectedTerminal,
-           let terminal = container.activeTerminal {
-            terminal.sendCommand(fullCommand)
-        }
+        // Pass the command through so it's sent right after the shell process
+        // starts (shell spawn is deferred to the next run loop tick for layout).
+        tabManager.addTerminalTab(directory: cwd, initialCommand: fullCommand)
     }
 
     /// Returns the current working directory from the active tab:

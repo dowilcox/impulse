@@ -271,7 +271,7 @@ pub fn spawn_command(
         Some(dir),
         &argv,
         &envv_refs,
-        gtk4::glib::SpawnFlags::DEFAULT,
+        gtk4::glib::SpawnFlags::SEARCH_PATH_FROM_ENVP,
         || {},
         -1,
         gtk4::gio::Cancellable::NONE,
