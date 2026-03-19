@@ -181,7 +181,7 @@ pub fn search_contents(
             // Use character-based column positions so that non-ASCII text
             // (and case-insensitive lowercasing that changes byte lengths)
             // reports correct columns.
-            let line_content: Option<String> = None;
+            let line_content: String = line.chars().take(500).collect();
             for (byte_pos, _) in haystack.match_indices(&query_match) {
                 if results.len() >= limit {
                     break;
@@ -202,9 +202,7 @@ pub fn search_contents(
                     path: file_path.clone(),
                     name: file_name.clone(),
                     line_number: Some((line_idx + 1) as u32),
-                    line_content: line_content
-                        .clone()
-                        .or_else(|| Some(line.chars().take(500).collect())),
+                    line_content: Some(line_content.clone()),
                     column_start: Some(col_start_chars as u32),
                     column_end: Some(col_end_chars as u32),
                     match_type: "content".to_string(),
@@ -257,8 +255,6 @@ pub fn replace_in_file(
     replacement: &str,
     case_sensitive: bool,
 ) -> Result<usize, String> {
-    use std::os::unix::fs::PermissionsExt;
-
     // Check file size before reading
     let metadata = std::fs::metadata(path)
         .map_err(|e| format!("Failed to read metadata for '{}': {}", path, e))?;
@@ -270,6 +266,7 @@ pub fn replace_in_file(
         ));
     }
 
+    #[cfg(unix)]
     let permissions = metadata.permissions();
 
     let content =
@@ -304,17 +301,28 @@ pub fn replace_in_file(
         ));
 
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut tmp_file = std::fs::OpenOptions::new()
+            #[cfg(unix)]
+            let tmp_file = {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&tmp_path)
+                    .map_err(|e| {
+                        format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
+                    })?
+            };
+            #[cfg(not(unix))]
+            let tmp_file = std::fs::OpenOptions::new()
                 .write(true)
-                .create_new(true) // O_EXCL: fail if file exists (prevents symlink attacks)
-                .mode(0o600)
+                .create_new(true)
                 .open(&tmp_path)
                 .map_err(|e| {
                     format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
                 })?;
+            let mut tmp_file = tmp_file;
             tmp_file.write_all(new_content.as_bytes()).map_err(|e| {
-                // Clean up temp file on write failure
                 let _ = std::fs::remove_file(&tmp_path);
                 format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
             })?;
@@ -324,15 +332,18 @@ pub fn replace_in_file(
             })?;
         }
 
-        // Preserve original file permissions
-        std::fs::set_permissions(
-            &tmp_path,
-            std::fs::Permissions::from_mode(permissions.mode()),
-        )
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
-            format!("Failed to set permissions on temp file: {}", e)
-        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                &tmp_path,
+                std::fs::Permissions::from_mode(permissions.mode()),
+            )
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                format!("Failed to set permissions on temp file: {}", e)
+            })?;
+        }
 
         // Atomic rename
         std::fs::rename(&tmp_path, path).map_err(|e| {

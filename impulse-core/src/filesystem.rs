@@ -86,7 +86,8 @@ pub fn read_directory_entries(path: &str, show_hidden: bool) -> Result<Vec<FileE
 pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String>, String> {
     // Canonicalize path to resolve symlinks (e.g. /var -> /private/var on macOS)
     // so it matches the repo root from libgit2.
-    let dir_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let dir_path = fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path).components().collect::<PathBuf>());
     let repo = match crate::git::open_repo(&dir_path) {
         Ok(r) => r,
         Err(_) => return Ok(HashMap::new()),
@@ -246,7 +247,8 @@ fn status_to_code(s: git2::Status) -> Option<&'static str> {
 pub fn get_all_git_statuses(
     path: &str,
 ) -> Result<HashMap<String, HashMap<String, String>>, String> {
-    let dir_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let dir_path = fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path).components().collect::<PathBuf>());
     let repo = match crate::git::open_repo(&dir_path) {
         Ok(r) => r,
         Err(_) => return Ok(HashMap::new()),

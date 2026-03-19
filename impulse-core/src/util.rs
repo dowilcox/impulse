@@ -72,8 +72,13 @@ pub fn run_with_timeout<T: Send + 'static>(
 }
 
 /// Convert a local path to a `file://` URI.
+///
+/// Uses path syntax (trailing separator) rather than filesystem I/O to
+/// distinguish directories from files, so it works for non-existent paths.
 pub fn file_path_to_uri(path: &Path) -> Option<String> {
-    if path.is_dir() {
+    let path_str = path.as_os_str().to_string_lossy();
+    let is_dir = path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR);
+    if is_dir {
         Url::from_directory_path(path).ok().map(|u| u.to_string())
     } else {
         Url::from_file_path(path).ok().map(|u| u.to_string())
