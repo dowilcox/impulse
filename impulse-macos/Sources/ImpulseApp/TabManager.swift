@@ -221,6 +221,7 @@ final class TabManager: NSObject {
             theme: termTheme,
             initialCommand: initialCommand
         )
+        container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlight)
         let entry = TabEntry.terminal(container)
         insertTab(entry)
     }

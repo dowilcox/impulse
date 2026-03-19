@@ -1,4 +1,5 @@
 import AppKit
+import os.log
 import SwiftTerm
 
 // MARK: - TerminalTab
@@ -646,31 +647,59 @@ class ImpulseTerminalView: LocalProcessTerminalView {
     /// text. Clipboard content copied from websites or documents often includes
     /// a trailing newline that the shell interprets as Enter, causing accidental
     /// command execution or splitting a single command into multiple commands.
+    ///
+    /// If the clipboard contains only an image (no text), the image is saved to
+    /// a temporary PNG file and its shell-escaped path is pasted, so CLI tools
+    /// like Claude Code can consume it.
     override func paste(_ sender: Any) {
         let clipboard = NSPasteboard.general
-        guard var text = clipboard.string(forType: .string) else { return }
 
-        // Strip trailing newlines and carriage returns. Clipboard content
-        // from web pages and documents commonly includes trailing newlines
-        // that would cause accidental command execution.
-        while text.hasSuffix("\n") || text.hasSuffix("\r") {
-            text.removeLast()
+        // Prefer text when available — this is the normal paste path.
+        if var text = clipboard.string(forType: .string) {
+            // Strip trailing newlines and carriage returns. Clipboard content
+            // from web pages and documents commonly includes trailing newlines
+            // that would cause accidental command execution.
+            while text.hasSuffix("\n") || text.hasSuffix("\r") {
+                text.removeLast()
+            }
+
+            // Normalize CRLF and standalone CR to LF for consistent handling.
+            text = text.replacingOccurrences(of: "\r\n", with: "\n")
+            text = text.replacingOccurrences(of: "\r", with: "\n")
+
+            guard !text.isEmpty else { return }
+
+            // Replicate SwiftTerm's paste logic with bracketed paste support
+            guard let terminal = terminal else { return }
+            if terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteStart[0...])
+            }
+            send(txt: text)
+            if terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteEnd[0...])
+            }
+            return
         }
 
-        // Normalize CRLF and standalone CR to LF for consistent handling.
-        text = text.replacingOccurrences(of: "\r\n", with: "\n")
-        text = text.replacingOccurrences(of: "\r", with: "\n")
-
-        guard !text.isEmpty else { return }
-
-        // Replicate SwiftTerm's paste logic with bracketed paste support
-        guard let terminal = terminal else { return }
-        if terminal.bracketedPasteMode {
-            send(data: EscapeSequences.bracketedPasteStart[0...])
-        }
-        send(txt: text)
-        if terminal.bracketedPasteMode {
-            send(data: EscapeSequences.bracketedPasteEnd[0...])
+        // Fall back to image: save as a temp PNG and paste the path.
+        if let image = clipboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
+           let tiffData = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            let tmpPath = NSTemporaryDirectory() + "impulse-clipboard-\(timestamp).png"
+            do {
+                try pngData.write(to: URL(fileURLWithPath: tmpPath))
+                // Restrict permissions to owner-only.
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: tmpPath
+                )
+                let escaped = tmpPath.shellEscaped
+                guard let data = escaped.data(using: .utf8) else { return }
+                send(data: ArraySlice(data))
+            } catch {
+                os_log(.error, "Failed to save clipboard image: %{public}@", error.localizedDescription)
+            }
         }
     }
 }
