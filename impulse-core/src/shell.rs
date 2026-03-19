@@ -105,9 +105,13 @@ pub fn get_default_shell_name() -> String {
         .to_string()
 }
 
-/// Return the user's home directory from $HOME.
+/// Return the user's home directory, preferring `dirs::home_dir()` (which uses
+/// getpwuid on Unix) over the `$HOME` environment variable.
 pub fn get_home_directory() -> Result<String, String> {
-    std::env::var("HOME").map_err(|e| format!("Failed to get HOME: {}", e))
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| std::env::var("HOME").ok())
+        .ok_or_else(|| "Failed to determine home directory".to_string())
 }
 
 /// Write a file with owner-only permissions (0600) to prevent other users
@@ -148,7 +152,10 @@ pub fn build_shell_command(
 
     let mut cmd = match shell_type {
         ShellType::Bash => {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let home = dirs::home_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|| std::env::var("HOME").ok())
+                .unwrap_or_else(|| "/root".to_string());
             let escaped_bashrc = escape_single_quotes(&format!("{}/.bashrc", home));
 
             let rc_content = format!(
@@ -175,7 +182,10 @@ pub fn build_shell_command(
             cmd
         }
         ShellType::Zsh => {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let home = dirs::home_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|| std::env::var("HOME").ok())
+                .unwrap_or_else(|| "/root".to_string());
             let escaped_home = escape_single_quotes(&home);
 
             let zdotdir = std::env::temp_dir().join(format!(

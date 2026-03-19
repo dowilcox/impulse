@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, MasterPty, PtySize};
 use serde::Serialize;
@@ -37,6 +37,10 @@ pub enum PtyMessage {
     },
     CwdChanged {
         path: String,
+    },
+    Terminated {
+        session_id: String,
+        exit_code: Option<i32>,
     },
     ShellReady,
 }
@@ -175,15 +179,26 @@ impl PtyManager {
                     }
                     Err(e) => {
                         log::warn!("PTY reader error for session {}: {}", session_id, e);
+                        sender.send(PtyMessage::Terminated {
+                            session_id: session_id.clone(),
+                            exit_code: None,
+                        });
                         break;
                     }
                 }
             }
 
-            for path in temp_files {
-                let _ = std::fs::remove_file(&path);
+            let mut dirs_to_remove = std::collections::HashSet::new();
+            for path in &temp_files {
+                let _ = std::fs::remove_file(path);
                 if let Some(parent) = path.parent() {
-                    let _ = std::fs::remove_dir(parent);
+                    dirs_to_remove.insert(parent.to_path_buf());
+                }
+            }
+            let temp_dir = std::env::temp_dir();
+            for dir in dirs_to_remove {
+                if dir.starts_with(&temp_dir) && dir != temp_dir {
+                    let _ = std::fs::remove_dir_all(&dir);
                 }
             }
         });
@@ -266,10 +281,17 @@ impl PtyManager {
 
         if let Some(mut session) = session {
             let _ = session.child.kill();
-            let _ = session.child.wait();
-            // Join the reader thread — it should exit promptly since the PTY fd
-            // is closed after the child exits and the stop flag has been set.
-            if let Some(handle) = session.reader_thread.take() {
+            let reader_handle = session.reader_thread.take();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let session_id = id.to_string();
+            std::thread::spawn(move || {
+                let _ = session.child.wait();
+                let _ = tx.send(());
+            });
+            if rx.recv_timeout(Duration::from_secs(5)).is_err() {
+                log::warn!("Timed out waiting for PTY child process {} to exit", session_id);
+            }
+            if let Some(handle) = reader_handle {
                 if let Err(e) = handle.join() {
                     log::warn!("PTY reader thread for session {} panicked: {:?}", id, e);
                 }
