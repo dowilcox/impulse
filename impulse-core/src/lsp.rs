@@ -421,13 +421,23 @@ impl LspClient {
             let cmd_name = command.to_string();
             let key = client_key.to_string();
             tokio::spawn(async move {
-                // Limit total stderr to 10MB to prevent memory exhaustion
-                let limited = stderr.take(10 * 1024 * 1024);
-                let reader = BufReader::new(limited);
-                let mut lines = reader.lines();
+                let mut bytes_read: u64 = 0;
+                const STDERR_LOG_LIMIT: u64 = 10 * 1024 * 1024;
+                let mut reader = BufReader::new(stderr);
+                let mut line_buf = Vec::new();
                 loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
+                    line_buf.clear();
+                    match reader.read_until(b'\n', &mut line_buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            bytes_read += n as u64;
+                            if bytes_read > STDERR_LOG_LIMIT {
+                                // Stop logging but keep draining so the server
+                                // doesn't block on a full pipe buffer.
+                                let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
+                                break;
+                            }
+                            let line = String::from_utf8_lossy(&line_buf);
                             let display = if line.len() > 8192 {
                                 &line[..8192]
                             } else {
@@ -438,7 +448,6 @@ impl LspClient {
                                 log::warn!("LSP stderr [{}:{}]: {}", cmd_name, key, trimmed);
                             }
                         }
-                        Ok(None) => break,
                         Err(_) => break,
                     }
                 }
@@ -527,38 +536,57 @@ impl LspClient {
         root_uri: &str,
     ) {
         let mut reader = BufReader::new(stdout);
+        const MAX_HEADER_LINE: usize = 8192;
         loop {
-            let mut header_line = String::new();
+            let mut header_buf = Vec::with_capacity(64);
             let mut content_length: usize = 0;
             let mut header_count: u32 = 0;
             loop {
-                header_line.clear();
-                match reader.read_line(&mut header_line).await {
-                    Ok(0) => return,
-                    Ok(_) => {
-                        if header_line.len() > 8192 {
-                            log::warn!(
-                                "LSP header line too long ({} bytes), dropping connection",
-                                header_line.len()
-                            );
-                            return;
-                        }
-                        let trimmed = header_line.trim();
-                        if trimmed.is_empty() {
-                            break;
-                        }
-                        header_count += 1;
-                        if header_count > 32 {
-                            log::warn!("Too many LSP headers, dropping connection");
-                            return;
-                        }
-                        if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
-                            if let Ok(len) = len_str.parse::<usize>() {
-                                content_length = len;
-                            }
-                        }
+                header_buf.clear();
+                // Read a header line with a bounded size to prevent unbounded
+                // memory allocation from a malicious server sending no newline.
+                let found_newline = loop {
+                    let available = match reader.fill_buf().await {
+                        Ok(buf) if buf.is_empty() => return,
+                        Ok(buf) => buf,
+                        Err(_) => return,
+                    };
+                    if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+                        header_buf.extend_from_slice(&available[..=pos]);
+                        let consumed = pos + 1;
+                        reader.consume(consumed);
+                        break true;
                     }
-                    Err(_) => return,
+                    header_buf.extend_from_slice(available);
+                    let consumed = available.len();
+                    reader.consume(consumed);
+                    if header_buf.len() > MAX_HEADER_LINE {
+                        break false;
+                    }
+                };
+                if !found_newline && header_buf.len() > MAX_HEADER_LINE {
+                    log::warn!(
+                        "LSP header line too long ({} bytes), dropping connection",
+                        header_buf.len()
+                    );
+                    return;
+                }
+                let header_line = String::from_utf8_lossy(&header_buf);
+                let trimmed = header_line.trim();
+                if trimmed.is_empty() {
+                    break;
+                }
+                header_count += 1;
+                if header_count > 32 {
+                    log::warn!("Too many LSP headers, dropping connection");
+                    return;
+                }
+                if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
+                    if content_length > 0 {
+                        log::warn!("Duplicate Content-Length header in LSP message, keeping first value ({})", content_length);
+                    } else if let Ok(len) = len_str.parse::<usize>() {
+                        content_length = len;
+                    }
                 }
             }
 
