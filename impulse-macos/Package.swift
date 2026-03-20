@@ -7,7 +7,6 @@ let package = Package(
         .macOS(.v13)
     ],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.11.2"),
     ],
     targets: [
         .systemLibrary(
@@ -17,7 +16,6 @@ let package = Package(
         .executableTarget(
             name: "ImpulseApp",
             dependencies: [
-                "SwiftTerm",
                 "CImpulseFFI",
             ],
             path: "Sources/ImpulseApp",

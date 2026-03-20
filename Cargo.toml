@@ -1,5 +1,5 @@
 [workspace]
-members = ["impulse-core", "impulse-editor", "impulse-linux", "impulse-ffi"]
+members = ["impulse-core", "impulse-editor", "impulse-terminal", "impulse-linux", "impulse-ffi"]
 resolver = "2"
 
 [workspace.dependencies]

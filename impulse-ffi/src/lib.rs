@@ -319,9 +319,12 @@ fn with_lsp_handle<T>(
 }
 
 /// Opaque handle token for the C API. Never dereferenced — only used as a key.
+/// Must NOT be zero-sized — ZSTs share the same Box pointer.
 pub struct LspRegistryHandle {
-    _private: (),
+    _id: u64,
 }
+
+static NEXT_LSP_HANDLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Create a new LSP registry for the given workspace root URI.
 ///
@@ -377,7 +380,9 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
             });
 
             // Allocate a stable address to use as an opaque handle key
-            let handle = Box::into_raw(Box::new(LspRegistryHandle { _private: () }));
+            let handle = Box::into_raw(Box::new(LspRegistryHandle {
+                _id: NEXT_LSP_HANDLE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            }));
             lsp_handle_registry().lock().insert(handle as usize, inner);
             handle
         }),
@@ -1260,6 +1265,373 @@ pub extern "C" fn impulse_matches_file_pattern(
                 None => return false,
             };
             impulse_core::util::matches_file_pattern(&path, &pattern)
+        }),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Terminal (impulse-terminal)
+// ---------------------------------------------------------------------------
+
+/// Opaque handle for a terminal backend instance.
+/// Must NOT be zero-sized — ZSTs share the same Box pointer, which would
+/// cause all handles to map to the same HashMap key.
+pub struct TerminalHandle {
+    _id: u64,
+}
+
+static NEXT_TERMINAL_HANDLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Global registry mapping terminal handle addresses to their backends.
+fn terminal_handle_registry(
+) -> &'static parking_lot::Mutex<HashMap<usize, impulse_terminal::TerminalBackend>> {
+    static REGISTRY: OnceLock<
+        parking_lot::Mutex<HashMap<usize, impulse_terminal::TerminalBackend>>,
+    > = OnceLock::new();
+    REGISTRY.get_or_init(|| parking_lot::Mutex::new(HashMap::new()))
+}
+
+/// Look up a terminal handle and run `f` with the backend.
+fn with_terminal<T>(
+    handle: *mut TerminalHandle,
+    default: T,
+    f: impl FnOnce(&impulse_terminal::TerminalBackend) -> T,
+) -> T {
+    if handle.is_null() {
+        return default;
+    }
+    let key = handle as usize;
+    let guard = terminal_handle_registry().lock();
+    match guard.get(&key) {
+        Some(backend) => f(backend),
+        None => {
+            log::warn!("Attempted to use invalid or freed terminal handle");
+            default
+        }
+    }
+}
+
+/// Look up a terminal handle and run `f` with a mutable backend reference.
+fn with_terminal_mut<T>(
+    handle: *mut TerminalHandle,
+    default: T,
+    f: impl FnOnce(&mut impulse_terminal::TerminalBackend) -> T,
+) -> T {
+    if handle.is_null() {
+        return default;
+    }
+    let key = handle as usize;
+    let mut guard = terminal_handle_registry().lock();
+    match guard.get_mut(&key) {
+        Some(backend) => f(backend),
+        None => {
+            log::warn!("Attempted to use invalid or freed terminal handle");
+            default
+        }
+    }
+}
+
+/// Create a new terminal backend.
+///
+/// `config_json` is a JSON object with terminal configuration.
+/// `cols` and `rows` are the initial grid dimensions.
+/// `cell_width` and `cell_height` are pixel dimensions per cell.
+///
+/// Returns an opaque handle, or null on failure.
+/// The caller must free it with `impulse_terminal_destroy`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_create(
+    config_json: *const c_char,
+    cols: u16,
+    rows: u16,
+    cell_width: u16,
+    cell_height: u16,
+) -> *mut TerminalHandle {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let config_str = match to_rust_str(config_json) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            let config: impulse_terminal::TerminalConfig =
+                match serde_json::from_str(&config_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::error!("Failed to parse terminal config: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+
+            match impulse_terminal::TerminalBackend::new(config, cols, rows, cell_width, cell_height)
+            {
+                Ok(backend) => {
+                    let handle =
+                        Box::into_raw(Box::new(TerminalHandle {
+                        _id: NEXT_TERMINAL_HANDLE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    }));
+                    terminal_handle_registry()
+                        .lock()
+                        .insert(handle as usize, backend);
+                    handle
+                }
+                Err(e) => {
+                    log::error!("Failed to create terminal: {}", e);
+                    std::ptr::null_mut()
+                }
+            }
+        }),
+    )
+}
+
+/// Destroy a terminal backend and free its resources.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_destroy(handle: *mut TerminalHandle) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return;
+            }
+            let key = handle as usize;
+            let backend = terminal_handle_registry().lock().remove(&key);
+            if let Some(backend) = backend {
+                backend.shutdown();
+            }
+            unsafe {
+                drop(Box::from_raw(handle));
+            }
+        }),
+    );
+}
+
+/// Send input bytes to the terminal's PTY.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_write(
+    handle: *mut TerminalHandle,
+    data: *const u8,
+    len: usize,
+) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if data.is_null() || len == 0 {
+                return;
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+            with_terminal(handle, (), |backend| {
+                backend.write(bytes);
+            });
+        }),
+    );
+}
+
+/// Resize the terminal grid and PTY.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_resize(
+    handle: *mut TerminalHandle,
+    cols: u16,
+    rows: u16,
+    cell_width: u16,
+    cell_height: u16,
+) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            with_terminal_mut(handle, (), |backend| {
+                backend.resize(cols, rows, cell_width, cell_height);
+            });
+        }),
+    );
+}
+
+/// Get a snapshot of the visible terminal grid as a JSON string.
+///
+/// Returns a JSON-encoded `GridSnapshot`. Caller must free with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_grid_snapshot(
+    handle: *mut TerminalHandle,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, std::ptr::null_mut(), |backend| {
+                let snapshot = backend.grid_snapshot();
+                match serde_json::to_string(&snapshot) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => {
+                        log::error!("Grid snapshot serialization failed: {}", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            })
+        }),
+    )
+}
+
+/// Poll for terminal events.
+///
+/// Returns a JSON array of events, or null if no events are pending.
+/// Caller must free with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_poll_events(
+    handle: *mut TerminalHandle,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, std::ptr::null_mut(), |backend| {
+                let events = backend.poll_events();
+                if events.is_empty() {
+                    return std::ptr::null_mut();
+                }
+                match serde_json::to_string(&events) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => {
+                        log::error!("Event serialization failed: {}", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            })
+        }),
+    )
+}
+
+/// Start a text selection at the given grid position.
+///
+/// `kind` is one of: "simple", "block", "semantic", "lines".
+#[no_mangle]
+pub extern "C" fn impulse_terminal_start_selection(
+    handle: *mut TerminalHandle,
+    col: u16,
+    row: u16,
+    kind: *const c_char,
+) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            let kind_str = to_rust_str(kind).unwrap_or_default();
+            let selection_kind = match kind_str.as_str() {
+                "block" => impulse_terminal::SelectionKind::Block,
+                "semantic" => impulse_terminal::SelectionKind::Semantic,
+                "lines" => impulse_terminal::SelectionKind::Lines,
+                _ => impulse_terminal::SelectionKind::Simple,
+            };
+            with_terminal(handle, (), |backend| {
+                backend.start_selection(col as usize, row as usize, selection_kind);
+            });
+        }),
+    );
+}
+
+/// Update the current selection to the given grid position.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_update_selection(
+    handle: *mut TerminalHandle,
+    col: u16,
+    row: u16,
+) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, (), |backend| {
+                backend.update_selection(col as usize, row as usize);
+            });
+        }),
+    );
+}
+
+/// Clear the current selection.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_clear_selection(handle: *mut TerminalHandle) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, (), |backend| {
+                backend.clear_selection();
+            });
+        }),
+    );
+}
+
+/// Get the selected text as a string.
+///
+/// Returns null if no text is selected.
+/// Caller must free with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_selected_text(
+    handle: *mut TerminalHandle,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, std::ptr::null_mut(), |backend| {
+                match backend.selected_text() {
+                    Some(text) => to_c_string(&text),
+                    None => std::ptr::null_mut(),
+                }
+            })
+        }),
+    )
+}
+
+/// Scroll the terminal viewport.
+///
+/// Positive `delta` scrolls up (towards history), negative scrolls down.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_scroll(handle: *mut TerminalHandle, delta: i32) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, (), |backend| {
+                backend.scroll(delta);
+            });
+        }),
+    );
+}
+
+/// Get the current terminal mode flags as a JSON string.
+///
+/// Caller must free with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, std::ptr::null_mut(), |backend| {
+                let mode = backend.mode();
+                match serde_json::to_string(&mode) {
+                    Ok(json) => to_c_string(&json),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            })
+        }),
+    )
+}
+
+/// Notify the terminal about focus change.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_set_focus(handle: *mut TerminalHandle, focused: bool) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            with_terminal(handle, (), |backend| {
+                backend.set_focus(focused);
+            });
+        }),
+    );
+}
+
+/// Get the PID of the child shell process.
+///
+/// Returns 0 if the handle is invalid.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32 {
+    ffi_catch(
+        0,
+        AssertUnwindSafe(|| {
+            with_terminal(handle, 0, |backend| backend.child_pid())
         }),
     )
 }

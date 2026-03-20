@@ -574,4 +574,114 @@ final class ImpulseCore {
         guard let ptr = CImpulseFFI.impulse_get_version() else { return "unknown" }
         return String(cString: ptr)
     }
+
+    // MARK: - Terminal (impulse-terminal)
+
+    /// Create a new terminal backend.
+    ///
+    /// Returns an opaque handle, or nil on failure.
+    static func terminalCreate(
+        configJson: String,
+        cols: UInt16,
+        rows: UInt16,
+        cellWidth: UInt16,
+        cellHeight: UInt16
+    ) -> OpaquePointer? {
+        return configJson.withCString { ptr in
+            CImpulseFFI.impulse_terminal_create(ptr, cols, rows, cellWidth, cellHeight)
+        }
+    }
+
+    /// Destroy a terminal backend and free its resources.
+    static func terminalDestroy(handle: OpaquePointer) {
+        CImpulseFFI.impulse_terminal_destroy(handle)
+    }
+
+    /// Send input bytes to the terminal's PTY.
+    static func terminalWrite(handle: OpaquePointer, data: Data) {
+        data.withUnsafeBytes { rawBuffer in
+            guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            CImpulseFFI.impulse_terminal_write(handle, ptr, data.count)
+        }
+    }
+
+    /// Resize the terminal grid and PTY.
+    static func terminalResize(
+        handle: OpaquePointer,
+        cols: UInt16,
+        rows: UInt16,
+        cellWidth: UInt16,
+        cellHeight: UInt16
+    ) {
+        CImpulseFFI.impulse_terminal_resize(handle, cols, rows, cellWidth, cellHeight)
+    }
+
+    /// Get a snapshot of the visible terminal grid as JSON.
+    static func terminalGridSnapshot(handle: OpaquePointer) -> String? {
+        guard let raw = CImpulseFFI.impulse_terminal_grid_snapshot(handle) else { return nil }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Poll for terminal events. Returns a JSON array string, or nil if no events.
+    static func terminalPollEvents(handle: OpaquePointer) -> String? {
+        guard let raw = CImpulseFFI.impulse_terminal_poll_events(handle) else { return nil }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Start a text selection at the given grid position.
+    static func terminalStartSelection(
+        handle: OpaquePointer,
+        col: UInt16,
+        row: UInt16,
+        kind: String
+    ) {
+        kind.withCString { kindPtr in
+            CImpulseFFI.impulse_terminal_start_selection(handle, col, row, kindPtr)
+        }
+    }
+
+    /// Update the current selection to the given grid position.
+    static func terminalUpdateSelection(handle: OpaquePointer, col: UInt16, row: UInt16) {
+        CImpulseFFI.impulse_terminal_update_selection(handle, col, row)
+    }
+
+    /// Clear the current selection.
+    static func terminalClearSelection(handle: OpaquePointer) {
+        CImpulseFFI.impulse_terminal_clear_selection(handle)
+    }
+
+    /// Get the selected text, or nil if nothing is selected.
+    static func terminalSelectedText(handle: OpaquePointer) -> String? {
+        guard let raw = CImpulseFFI.impulse_terminal_selected_text(handle) else { return nil }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Scroll the terminal viewport.
+    static func terminalScroll(handle: OpaquePointer, delta: Int32) {
+        CImpulseFFI.impulse_terminal_scroll(handle, delta)
+    }
+
+    /// Get the current terminal mode flags as JSON.
+    static func terminalMode(handle: OpaquePointer) -> String? {
+        guard let raw = CImpulseFFI.impulse_terminal_mode(handle) else { return nil }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
+    /// Notify the terminal about focus change.
+    static func terminalSetFocus(handle: OpaquePointer, focused: Bool) {
+        CImpulseFFI.impulse_terminal_set_focus(handle, focused)
+    }
+
+    /// Get the PID of the child shell process.
+    static func terminalChildPid(handle: OpaquePointer) -> UInt32 {
+        CImpulseFFI.impulse_terminal_child_pid(handle)
+    }
 }

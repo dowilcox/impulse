@@ -69,4 +69,22 @@ bool impulse_matches_file_pattern(const char *path, const char *pattern);
 char *impulse_check_for_update(void);
 const char *impulse_get_version(void);
 
+// Terminal (impulse-terminal)
+typedef struct TerminalHandle TerminalHandle;
+
+TerminalHandle *impulse_terminal_create(const char *config_json, uint16_t cols, uint16_t rows, uint16_t cell_width, uint16_t cell_height);
+void impulse_terminal_destroy(TerminalHandle *handle);
+void impulse_terminal_write(TerminalHandle *handle, const uint8_t *data, size_t len);
+void impulse_terminal_resize(TerminalHandle *handle, uint16_t cols, uint16_t rows, uint16_t cell_width, uint16_t cell_height);
+char *impulse_terminal_grid_snapshot(TerminalHandle *handle);
+char *impulse_terminal_poll_events(TerminalHandle *handle);
+void impulse_terminal_start_selection(TerminalHandle *handle, uint16_t col, uint16_t row, const char *kind);
+void impulse_terminal_update_selection(TerminalHandle *handle, uint16_t col, uint16_t row);
+void impulse_terminal_clear_selection(TerminalHandle *handle);
+char *impulse_terminal_selected_text(TerminalHandle *handle);
+void impulse_terminal_scroll(TerminalHandle *handle, int32_t delta);
+char *impulse_terminal_mode(TerminalHandle *handle);
+void impulse_terminal_set_focus(TerminalHandle *handle, bool focused);
+uint32_t impulse_terminal_child_pid(TerminalHandle *handle);
+
 #endif
