@@ -34,6 +34,16 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// input in tools like Claude Code).
     private var shiftEnterMonitor: Any?
 
+    /// Local event monitor that strips the `.numericPad` modifier flag from
+    /// regular arrow key events. macOS sets `.numericPad` on arrow keys even
+    /// though they aren't keypad keys. SwiftTerm checks this flag and sends
+    /// keypad-variant Kitty sequences (e.g. KP_Up = `\e[57417u`) that TUI
+    /// apps like Claude Code don't recognize.
+    private var arrowKeyMonitor: Any?
+
+    /// Regular arrow key keyCodes. macOS incorrectly flags these as numericPad.
+    private static let arrowKeyCodes: Set<UInt16> = [123, 124, 125, 126]
+
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
@@ -95,6 +105,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         if isFocused {
             if scrollMonitor == nil { setupScrollWheelForwarding() }
             if shiftEnterMonitor == nil { setupShiftEnter() }
+            if arrowKeyMonitor == nil { setupArrowKeyFix() }
         } else {
             removeScrollAndKeyMonitors()
         }
@@ -103,6 +114,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     private func removeScrollAndKeyMonitors() {
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         if let m = shiftEnterMonitor { NSEvent.removeMonitor(m); shiftEnterMonitor = nil }
+        if let m = arrowKeyMonitor { NSEvent.removeMonitor(m); arrowKeyMonitor = nil }
     }
 
     deinit {
@@ -114,6 +126,9 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             NSEvent.removeMonitor(monitor)
         }
         if let monitor = shiftEnterMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = arrowKeyMonitor {
             NSEvent.removeMonitor(monitor)
         }
         for path in shellIntegrationTempPaths {
@@ -324,6 +339,48 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             let bytes: [UInt8] = [0x1B, 0x5B, 0x31, 0x33, 0x3B, 0x32, 0x75] // \e[13;2u
             self.terminalView.send(data: bytes[...])
             return nil // consume the event
+        }
+    }
+
+    // MARK: Arrow Key Fix
+
+    /// Installs a local event monitor that strips the `.numericPad` modifier
+    /// flag from regular arrow key events. macOS sets `.numericPad` on arrow
+    /// keys (keyCodes 123-126) even though they are not keypad keys. SwiftTerm
+    /// checks this flag and emits keypad-variant Kitty keyboard sequences
+    /// (KP_Up/KP_Down/KP_Left/KP_Right) that TUI apps don't recognize.
+    private func setupArrowKeyFix() {
+        arrowKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+
+            // Only fix events targeting our terminal view.
+            guard self.window?.firstResponder === self.terminalView else {
+                return event
+            }
+
+            // Only fix regular arrow keys that macOS incorrectly flags as numericPad.
+            guard Self.arrowKeyCodes.contains(event.keyCode),
+                  event.modifierFlags.contains(.numericPad) else {
+                return event
+            }
+
+            // Create a new event without the .numericPad flag so SwiftTerm
+            // sends regular (non-keypad) arrow escape sequences.
+            guard let fixed = NSEvent.keyEvent(
+                with: event.type,
+                location: event.locationInWindow,
+                modifierFlags: event.modifierFlags.subtracting(.numericPad),
+                timestamp: event.timestamp,
+                windowNumber: event.windowNumber,
+                context: nil,
+                characters: event.characters ?? "",
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                isARepeat: event.isARepeat,
+                keyCode: event.keyCode
+            ) else {
+                return event
+            }
+            return fixed
         }
     }
 

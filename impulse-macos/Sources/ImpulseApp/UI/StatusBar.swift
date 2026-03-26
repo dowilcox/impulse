@@ -272,8 +272,13 @@ final class StatusBar: NSView {
         guard let info = note.userInfo,
               let version = info["version"] as? String,
               let url = info["url"] as? String else { return }
+        let currentVersion = info["currentVersion"] as? String
         updateURL = url
-        updateButton.title = "⬆ Update v\(version)"
+        if let current = currentVersion {
+            updateButton.title = "⬆ v\(current) → v\(version)"
+        } else {
+            updateButton.title = "⬆ Update v\(version)"
+        }
         updateButton.toolTip = "Click to open release page"
         updateButton.isHidden = false
     }

@@ -557,7 +557,7 @@ final class ImpulseCore {
     ///
     /// Returns `(version, url)` if a new version is available, or `nil` if
     /// up-to-date, checked recently, or on error.
-    static func checkForUpdate() -> (version: String, url: String)? {
+    static func checkForUpdate() -> (version: String, currentVersion: String, url: String)? {
         guard let raw = CImpulseFFI.impulse_check_for_update() else { return nil }
         let result = String(cString: raw)
         impulse_free_string(raw)
@@ -565,8 +565,9 @@ final class ImpulseCore {
         guard let data = result.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
               let version = json["version"],
+              let currentVersion = json["current_version"],
               let url = json["url"] else { return nil }
-        return (version, url)
+        return (version, currentVersion, url)
     }
 
     /// Return the current application version.

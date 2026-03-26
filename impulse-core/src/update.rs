@@ -19,6 +19,7 @@ struct GitHubRelease {
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub version: String,
+    pub current_version: String,
     pub url: String,
 }
 
@@ -120,11 +121,23 @@ pub fn check_for_update() -> Result<Option<UpdateInfo>, String> {
             .strip_prefix('v')
             .unwrap_or(&release.tag_name)
             .to_string();
+        log::info!(
+            "Update available: {} -> {} (current: {})",
+            CURRENT_VERSION,
+            version,
+            CURRENT_VERSION
+        );
         Ok(Some(UpdateInfo {
             version,
+            current_version: CURRENT_VERSION.to_string(),
             url: release.html_url,
         }))
     } else {
+        log::info!(
+            "No update available (current: {}, latest: {})",
+            CURRENT_VERSION,
+            release.tag_name
+        );
         Ok(None)
     }
 }

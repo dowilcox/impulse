@@ -163,9 +163,9 @@ impl StatusBar {
         self.preview_button.remove_css_class("previewing");
     }
 
-    pub fn show_update(&self, version: &str, url: &str) {
+    pub fn show_update(&self, version: &str, current_version: &str, url: &str) {
         self.update_button
-            .set_label(&format!("⬆ Update v{}", version));
+            .set_label(&format!("⬆ v{} → v{}", current_version, version));
         self.update_button
             .set_tooltip_text(Some("Click to open release page"));
         self.update_button.set_visible(true);

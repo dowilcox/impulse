@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NotificationCenter.default.post(
                         name: .impulseUpdateAvailable,
                         object: nil,
-                        userInfo: ["version": update.version, "url": update.url])
+                        userInfo: ["version": update.version, "currentVersion": update.currentVersion, "url": update.url])
                 }
             }
         }

@@ -1442,17 +1442,17 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Check for updates in background if enabled.
     if settings.borrow().check_for_updates {
-        let result = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String, String)>));
         let result_writer = std::sync::Arc::clone(&result);
         std::thread::spawn(move || {
             if let Ok(Some(info)) = impulse_core::update::check_for_update() {
-                *result_writer.lock().unwrap() = Some((info.version, info.url));
+                *result_writer.lock().unwrap() = Some((info.version, info.current_version, info.url));
             }
         });
         let status_bar_for_update = Rc::clone(&status_bar);
         gtk4::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
-            if let Some((version, url)) = result.lock().unwrap().take() {
-                status_bar_for_update.borrow().show_update(&version, &url);
+            if let Some((version, current_version, url)) = result.lock().unwrap().take() {
+                status_bar_for_update.borrow().show_update(&version, &current_version, &url);
                 return gtk4::glib::ControlFlow::Break;
             }
             gtk4::glib::ControlFlow::Continue

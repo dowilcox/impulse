@@ -1213,6 +1213,7 @@ pub extern "C" fn impulse_check_for_update() -> *mut c_char {
             Ok(Some(info)) => {
                 let json = serde_json::json!({
                     "version": info.version,
+                    "current_version": info.current_version,
                     "url": info.url,
                 });
                 to_c_string(&json.to_string())
