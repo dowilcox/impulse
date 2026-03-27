@@ -1,35 +1,24 @@
 import SwiftUI
 import AppKit
 
-/// Tab bar at the top of the detail area.
+/// Tab bar styled like Finder: full-width pill tabs dividing the strip equally.
+/// Hidden when there is only one tab.
 struct TabBarView: View {
     var windowModel: WindowModel
     @State private var hoveredIndex: Int? = nil
 
     var body: some View {
-        tabStrip
-            .frame(maxWidth: .infinity)
-            .frame(height: 36)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Divider() }
-    }
-
-    // MARK: - Tab Strip
-
-    private var tabStrip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 1) {
-                    ForEach(windowModel.tabDisplayInfos) { tab in
-                        singleTab(tab)
-                            .id(tab.id)
-                    }
+        if windowModel.tabDisplayInfos.count > 1 {
+            HStack(spacing: 2) {
+                ForEach(windowModel.tabDisplayInfos) { tab in
+                    singleTab(tab)
+                        .id(tab.id)
                 }
-                .padding(.horizontal, 4)
             }
-            .onChange(of: windowModel.selectedTabIndex) { _, newValue in
-                withAnimation { proxy.scrollTo(newValue, anchor: .center) }
-            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .bottom) { Divider() }
         }
     }
 
@@ -39,49 +28,44 @@ struct TabBarView: View {
         let isSelected = tab.id == windowModel.selectedTabIndex
         let isHovered = hoveredIndex == tab.id
 
-        // Use a plain ZStack — the tap gesture is on the whole area,
-        // close button is an independent overlay.
-        return ZStack(alignment: .trailing) {
-            // Tab content — tapping anywhere selects the tab
-            HStack(spacing: 5) {
-                if let icon = tab.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 14, height: 14)
-                }
-
-                Text(tab.title)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        return HStack(spacing: 5) {
+            if let icon = tab.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 14, height: 14)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.leading, 10)
-            .padding(.trailing, tab.isPinned ? 10 : 26) // leave room for close
 
-            // Close button — independent from the tab tap
-            if !tab.isPinned && (isSelected || isHovered) {
+            Text(tab.title)
+                .font(.system(size: 11.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
+
+            // Close button — only on hover
+            if !tab.isPinned && isHovered {
                 Button(action: { windowModel.onTabClosed?(tab.id) }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .frame(width: 16, height: 16)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 6)
             }
         }
-        .frame(minWidth: 120, maxWidth: 200, minHeight: 36, maxHeight: 36)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 28)
         .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(isSelected ? Color.primary.opacity(0.08) : isHovered ? Color.primary.opacity(0.04) : .clear)
-                .padding(.vertical, 3)
-                .padding(.horizontal, 1)
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected
+                    ? Color.primary.opacity(0.12)
+                    : isHovered ? Color.primary.opacity(0.05) : .clear)
         )
         .foregroundStyle(isSelected ? .primary : .secondary)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 10))
         .simultaneousGesture(TapGesture().onEnded {
             windowModel.onTabSelected?(tab.id)
         })

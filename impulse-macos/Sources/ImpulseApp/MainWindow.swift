@@ -431,7 +431,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         window.center()
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unified
-        window.titlebarAppearsTransparent = false
+        window.titlebarSeparatorStyle = .none
+        window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         window.backgroundColor = theme.bgSurface
