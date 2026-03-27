@@ -1,30 +1,31 @@
 import SwiftUI
 import AppKit
 
-/// Wraps TabManager's contentView (the NSView that shows/hides tab content)
-/// in an NSViewRepresentable for embedding in SwiftUI.
-///
-/// Uses a stable container NSView so that SwiftUI view recreation doesn't
-/// disrupt the AppKit view hierarchy. TabManager continues to manage the
-/// terminal/editor NSView lifecycle internally.
+/// Container that syncs its child view's frame on every layout pass,
+/// ensuring SwiftTerm picks up the correct size immediately.
+private class ContentContainer: NSView {
+    override func layout() {
+        super.layout()
+        // After SwiftUI sets our frame, push it to the child.
+        if let child = subviews.first, child.frame != bounds {
+            child.frame = bounds
+        }
+    }
+}
+
+/// Wraps TabManager's contentView in an NSViewRepresentable for SwiftUI.
 struct ContentAreaRepresentable: NSViewRepresentable {
     let contentView: NSView
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        contentView.translatesAutoresizingMaskIntoConstraints = false
+        let container = ContentContainer()
+        contentView.translatesAutoresizingMaskIntoConstraints = true
+        contentView.autoresizingMask = [.width, .height]
+        contentView.frame = container.bounds
         container.addSubview(contentView)
-        NSLayoutConstraint.activate([
-            contentView.topAnchor.constraint(equalTo: container.topAnchor),
-            contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            contentView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
         return container
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // TabManager manages content internally; nothing to update here.
     }
 }
