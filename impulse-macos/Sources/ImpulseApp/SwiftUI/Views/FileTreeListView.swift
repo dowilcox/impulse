@@ -2,8 +2,6 @@ import SwiftUI
 import AppKit
 
 /// Displays the project file tree as a scrollable outline.
-/// Uses a recursive VStack approach instead of List+DisclosureGroup
-/// to avoid the known NSOutlineView/DisclosureGroup click conflict.
 struct FileTreeListView: View {
     var model: WindowModel
 
@@ -26,15 +24,12 @@ private struct FileNodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The row itself
             HStack(spacing: 0) {
-                // Indent
                 if depth > 0 {
                     Spacer()
                         .frame(width: CGFloat(depth) * 16)
                 }
 
-                // Disclosure indicator for directories
                 if node.isDirectory {
                     Image(systemName: node.isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .medium))
@@ -44,7 +39,7 @@ private struct FileNodeView: View {
                     Spacer().frame(width: 16)
                 }
 
-                FileTreeRow(node: node)
+                FileTreeRow(node: node, iconCache: model.iconCache)
             }
             .padding(.vertical, 3)
             .padding(.horizontal, 8)
@@ -63,7 +58,6 @@ private struct FileNodeView: View {
             }
             .contextMenu { nodeContextMenu(for: node) }
 
-            // Children (when expanded)
             if node.isDirectory && node.isExpanded, let children = node.children {
                 ForEach(children) { child in
                     FileNodeView(node: child, model: model, depth: depth + 1)
@@ -122,10 +116,10 @@ private struct FileNodeView: View {
     }
 }
 
-/// A single row in the file tree showing an icon, file name, and optional
-/// git status badge.
+/// A single row: themed icon + file name + git status badge.
 struct FileTreeRow: View {
     let node: FileTreeNode
+    var iconCache: IconCache?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -149,15 +143,22 @@ struct FileTreeRow: View {
 
     @ViewBuilder
     private var fileIcon: some View {
-        if node.isDirectory {
-            Image(systemName: node.isExpanded ? "folder.fill" : "folder.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(Color.accentColor)
-        } else {
-            let nsImage = NSWorkspace.shared.icon(forFile: node.path)
+        if let nsImage = iconCache?.icon(
+            filename: node.name,
+            isDirectory: node.isDirectory,
+            expanded: node.isExpanded
+        ) {
             Image(nsImage: nsImage)
                 .resizable()
                 .interpolation(.high)
+        } else if node.isDirectory {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.accentColor)
+        } else {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
         }
     }
 

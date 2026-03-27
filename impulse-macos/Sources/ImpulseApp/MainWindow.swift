@@ -412,6 +412,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         self.tabManager = TabManager(settings: settings, theme: theme, core: core)
         self.tabManager.windowModel = windowModel
         self.windowModel.theme = theme
+        self.windowModel.iconCache = tabManager.iconCache
         self.windowModel.showHiddenFiles = settings.sidebarShowHidden
         self.fileTreeView = FileTreeView()
         self.searchPanel = SearchPanel()
@@ -1234,6 +1235,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func handleThemeChange(_ newTheme: Theme) {
         theme = newTheme
         windowModel.theme = newTheme
+        windowModel.iconCache = tabManager.iconCache
 
         // Switch window chrome between light and dark appearance
         window?.appearance = NSAppearance(named: newTheme.isLight ? .aqua : .darkAqua)

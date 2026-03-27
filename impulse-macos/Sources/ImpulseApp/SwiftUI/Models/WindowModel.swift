@@ -73,6 +73,11 @@ final class WindowModel {
 
     var theme: Theme = ThemeManager.nord
 
+    // MARK: Icons
+
+    /// Shared icon cache for themed file/folder icons in the sidebar.
+    var iconCache: IconCache?
+
     // MARK: Callbacks (set by MainWindowController for SwiftUI → AppKit)
 
     var onTabSelected: ((Int) -> Void)?
