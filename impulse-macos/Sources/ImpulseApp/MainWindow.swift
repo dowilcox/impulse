@@ -732,18 +732,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     // MARK: - NSToolbarDelegate
 
     private static let toolbarSidebarToggle = NSToolbarItem.Identifier("sidebarToggle")
-    private static let toolbarMore = NSToolbarItem.Identifier("more")
+    private static let toolbarNewFile = NSToolbarItem.Identifier("newFile")
+    private static let toolbarNewFolder = NSToolbarItem.Identifier("newFolder")
+    private static let toolbarRefresh = NSToolbarItem.Identifier("refresh")
+    private static let toolbarCollapseAll = NSToolbarItem.Identifier("collapseAll")
+    private static let toolbarToggleHidden = NSToolbarItem.Identifier("toggleHidden")
     private static let toolbarNewTab = NSToolbarItem.Identifier("newTab")
     private static let toolbarSearch = NSToolbarItem.Identifier("search")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            // Sidebar area — items before .sidebarTrackingSeparator
-            // track the sidebar column width (like Notes/Finder).
             Self.toolbarSidebarToggle,
-            Self.toolbarMore,
             .sidebarTrackingSeparator,
-            // Detail area
+            Self.toolbarNewFile,
+            Self.toolbarNewFolder,
+            Self.toolbarRefresh,
+            Self.toolbarCollapseAll,
+            Self.toolbarToggleHidden,
             .flexibleSpace,
             Self.toolbarNewTab,
             Self.toolbarSearch,
@@ -767,6 +772,56 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             item.isBordered = true
             return item
 
+        case Self.toolbarNewFile:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")
+            item.label = "New File"
+            item.toolTip = "New File"
+            item.target = self
+            item.action = #selector(newFileAction(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarNewFolder:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")
+            item.label = "New Folder"
+            item.toolTip = "New Folder"
+            item.target = self
+            item.action = #selector(newFolderAction(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarRefresh:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
+            item.label = "Refresh"
+            item.toolTip = "Refresh File Tree"
+            item.target = self
+            item.action = #selector(refreshTreeAction(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarCollapseAll:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Collapse All")
+            item.label = "Collapse All"
+            item.toolTip = "Collapse All Folders"
+            item.target = self
+            item.action = #selector(collapseAllAction(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarToggleHidden:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: windowModel.showHiddenFiles ? "eye" : "eye.slash", accessibilityDescription: "Toggle Hidden Files")
+            item.label = "Hidden Files"
+            item.toolTip = windowModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
+            item.target = self
+            item.action = #selector(toggleHiddenAction(_:))
+            item.isBordered = true
+            return item
+
         case Self.toolbarNewTab:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
@@ -776,25 +831,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             item.action = #selector(toolbarNewTabClicked(_:))
             item.isBordered = true
             return item
-
-        case Self.toolbarMore:
-            let menuItem = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
-            menuItem.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
-            menuItem.label = "More"
-            menuItem.toolTip = "More Actions"
-            menuItem.isBordered = true
-            let menu = NSMenu()
-            menu.addItem(withTitle: "New File…", action: #selector(newFileAction(_:)), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "New Folder…", action: #selector(newFolderAction(_:)), keyEquivalent: "").target = self
-            menu.addItem(.separator())
-            menu.addItem(withTitle: "Refresh File Tree", action: #selector(refreshTreeAction(_:)), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "Collapse All", action: #selector(collapseAllAction(_:)), keyEquivalent: "").target = self
-            menu.addItem(.separator())
-            let hiddenItem = menu.addItem(withTitle: "Show Hidden Files", action: #selector(toggleHiddenAction(_:)), keyEquivalent: "")
-            hiddenItem.target = self
-            hiddenItem.state = windowModel.showHiddenFiles ? .on : .off
-            menuItem.menu = menu
-            return menuItem
 
         case Self.toolbarSearch:
             let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
@@ -860,25 +896,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func toggleHiddenAction(_ sender: Any?) {
-        fileTreeView.toggleHiddenFiles()
-        // Update the button icon to reflect the current state.
-        let svgName = fileTreeView.showHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
-        let sfName = fileTreeView.showHidden ? "eye" : "eye.slash"
-        toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
-            ?? NSImage(systemSymbolName: sfName, accessibilityDescription: "Toggle Hidden Files")
-        // Persist the setting.
-        settings.sidebarShowHidden = fileTreeView.showHidden
-        if let delegate = NSApp.delegate as? AppDelegate {
-            delegate.settings.sidebarShowHidden = fileTreeView.showHidden
+        // Use the WindowModel callback which rebuilds the SwiftUI tree + persists.
+        windowModel.onToggleHidden?()
+        // Update toolbar button icon and tooltip to reflect new state.
+        updateToggleHiddenToolbarItem()
+    }
+
+    /// Updates the toggle-hidden toolbar item icon to match current state.
+    private func updateToggleHiddenToolbarItem() {
+        guard let toolbar = window?.toolbar else { return }
+        for item in toolbar.items where item.itemIdentifier == Self.toolbarToggleHidden {
+            let showing = windowModel.showHiddenFiles
+            item.image = NSImage(systemSymbolName: showing ? "eye" : "eye.slash",
+                                 accessibilityDescription: "Toggle Hidden Files")
+            item.toolTip = showing ? "Hide Hidden Files" : "Show Hidden Files"
         }
     }
 
     @objc private func collapseAllAction(_ sender: Any?) {
-        fileTreeView.collapseAll()
+        windowModel.onCollapseAll?()
     }
 
     @objc private func refreshTreeAction(_ sender: Any?) {
-        fileTreeView.refreshTree()
+        windowModel.onRefreshTree?()
     }
 
     @objc private func newFileAction(_ sender: Any?) {
