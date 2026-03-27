@@ -2,13 +2,12 @@ import SwiftUI
 import AppKit
 
 /// Root SwiftUI view for the Impulse window. Uses NavigationSplitView for the
-/// standard macOS sidebar + detail layout, with toolbar items placed where
-/// Apple puts them (sidebar toggle by traffic lights, search in top-right,
-/// new tab button in toolbar).
+/// standard macOS sidebar + detail layout. Toolbar items are inline in
+/// SidebarView rather than via .toolbar {} (which doesn't propagate to
+/// NSToolbar when inside an NSHostingView).
 struct MainContentView: View {
     var windowModel: WindowModel
     let tabManagerContentView: NSView
-    @State private var searchText = ""
 
     var body: some View {
         NavigationSplitView {
@@ -23,20 +22,5 @@ struct MainContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search")
-        .onChange(of: searchText) { _, newValue in
-            if !newValue.isEmpty {
-                windowModel.sidebarPanel = .search
-                windowModel.searchQuery = newValue
-            }
-        }
-        .toolbar(id: "main") {
-            ToolbarItem(id: "newTab", placement: .primaryAction) {
-                Button(action: { windowModel.onNewTab?() }) {
-                    Label("New Tab", systemImage: "plus")
-                }
-                .help("New Terminal Tab")
-            }
-        }
     }
 }

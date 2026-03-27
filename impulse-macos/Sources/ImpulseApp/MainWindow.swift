@@ -136,7 +136,7 @@ private final class SidebarToggleButton: NSButton {
 ///   - An NSToolbar hosting the tab bar (via TabManager).
 ///
 /// Multiple windows can coexist; each owns its own TabManager and sidebar state.
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitViewDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitViewDelegate, NSToolbarDelegate {
 
     // MARK: - Titlebar Buttons
 
@@ -274,6 +274,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Manages the tab bar and tab content lifecycle.
     let tabManager: TabManager
+
+    /// Search field shown in the window toolbar (titlebar area).
+    private let toolbarSearchField: NSSearchField = {
+        let sf = NSSearchField()
+        sf.placeholderString = "Search"
+        sf.controlSize = .regular
+        sf.translatesAutoresizingMaskIntoConstraints = false
+        return sf
+    }()
 
     /// The status bar at the bottom of the content area.
     private let statusBar = StatusBar()
@@ -427,13 +436,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         window.backgroundColor = theme.bgSurface
 
-        // Attach an NSToolbar so SwiftUI's .toolbar {} items render
-        let toolbar = NSToolbar(identifier: "MainToolbar")
-        toolbar.displayMode = .iconOnly
-        window.toolbar = toolbar
-
         super.init(window: window)
         window.delegate = self
+
+        // Build an NSToolbar with delegate for titlebar items (like Apple apps).
+        // Must be set AFTER super.init so self is available as delegate.
+        let toolbar = NSToolbar(identifier: "MainToolbar")
+        toolbar.displayMode = .iconOnly
+        toolbar.delegate = self
+        window.toolbar = toolbar
 
         filesToggle.target = self
         filesToggle.action = #selector(filesToggleClicked(_:))
@@ -575,7 +586,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         windowModel.onPreviewToggle = { [weak self] in
             self?.previewButtonClicked(nil)
         }
-        windowModel.onOpenFile = { [weak self] path, line in
+        windowModel.onOpenFile = { path, line in
             NotificationCenter.default.post(
                 name: .impulseOpenFile,
                 object: nil,
@@ -583,15 +594,91 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             )
         }
         windowModel.onRefreshTree = { [weak self] in
-            self?.fileTreeView.refreshTree()
+            guard let self else { return }
+            let root = self.fileTreeRootPath
+            let showHidden = self.windowModel.showHiddenFiles
+            guard !root.isEmpty else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
+                FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.windowModel.fileTreeNodes = nodes
+                    self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
+                    self.fileTreeCacheInsert(key: root, nodes: nodes)
+                }
+            }
         }
         windowModel.onCollapseAll = { [weak self] in
-            self?.fileTreeView.collapseAll()
+            guard let self else { return }
+            func collapseRecursively(_ nodes: [FileTreeNode]) {
+                for node in nodes {
+                    if node.isDirectory && node.isExpanded {
+                        if let children = node.children {
+                            collapseRecursively(children)
+                        }
+                        node.isExpanded = false
+                    }
+                }
+            }
+            collapseRecursively(self.windowModel.fileTreeNodes)
         }
         windowModel.onToggleHidden = { [weak self] in
             guard let self else { return }
-            self.fileTreeView.toggleHiddenFiles()
-            self.windowModel.showHiddenFiles = self.fileTreeView.showHidden
+            self.windowModel.showHiddenFiles.toggle()
+            let showHidden = self.windowModel.showHiddenFiles
+            let root = self.fileTreeRootPath
+            self.settings.sidebarShowHidden = showHidden
+            if let delegate = NSApp.delegate as? AppDelegate {
+                delegate.settings.sidebarShowHidden = showHidden
+            }
+            guard !root.isEmpty else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
+                FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.windowModel.fileTreeNodes = nodes
+                    self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
+                    self.fileTreeView.showHidden = showHidden
+                    self.fileTreeCacheInsert(key: root, nodes: nodes)
+                }
+            }
+        }
+        windowModel.onNewFile = { [weak self] (dirPath: String) in
+            guard let self, !dirPath.isEmpty else { return }
+            self.fileTreeView.showNameInputAlert(
+                title: "New File",
+                message: "Enter a name for the new file:",
+                placeholder: "untitled",
+                defaultValue: ""
+            ) { [weak self] name in
+                guard let self, !name.isEmpty, !name.contains("/") else { return }
+                let fullPath = (dirPath as NSString).appendingPathComponent(name)
+                let resolvedPath = (fullPath as NSString).standardizingPath
+                let resolvedDir = (dirPath as NSString).standardizingPath
+                guard resolvedPath.hasPrefix(resolvedDir) else { return }
+                guard FileManager.default.createFile(atPath: fullPath, contents: nil) else { return }
+                self.windowModel.onRefreshTree?()
+            }
+        }
+        windowModel.onNewFolder = { [weak self] (dirPath: String) in
+            guard let self, !dirPath.isEmpty else { return }
+            self.fileTreeView.showNameInputAlert(
+                title: "New Folder",
+                message: "Enter a name for the new folder:",
+                placeholder: "untitled-folder",
+                defaultValue: ""
+            ) { [weak self] name in
+                guard let self, !name.isEmpty, !name.contains("/") else { return }
+                let fullPath = (dirPath as NSString).appendingPathComponent(name)
+                let resolvedPath = (fullPath as NSString).standardizingPath
+                let resolvedDir = (dirPath as NSString).standardizingPath
+                guard resolvedPath.hasPrefix(resolvedDir) else { return }
+                try? FileManager.default.createDirectory(
+                    atPath: fullPath, withIntermediateDirectories: false)
+                self.windowModel.onRefreshTree?()
+            }
         }
 
         // Single NSHostingView replaces ALL AppKit chrome
@@ -610,24 +697,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Old AppKit sidebar components are kept alive but not displayed.
-        // They will be deleted in Phase 3. FileTreeView is still used for
-        // its data loading methods — just not rendered.
+        // Old AppKit sidebar components are kept alive for data-loading methods
+        // (FileTreeView.refreshTree, etc.) but not rendered. SwiftUI's
+        // NavigationSplitView handles sidebar visibility.
         sidebarContainer.isHidden = true
-        splitView.setPosition(0, ofDividerAt: 0)
-        updateSidebarToggleIcon()
-
-        // Defer sidebar restore so the window has laid out first.
-        if sidebarVisible {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.sidebarContainer.isHidden = false
-                self.splitView.setPosition(self.sidebarTargetWidth, ofDividerAt: 0)
-            }
-        }
-
-        // Content area has a minimum width so the sidebar cannot push it off screen.
-        contentContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     }
 
     // MARK: - NSSplitViewDelegate
@@ -653,6 +726,108 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func splitViewDidResizeSubviews(_ notification: Notification) {
         if !sidebarContainer.isHidden && sidebarContainer.frame.width > 0 {
             sidebarTargetWidth = sidebarContainer.frame.width
+        }
+    }
+
+    // MARK: - NSToolbarDelegate
+
+    private static let toolbarSidebarToggle = NSToolbarItem.Identifier("sidebarToggle")
+    private static let toolbarMore = NSToolbarItem.Identifier("more")
+    private static let toolbarNewTab = NSToolbarItem.Identifier("newTab")
+    private static let toolbarSearch = NSToolbarItem.Identifier("search")
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [
+            // Sidebar area — items before .sidebarTrackingSeparator
+            // track the sidebar column width (like Notes/Finder).
+            Self.toolbarSidebarToggle,
+            Self.toolbarMore,
+            .sidebarTrackingSeparator,
+            // Detail area
+            .flexibleSpace,
+            Self.toolbarNewTab,
+            Self.toolbarSearch,
+        ]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch itemIdentifier {
+
+        case Self.toolbarSidebarToggle:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
+            item.label = "Sidebar"
+            item.toolTip = "Toggle Sidebar"
+            item.target = self
+            item.action = #selector(toolbarSidebarToggle(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarNewTab:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
+            item.label = "New Tab"
+            item.toolTip = "New Terminal Tab"
+            item.target = self
+            item.action = #selector(toolbarNewTabClicked(_:))
+            item.isBordered = true
+            return item
+
+        case Self.toolbarMore:
+            let menuItem = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
+            menuItem.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
+            menuItem.label = "More"
+            menuItem.toolTip = "More Actions"
+            menuItem.isBordered = true
+            let menu = NSMenu()
+            menu.addItem(withTitle: "New File…", action: #selector(newFileAction(_:)), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "New Folder…", action: #selector(newFolderAction(_:)), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Refresh File Tree", action: #selector(refreshTreeAction(_:)), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Collapse All", action: #selector(collapseAllAction(_:)), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+            let hiddenItem = menu.addItem(withTitle: "Show Hidden Files", action: #selector(toggleHiddenAction(_:)), keyEquivalent: "")
+            hiddenItem.target = self
+            hiddenItem.state = windowModel.showHiddenFiles ? .on : .off
+            menuItem.menu = menu
+            return menuItem
+
+        case Self.toolbarSearch:
+            let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
+            item.searchField = toolbarSearchField
+            toolbarSearchField.target = self
+            toolbarSearchField.action = #selector(toolbarSearchChanged(_:))
+            return item
+
+        default:
+            return nil
+        }
+    }
+
+    @objc private func toolbarSidebarToggle(_ sender: Any?) {
+        NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: sender)
+    }
+
+    @objc private func toolbarNewTabClicked(_ sender: Any?) {
+        tabManager.addTerminalTab()
+    }
+
+    @objc private func toolbarSearchChanged(_ sender: NSSearchField) {
+        let query = sender.stringValue
+        windowModel.searchQuery = query
+        if query.isEmpty {
+            windowModel.sidebarPanel = .files
+        } else {
+            windowModel.sidebarPanel = .search
+            // Open sidebar if collapsed so search results are visible
+            if !sidebarVisible {
+                NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: nil)
+                sidebarVisible = true
+            }
         }
     }
 
@@ -967,6 +1142,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 gitBranch: branch,
                 shellName: shellName
             )
+            // Sync to SwiftUI
+            windowModel.shellName = shellName
+            windowModel.currentCwd = cwd
+            windowModel.gitBranch = branch
+            windowModel.cursorLine = nil
+            windowModel.cursorCol = nil
+            windowModel.currentLanguage = nil
+            windowModel.currentIndent = nil
+            windowModel.isPreviewable = false
+            windowModel.isPreviewing = false
+            windowModel.blameInfo = nil
         } else if let language = tabInfo.language {
             let cwd = tabInfo.cwd ?? ""
             let branch = cwd.isEmpty ? nil : gitBranch(forDirectory: cwd)
@@ -979,13 +1165,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 tabWidth: settings.tabWidth,
                 useSpaces: settings.useSpaces
             )
+            // Sync to SwiftUI
+            windowModel.shellName = ""
+            windowModel.currentCwd = cwd
+            windowModel.gitBranch = branch
+            windowModel.cursorLine = tabInfo.cursorLine
+            windowModel.cursorCol = tabInfo.cursorCol
+            windowModel.currentLanguage = language
+            windowModel.currentIndent = settings.useSpaces
+                ? "Spaces: \(settings.tabWidth)" : "Tab Size: \(settings.tabWidth)"
             // Show/hide preview button based on file type
             if let editor = tabManager.selectedEditor,
                let fp = editor.filePath,
                EditorTab.isPreviewableFile(fp) {
                 statusBar.showPreviewButton(isPreviewing: editor.isPreviewing)
+                windowModel.isPreviewable = true
+                windowModel.isPreviewing = editor.isPreviewing
             } else {
                 statusBar.hidePreviewButton()
+                windowModel.isPreviewable = false
+                windowModel.isPreviewing = false
             }
         }
     }
@@ -1480,6 +1679,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     tabWidth: self.settings.tabWidth,
                     useSpaces: self.settings.useSpaces
                 )
+                // Sync to SwiftUI
+                self.windowModel.cursorLine = Int(line)
+                self.windowModel.cursorCol = Int(col)
+                self.windowModel.currentCwd = cwd
+                self.windowModel.gitBranch = branch
+                self.windowModel.currentLanguage = editor.language
                 // Fetch blame asynchronously for the current line.
                 self.fetchBlame(filePath: filePath, line: UInt32(displayLine))
             }
@@ -2017,6 +2222,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         let themeJSON = markdownThemeJSON()
         if let isPreviewing = editor.togglePreview(themeJSON: themeJSON, bgColor: theme.bgHex) {
             statusBar.showPreviewButton(isPreviewing: isPreviewing)
+            windowModel.isPreviewing = isPreviewing
         }
     }
 
@@ -2140,16 +2346,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             fileTreeCacheInsert(key: fileTreeRootPath, nodes: fileTreeView.rootNodes)
         }
         fileTreeRootPath = dir
+        windowModel.fileTreeRootPath = dir
         searchPanel.setRootPath(dir)
         invalidateGitBranchCache()
 
         // Immediate UI update with no branch yet.
+        let shellName = ImpulseCore.getUserLoginShellName()
         if updateStatusBar {
             statusBar.updateForTerminal(
                 cwd: dir,
                 gitBranch: nil,
-                shellName: ImpulseCore.getUserLoginShellName()
+                shellName: shellName
             )
+            windowModel.currentCwd = dir
+            windowModel.gitBranch = nil
+            windowModel.shellName = shellName
         }
 
         // Show cached tree instantly if available. Skip git refresh since the
@@ -2177,8 +2388,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                     self.statusBar.updateForTerminal(
                         cwd: dir,
                         gitBranch: branch,
-                        shellName: ImpulseCore.getUserLoginShellName()
+                        shellName: shellName
                     )
+                    self.windowModel.currentCwd = dir
+                    self.windowModel.gitBranch = branch
                 }
             }
         }
@@ -2221,6 +2434,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     private func fetchBlame(filePath: String, line: UInt32) {
         guard !filePath.isEmpty else {
             statusBar.clearBlame()
+            windowModel.blameInfo = nil
             return
         }
         DispatchQueue.global(qos: .utility).async {
@@ -2231,9 +2445,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                    let author = blame["author"],
                    let date = blame["date"],
                    let summary = blame["summary"] {
-                    self.statusBar.updateBlame("\(author) \u{2022} \(date) \u{2022} \(summary)")
+                    let text = "\(author) \u{2022} \(date) \u{2022} \(summary)"
+                    self.statusBar.updateBlame(text)
+                    self.windowModel.blameInfo = text
                 } else {
                     self.statusBar.clearBlame()
+                    self.windowModel.blameInfo = nil
                 }
             }
         }

@@ -16,10 +16,8 @@ struct StatusBarView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .background(Color(model.theme.bgSurface))
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color(model.theme.border)).frame(height: 1)
-        }
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     // MARK: - Left Group
