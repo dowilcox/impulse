@@ -409,6 +409,9 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
     func applyTheme(_ theme: Theme) {
         guard let container = contentView as? NSVisualEffectView else { return }
         container.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
+        container.wantsLayer = true
+        container.layer?.borderWidth = 1
+        container.layer?.borderColor = theme.border.cgColor
         tableView.reloadData()
     }
 }

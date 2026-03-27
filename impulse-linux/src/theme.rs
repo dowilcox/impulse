@@ -5,6 +5,12 @@ pub struct ThemeColors {
     pub bg: &'static str,
     pub bg_dark: &'static str,
     pub bg_highlight: &'static str,
+    /// Darkest background layer — used for status bar, sidebar header, deepest panels.
+    pub bg_surface: &'static str,
+    /// Explicit border/separator color — sits between `bg_dark` and `bg_highlight`.
+    pub border: &'static str,
+    /// Primary UI accent — used for active tab underline, active sidebar tab, focus rings.
+    pub accent: &'static str,
     pub fg: &'static str,
     pub fg_dark: &'static str,
     pub cyan: &'static str,
@@ -46,9 +52,12 @@ impl ThemeColors {
 
 /// Kanagawa Wave — warm golden tones inspired by Hokusai's Great Wave (default).
 pub static KANAGAWA: ThemeColors = ThemeColors {
-    bg: "#1F1F28",
-    bg_dark: "#16161D",
-    bg_highlight: "#2A2A37",
+    bg: "#1a1a23",
+    bg_dark: "#141419",
+    bg_highlight: "#262633",
+    bg_surface: "#0f0f14",
+    border: "#1e1e2a",
+    accent: "#7AA89F",
     fg: "#DCD7BA",
     fg_dark: "#C8C093",
     cyan: "#7AA89F",
@@ -69,9 +78,12 @@ pub static KANAGAWA: ThemeColors = ThemeColors {
 
 /// Rosé Pine — muted pastels on warm dark purple, "soho vibes".
 pub static ROSE_PINE: ThemeColors = ThemeColors {
-    bg: "#191724",
-    bg_dark: "#1f1d2e",
-    bg_highlight: "#26233a",
+    bg: "#14121f",
+    bg_dark: "#0f0e19",
+    bg_highlight: "#211f30",
+    bg_surface: "#0a0914",
+    border: "#1a1828",
+    accent: "#9ccfd8",
     fg: "#e0def4",
     fg_dark: "#908caa",
     cyan: "#9ccfd8",
@@ -92,9 +104,12 @@ pub static ROSE_PINE: ThemeColors = ThemeColors {
 
 /// Nord — arctic, clean, minimal blue palette.
 pub static NORD: ThemeColors = ThemeColors {
-    bg: "#2E3440",
-    bg_dark: "#272C36",
-    bg_highlight: "#434C5E",
+    bg: "#282e3a",
+    bg_dark: "#222830",
+    bg_highlight: "#3b4455",
+    bg_surface: "#1b2028",
+    border: "#2e3542",
+    accent: "#88C0D0",
     fg: "#D8DEE9",
     fg_dark: "#E5E9F0",
     cyan: "#88C0D0",
@@ -115,9 +130,12 @@ pub static NORD: ThemeColors = ThemeColors {
 
 /// Gruvbox Dark — warm retro palette with earthy tones.
 pub static GRUVBOX: ThemeColors = ThemeColors {
-    bg: "#282828",
-    bg_dark: "#1d2021",
-    bg_highlight: "#3c3836",
+    bg: "#222222",
+    bg_dark: "#1a1a1a",
+    bg_highlight: "#353230",
+    bg_surface: "#131313",
+    border: "#2a2826",
+    accent: "#8ec07c",
     fg: "#ebdbb2",
     fg_dark: "#d5c4a1",
     cyan: "#8ec07c",
@@ -138,9 +156,12 @@ pub static GRUVBOX: ThemeColors = ThemeColors {
 
 /// Tokyo Night — cool blue-purple palette.
 pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
-    bg: "#1a1b26",
-    bg_dark: "#16161e",
-    bg_highlight: "#292e42",
+    bg: "#151620",
+    bg_dark: "#111119",
+    bg_highlight: "#242938",
+    bg_surface: "#0c0c13",
+    border: "#1a1b28",
+    accent: "#7dcfff",
     fg: "#c0caf5",
     fg_dark: "#a9b1d6",
     cyan: "#7dcfff",
@@ -161,9 +182,12 @@ pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
 
 /// Tokyo Night Storm — deeper blue-tinted variant of Tokyo Night.
 pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
-    bg: "#24283b",
-    bg_dark: "#1f2335",
-    bg_highlight: "#292e42",
+    bg: "#1e2235",
+    bg_dark: "#191c2e",
+    bg_highlight: "#252a3c",
+    bg_surface: "#131627",
+    border: "#1e2134",
+    accent: "#7dcfff",
     fg: "#c0caf5",
     fg_dark: "#a9b1d6",
     cyan: "#7dcfff",
@@ -184,9 +208,12 @@ pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
 
 /// Catppuccin Mocha — warm pastel palette on dark base.
 pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
-    bg: "#1e1e2e",
-    bg_dark: "#181825",
-    bg_highlight: "#313244",
+    bg: "#191928",
+    bg_dark: "#131320",
+    bg_highlight: "#2a2a3c",
+    bg_surface: "#0e0e19",
+    border: "#1f1f2e",
+    accent: "#94e2d5",
     fg: "#cdd6f4",
     fg_dark: "#bac2de",
     cyan: "#94e2d5",
@@ -207,9 +234,12 @@ pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
 
 /// Dracula — iconic purple-tinted dark theme with vibrant accents.
 pub static DRACULA: ThemeColors = ThemeColors {
-    bg: "#282a36",
-    bg_dark: "#21222c",
-    bg_highlight: "#44475a",
+    bg: "#22242f",
+    bg_dark: "#1b1c26",
+    bg_highlight: "#3b3e52",
+    bg_surface: "#14151d",
+    border: "#292b3a",
+    accent: "#8be9fd",
     fg: "#f8f8f2",
     fg_dark: "#8490b7",
     cyan: "#8be9fd",
@@ -230,9 +260,12 @@ pub static DRACULA: ThemeColors = ThemeColors {
 
 /// Solarized Dark — precision-engineered palette with balanced contrast.
 pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
-    bg: "#002b36",
-    bg_dark: "#001e26",
-    bg_highlight: "#073642",
+    bg: "#00242e",
+    bg_dark: "#001920",
+    bg_highlight: "#053340",
+    bg_surface: "#001018",
+    border: "#012a34",
+    accent: "#2aa198",
     fg: "#839496",
     fg_dark: "#748e97",
     cyan: "#2aa198",
@@ -253,9 +286,12 @@ pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
 
 /// One Dark — Atom-inspired balanced dark theme.
 pub static ONE_DARK: ThemeColors = ThemeColors {
-    bg: "#282c34",
-    bg_dark: "#21252b",
-    bg_highlight: "#2c313a",
+    bg: "#22262e",
+    bg_dark: "#1c1f25",
+    bg_highlight: "#282d36",
+    bg_surface: "#15181d",
+    border: "#21252c",
+    accent: "#56b6c2",
     fg: "#abb2bf",
     fg_dark: "#8c93a1",
     cyan: "#56b6c2",
@@ -276,9 +312,12 @@ pub static ONE_DARK: ThemeColors = ThemeColors {
 
 /// Ayu Dark — minimal dark theme with warm accent colors.
 pub static AYU_DARK: ThemeColors = ThemeColors {
-    bg: "#0b0e14",
-    bg_dark: "#07090d",
-    bg_highlight: "#131721",
+    bg: "#080b10",
+    bg_dark: "#05070b",
+    bg_highlight: "#101420",
+    bg_surface: "#020305",
+    border: "#0b0e16",
+    accent: "#73b8ff",
     fg: "#bfbdb6",
     fg_dark: "#797f8e",
     cyan: "#73b8ff",
@@ -299,9 +338,12 @@ pub static AYU_DARK: ThemeColors = ThemeColors {
 
 /// Everforest Dark — soft green tones inspired by nature.
 pub static EVERFOREST_DARK: ThemeColors = ThemeColors {
-    bg: "#2d353b",
-    bg_dark: "#272e33",
-    bg_highlight: "#3d484d",
+    bg: "#272e34",
+    bg_dark: "#21282d",
+    bg_highlight: "#353f44",
+    bg_surface: "#1a2025",
+    border: "#2c3338",
+    accent: "#83c092",
     fg: "#d3c6aa",
     fg_dark: "#9da9a0",
     cyan: "#83c092",
@@ -322,9 +364,12 @@ pub static EVERFOREST_DARK: ThemeColors = ThemeColors {
 
 /// GitHub Dark — GitHub's official dark theme.
 pub static GITHUB_DARK: ThemeColors = ThemeColors {
-    bg: "#0d1117",
-    bg_dark: "#010409",
-    bg_highlight: "#161b22",
+    bg: "#090d13",
+    bg_dark: "#050709",
+    bg_highlight: "#131820",
+    bg_surface: "#010203",
+    border: "#0a0f15",
+    accent: "#79c0ff",
     fg: "#e6edf3",
     fg_dark: "#8b949e",
     cyan: "#79c0ff",
@@ -345,9 +390,12 @@ pub static GITHUB_DARK: ThemeColors = ThemeColors {
 
 /// Monokai Pro — iconic warm dark theme with vibrant syntax colors.
 pub static MONOKAI_PRO: ThemeColors = ThemeColors {
-    bg: "#2d2a2e",
-    bg_dark: "#221f22",
-    bg_highlight: "#403e41",
+    bg: "#272428",
+    bg_dark: "#1e1b1e",
+    bg_highlight: "#38363a",
+    bg_surface: "#161416",
+    border: "#2c292c",
+    accent: "#78dce8",
     fg: "#fcfcfa",
     fg_dark: "#939293",
     cyan: "#78dce8",
@@ -368,9 +416,12 @@ pub static MONOKAI_PRO: ThemeColors = ThemeColors {
 
 /// Palenight — Material Design-inspired dark theme with purple tones.
 pub static PALENIGHT: ThemeColors = ThemeColors {
-    bg: "#292d3e",
-    bg_dark: "#1b1e2b",
-    bg_highlight: "#32374d",
+    bg: "#232738",
+    bg_dark: "#1a1d28",
+    bg_highlight: "#2d3246",
+    bg_surface: "#131520",
+    border: "#212435",
+    accent: "#89ddff",
     fg: "#a6accd",
     fg_dark: "#868bab",
     cyan: "#89ddff",
@@ -392,8 +443,11 @@ pub static PALENIGHT: ThemeColors = ThemeColors {
 /// Solarized Light — precision-engineered light palette with balanced contrast.
 pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
     bg: "#fdf6e3",
-    bg_dark: "#eee8d5",
+    bg_dark: "#f0eadb",
     bg_highlight: "#eee8d5",
+    bg_surface: "#e2dcc8",
+    border: "#d3ccb6",
+    accent: "#217e77",
     fg: "#657b83",
     fg_dark: "#576464",
     cyan: "#217e77",
@@ -415,8 +469,11 @@ pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
 /// Catppuccin Latte — warm pastel light theme.
 pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
     bg: "#eff1f5",
-    bg_dark: "#e6e9ef",
+    bg_dark: "#e4e7ed",
     bg_highlight: "#dce0e8",
+    bg_surface: "#d5d9e2",
+    border: "#c9cdd6",
+    accent: "#137a80",
     fg: "#4c4f69",
     fg_dark: "#65677c",
     cyan: "#137a80",
@@ -438,8 +495,11 @@ pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
 /// GitHub Light — GitHub's official light theme.
 pub static GITHUB_LIGHT: ThemeColors = ThemeColors {
     bg: "#ffffff",
-    bg_dark: "#f6f8fa",
-    bg_highlight: "#f0f2f4",
+    bg_dark: "#f4f6f8",
+    bg_highlight: "#eef0f3",
+    bg_surface: "#e6e9ed",
+    border: "#d4dae0",
+    accent: "#0969da",
     fg: "#1f2328",
     fg_dark: "#656d76",
     cyan: "#0a3069",
@@ -563,11 +623,12 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         /* --- Sidebar --- */
         .sidebar {{
             background-color: {bg_dark};
-            border-right: 1px solid {bg_highlight};
+            border-right: 1px solid {border};
         }}
         .sidebar-switcher {{
             padding: 6px 8px;
-            background-color: {bg_dark};
+            background-color: {bg_surface};
+            border-bottom: 1px solid {border};
         }}
         .sidebar-tab {{
             border-radius: 6px;
@@ -579,17 +640,19 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border: none;
             box-shadow: none;
             min-height: 26px;
+            transition: color 0.15s ease, background-color 0.15s ease;
         }}
         .sidebar-tab:hover {{
             color: {fg};
             background-color: {bg_highlight};
         }}
         .sidebar-tab-active {{
-            color: {cyan};
-            background-color: {bg_highlight};
+            color: {accent};
+            background-color: alpha({accent}, 0.15);
         }}
         .sidebar-project-header {{
             padding: 4px 8px;
+            background-color: {bg_surface};
         }}
         .sidebar-project-name {{
             font-size: 11px;
@@ -601,21 +664,29 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             min-width: 24px;
             min-height: 24px;
             padding: 2px;
+            border-radius: 4px;
+            transition: background-color 0.15s ease;
+        }}
+        .sidebar-toolbar-btn:hover {{
+            background-color: {bg_highlight};
         }}
         .file-tree {{
             background-color: transparent;
         }}
         .file-tree row {{
             padding: 0;
+            border-radius: 4px;
+            margin: 0 4px;
+            transition: background-color 0.1s ease;
         }}
         .file-tree row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.08);
         }}
         .file-tree row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.15);
         }}
         .sidebar-indent-guide {{
-            color: alpha({comment}, 0.25);
+            color: alpha({border}, 0.4);
         }}
         .file-entry {{
             padding: 0px 8px;
@@ -685,8 +756,11 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .search-result {{
             padding: 4px 10px;
         }}
+        .search-result {{
+            transition: background-color 0.1s ease;
+        }}
         .search-result:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.08);
         }}
         .search-result-path {{
             font-size: 11px;
@@ -698,16 +772,27 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Split pane dividers --- */
         paned > separator {{
-            background-color: {bg_highlight};
+            background-color: {border};
             min-width: 1px;
             min-height: 1px;
+            transition: min-width 0.15s ease, min-height 0.15s ease, background-color 0.15s ease;
+        }}
+        paned > separator:hover {{
+            background-color: {accent};
+            min-width: 3px;
+            min-height: 3px;
         }}
         /* --- Status bar --- */
         .status-bar {{
-            background-color: {bg_dark};
+            background-color: {bg_surface};
             padding: 2px 12px;
-            min-height: 24px;
-            border-top: 1px solid {bg_highlight};
+            min-height: 28px;
+            border-top: 1px solid {border};
+        }}
+        .status-bar-separator {{
+            background-color: alpha({border}, 0.4);
+            min-width: 1px;
+            margin: 5px 6px;
         }}
         .status-bar label {{
             font-size: 12px;
@@ -793,38 +878,44 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Header bar --- */
         headerbar {{
-            background-color: {bg_dark};
+            background-color: {bg_surface};
             box-shadow: none;
             min-height: 38px;
+            border-bottom: 1px solid {border};
         }}
         headerbar button {{
             color: {fg_dark};
+            transition: color 0.15s ease, background-color 0.15s ease;
         }}
         headerbar button:hover {{
-            color: {cyan};
+            color: {accent};
             background-color: {bg_highlight};
         }}
         tabbar {{
-            background-color: {bg_dark};
+            background-color: {bg_surface};
+            border-bottom: 1px solid {border};
         }}
         tabbar revealer > box {{
             box-shadow: none;
             padding: 0;
         }}
         tabbar tabbox {{
-            background-color: {bg_dark};
+            background-color: {bg_surface};
         }}
         tabbar tab {{
-            min-height: 32px;
-            padding: 0 8px;
-            background-color: {bg_dark};
+            min-height: 34px;
+            padding: 0 10px;
+            background-color: {bg_surface};
             color: {fg_dark};
-            border-radius: 6px 6px 0 0;
+            border-radius: 0;
+            border-bottom: 2px solid transparent;
             cursor: pointer;
+            transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }}
         tabbar tab:selected {{
             background-color: {bg};
-            color: {cyan};
+            color: {accent};
+            border-bottom: 2px solid {accent};
         }}
         tabbar tab:hover:not(:selected) {{
             background-color: {bg_highlight};
@@ -844,17 +935,22 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .quick-open {{
             background-color: {bg};
             border-radius: 8px;
-            border: 1px solid {bg_highlight};
+            border: 1px solid {border};
         }}
         .quick-open entry {{
             margin: 8px;
             font-size: 14px;
         }}
+        .quick-open list row {{
+            border-radius: 4px;
+            margin: 0 4px;
+            transition: background-color 0.1s ease;
+        }}
         .quick-open list row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.08);
         }}
         .quick-open list row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.15);
         }}
         .quick-open list row label {{
             padding: 6px 12px;
@@ -864,7 +960,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .terminal-search-bar {{
             background-color: {bg_dark};
             padding: 4px 8px;
-            border-bottom: 1px solid {bg_highlight};
+            border-bottom: 1px solid {border};
         }}
         .terminal-search-bar entry {{
             min-height: 28px;
@@ -881,18 +977,19 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Scrollbars --- */
         scrollbar slider {{
-            background-color: {comment};
-            border-radius: 3px;
-            min-width: 6px;
-            min-height: 6px;
+            background-color: {border};
+            border-radius: 4px;
+            min-width: 4px;
+            min-height: 4px;
+            transition: background-color 0.15s ease;
         }}
         scrollbar slider:hover {{
-            background-color: {fg_dark};
+            background-color: {comment};
         }}
         /* --- Project search panel --- */
         .project-search-panel {{
             background-color: {bg_dark};
-            border-top: 1px solid {bg_highlight};
+            border-top: 1px solid {border};
         }}
         .project-search-row {{
             padding: 4px 8px;
@@ -915,11 +1012,14 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .project-search-results {{
             background-color: transparent;
         }}
+        .project-search-results row {{
+            transition: background-color 0.1s ease;
+        }}
         .project-search-results row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.08);
         }}
         .project-search-results row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({accent}, 0.15);
         }}
         .project-search-file-header {{
             padding: 4px 8px;
@@ -951,6 +1051,9 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         bg_dark = theme.bg_dark,
         bg = theme.bg,
         bg_highlight = theme.bg_highlight,
+        bg_surface = theme.bg_surface,
+        border = theme.border,
+        accent = theme.accent,
         fg = theme.fg,
         fg_dark = theme.fg_dark,
         cyan = theme.cyan,

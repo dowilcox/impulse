@@ -16,10 +16,10 @@ private final class PointerOutlineView: NSOutlineView {
 /// rounded corners, giving the file tree a polished native appearance.
 private final class HoverRowView: NSTableRowView {
 
-    // Static cached colors to avoid per-frame NSColor allocation.
-    private static let guideColor = NSColor.white.withAlphaComponent(0.25)
-    private static let hoverColor = NSColor.white.withAlphaComponent(0.05)
-    private static let selectionColor = NSColor.white.withAlphaComponent(0.10)
+    // Theme-derived colors — set by FileTreeView when creating rows.
+    var guideColor: NSColor = NSColor.white.withAlphaComponent(0.25)
+    var hoverColor: NSColor = NSColor.white.withAlphaComponent(0.05)
+    var selectionColor: NSColor = NSColor.white.withAlphaComponent(0.10)
 
     var indentLevel: Int = 0
     private var isHovered = false
@@ -64,7 +64,7 @@ private final class HoverRowView: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {
         // Draw indent guide lines
         if indentLevel > 0 {
-            Self.guideColor.setFill()
+            guideColor.setFill()
             let indentPerLevel: CGFloat = 16
             // The outline view adds its own indentation offset; the guides should
             // align with the start of each indentation level relative to the row's
@@ -79,7 +79,7 @@ private final class HoverRowView: NSTableRowView {
         if isHovered && !isSelected {
             let inset = bounds.insetBy(dx: 4, dy: 1)
             let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
-            Self.hoverColor.setFill()
+            hoverColor.setFill()
             path.fill()
         }
     }
@@ -87,7 +87,7 @@ private final class HoverRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         let inset = bounds.insetBy(dx: 4, dy: 1)
         let path = NSBezierPath(roundedRect: inset, xRadius: 4, yRadius: 4)
-        Self.selectionColor.setFill()
+        selectionColor.setFill()
         path.fill()
     }
 }
@@ -110,6 +110,9 @@ final class FileTreeView: NSView {
 
     // Icon cache for themed file icons
     private var iconCache: IconCache?
+
+    // Current theme — used to set colors on HoverRowView instances.
+    private var currentTheme: Theme?
 
     // Path-to-node lookup for O(1) node search instead of O(n) tree walk.
     private var nodeByPath: [String: FileTreeNode] = [:]
@@ -375,6 +378,7 @@ final class FileTreeView: NSView {
 
     /// Re-apply theme colours so the sidebar background shows through.
     func applyTheme(_ theme: Theme) {
+        currentTheme = theme
         outlineView.backgroundColor = .clear
         if let cache = iconCache {
             cache.rebuild(theme: theme)
@@ -1342,6 +1346,12 @@ extension FileTreeView: NSOutlineViewDelegate {
             rowView = newRow
         }
         rowView.indentLevel = outlineView.level(forItem: item)
+        // Apply theme-derived colors for hover/selection/indent guides
+        if let theme = currentTheme {
+            rowView.hoverColor = theme.accent.withAlphaComponent(0.08)
+            rowView.selectionColor = theme.accent.withAlphaComponent(0.15)
+            rowView.guideColor = theme.border.withAlphaComponent(0.4)
+        }
         return rowView
     }
 

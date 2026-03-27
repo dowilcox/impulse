@@ -158,7 +158,7 @@ final class TabManager: NSObject {
     private(set) var selectedIndex: Int = -1
 
     /// The custom tab bar displayed in the titlebar for tab switching.
-    let tabBar: CustomTabBar
+    // CustomTabBar removed — SwiftUI TabBarView reads from windowModel
 
     /// Icon cache for themed file icons in tab bar.
     private(set) var iconCache: IconCache?
@@ -169,6 +169,9 @@ final class TabManager: NSObject {
     var settings: Settings
     private var theme: Theme
     private let core: ImpulseCore
+
+    /// Observable state for SwiftUI views. Set by MainWindowController.
+    weak var windowModel: WindowModel?
 
     /// Optional callback invoked instead of directly closing a tab. When set,
     /// `closeTabFromMenu` and `closeOtherTabsFromMenu` delegate to this
@@ -188,19 +191,13 @@ final class TabManager: NSObject {
         self.theme = theme
         self.core = core
 
-        tabBar = CustomTabBar()
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-
         iconCache = IconCache(theme: theme)
-        tabBar.pinIcon = iconCache?.toolbarIcon(name: "pin")
 
         contentView = NSView()
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = theme.bg.cgColor
 
         super.init()
-
-        tabBar.delegate = self
     }
 
     // MARK: - Adding Tabs
@@ -624,7 +621,7 @@ final class TabManager: NSObject {
         }
 
         selectedIndex = index
-        tabBar.selectTab(index: index)
+        syncToWindowModel()
 
         // Activate the new tab.
         let entry = tabs[index]
@@ -715,8 +712,6 @@ final class TabManager: NSObject {
         } else {
             iconCache = IconCache(theme: theme)
         }
-        tabBar.pinIcon = iconCache?.toolbarIcon(name: "pin")
-        tabBar.applyTheme(theme)
         rebuildSegments()
         for tab in tabs {
             tab.applyTheme(theme)
@@ -725,21 +720,30 @@ final class TabManager: NSObject {
 
     // MARK: - Segmented Control
 
-    /// Rebuilds the tab bar to match the current tab list.
+    /// Rebuilds the tab display to match the current tab list.
     private func rebuildSegments() {
-        let items = tabs.enumerated().map { (i, tab) in
-            TabItemData(title: tab.title, icon: tabIcon(for: tab), isPinned: pinnedTabs[i])
+        syncToWindowModel()
+    }
+
+    /// Push current tab state to the SwiftUI-observable WindowModel.
+    func syncToWindowModel() {
+        guard let ws = windowModel else { return }
+        let infos = tabs.enumerated().map { (i, tab) in
+            TabDisplayInfo(
+                id: i,
+                title: tab.title,
+                icon: tabIcon(for: tab),
+                isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
+                isTerminal: { if case .terminal = tab { return true } else { return false } }()
+            )
         }
-        tabBar.rebuild(tabs: items, selectedIndex: selectedIndex, theme: theme)
+        ws.refreshTabs(infos, selectedIndex: selectedIndex)
     }
 
     /// Updates tab labels to reflect current tab titles (e.g., after a
     /// terminal title change or editor save).
     func refreshSegmentLabels() {
-        let items = tabs.enumerated().map { (i, tab) in
-            TabItemData(title: tab.title, icon: tabIcon(for: tab), isPinned: pinnedTabs[i])
-        }
-        tabBar.updateLabels(tabs: items)
+        syncToWindowModel()
     }
 
     /// Returns the appropriate icon for a tab entry.
@@ -939,26 +943,3 @@ final class TabManager: NSObject {
     }
 }
 
-// MARK: - CustomTabBarDelegate
-
-extension TabManager: CustomTabBarDelegate {
-    func tabItemClicked(index: Int) {
-        selectTab(index: index)
-    }
-
-    func tabItemCloseClicked(index: Int) {
-        if let handler = tabCloseHandler {
-            handler(index)
-        } else {
-            closeTab(index: index)
-        }
-    }
-
-    func tabItemContextMenu(index: Int) -> NSMenu? {
-        return contextMenu(forTabIndex: index)
-    }
-
-    func tabItemMoved(from sourceIndex: Int, to destinationIndex: Int) {
-        moveTab(from: sourceIndex, to: destinationIndex)
-    }
-}

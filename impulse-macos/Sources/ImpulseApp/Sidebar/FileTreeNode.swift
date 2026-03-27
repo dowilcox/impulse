@@ -4,11 +4,28 @@ import Foundation
 
 /// Model node for the sidebar file tree. Each node represents a file or directory
 /// at a given path. Directory children are lazily loaded on first expansion.
-final class FileTreeNode {
+final class FileTreeNode: Identifiable {
 
     let name: String
     let path: String
     let isDirectory: Bool
+
+    /// Stable identity for SwiftUI (uses the full path).
+    var id: String { path }
+
+    /// Children accessor for SwiftUI's `List(items, children:)`.
+    /// Returns `nil` for files (no disclosure triangle).
+    /// For directories, loads children on first access if not yet loaded.
+    var swiftUIChildren: [FileTreeNode]? {
+        guard isDirectory else { return nil }
+        if children == nil {
+            // Eagerly load on first access so SwiftUI can display the tree.
+            // This runs synchronously but loadChildren is fast for most directories.
+            loadChildren(showHidden: true)
+        }
+        let kids = children ?? []
+        return kids.isEmpty ? nil : kids
+    }
 
     /// `nil` means not yet loaded. An empty array means loaded but the directory is empty.
     var children: [FileTreeNode]?

@@ -67,11 +67,19 @@ impl StatusBar {
         update_button.set_visible(false);
         update_button.set_cursor_from_name(Some("pointer"));
 
+        // Left group: shell, branch, cwd, blame
         widget.append(&shell_label);
         widget.append(&branch_label);
         widget.append(&cwd_label);
         widget.append(&blame_label);
         widget.append(&update_button);
+
+        // Separator between left and right groups
+        let sep = gtk4::Separator::new(gtk4::Orientation::Vertical);
+        sep.add_css_class("status-bar-separator");
+        widget.append(&sep);
+
+        // Right group: encoding, indent, language, cursor, preview
         widget.append(&encoding_label);
         widget.append(&indent_label);
         widget.append(&language_label);

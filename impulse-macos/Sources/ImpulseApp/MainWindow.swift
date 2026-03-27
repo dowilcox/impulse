@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import os.log
 
 // MARK: - Themed Split View
@@ -87,7 +88,7 @@ private final class SidebarToggleButton: NSButton {
 
     private func updateVisualState() {
         if isActive {
-            layer?.backgroundColor = bgHighlight.cgColor
+            layer?.backgroundColor = accentColor.withAlphaComponent(0.15).cgColor
             contentTintColor = accentColor
         } else if isHovered {
             layer?.backgroundColor = bgHighlight.cgColor
@@ -177,6 +178,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     private(set) var theme: Theme
 
+    /// Observable state shared with SwiftUI views.
+    let windowModel = WindowModel()
+
     private let tabBarContainer: NSView = {
         let v = NSView()
         v.wantsLayer = true
@@ -189,7 +193,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         v.wantsLayer = true
         return v
     }()
-    private let contentContainer = NSView()
+    private let contentContainer: NSView = {
+        let v = NSView()
+        v.wantsLayer = true
+        return v
+    }()
 
     /// The sidebar file tree using the NSOutlineView-based FileTreeView.
     private let fileTreeView: FileTreeView
@@ -226,6 +234,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// The project header row (toolbar buttons), hidden when Search is active.
     private let projectHeaderView: NSView = {
         let v = NSView()
+        v.wantsLayer = true
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
@@ -392,6 +401,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         self.sidebarVisible = settings.sidebarVisible
         self.sidebarTargetWidth = CGFloat(settings.sidebarWidth)
         self.tabManager = TabManager(settings: settings, theme: theme, core: core)
+        self.tabManager.windowModel = windowModel
+        self.windowModel.theme = theme
+        self.windowModel.showHiddenFiles = settings.sidebarShowHidden
         self.fileTreeView = FileTreeView()
         self.searchPanel = SearchPanel()
 
@@ -409,10 +421,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         window.minSize = NSSize(width: 600, height: 400)
         window.center()
         window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = AppState.isDev ? .visible : .hidden
+        window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = false
+        window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
-        window.backgroundColor = theme.bgDark
+        window.backgroundColor = theme.bgSurface
+
+        // Attach an NSToolbar so SwiftUI's .toolbar {} items render
+        let toolbar = NSToolbar(identifier: "MainToolbar")
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
 
         super.init(window: window)
         window.delegate = self
@@ -422,8 +440,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         filesToggle.isActive = true
         searchToggle.target = self
         searchToggle.action = #selector(searchToggleClicked(_:))
-        filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.cyan)
-        searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.cyan)
+        filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.accent)
+        searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.accent)
 
         // Set toolbar button icons from shared SVG icon cache, falling back to
         // SF Symbols if the cache hasn't loaded (e.g. missing bundle resources).
@@ -478,7 +496,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Apply initial theme to sidebar views and split divider.
         fileTreeView.applyTheme(theme)
         searchPanel.applyTheme(theme)
-        splitView.customDividerColor = theme.bgHighlight
+        splitView.customDividerColor = theme.border
 
         // Set initial root path for the file tree and search panel.
         // Always start at home; the sidebar will update once the terminal's CWD
@@ -497,6 +515,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 self.fileTreeView.updateTree(nodes: nodes, rootPath: rootPath)
                 self.fileTreeView.showHidden = showHidden
                 self.fileTreeCacheInsert(key: rootPath, nodes: nodes)
+                // Push to SwiftUI sidebar
+                self.windowModel.fileTreeNodes = nodes
+                self.windowModel.fileTreeRootPath = rootPath
             }
         }
         if settings.sidebarShowHidden {
@@ -534,157 +555,64 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     private func setupLayout() {
         guard let contentView = window?.contentView else { return }
 
-        // Main split: sidebar | content
-        splitView.isVertical = true
-        splitView.dividerStyle = .thin
-        splitView.delegate = self
-        splitView.translatesAutoresizingMaskIntoConstraints = false
+        // Wire SwiftUI callbacks → AppKit actions
+        windowModel.onTabSelected = { [weak self] index in
+            self?.tabManager.selectTab(index: index)
+        }
+        windowModel.onTabClosed = { [weak self] index in
+            if let handler = self?.tabManager.tabCloseHandler {
+                handler(index)
+            } else {
+                self?.tabManager.closeTab(index: index)
+            }
+        }
+        windowModel.onNewTab = { [weak self] in
+            self?.tabManager.addTerminalTab()
+        }
+        windowModel.onTabMoved = { [weak self] from, to in
+            self?.tabManager.moveTab(from: from, to: to)
+        }
+        windowModel.onPreviewToggle = { [weak self] in
+            self?.previewButtonClicked(nil)
+        }
+        windowModel.onOpenFile = { [weak self] path, line in
+            NotificationCenter.default.post(
+                name: .impulseOpenFile,
+                object: nil,
+                userInfo: ["path": path, "line": line as Any]
+            )
+        }
+        windowModel.onRefreshTree = { [weak self] in
+            self?.fileTreeView.refreshTree()
+        }
+        windowModel.onCollapseAll = { [weak self] in
+            self?.fileTreeView.collapseAll()
+        }
+        windowModel.onToggleHidden = { [weak self] in
+            guard let self else { return }
+            self.fileTreeView.toggleHiddenFiles()
+            self.windowModel.showHiddenFiles = self.fileTreeView.showHidden
+        }
 
-        // Sidebar: segmented control → project header → file tree / search panel
-        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        let sidebarModeStack = NSStackView(views: [filesToggle, searchToggle])
-        sidebarModeStack.orientation = .horizontal
-        sidebarModeStack.spacing = 6
-        sidebarModeStack.distribution = .fillEqually
-        sidebarModeStack.translatesAutoresizingMaskIntoConstraints = false
-
-        // Project header: project name label + toolbar buttons (new file, new folder, hidden, refresh, collapse)
-        let toolbarStack = NSStackView(views: [newFileButton, newFolderButton, toggleHiddenButton, refreshButton, collapseAllButton])
-        toolbarStack.orientation = .horizontal
-        toolbarStack.spacing = 2
-        toolbarStack.translatesAutoresizingMaskIntoConstraints = false
-
-        projectHeaderView.addSubview(toolbarStack)
-
-        NSLayoutConstraint.activate([
-            toolbarStack.trailingAnchor.constraint(equalTo: projectHeaderView.trailingAnchor, constant: -8),
-            toolbarStack.centerYAnchor.constraint(equalTo: projectHeaderView.centerYAnchor),
-
-            newFileButton.widthAnchor.constraint(equalToConstant: 24),
-            newFolderButton.widthAnchor.constraint(equalToConstant: 24),
-            toggleHiddenButton.widthAnchor.constraint(equalToConstant: 24),
-            refreshButton.widthAnchor.constraint(equalToConstant: 24),
-            collapseAllButton.widthAnchor.constraint(equalToConstant: 24),
-
-            projectHeaderView.heightAnchor.constraint(equalToConstant: 24),
-        ])
-
-        fileTreeView.translatesAutoresizingMaskIntoConstraints = false
-        searchPanel.translatesAutoresizingMaskIntoConstraints = false
-        searchPanel.isHidden = true
-
-        sidebarContainer.addSubview(sidebarModeStack)
-        sidebarContainer.addSubview(projectHeaderView)
-        sidebarContainer.addSubview(fileTreeView)
-        sidebarContainer.addSubview(searchPanel)
-
-        NSLayoutConstraint.activate([
-            sidebarModeStack.topAnchor.constraint(equalTo: sidebarContainer.safeAreaLayoutGuide.topAnchor, constant: 10),
-            sidebarModeStack.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor, constant: 10),
-            sidebarModeStack.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -10),
-
-            projectHeaderView.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 6),
-            projectHeaderView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            projectHeaderView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-
-            fileTreeView.topAnchor.constraint(equalTo: projectHeaderView.bottomAnchor, constant: 4),
-            fileTreeView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            fileTreeView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-            fileTreeView.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
-
-            searchPanel.topAnchor.constraint(equalTo: sidebarModeStack.bottomAnchor, constant: 6),
-            searchPanel.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            searchPanel.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-            searchPanel.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
-        ])
-
-        // Content area: terminal search bar + tab content + status bar
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        // Terminal search bar (hidden by default)
-        setupTerminalSearchBar()
-        contentContainer.addSubview(termSearchBar)
-
-        let tabContentView = tabManager.contentView
-        tabContentView.translatesAutoresizingMaskIntoConstraints = false
-
-        statusBar.translatesAutoresizingMaskIntoConstraints = false
-        statusBar.previewButton.target = self
-        statusBar.previewButton.action = #selector(previewButtonClicked(_:))
-
-        contentContainer.addSubview(tabContentView)
-
-        let searchHeight = termSearchBar.heightAnchor.constraint(equalToConstant: 0)
-        termSearchHeightConstraint = searchHeight
+        // Single NSHostingView replaces ALL AppKit chrome
+        let rootView = MainContentView(
+            windowModel: windowModel,
+            tabManagerContentView: tabManager.contentView
+        )
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(hostingView)
 
         NSLayoutConstraint.activate([
-            termSearchBar.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            termSearchBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            termSearchBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            searchHeight,
-
-            tabContentView.topAnchor.constraint(equalTo: termSearchBar.bottomAnchor),
-            tabContentView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            tabContentView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            tabContentView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            hostingView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            hostingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        splitView.addArrangedSubview(sidebarContainer)
-        splitView.addArrangedSubview(contentContainer)
-
-        // Tab bar container: below the titlebar safe area (in normal content space)
-        // so that mouse events are delivered through the standard responder chain
-        // without interference from the titlebar's event routing.
-        tabBarContainer.layer?.backgroundColor = theme.bgDark.cgColor
-        let tabSegment = tabManager.tabBar
-
-        tabBarContainer.addSubview(sidebarToggleButton)
-        tabBarContainer.addSubview(tabSegment)
-        tabBarContainer.addSubview(newTabButton)
-
-        contentView.addSubview(tabBarContainer)
-        contentView.addSubview(splitView)
-        contentView.addSubview(statusBar)
-
-        NSLayoutConstraint.activate([
-            // Pin to safe area top (below the titlebar) — clicks work reliably here
-            tabBarContainer.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
-            tabBarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            tabBarContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            tabBarContainer.heightAnchor.constraint(equalToConstant: 48),
-
-            // Sidebar toggle: left side, same height as tab items (34px)
-            sidebarToggleButton.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor, constant: 8),
-            sidebarToggleButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -10),
-            sidebarToggleButton.widthAnchor.constraint(equalToConstant: 34),
-            sidebarToggleButton.heightAnchor.constraint(equalToConstant: 34),
-
-            // Tab strip: fills between sidebar toggle and + button
-            tabSegment.leadingAnchor.constraint(equalTo: sidebarToggleButton.trailingAnchor, constant: 6),
-            tabSegment.topAnchor.constraint(equalTo: tabBarContainer.topAnchor),
-            tabSegment.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
-            tabSegment.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -6),
-
-            // New tab button: right side, vertically aligned with tab items
-            newTabButton.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor, constant: -8),
-            newTabButton.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor, constant: -13),
-            newTabButton.widthAnchor.constraint(equalToConstant: 28),
-            newTabButton.heightAnchor.constraint(equalToConstant: 28),
-
-            splitView.topAnchor.constraint(equalTo: tabBarContainer.bottomAnchor),
-            splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
-
-            // Status bar: full width, pinned to bottom of window
-            statusBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-
-        // Start with sidebar hidden; apply the saved state after layout
-        // so the split view has valid geometry when setPosition is called.
+        // Old AppKit sidebar components are kept alive but not displayed.
+        // They will be deleted in Phase 3. FileTreeView is still used for
+        // its data loading methods — just not rendered.
         sidebarContainer.isHidden = true
         splitView.setPosition(0, ofDividerAt: 0)
         updateSidebarToggleIcon()
@@ -1065,24 +993,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// Re-applies theme colors to all child views.
     func handleThemeChange(_ newTheme: Theme) {
         theme = newTheme
+        windowModel.theme = newTheme
 
         // Switch window chrome between light and dark appearance
         window?.appearance = NSAppearance(named: newTheme.isLight ? .aqua : .darkAqua)
 
-        // Window background — use bgDark so the titlebar blends with the tab bar
-        window?.backgroundColor = newTheme.bgDark
+        // Window background — use bgSurface so the titlebar blends with the tab bar
+        window?.backgroundColor = newTheme.bgSurface
 
         // Tab bar container and titlebar buttons
-        tabBarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
+        tabBarContainer.layer?.backgroundColor = newTheme.bgSurface.cgColor
         updateSidebarToggleIcon()
         newTabButton.contentTintColor = newTheme.fgDark
 
-        // Sidebar background
+        // Sidebar background — uses bgDark (one step lighter than bgSurface)
         sidebarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
 
         // Sidebar toggle buttons
-        filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
-        searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.cyan)
+        filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.accent)
+        searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.accent)
 
         // Sidebar toolbar buttons
         newFileButton.contentTintColor = newTheme.fgDark
@@ -1091,19 +1020,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         refreshButton.contentTintColor = newTheme.fgDark
         collapseAllButton.contentTintColor = newTheme.fgDark
 
+        // Project header area — deepest layer
+        projectHeaderView.layer?.backgroundColor = newTheme.bgSurface.cgColor
+
         // Sidebar views
         fileTreeView.applyTheme(newTheme)
         searchPanel.applyTheme(newTheme)
 
-        // Status bar + split view divider (same border color)
+        // Status bar + split view divider
         statusBar.applyTheme(newTheme)
-        splitView.customDividerColor = newTheme.bgHighlight
+        splitView.customDividerColor = newTheme.border
 
-        // Content background
+        // Content background — uses bg (lightest background for editor area)
         contentContainer.layer?.backgroundColor = newTheme.bg.cgColor
 
         // Terminal search bar
         termSearchBar.layer?.backgroundColor = newTheme.bgDark.cgColor
+        termSearchBar.layer?.borderWidth = 0
+        termSearchBar.layer?.borderColor = nil
+        // Add bottom border via a sublayer
+        applyTermSearchBarBorder(newTheme)
 
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
@@ -1115,6 +1051,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 editor.refreshPreview(themeJSON: themeJSON, bgColor: theme.bgHex)
             }
         }
+    }
+
+    private func applyTermSearchBarBorder(_ theme: Theme) {
+        // Remove any previous border sublayer
+        termSearchBar.layer?.sublayers?.removeAll(where: { $0.name == "bottomBorder" })
+        let border = CALayer()
+        border.name = "bottomBorder"
+        border.backgroundColor = theme.border.cgColor
+        border.frame = CGRect(x: 0, y: 0, width: termSearchBar.bounds.width, height: 1)
+        border.autoresizingMask = [.layerWidthSizable]
+        termSearchBar.layer?.addSublayer(border)
     }
 
     // MARK: - File Tree Cache (LRU)
@@ -2210,6 +2157,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         if let cached = fileTreeCache[dir] {
             fileTreeView.updateTree(nodes: cached, rootPath: dir, skipGitRefresh: true)
             fileTreeCacheTouch(key: dir)
+            windowModel.fileTreeNodes = cached
+            windowModel.fileTreeRootPath = dir
         }
 
         // Refresh from disk in the background.
@@ -2222,6 +2171,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 guard self.fileTreeRootPath == dir else { return }
                 self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
                 self.fileTreeCacheInsert(key: dir, nodes: nodes)
+                self.windowModel.fileTreeNodes = nodes
+                self.windowModel.fileTreeRootPath = dir
                 if updateStatusBar {
                     self.statusBar.updateForTerminal(
                         cwd: dir,

@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "ImpulseApp",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.11.2"),

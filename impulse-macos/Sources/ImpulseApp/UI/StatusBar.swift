@@ -47,7 +47,17 @@ final class StatusBar: NSView {
     }()
 
     /// The fixed status bar height.
-    static let barHeight: CGFloat = 26
+    static let barHeight: CGFloat = 28
+
+    /// Separator view between left and right label groups.
+    private let separatorView: NSView = {
+        let v = NSView()
+        v.wantsLayer = true
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        return v
+    }()
 
     // MARK: - Initialization
 
@@ -129,6 +139,7 @@ final class StatusBar: NSView {
             cwdLabel,
             blameLabel,
             updateButton,
+            separatorView,
             indentInfoLabel,
             encodingLabel,
             languageLabel,
@@ -251,8 +262,9 @@ final class StatusBar: NSView {
 
     /// Applies the given theme colors to the status bar and all labels.
     func applyTheme(_ theme: Theme) {
-        layer?.backgroundColor = theme.bgDark.cgColor
-        topBorder.layer?.backgroundColor = theme.bgHighlight.cgColor
+        layer?.backgroundColor = theme.bgSurface.cgColor
+        topBorder.layer?.backgroundColor = theme.border.cgColor
+        separatorView.layer?.backgroundColor = theme.border.withAlphaComponent(0.4).cgColor
 
         cwdLabel.textColor = theme.fg
         gitBranchLabel.textColor = theme.magenta
@@ -262,7 +274,7 @@ final class StatusBar: NSView {
         encodingLabel.textColor = theme.fgDark
         indentInfoLabel.textColor = theme.fgDark
         blameLabel.textColor = theme.fgDark
-        previewButton.applyTheme(borderColor: theme.green, bgDark: theme.bgDark)
+        previewButton.applyTheme(borderColor: theme.green, bgDark: theme.bgSurface)
         updateButton.contentTintColor = theme.yellow
     }
 

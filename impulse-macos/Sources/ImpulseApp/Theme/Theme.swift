@@ -71,6 +71,12 @@ struct Theme {
     let bg: NSColor
     let bgDark: NSColor
     let bgHighlight: NSColor
+    /// Darkest background layer — used for status bar, sidebar header, deepest panels.
+    let bgSurface: NSColor
+    /// Explicit border/separator color — sits between `bgDark` and `bgHighlight`.
+    let border: NSColor
+    /// Primary UI accent — used for active tab underline, active sidebar tab, focus rings.
+    let accent: NSColor
     let fg: NSColor
     let fgDark: NSColor
     let cyan: NSColor
@@ -91,6 +97,9 @@ struct Theme {
     var bgHex: String { bg.hexString }
     var bgDarkHex: String { bgDark.hexString }
     var bgHighlightHex: String { bgHighlight.hexString }
+    var bgSurfaceHex: String { bgSurface.hexString }
+    var borderHex: String { border.hexString }
+    var accentHex: String { accent.hexString }
     var fgHex: String { fg.hexString }
     var fgDarkHex: String { fgDark.hexString }
     var cyanHex: String { cyan.hexString }
@@ -171,9 +180,12 @@ enum ThemeManager {
 
     static let kanagawa = Theme(
         name: "kanagawa",
-        bg: NSColor(hex: "#1F1F28"),
-        bgDark: NSColor(hex: "#16161D"),
-        bgHighlight: NSColor(hex: "#2A2A37"),
+        bg: NSColor(hex: "#1a1a23"),
+        bgDark: NSColor(hex: "#141419"),
+        bgHighlight: NSColor(hex: "#262633"),
+        bgSurface: NSColor(hex: "#0f0f14"),
+        border: NSColor(hex: "#1e1e2a"),
+        accent: NSColor(hex: "#7AA89F"),
         fg: NSColor(hex: "#DCD7BA"),
         fgDark: NSColor(hex: "#C8C093"),
         cyan: NSColor(hex: "#7AA89F"),
@@ -196,9 +208,12 @@ enum ThemeManager {
 
     static let rosePine = Theme(
         name: "rose-pine",
-        bg: NSColor(hex: "#191724"),
-        bgDark: NSColor(hex: "#1f1d2e"),
-        bgHighlight: NSColor(hex: "#26233a"),
+        bg: NSColor(hex: "#14121f"),
+        bgDark: NSColor(hex: "#0f0e19"),
+        bgHighlight: NSColor(hex: "#211f30"),
+        bgSurface: NSColor(hex: "#0a0914"),
+        border: NSColor(hex: "#1a1828"),
+        accent: NSColor(hex: "#9ccfd8"),
         fg: NSColor(hex: "#e0def4"),
         fgDark: NSColor(hex: "#908caa"),
         cyan: NSColor(hex: "#9ccfd8"),
@@ -221,9 +236,12 @@ enum ThemeManager {
 
     static let nord = Theme(
         name: "nord",
-        bg: NSColor(hex: "#2E3440"),
-        bgDark: NSColor(hex: "#272C36"),
-        bgHighlight: NSColor(hex: "#434C5E"),
+        bg: NSColor(hex: "#282e3a"),
+        bgDark: NSColor(hex: "#222830"),
+        bgHighlight: NSColor(hex: "#3b4455"),
+        bgSurface: NSColor(hex: "#1b2028"),
+        border: NSColor(hex: "#2e3542"),
+        accent: NSColor(hex: "#88C0D0"),
         fg: NSColor(hex: "#D8DEE9"),
         fgDark: NSColor(hex: "#E5E9F0"),
         cyan: NSColor(hex: "#88C0D0"),
@@ -246,9 +264,12 @@ enum ThemeManager {
 
     static let gruvbox = Theme(
         name: "gruvbox",
-        bg: NSColor(hex: "#282828"),
-        bgDark: NSColor(hex: "#1d2021"),
-        bgHighlight: NSColor(hex: "#3c3836"),
+        bg: NSColor(hex: "#222222"),
+        bgDark: NSColor(hex: "#1a1a1a"),
+        bgHighlight: NSColor(hex: "#353230"),
+        bgSurface: NSColor(hex: "#131313"),
+        border: NSColor(hex: "#2a2826"),
+        accent: NSColor(hex: "#8ec07c"),
         fg: NSColor(hex: "#ebdbb2"),
         fgDark: NSColor(hex: "#d5c4a1"),
         cyan: NSColor(hex: "#8ec07c"),
@@ -271,9 +292,12 @@ enum ThemeManager {
 
     static let tokyoNight = Theme(
         name: "tokyo-night",
-        bg: NSColor(hex: "#1a1b26"),
-        bgDark: NSColor(hex: "#16161e"),
-        bgHighlight: NSColor(hex: "#292e42"),
+        bg: NSColor(hex: "#151620"),
+        bgDark: NSColor(hex: "#111119"),
+        bgHighlight: NSColor(hex: "#242938"),
+        bgSurface: NSColor(hex: "#0c0c13"),
+        border: NSColor(hex: "#1a1b28"),
+        accent: NSColor(hex: "#7dcfff"),
         fg: NSColor(hex: "#c0caf5"),
         fgDark: NSColor(hex: "#a9b1d6"),
         cyan: NSColor(hex: "#7dcfff"),
@@ -296,9 +320,12 @@ enum ThemeManager {
 
     static let tokyoNightStorm = Theme(
         name: "tokyo-night-storm",
-        bg: NSColor(hex: "#24283b"),
-        bgDark: NSColor(hex: "#1f2335"),
-        bgHighlight: NSColor(hex: "#292e42"),
+        bg: NSColor(hex: "#1e2235"),
+        bgDark: NSColor(hex: "#191c2e"),
+        bgHighlight: NSColor(hex: "#252a3c"),
+        bgSurface: NSColor(hex: "#131627"),
+        border: NSColor(hex: "#1e2134"),
+        accent: NSColor(hex: "#7dcfff"),
         fg: NSColor(hex: "#c0caf5"),
         fgDark: NSColor(hex: "#a9b1d6"),
         cyan: NSColor(hex: "#7dcfff"),
@@ -321,9 +348,12 @@ enum ThemeManager {
 
     static let catppuccinMocha = Theme(
         name: "catppuccin-mocha",
-        bg: NSColor(hex: "#1e1e2e"),
-        bgDark: NSColor(hex: "#181825"),
-        bgHighlight: NSColor(hex: "#313244"),
+        bg: NSColor(hex: "#191928"),
+        bgDark: NSColor(hex: "#131320"),
+        bgHighlight: NSColor(hex: "#2a2a3c"),
+        bgSurface: NSColor(hex: "#0e0e19"),
+        border: NSColor(hex: "#1f1f2e"),
+        accent: NSColor(hex: "#94e2d5"),
         fg: NSColor(hex: "#cdd6f4"),
         fgDark: NSColor(hex: "#bac2de"),
         cyan: NSColor(hex: "#94e2d5"),
@@ -346,9 +376,12 @@ enum ThemeManager {
 
     static let dracula = Theme(
         name: "dracula",
-        bg: NSColor(hex: "#282a36"),
-        bgDark: NSColor(hex: "#21222c"),
-        bgHighlight: NSColor(hex: "#44475a"),
+        bg: NSColor(hex: "#22242f"),
+        bgDark: NSColor(hex: "#1b1c26"),
+        bgHighlight: NSColor(hex: "#3b3e52"),
+        bgSurface: NSColor(hex: "#14151d"),
+        border: NSColor(hex: "#292b3a"),
+        accent: NSColor(hex: "#8be9fd"),
         fg: NSColor(hex: "#f8f8f2"),
         fgDark: NSColor(hex: "#8490b7"),
         cyan: NSColor(hex: "#8be9fd"),
@@ -371,9 +404,12 @@ enum ThemeManager {
 
     static let solarizedDark = Theme(
         name: "solarized-dark",
-        bg: NSColor(hex: "#002b36"),
-        bgDark: NSColor(hex: "#001e26"),
-        bgHighlight: NSColor(hex: "#073642"),
+        bg: NSColor(hex: "#00242e"),
+        bgDark: NSColor(hex: "#001920"),
+        bgHighlight: NSColor(hex: "#053340"),
+        bgSurface: NSColor(hex: "#001018"),
+        border: NSColor(hex: "#012a34"),
+        accent: NSColor(hex: "#2aa198"),
         fg: NSColor(hex: "#839496"),
         fgDark: NSColor(hex: "#748e97"),
         cyan: NSColor(hex: "#2aa198"),
@@ -396,9 +432,12 @@ enum ThemeManager {
 
     static let oneDark = Theme(
         name: "one-dark",
-        bg: NSColor(hex: "#282c34"),
-        bgDark: NSColor(hex: "#21252b"),
-        bgHighlight: NSColor(hex: "#2c313a"),
+        bg: NSColor(hex: "#22262e"),
+        bgDark: NSColor(hex: "#1c1f25"),
+        bgHighlight: NSColor(hex: "#282d36"),
+        bgSurface: NSColor(hex: "#15181d"),
+        border: NSColor(hex: "#21252c"),
+        accent: NSColor(hex: "#56b6c2"),
         fg: NSColor(hex: "#abb2bf"),
         fgDark: NSColor(hex: "#8c93a1"),
         cyan: NSColor(hex: "#56b6c2"),
@@ -421,9 +460,12 @@ enum ThemeManager {
 
     static let ayuDark = Theme(
         name: "ayu-dark",
-        bg: NSColor(hex: "#0b0e14"),
-        bgDark: NSColor(hex: "#07090d"),
-        bgHighlight: NSColor(hex: "#131721"),
+        bg: NSColor(hex: "#080b10"),
+        bgDark: NSColor(hex: "#05070b"),
+        bgHighlight: NSColor(hex: "#101420"),
+        bgSurface: NSColor(hex: "#020305"),
+        border: NSColor(hex: "#0b0e16"),
+        accent: NSColor(hex: "#73b8ff"),
         fg: NSColor(hex: "#bfbdb6"),
         fgDark: NSColor(hex: "#797f8e"),
         cyan: NSColor(hex: "#73b8ff"),
@@ -446,9 +488,12 @@ enum ThemeManager {
 
     static let everforestDark = Theme(
         name: "everforest-dark",
-        bg: NSColor(hex: "#2d353b"),
-        bgDark: NSColor(hex: "#272e33"),
-        bgHighlight: NSColor(hex: "#3d484d"),
+        bg: NSColor(hex: "#272e34"),
+        bgDark: NSColor(hex: "#21282d"),
+        bgHighlight: NSColor(hex: "#353f44"),
+        bgSurface: NSColor(hex: "#1a2025"),
+        border: NSColor(hex: "#2c3338"),
+        accent: NSColor(hex: "#83c092"),
         fg: NSColor(hex: "#d3c6aa"),
         fgDark: NSColor(hex: "#9da9a0"),
         cyan: NSColor(hex: "#83c092"),
@@ -471,9 +516,12 @@ enum ThemeManager {
 
     static let githubDark = Theme(
         name: "github-dark",
-        bg: NSColor(hex: "#0d1117"),
-        bgDark: NSColor(hex: "#010409"),
-        bgHighlight: NSColor(hex: "#161b22"),
+        bg: NSColor(hex: "#090d13"),
+        bgDark: NSColor(hex: "#050709"),
+        bgHighlight: NSColor(hex: "#131820"),
+        bgSurface: NSColor(hex: "#010203"),
+        border: NSColor(hex: "#0a0f15"),
+        accent: NSColor(hex: "#79c0ff"),
         fg: NSColor(hex: "#e6edf3"),
         fgDark: NSColor(hex: "#8b949e"),
         cyan: NSColor(hex: "#79c0ff"),
@@ -496,9 +544,12 @@ enum ThemeManager {
 
     static let monokaiPro = Theme(
         name: "monokai-pro",
-        bg: NSColor(hex: "#2d2a2e"),
-        bgDark: NSColor(hex: "#221f22"),
-        bgHighlight: NSColor(hex: "#403e41"),
+        bg: NSColor(hex: "#272428"),
+        bgDark: NSColor(hex: "#1e1b1e"),
+        bgHighlight: NSColor(hex: "#38363a"),
+        bgSurface: NSColor(hex: "#161416"),
+        border: NSColor(hex: "#2c292c"),
+        accent: NSColor(hex: "#78dce8"),
         fg: NSColor(hex: "#fcfcfa"),
         fgDark: NSColor(hex: "#939293"),
         cyan: NSColor(hex: "#78dce8"),
@@ -521,9 +572,12 @@ enum ThemeManager {
 
     static let palenight = Theme(
         name: "palenight",
-        bg: NSColor(hex: "#292d3e"),
-        bgDark: NSColor(hex: "#1b1e2b"),
-        bgHighlight: NSColor(hex: "#32374d"),
+        bg: NSColor(hex: "#232738"),
+        bgDark: NSColor(hex: "#1a1d28"),
+        bgHighlight: NSColor(hex: "#2d3246"),
+        bgSurface: NSColor(hex: "#131520"),
+        border: NSColor(hex: "#212435"),
+        accent: NSColor(hex: "#89ddff"),
         fg: NSColor(hex: "#a6accd"),
         fgDark: NSColor(hex: "#868bab"),
         cyan: NSColor(hex: "#89ddff"),
@@ -547,8 +601,11 @@ enum ThemeManager {
     static let solarizedLight = Theme(
         name: "solarized-light",
         bg: NSColor(hex: "#fdf6e3"),
-        bgDark: NSColor(hex: "#eee8d5"),
+        bgDark: NSColor(hex: "#f0eadb"),
         bgHighlight: NSColor(hex: "#eee8d5"),
+        bgSurface: NSColor(hex: "#e2dcc8"),
+        border: NSColor(hex: "#d3ccb6"),
+        accent: NSColor(hex: "#217e77"),
         fg: NSColor(hex: "#657b83"),
         fgDark: NSColor(hex: "#576464"),
         cyan: NSColor(hex: "#217e77"),
@@ -572,8 +629,11 @@ enum ThemeManager {
     static let catppuccinLatte = Theme(
         name: "catppuccin-latte",
         bg: NSColor(hex: "#eff1f5"),
-        bgDark: NSColor(hex: "#e6e9ef"),
+        bgDark: NSColor(hex: "#e4e7ed"),
         bgHighlight: NSColor(hex: "#dce0e8"),
+        bgSurface: NSColor(hex: "#d5d9e2"),
+        border: NSColor(hex: "#c9cdd6"),
+        accent: NSColor(hex: "#137a80"),
         fg: NSColor(hex: "#4c4f69"),
         fgDark: NSColor(hex: "#65677c"),
         cyan: NSColor(hex: "#137a80"),
@@ -597,8 +657,11 @@ enum ThemeManager {
     static let githubLight = Theme(
         name: "github-light",
         bg: NSColor(hex: "#ffffff"),
-        bgDark: NSColor(hex: "#f6f8fa"),
-        bgHighlight: NSColor(hex: "#f0f2f4"),
+        bgDark: NSColor(hex: "#f4f6f8"),
+        bgHighlight: NSColor(hex: "#eef0f3"),
+        bgSurface: NSColor(hex: "#e6e9ed"),
+        border: NSColor(hex: "#d4dae0"),
+        accent: NSColor(hex: "#0969da"),
         fg: NSColor(hex: "#1f2328"),
         fgDark: NSColor(hex: "#656d76"),
         cyan: NSColor(hex: "#0a3069"),
