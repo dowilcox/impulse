@@ -21,6 +21,11 @@ private struct FileNodeView: View {
     @Bindable var node: FileTreeNode
     var model: WindowModel
     let depth: Int
+    @State private var isHovered = false
+
+    private var isActiveFile: Bool {
+        !node.isDirectory && node.path == model.activeFilePath
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -43,7 +48,16 @@ private struct FileNodeView: View {
             }
             .padding(.vertical, 3)
             .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActiveFile
+                        ? Color.accentColor.opacity(0.2)
+                        : isHovered ? Color.primary.opacity(0.06) : Color.clear)
+            )
             .contentShape(Rectangle())
+            .onHover { hovering in
+                isHovered = hovering
+            }
             .onTapGesture {
                 if node.isDirectory {
                     withAnimation(.easeInOut(duration: 0.15)) {

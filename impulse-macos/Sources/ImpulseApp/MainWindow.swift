@@ -367,8 +367,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             let root = self.fileTreeRootPath
             let showHidden = self.windowModel.showHiddenFiles
             guard !root.isEmpty else { return }
+            // Collect expanded paths to restore after rebuild.
+            let expandedPaths = Self.collectExpandedPaths(self.windowModel.fileTreeNodes)
             DispatchQueue.global(qos: .userInitiated).async {
                 let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
+                // Restore expanded state and load children for expanded dirs.
+                Self.restoreExpandedPaths(expandedPaths, in: nodes, showHidden: showHidden)
                 FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -2077,6 +2081,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             updateToggleHiddenToolbarItem()
             if !fileTreeRootPath.isEmpty {
                 windowModel.onRefreshTree?()
+            }
+        }
+    }
+
+    // MARK: - File Tree Expansion Helpers
+
+    /// Collects paths of all expanded directories in the tree.
+    private static func collectExpandedPaths(_ nodes: [FileTreeNode]) -> Set<String> {
+        var paths = Set<String>()
+        for node in nodes {
+            if node.isDirectory && node.isExpanded {
+                paths.insert(node.path)
+                if let children = node.children {
+                    paths.formUnion(collectExpandedPaths(children))
+                }
+            }
+        }
+        return paths
+    }
+
+    /// Restores expanded state for directories whose paths are in the set.
+    /// Loads children for expanded dirs so the tree shows content.
+    private static func restoreExpandedPaths(_ paths: Set<String>, in nodes: [FileTreeNode], showHidden: Bool) {
+        for node in nodes where node.isDirectory && paths.contains(node.path) {
+            node.isExpanded = true
+            if !node.isLoaded {
+                node.loadChildren(showHidden: showHidden)
+            }
+            if let children = node.children {
+                restoreExpandedPaths(paths, in: children, showHidden: showHidden)
             }
         }
     }

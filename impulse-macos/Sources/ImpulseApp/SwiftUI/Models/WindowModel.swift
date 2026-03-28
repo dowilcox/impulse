@@ -42,8 +42,9 @@ final class WindowModel {
     var fileTreeNodes: [FileTreeNode] = []
     var fileTreeRootPath: String = ""
 
-    /// Path of the currently focused/highlighted node in the file tree.
-    var focusedNodePath: String? = nil
+    /// Path of the file currently open in the active editor tab.
+    /// Used to highlight the active file in the sidebar.
+    var activeFilePath: String? = nil
 
     // MARK: Search
 

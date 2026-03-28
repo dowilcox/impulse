@@ -738,6 +738,13 @@ final class TabManager: NSObject {
             )
         }
         ws.refreshTabs(infos, selectedIndex: selectedIndex)
+
+        // Update the active file path for sidebar highlighting.
+        if let editor = selectedEditor {
+            ws.activeFilePath = editor.filePath
+        } else {
+            ws.activeFilePath = nil
+        }
     }
 
     /// Updates tab labels to reflect current tab titles (e.g., after a
