@@ -130,6 +130,10 @@ struct Settings: Codable {
     // -- Editor (additional) --
     var editorLineHeight: Int
     var editorAutoClosingBrackets: String
+    var editorCursorSurroundingLines: Int
+    var editorSelectionHighlight: Bool
+    var editorOccurrencesHighlight: Bool
+    var editorWordBasedSuggestions: String
 
     // -- Sidebar --
     var sidebarShowHidden: Bool
@@ -192,6 +196,10 @@ struct Settings: Codable {
         case terminalBoldIsBright = "terminal_bold_is_bright"
         case editorLineHeight = "editor_line_height"
         case editorAutoClosingBrackets = "editor_auto_closing_brackets"
+        case editorCursorSurroundingLines = "editor_cursor_surrounding_lines"
+        case editorSelectionHighlight = "editor_selection_highlight"
+        case editorOccurrencesHighlight = "editor_occurrences_highlight"
+        case editorWordBasedSuggestions = "editor_word_based_suggestions"
         case sidebarShowHidden = "sidebar_show_hidden"
         case colorScheme = "color_scheme"
         case commandsOnSave = "commands_on_save"
@@ -244,6 +252,10 @@ struct Settings: Codable {
             terminalBoldIsBright: false,
             editorLineHeight: 0,
             editorAutoClosingBrackets: "languageDefined",
+            editorCursorSurroundingLines: 3,
+            editorSelectionHighlight: true,
+            editorOccurrencesHighlight: true,
+            editorWordBasedSuggestions: "matchingDocuments",
             sidebarShowHidden: false,
             colorScheme: "nord",
             commandsOnSave: [],
@@ -300,6 +312,10 @@ struct Settings: Codable {
         terminalBoldIsBright = (try? c.decode(Bool.self, forKey: .terminalBoldIsBright)) ?? d.terminalBoldIsBright
         editorLineHeight = (try? c.decode(Int.self, forKey: .editorLineHeight)) ?? d.editorLineHeight
         editorAutoClosingBrackets = (try? c.decode(String.self, forKey: .editorAutoClosingBrackets)) ?? d.editorAutoClosingBrackets
+        editorCursorSurroundingLines = (try? c.decode(Int.self, forKey: .editorCursorSurroundingLines)) ?? d.editorCursorSurroundingLines
+        editorSelectionHighlight = (try? c.decode(Bool.self, forKey: .editorSelectionHighlight)) ?? d.editorSelectionHighlight
+        editorOccurrencesHighlight = (try? c.decode(Bool.self, forKey: .editorOccurrencesHighlight)) ?? d.editorOccurrencesHighlight
+        editorWordBasedSuggestions = (try? c.decode(String.self, forKey: .editorWordBasedSuggestions)) ?? d.editorWordBasedSuggestions
         sidebarShowHidden = (try? c.decode(Bool.self, forKey: .sidebarShowHidden)) ?? d.sidebarShowHidden
         colorScheme = (try? c.decode(String.self, forKey: .colorScheme)) ?? d.colorScheme
         commandsOnSave = (try? c.decode([CommandOnSave].self, forKey: .commandsOnSave)) ?? d.commandsOnSave
@@ -323,6 +339,8 @@ struct Settings: Codable {
          terminalCopyOnSelect: Bool, terminalScrollOnOutput: Bool,
          terminalAllowHyperlink: Bool, terminalBoldIsBright: Bool,
          editorLineHeight: Int, editorAutoClosingBrackets: String,
+         editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
+         editorOccurrencesHighlight: Bool, editorWordBasedSuggestions: String,
          sidebarShowHidden: Bool, colorScheme: String,
          commandsOnSave: [CommandOnSave], customKeybindings: [CustomKeybinding],
          keybindingOverrides: [String: String], fileTypeOverrides: [FileTypeOverride],
@@ -366,6 +384,10 @@ struct Settings: Codable {
         self.terminalBoldIsBright = terminalBoldIsBright
         self.editorLineHeight = editorLineHeight
         self.editorAutoClosingBrackets = editorAutoClosingBrackets
+        self.editorCursorSurroundingLines = editorCursorSurroundingLines
+        self.editorSelectionHighlight = editorSelectionHighlight
+        self.editorOccurrencesHighlight = editorOccurrencesHighlight
+        self.editorWordBasedSuggestions = editorWordBasedSuggestions
         self.sidebarShowHidden = sidebarShowHidden
         self.colorScheme = colorScheme
         self.commandsOnSave = commandsOnSave

@@ -97,6 +97,10 @@ pub struct Settings {
     // ── Editor (additional) ──────────────────────────────────────────────
     pub editor_line_height: u32,
     pub editor_auto_closing_brackets: String,
+    pub editor_cursor_surrounding_lines: u32,
+    pub editor_selection_highlight: bool,
+    pub editor_occurrences_highlight: bool,
+    pub editor_word_based_suggestions: String,
 
     // ── Sidebar ────────────────────────────────────────────────────────
     pub sidebar_show_hidden: bool,
@@ -168,6 +172,10 @@ impl Default for Settings {
             // Editor (additional)
             editor_line_height: 0,
             editor_auto_closing_brackets: String::from("languageDefined"),
+            editor_cursor_surrounding_lines: 3,
+            editor_selection_highlight: true,
+            editor_occurrences_highlight: true,
+            editor_word_based_suggestions: String::from("matchingDocuments"),
 
             // Sidebar
             sidebar_show_hidden: false,

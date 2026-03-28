@@ -202,6 +202,14 @@ pub struct EditorOptions {
     pub line_height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_closing_brackets: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_surrounding_lines: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_highlight: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurrences_highlight: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_based_suggestions: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,6 +382,8 @@ pub struct MonacoThemeColors {
     pub scrollbar_slider_background: String,
     #[serde(rename = "scrollbarSlider.hoverBackground")]
     pub scrollbar_slider_hover_background: String,
+    #[serde(rename = "scrollbarSlider.activeBackground")]
+    pub scrollbar_slider_active_background: String,
     #[serde(rename = "impulse.diffAddedColor")]
     pub diff_added_color: String,
     #[serde(rename = "impulse.diffModifiedColor")]
@@ -617,6 +627,7 @@ mod tests {
                     minimap_background: "#1a1b26".to_string(),
                     scrollbar_slider_background: "#3b4261".to_string(),
                     scrollbar_slider_hover_background: "#545c7e".to_string(),
+                    scrollbar_slider_active_background: "#6a7094".to_string(),
                     diff_added_color: "#9ece6a".to_string(),
                     diff_modified_color: "#e0af68".to_string(),
                     diff_deleted_color: "#f7768e".to_string(),
@@ -664,6 +675,10 @@ mod tests {
                 cursor_blinking: None,
                 line_height: None,
                 auto_closing_brackets: None,
+                cursor_surrounding_lines: None,
+                selection_highlight: None,
+                occurrences_highlight: None,
+                word_based_suggestions: None,
             },
         };
         let json = serde_json::to_string(&cmd).unwrap();

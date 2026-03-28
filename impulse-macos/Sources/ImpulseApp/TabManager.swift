@@ -850,7 +850,11 @@ final class TabManager: NSObject {
             cursorStyle: settings.editorCursorStyle,
             cursorBlinking: settings.editorCursorBlinking,
             lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
-            autoClosingBrackets: settings.editorAutoClosingBrackets
+            autoClosingBrackets: settings.editorAutoClosingBrackets,
+            cursorSurroundingLines: UInt32(settings.editorCursorSurroundingLines),
+            selectionHighlight: settings.editorSelectionHighlight,
+            occurrencesHighlight: settings.editorOccurrencesHighlight,
+            wordBasedSuggestions: settings.editorWordBasedSuggestions
         )
     }
 

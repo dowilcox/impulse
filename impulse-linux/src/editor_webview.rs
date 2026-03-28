@@ -1064,6 +1064,10 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
             None
         },
         auto_closing_brackets: Some(settings.editor_auto_closing_brackets.clone()),
+        cursor_surrounding_lines: Some(settings.editor_cursor_surrounding_lines),
+        selection_highlight: Some(settings.editor_selection_highlight),
+        occurrences_highlight: Some(settings.editor_occurrences_highlight),
+        word_based_suggestions: Some(settings.editor_word_based_suggestions.clone()),
     }
 }
 
@@ -1363,6 +1367,7 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
             minimap_background: format!("#{}", strip(theme.bg_dark)),
             scrollbar_slider_background: format!("#{}40", strip(theme.comment)),
             scrollbar_slider_hover_background: format!("#{}80", strip(theme.comment)),
+            scrollbar_slider_active_background: format!("#{}A0", strip(theme.comment)),
             diff_added_color: format!("#{}", strip(theme.green)),
             diff_modified_color: format!("#{}", strip(theme.yellow)),
             diff_deleted_color: format!("#{}", strip(theme.red)),

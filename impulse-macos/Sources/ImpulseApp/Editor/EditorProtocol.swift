@@ -341,6 +341,10 @@ struct EditorOptions: Codable {
     var cursorBlinking: String?
     var lineHeight: UInt32?
     var autoClosingBrackets: String?
+    var cursorSurroundingLines: UInt32?
+    var selectionHighlight: Bool?
+    var occurrencesHighlight: Bool?
+    var wordBasedSuggestions: String?
 
     enum CodingKeys: String, CodingKey {
         case fontSize = "font_size"
@@ -364,6 +368,10 @@ struct EditorOptions: Codable {
         case cursorBlinking = "cursor_blinking"
         case lineHeight = "line_height"
         case autoClosingBrackets = "auto_closing_brackets"
+        case cursorSurroundingLines = "cursor_surrounding_lines"
+        case selectionHighlight = "selection_highlight"
+        case occurrencesHighlight = "occurrences_highlight"
+        case wordBasedSuggestions = "word_based_suggestions"
     }
 }
 
@@ -548,6 +556,7 @@ struct MonacoThemeColors: Codable {
     var minimapBackground: String
     var scrollbarSliderBackground: String
     var scrollbarSliderHoverBackground: String
+    var scrollbarSliderActiveBackground: String
     var diffAddedColor: String
     var diffModifiedColor: String
     var diffDeletedColor: String
@@ -568,6 +577,7 @@ struct MonacoThemeColors: Codable {
         case minimapBackground = "minimap.background"
         case scrollbarSliderBackground = "scrollbarSlider.background"
         case scrollbarSliderHoverBackground = "scrollbarSlider.hoverBackground"
+        case scrollbarSliderActiveBackground = "scrollbarSlider.activeBackground"
         case diffAddedColor = "impulse.diffAddedColor"
         case diffModifiedColor = "impulse.diffModifiedColor"
         case diffDeletedColor = "impulse.diffDeletedColor"

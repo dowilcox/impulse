@@ -771,6 +771,7 @@ extension Theme {
                 minimapBackground: bgDarkHex,
                 scrollbarSliderBackground: commentHex + "40",
                 scrollbarSliderHoverBackground: commentHex + "80",
+                scrollbarSliderActiveBackground: commentHex + "A0",
                 diffAddedColor: greenHex,
                 diffModifiedColor: yellowHex,
                 diffDeletedColor: redHex

@@ -9,29 +9,33 @@
     />
     <style>
       @font-face {
-        font-family: 'JetBrains Mono';
-        src: url('./fonts/jetbrains-mono/JetBrainsMono-Regular.ttf') format('truetype');
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Regular.ttf")
+          format("truetype");
         font-weight: 400;
         font-style: normal;
         font-display: swap;
       }
       @font-face {
-        font-family: 'JetBrains Mono';
-        src: url('./fonts/jetbrains-mono/JetBrainsMono-Bold.ttf') format('truetype');
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Bold.ttf")
+          format("truetype");
         font-weight: 700;
         font-style: normal;
         font-display: swap;
       }
       @font-face {
-        font-family: 'JetBrains Mono';
-        src: url('./fonts/jetbrains-mono/JetBrainsMono-Italic.ttf') format('truetype');
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Italic.ttf")
+          format("truetype");
         font-weight: 400;
         font-style: italic;
         font-display: swap;
       }
       @font-face {
-        font-family: 'JetBrains Mono';
-        src: url('./fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf') format('truetype');
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf")
+          format("truetype");
         font-weight: 700;
         font-style: italic;
         font-display: swap;
@@ -64,6 +68,14 @@
          .view-overlays (indent/bracket guides) shift together. */
       .monaco-editor .lines-content {
         padding-left: 8px !important;
+      }
+      /* Native-style overlay scrollbars: rounded, auto-fade */
+      .monaco-scrollable-element > .scrollbar > .slider {
+        border-radius: 5px;
+        transition: opacity 0.2s ease;
+      }
+      .monaco-scrollable-element > .scrollbar {
+        transition: opacity 0.3s ease;
       }
       /* Default diff gutter colors (overridden by theme) */
       .diff-gutter-added {

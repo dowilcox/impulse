@@ -178,6 +178,16 @@ require(["vs/editor/editor.main"], function () {
     cursorSmoothCaretAnimation: "on",
     stickyScroll: { enabled: false },
     padding: { top: 4 },
+    // Native-style overlay scrollbars: thin, no shadows, auto-fade via CSS
+    scrollbar: {
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+      verticalSliderSize: 10,
+      horizontalSliderSize: 10,
+      useShadows: false,
+      verticalHasArrows: false,
+      horizontalHasArrows: false,
+    },
     suggest: {
       showIcons: true,
       showStatusBar: true,
@@ -199,6 +209,12 @@ require(["vs/editor/editor.main"], function () {
     insertSpaces: true,
     formatOnPaste: false,
     formatOnType: false,
+    // Auto-rename matching HTML/JSX tags
+    linkedEditing: true,
+    // Hide line highlight when editor is not focused
+    renderLineHighlightOnlyWhenFocus: true,
+    // Keep context lines visible around cursor when scrolling
+    cursorSurroundingLines: 3,
   });
 
   // --- Content change listener (debounced) ---
@@ -672,6 +688,14 @@ function handleUpdateSettings(cmd) {
   if (opts.line_height != null) update.lineHeight = opts.line_height;
   if (opts.auto_closing_brackets != null)
     update.autoClosingBrackets = opts.auto_closing_brackets;
+  if (opts.cursor_surrounding_lines != null)
+    update.cursorSurroundingLines = opts.cursor_surrounding_lines;
+  if (opts.selection_highlight != null)
+    update.selectionHighlight = opts.selection_highlight;
+  if (opts.occurrences_highlight != null)
+    update.occurrencesHighlight = opts.occurrences_highlight;
+  if (opts.word_based_suggestions != null)
+    update.wordBasedSuggestions = opts.word_based_suggestions;
   editor.updateOptions(update);
 
   // Also update model options if tab settings changed
