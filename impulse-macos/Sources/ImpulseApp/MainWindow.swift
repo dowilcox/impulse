@@ -708,7 +708,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 NSLog("MainWindow: failed to create file at \(fullPath)")
                 return
             }
-            self.fileTreeView.refreshTree()
+            self.windowModel.onRefreshTree?()
         }
     }
 
@@ -733,7 +733,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 NSLog("MainWindow: failed to create folder at \(fullPath): \(error)")
                 return
             }
-            self.fileTreeView.refreshTree()
+            self.windowModel.onRefreshTree?()
         }
     }
 

@@ -146,7 +146,11 @@ private struct FileNodeView: View {
                 try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
                 model.onRefreshTree?()
             } catch {
-                NSLog("Rename failed: \(error)")
+                let errAlert = NSAlert()
+                errAlert.messageText = "Rename Failed"
+                errAlert.informativeText = error.localizedDescription
+                errAlert.alertStyle = .warning
+                errAlert.runModal()
             }
         }
 
@@ -158,7 +162,11 @@ private struct FileNodeView: View {
                 )
                 model.onRefreshTree?()
             } catch {
-                NSLog("Trash failed: \(error)")
+                let errAlert = NSAlert()
+                errAlert.messageText = "Move to Trash Failed"
+                errAlert.informativeText = error.localizedDescription
+                errAlert.alertStyle = .warning
+                errAlert.runModal()
             }
         }
     }

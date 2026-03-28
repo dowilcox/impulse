@@ -100,10 +100,7 @@ private struct TabDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        guard let from = draggedTabId, from != tabId else { return }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            windowModel.onTabMoved?(from, tabId)
-        }
+        // Visual reorder handled by performDrop, not here.
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
