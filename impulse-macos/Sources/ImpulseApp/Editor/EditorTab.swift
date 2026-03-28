@@ -455,30 +455,28 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return
         }
 
-        // Escape characters that are special inside a JS single-quoted string literal.
-        var escaped = jsonString
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
-            .replacingOccurrences(of: "\0", with: "\\0")
-            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
-            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
-
-        // Escape any remaining ASCII control characters (below U+0020) that
-        // were not covered above. These are invalid inside JS string literals
-        // and could cause syntax errors or injection issues.
-        var sanitized = ""
-        sanitized.reserveCapacity(escaped.count)
-        for scalar in escaped.unicodeScalars {
-            if scalar.value < 0x20 && scalar != "\n" && scalar != "\r" && scalar != "\t" {
-                sanitized += String(format: "\\u%04x", scalar.value)
-            } else {
-                sanitized += String(scalar)
+        // Single-pass escaper for JS single-quoted string literals.
+        // Avoids 7+ intermediate String allocations from chained replacingOccurrences.
+        var escaped = ""
+        escaped.reserveCapacity(jsonString.count)
+        for scalar in jsonString.unicodeScalars {
+            switch scalar {
+            case "\\": escaped += "\\\\"
+            case "'":  escaped += "\\'"
+            case "\n": escaped += "\\n"
+            case "\r": escaped += "\\r"
+            case "\t": escaped += "\\t"
+            case "\0": escaped += "\\0"
+            case "\u{2028}": escaped += "\\u2028"
+            case "\u{2029}": escaped += "\\u2029"
+            default:
+                if scalar.value < 0x20 {
+                    escaped += String(format: "\\u%04x", scalar.value)
+                } else {
+                    escaped += String(scalar)
+                }
             }
         }
-        escaped = sanitized
 
         let script = "impulseReceiveCommand('\(escaped)')"
         guard let webView else { return }

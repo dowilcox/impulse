@@ -116,51 +116,37 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
         .map_err(|e| format!("Diff failed: {}", e))?;
 
     let mut changed_lines = HashMap::new();
+    let mut deleted_lines: Vec<u32> = Vec::new();
 
-    diff.foreach(
-        &mut |_, _| true,
-        None,
-        None,
-        Some(&mut |_delta, _hunk, line| {
-            let origin = line.origin();
-            let new_lineno = line.new_lineno();
-            match origin {
-                '+' => {
-                    if let Some(lineno) = new_lineno {
-                        changed_lines.insert(lineno, DiffLineStatus::Added);
-                    }
-                }
-                '-' => {
-                    // Removed lines don't have new line numbers
-                    // We handle modifications in the second pass below
-                }
-                _ => {}
-            }
-            true
-        }),
-    )
-    .map_err(|e| format!("Diff iteration failed: {}", e))?;
-
-    // Second pass: re-classify lines in hunks with both additions and deletions as Modified.
-    // Also detect pure-deletion hunks (removed lines with no additions).
-    // We track hunk transitions via the hunk header in the line callback to avoid
-    // multiple mutable borrow issues with separate hunk_cb + line_cb closures.
+    // Single-pass diff: collect additions per hunk and classify them as Added or
+    // Modified depending on whether the hunk also has deletions. Pure-deletion
+    // hunks (no additions) are recorded in `deleted_lines`.
     let mut hunk_added: Vec<u32> = Vec::new();
     let mut hunk_removed_count: u32 = 0;
     let mut last_hunk_header: Option<(u32, u32, u32, u32)> = None;
-    let mut deleted_lines: Vec<u32> = Vec::new();
 
     let classify_hunk = |added: &mut Vec<u32>,
                          removed: &mut u32,
-                         lines: &mut std::collections::HashMap<u32, DiffLineStatus>,
+                         lines: &mut HashMap<u32, DiffLineStatus>,
                          deleted: &mut Vec<u32>,
                          hunk_header: &Option<(u32, u32, u32, u32)>| {
         if !added.is_empty() && *removed > 0 {
+            // Mixed hunk: first N additions (matching deletion count) are Modified,
+            // the rest are Added.
             let modify_count = added.len().min(*removed as usize);
-            for &lineno in added.iter().take(modify_count) {
-                lines.insert(lineno, DiffLineStatus::Modified);
+            for (i, &lineno) in added.iter().enumerate() {
+                if i < modify_count {
+                    lines.insert(lineno, DiffLineStatus::Modified);
+                } else {
+                    lines.insert(lineno, DiffLineStatus::Added);
+                }
             }
-        } else if added.is_empty() && *removed > 0 {
+        } else if !added.is_empty() {
+            // Pure addition hunk
+            for &lineno in added.iter() {
+                lines.insert(lineno, DiffLineStatus::Added);
+            }
+        } else if *removed > 0 {
             // Pure deletion hunk — anchor at the new-file line where the deletion occurred
             if let Some((_, _, new_start, _)) = hunk_header {
                 deleted.push(*new_start);
@@ -179,7 +165,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
             let current_hunk =
                 hunk.map(|h| (h.old_start(), h.old_lines(), h.new_start(), h.new_lines()));
             if current_hunk != last_hunk_header {
-                // New hunk - classify previous hunk's collected lines
+                // New hunk — classify previous hunk's collected lines
                 classify_hunk(
                     &mut hunk_added,
                     &mut hunk_removed_count,
@@ -204,7 +190,7 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
             true
         }),
     )
-    .map_err(|e| format!("Hunk analysis failed: {}", e))?;
+    .map_err(|e| format!("Diff iteration failed: {}", e))?;
 
     // Classify final hunk
     classify_hunk(

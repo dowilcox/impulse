@@ -64,7 +64,7 @@ struct SearchPanelView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(model.searchResults.enumerated()), id: \.offset) { _, result in
+                        ForEach(model.searchResults, id: \.stableId) { result in
                             SearchResultRow(result: result)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)

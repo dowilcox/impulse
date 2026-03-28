@@ -1,6 +1,7 @@
 use ignore::WalkBuilder;
 use regex::RegexBuilder;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -171,38 +172,46 @@ pub fn search_contents(
                 Err(_) => continue,
             };
 
-            let haystack = if case_sensitive {
-                line.clone()
+            // Avoid allocating a clone for case-sensitive search; borrow directly.
+            let haystack: Cow<str> = if case_sensitive {
+                Cow::Borrowed(&line)
             } else {
-                line.to_lowercase()
+                Cow::Owned(line.to_lowercase())
             };
 
             // Find all matches on this line, not just the first.
             // Use character-based column positions so that non-ASCII text
             // (and case-insensitive lowercasing that changes byte lengths)
             // reports correct columns.
-            let line_content: String = line.chars().take(500).collect();
+            let match_char_len = query.chars().count();
+            let mut line_content: Option<String> = None;
+            let mut prev_byte_pos: usize = 0;
+            let mut prev_char_pos: usize = 0;
+
             for (byte_pos, _) in haystack.match_indices(&query_match) {
                 if results.len() >= limit {
                     break;
                 }
 
-                // Convert byte offset in the haystack to a character offset.
-                let col_start_chars = haystack[..byte_pos].chars().count();
+                // Incrementally compute char offset from the last match position
+                // to avoid O(n) chars().count() from the start on every match.
+                let col_start_chars =
+                    prev_char_pos + haystack[prev_byte_pos..byte_pos].chars().count();
+                prev_byte_pos = byte_pos;
+                prev_char_pos = col_start_chars;
 
-                // For column_end, we need the character length of the match
-                // in the *original* line (not the lowercased haystack), because
-                // lowercasing can change character count for certain Unicode.
-                // The match length in characters from the original line is the
-                // same span of characters starting at col_start_chars.
-                let match_char_len = query.chars().count();
                 let col_end_chars = col_start_chars + match_char_len;
+
+                // Lazily compute truncated line content only when there's a match.
+                let content = line_content
+                    .get_or_insert_with(|| line.chars().take(500).collect())
+                    .clone();
 
                 results.push(SearchResult {
                     path: file_path.clone(),
                     name: file_name.clone(),
                     line_number: Some((line_idx + 1) as u32),
-                    line_content: Some(line_content.clone()),
+                    line_content: Some(content),
                     column_start: Some(col_start_chars as u32),
                     column_end: Some(col_end_chars as u32),
                     match_type: "content".to_string(),

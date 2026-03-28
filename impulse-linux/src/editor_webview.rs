@@ -23,6 +23,30 @@ use crate::lsp_completion::{
 use crate::settings::Settings;
 use crate::theme::ThemeColors;
 
+// Cache the last Monaco theme conversion to avoid rebuilding 50+ token rules
+// each time an editor tab is created with the same theme.
+thread_local! {
+    static MONACO_THEME_CACHE: RefCell<Option<(*const str, MonacoThemeDefinition)>> =
+        const { RefCell::new(None) };
+}
+
+fn theme_to_monaco_cached(theme: &ThemeColors) -> MonacoThemeDefinition {
+    // Use the theme's bg pointer as a cache key — each theme has a unique
+    // &'static str so pointer identity is safe.
+    let key = theme.bg as *const str;
+    MONACO_THEME_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((cached_key, ref cached_def)) = *cache {
+            if cached_key == key {
+                return cached_def.clone();
+            }
+        }
+        let def = theme_to_monaco(theme);
+        *cache = Some((key, def.clone()));
+        def
+    })
+}
+
 /// Handle for communicating with a Monaco editor running inside a WebView.
 pub struct MonacoEditorHandle {
     webview: webkit6::WebView,
@@ -215,7 +239,7 @@ impl MonacoEditorHandle {
     }
 
     pub fn set_theme(&self, theme: &ThemeColors) {
-        let definition = theme_to_monaco(theme);
+        let definition = theme_to_monaco_cached(theme);
         self.send_command(&EditorCommand::SetTheme {
             theme: Box::new(definition),
         });
@@ -461,7 +485,7 @@ impl MonacoEditorHandle {
         let is_ready = self.is_ready.clone();
         let watcher_cell = self._file_watcher.clone();
 
-        let timer_id = glib::timeout_add_local(Duration::from_millis(100), move || {
+        let timer_id = glib::timeout_add_local(Duration::from_millis(300), move || {
             if !changed.swap(false, Ordering::Relaxed) {
                 return glib::ControlFlow::Continue;
             }
@@ -749,7 +773,7 @@ where
 
         // Immediately send theme, settings, and file content.
         handle.send_command(&EditorCommand::SetTheme {
-            theme: Box::new(theme_to_monaco(theme)),
+            theme: Box::new(theme_to_monaco_cached(theme)),
         });
 
         let mut options = settings_to_editor_options(settings);
@@ -856,7 +880,7 @@ where
     let initial_content = content.to_string();
     let initial_language = language.to_string();
     let initial_settings = settings.clone();
-    let initial_theme = theme_to_monaco(theme);
+    let initial_theme = theme_to_monaco_cached(theme);
     let initial_indent_width = indent_width;
     let initial_use_spaces = use_spaces;
 

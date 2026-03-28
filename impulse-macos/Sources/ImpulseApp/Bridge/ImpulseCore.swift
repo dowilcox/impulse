@@ -16,6 +16,12 @@ struct SearchResult: Codable {
     let columnEnd: UInt32?
     let matchType: String
 
+    /// Stable identity for SwiftUI ForEach diffing. Combines path, line, and
+    /// column to uniquely identify each result without relying on array offset.
+    var stableId: String {
+        "\(path):\(lineNumber ?? 0):\(columnStart ?? 0)"
+    }
+
     enum CodingKeys: String, CodingKey {
         case path, name
         case lineNumber = "line_number"
