@@ -5,6 +5,7 @@ import os.log
 // MARK: - Themed Split View
 
 /// NSSplitView subclass that allows a custom divider color to match the app theme.
+/// Used by TerminalContainer for split terminal panes.
 final class ThemedSplitView: NSSplitView {
     var customDividerColor: NSColor? {
         didSet { needsDisplay = true }
@@ -12,16 +13,6 @@ final class ThemedSplitView: NSSplitView {
 
     override var dividerColor: NSColor {
         customDividerColor ?? super.dividerColor
-    }
-}
-
-// MARK: - Pointer Button
-
-/// NSButton subclass that shows a pointing hand cursor on hover.
-private final class PointerButton: NSButton {
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: .pointingHand)
     }
 }
 
@@ -55,7 +46,7 @@ private final class ImpulseWindow: NSWindow {
 ///   - An NSToolbar hosting the tab bar (via TabManager).
 ///
 /// Multiple windows can coexist; each owns its own TabManager and sidebar state.
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitViewDelegate, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: - State
 
@@ -71,24 +62,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
     /// Observable state shared with SwiftUI views.
     let windowModel = WindowModel()
-
-    private let tabBarContainer: NSView = {
-        let v = NSView()
-        v.wantsLayer = true
-        v.translatesAutoresizingMaskIntoConstraints = false
-        return v
-    }()
-    private let splitView = ThemedSplitView()
-    private let sidebarContainer: NSView = {
-        let v = NSView()
-        v.wantsLayer = true
-        return v
-    }()
-    private let contentContainer: NSView = {
-        let v = NSView()
-        v.wantsLayer = true
-        return v
-    }()
 
     /// The sidebar file tree using the NSOutlineView-based FileTreeView.
     private let fileTreeView: FileTreeView
@@ -278,11 +251,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         setupNotificationObservers()
         setupCustomKeybindingMonitor()
 
-        // Apply initial theme to sidebar views and split divider.
-        fileTreeView.applyTheme(theme)
-        searchPanel.applyTheme(theme)
-        splitView.customDividerColor = theme.border
-
         // Set initial root path for the file tree and search panel.
         // Always start at home; the sidebar will update once the terminal's CWD
         // is detected via OSC 7.
@@ -470,36 +438,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Old AppKit sidebar components are kept alive for data-loading methods
-        // (FileTreeView.refreshTree, etc.) but not rendered. SwiftUI's
-        // NavigationSplitView handles sidebar visibility.
-        sidebarContainer.isHidden = true
-    }
-
-    // MARK: - NSSplitViewDelegate
-
-    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        if dividerIndex == 0 {
-            return 150 // minimum sidebar width
-        }
-        return proposedMinimumPosition
-    }
-
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        if dividerIndex == 0 {
-            return min(proposedMaximumPosition, splitView.frame.width - 400)
-        }
-        return proposedMaximumPosition
-    }
-
-    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
-        return subview === sidebarContainer
-    }
-
-    func splitViewDidResizeSubviews(_ notification: Notification) {
-        if !sidebarContainer.isHidden && sidebarContainer.frame.width > 0 {
-            sidebarTargetWidth = sidebarContainer.frame.width
-        }
     }
 
     // MARK: - NSToolbarDelegate
@@ -691,14 +629,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     // MARK: - Actions
-
-    @objc private func toggleSidebarAction(_ sender: Any?) {
-        toggleSidebar()
-    }
-
-    @objc private func newTabAction(_ sender: Any?) {
-        tabManager.addTerminalTab()
-    }
 
     @objc private func toggleHiddenAction(_ sender: Any?) {
         // Use the WindowModel callback which rebuilds the SwiftUI tree + persists.
@@ -1006,26 +936,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Window background — use bgSurface so the titlebar blends with the tab bar
         window?.backgroundColor = newTheme.bgSurface
 
-        // Old AppKit sidebar chrome removed — SwiftUI observes windowModel.theme.
-
-        // Sidebar views (kept for data loading)
-        fileTreeView.applyTheme(newTheme)
-        searchPanel.applyTheme(newTheme)
-
-        // Status bar + split view divider
-        statusBar.applyTheme(newTheme)
-        splitView.customDividerColor = newTheme.border
-
-        // Content background — uses bg (lightest background for editor area)
-        contentContainer.layer?.backgroundColor = newTheme.bg.cgColor
-
-        // Terminal search bar
-        termSearchBar.layer?.backgroundColor = newTheme.bgDark.cgColor
-        termSearchBar.layer?.borderWidth = 0
-        termSearchBar.layer?.borderColor = nil
-        // Add bottom border via a sublayer
-        applyTermSearchBarBorder(newTheme)
-
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
 
@@ -1036,17 +946,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 editor.refreshPreview(themeJSON: themeJSON, bgColor: theme.bgHex)
             }
         }
-    }
-
-    private func applyTermSearchBarBorder(_ theme: Theme) {
-        // Remove any previous border sublayer
-        termSearchBar.layer?.sublayers?.removeAll(where: { $0.name == "bottomBorder" })
-        let border = CALayer()
-        border.name = "bottomBorder"
-        border.backgroundColor = theme.border.cgColor
-        border.frame = CGRect(x: 0, y: 0, width: termSearchBar.bounds.width, height: 1)
-        border.autoresizingMask = [.layerWidthSizable]
-        termSearchBar.layer?.addSublayer(border)
     }
 
     // MARK: - File Tree Cache (LRU)

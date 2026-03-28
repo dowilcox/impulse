@@ -68,8 +68,8 @@ private struct FileNodeView: View {
             .onHover { hovering in
                 isHovered = hovering
             }
-            .onDrag {
-                NSItemProvider(object: node.path as NSString)
+            .onDrag { [nodePath = node.path] in
+                NSItemProvider(object: nodePath as NSString)
             }
             .onDrop(of: [.fileURL, .text], isTargeted: $isDropTarget) { providers in
                 handleDrop(providers: providers)
@@ -120,11 +120,15 @@ private struct FileNodeView: View {
             // Try to get a file path string (from internal drag).
             provider.loadItem(forTypeIdentifier: "public.text", options: nil) { data, _ in
                 guard let pathData = data as? Data,
-                      let sourcePath = String(data: pathData, encoding: .utf8) else { return }
-                let sourceName = (sourcePath as NSString).lastPathComponent
-                let destPath = (targetDir as NSString).appendingPathComponent(sourceName)
-                guard sourcePath != destPath,
-                      !destPath.hasPrefix(sourcePath + "/") else { return } // can't move into self
+                      let sourcePath = String(data: pathData, encoding: .utf8),
+                      sourcePath.hasPrefix("/"),
+                      FileManager.default.fileExists(atPath: sourcePath) else { return }
+                let normalizedSource = (sourcePath as NSString).standardizingPath
+                let sourceName = (normalizedSource as NSString).lastPathComponent
+                let destPath = ((targetDir as NSString).appendingPathComponent(sourceName) as NSString).standardizingPath
+                // Can't move to same location or into itself.
+                guard normalizedSource != destPath,
+                      !destPath.hasPrefix(normalizedSource + "/") else { return }
                 DispatchQueue.main.async {
                     do {
                         try FileManager.default.moveItem(atPath: sourcePath, toPath: destPath)
@@ -205,9 +209,13 @@ private struct FileNodeView: View {
             alert.window.initialFirstResponder = input
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             let newName = input.stringValue.trimmingCharacters(in: .whitespaces)
-            guard !newName.isEmpty, !newName.contains("/"), newName != currentName else { return }
+            guard !newName.isEmpty, newName != currentName,
+                  !newName.contains("/"), !newName.contains("\0"),
+                  !newName.contains("..") else { return }
             let parentDir = (node.path as NSString).deletingLastPathComponent
-            let newPath = (parentDir as NSString).appendingPathComponent(newName)
+            let newPath = ((parentDir as NSString).appendingPathComponent(newName) as NSString).standardizingPath
+            let normalizedParent = (parentDir as NSString).standardizingPath
+            guard (newPath as NSString).deletingLastPathComponent == normalizedParent else { return }
             do {
                 try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
                 model.onRefreshTree?()
@@ -256,10 +264,10 @@ struct FileTreeRow: View {
 
             Spacer()
 
-            if let badge = gitBadge {
-                Text(badge.letter)
+            if let info = gitInfo {
+                Text(info.letter)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(badge.color)
+                    .foregroundStyle(info.color)
             }
         }
     }
@@ -285,20 +293,8 @@ struct FileTreeRow: View {
         }
     }
 
-    private var gitNameColor: Color {
-        switch node.gitStatus {
-        case .modified:  return .yellow
-        case .added:     return .green
-        case .untracked: return .green
-        case .deleted:   return .red
-        case .renamed:   return .blue
-        case .conflict:  return .orange
-        case .ignored:   return .secondary
-        case .none:      return .primary
-        }
-    }
-
-    private var gitBadge: (letter: String, color: Color)? {
+    /// Git status display info: badge letter, color for both name and badge.
+    private var gitInfo: (letter: String, color: Color)? {
         switch node.gitStatus {
         case .modified:  return ("M", .yellow)
         case .added:     return ("A", .green)
@@ -306,7 +302,12 @@ struct FileTreeRow: View {
         case .deleted:   return ("D", .red)
         case .renamed:   return ("R", .blue)
         case .conflict:  return ("C", .orange)
-        case .ignored, .none: return nil
+        case .ignored:   return nil
+        case .none:      return nil
         }
+    }
+
+    private var gitNameColor: Color {
+        gitInfo?.color ?? (node.gitStatus == .ignored ? .secondary : .primary)
     }
 }

@@ -9,6 +9,7 @@ import AppKit
 struct SearchPanelView: View {
     var model: WindowModel
     @State private var searchTask: Task<Void, Never>?
+    @State private var activeSearchTask: Task<Void, Never>?
     @State private var isSearching = false
     @State private var searchGeneration: UInt = 0
 
@@ -82,6 +83,7 @@ struct SearchPanelView: View {
         }
         .onDisappear {
             searchTask?.cancel()
+            activeSearchTask?.cancel()
         }
     }
 
@@ -113,9 +115,10 @@ struct SearchPanelView: View {
 
         searchGeneration &+= 1
         let generation = searchGeneration
+        activeSearchTask?.cancel()
 
         isSearching = true
-        Task.detached {
+        activeSearchTask = Task.detached {
             let fileResults = ImpulseCore.searchFiles(root: root, query: query)
             let contentResults = ImpulseCore.searchContent(
                 root: root, query: query, caseSensitive: caseSensitive
