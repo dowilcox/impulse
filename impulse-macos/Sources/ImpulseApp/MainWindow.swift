@@ -618,7 +618,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     }
 
     @objc private func toolbarSidebarToggle(_ sender: Any?) {
+        sidebarVisible.toggle()
         NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: sender)
+        updateSidebarToolbarItems()
     }
 
     @objc private func toolbarNewTabClicked(_ sender: Any?) {
@@ -636,6 +638,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
             if !sidebarVisible {
                 NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: nil)
                 sidebarVisible = true
+            }
+        }
+    }
+
+    // MARK: - Toolbar Validation
+
+    /// Toolbar item identifiers that are only shown when sidebar is visible.
+    private static let sidebarOnlyItems: [NSToolbarItem.Identifier] = [
+        toolbarNewFile, toolbarNewFolder, toolbarRefresh, toolbarCollapseAll, toolbarToggleHidden,
+    ]
+
+    /// Inserts or removes file-tree toolbar items based on sidebar visibility.
+    private func updateSidebarToolbarItems() {
+        guard let toolbar = window?.toolbar else { return }
+        if sidebarVisible {
+            // Insert after sidebarTrackingSeparator (index 1).
+            // Check if already present to avoid duplicates.
+            let existing = Set(toolbar.items.map(\.itemIdentifier))
+            for (offset, id) in Self.sidebarOnlyItems.enumerated() {
+                if !existing.contains(id) {
+                    toolbar.insertItem(withItemIdentifier: id, at: 2 + offset)
+                }
+            }
+        } else {
+            // Remove in reverse order to keep indices stable.
+            let toRemove = Set(Self.sidebarOnlyItems)
+            for i in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
+                if toRemove.contains(toolbar.items[i].itemIdentifier) {
+                    toolbar.removeItem(at: i)
+                }
             }
         }
     }
@@ -755,6 +787,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     func toggleSidebar() {
         sidebarVisible.toggle()
         NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: nil)
+        updateSidebarToolbarItems()
     }
 
     // MARK: - Custom Keybinding Monitor
