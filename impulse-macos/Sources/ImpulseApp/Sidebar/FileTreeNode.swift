@@ -69,9 +69,13 @@ final class FileTreeNode: Identifiable {
         for itemURL in contents {
             let itemName = itemURL.lastPathComponent
 
-            // Skip hidden files when not requested (belt-and-suspenders; the option
-            // above should already handle this).
+            // Skip hidden files when not requested.
             if !showHidden && itemName.hasPrefix(".") {
+                continue
+            }
+
+            // Always skip .DS_Store — macOS metadata, never useful in a file tree.
+            if itemName == ".DS_Store" {
                 continue
             }
 
