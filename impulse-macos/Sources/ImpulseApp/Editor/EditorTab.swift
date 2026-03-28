@@ -147,6 +147,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         let wv = WKWebView(frame: bounds, configuration: config)
         wv.navigationDelegate = self
         wv.translatesAutoresizingMaskIntoConstraints = false
+        wv.allowsMagnification = false
 
         // Make the WebView background transparent so it does not flash white
         // before Monaco renders its own background colour.

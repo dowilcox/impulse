@@ -192,6 +192,14 @@ echo "    OK: File icons copied to ${ICONS_DST}"
 
 # ── Step 3: Build Swift app ───────────────────────────────────────────
 
+# SwiftPM does not detect changes to linked static libraries (.a files).
+# If libimpulse_ffi.a is newer than the last Swift build output, touch a
+# Swift source file to force SwiftPM to re-link.
+SWIFT_BIN="impulse-macos/.build/release/ImpulseApp"
+if [[ -f "${SWIFT_BIN}" && "target/release/libimpulse_ffi.a" -nt "${SWIFT_BIN}" ]]; then
+    touch impulse-macos/Sources/ImpulseApp/ImpulseApp.swift
+fi
+
 echo "==> Building ImpulseApp (Swift)..."
 cd impulse-macos
 swift build -c release

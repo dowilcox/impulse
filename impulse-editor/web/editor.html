@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; connect-src 'none'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; object-src 'none';"
@@ -63,12 +66,8 @@
         width: 100%;
         height: 100%;
       }
-      /* Add space between line numbers/gutter and code content.
-         Applied to .lines-content so both .view-lines (text) and
-         .view-overlays (indent/bracket guides) shift together. */
-      .monaco-editor .lines-content {
-        padding-left: 8px !important;
-      }
+      /* Gutter-to-code spacing is handled by Monaco's built-in padding
+         option (padding: { left: 8 }) so hit testing stays accurate. */
       /* Native-style overlay scrollbars: rounded, auto-fade */
       .monaco-scrollable-element > .scrollbar > .slider {
         border-radius: 5px;
@@ -81,17 +80,17 @@
       .diff-gutter-added {
         background: #9ece6a;
         width: 3px !important;
-        margin-left: 3px;
+        margin-left: 7px;
       }
       .diff-gutter-modified {
         background: #e0af68;
         width: 3px !important;
-        margin-left: 3px;
+        margin-left: 7px;
       }
       .diff-gutter-deleted {
         background: #f7768e;
         width: 3px !important;
-        margin-left: 3px;
+        margin-left: 7px;
         height: 3px !important;
         position: relative;
         top: 50%;

@@ -58,6 +58,7 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
         config.defaultWebpagePreferences = pagePrefs
 
         let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
+        wv.allowsMagnification = false
         wv.underPageBackgroundColor = .clear
 
         warmWebView = wv

@@ -177,7 +177,7 @@ require(["vs/editor/editor.main"], function () {
     cursorBlinking: "smooth",
     cursorSmoothCaretAnimation: "on",
     stickyScroll: { enabled: false },
-    padding: { top: 4 },
+    padding: { left: 8 },
     // Native-style overlay scrollbars: thin, no shadows, auto-fade via CSS
     scrollbar: {
       verticalScrollbarSize: 10,
@@ -508,6 +508,12 @@ require(["vs/editor/editor.main"], function () {
   // Flush any commands that arrived before Monaco was ready
   pendingCommands.forEach(handleCommand);
   pendingCommands = [];
+
+  // Force font remeasurement after layout settles — WebKit can measure
+  // fonts before they are fully loaded, causing hit-test coordinate drift.
+  requestAnimationFrame(function () {
+    monaco.editor.remeasureFonts();
+  });
 
   // Signal ready
   sendToHost({ type: "Ready" });
