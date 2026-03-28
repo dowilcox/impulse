@@ -52,6 +52,16 @@ private struct FileNodeView: View {
                     if node.isExpanded && !node.isLoaded {
                         node.loadChildren(showHidden: model.showHiddenFiles)
                     }
+                    // Fetch git status for newly loaded children
+                    if node.isExpanded, let children = node.children, !children.isEmpty {
+                        let nodePath = node.path
+                        let rootPath = model.fileTreeRootPath
+                        DispatchQueue.global(qos: .utility).async {
+                            FileTreeNode.refreshGitStatus(
+                                nodes: children, repoPath: rootPath, dirPath: nodePath
+                            )
+                        }
+                    }
                 } else {
                     model.onOpenFile?(node.path, nil)
                 }
@@ -113,6 +123,44 @@ private struct FileNodeView: View {
                 NSWorkspace.shared.open(URL(fileURLWithPath: node.path))
             }
         }
+
+        Divider()
+
+        Button("Rename…") {
+            let currentName = (node.path as NSString).lastPathComponent
+            let alert = NSAlert()
+            alert.messageText = "Rename"
+            alert.informativeText = "Enter a new name:"
+            alert.addButton(withTitle: "Rename")
+            alert.addButton(withTitle: "Cancel")
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+            input.stringValue = currentName
+            alert.accessoryView = input
+            alert.window.initialFirstResponder = input
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let newName = input.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !newName.isEmpty, !newName.contains("/"), newName != currentName else { return }
+            let parentDir = (node.path as NSString).deletingLastPathComponent
+            let newPath = (parentDir as NSString).appendingPathComponent(newName)
+            do {
+                try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
+                model.onRefreshTree?()
+            } catch {
+                NSLog("Rename failed: \(error)")
+            }
+        }
+
+        Button("Move to Trash", role: .destructive) {
+            do {
+                try FileManager.default.trashItem(
+                    at: URL(fileURLWithPath: node.path),
+                    resultingItemURL: nil
+                )
+                model.onRefreshTree?()
+            } catch {
+                NSLog("Trash failed: \(error)")
+            }
+        }
     }
 }
 
@@ -128,6 +176,7 @@ struct FileTreeRow: View {
 
             Text(node.name)
                 .font(.system(size: 13))
+                .foregroundStyle(gitNameColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -159,6 +208,19 @@ struct FileTreeRow: View {
             Image(systemName: "doc.fill")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var gitNameColor: Color {
+        switch node.gitStatus {
+        case .modified:  return .yellow
+        case .added:     return .green
+        case .untracked: return .green
+        case .deleted:   return .red
+        case .renamed:   return .blue
+        case .conflict:  return .orange
+        case .ignored:   return .secondary
+        case .none:      return .primary
         }
     }
 

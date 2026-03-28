@@ -4,14 +4,53 @@ import AppKit
 // MARK: - Search Panel View
 
 /// Displays search results in the sidebar. The search input is the
-/// NSSearchToolbarItem in the window toolbar — this view only shows results.
+/// NSSearchToolbarItem in the window toolbar. This view shows options
+/// and results.
 struct SearchPanelView: View {
     var model: WindowModel
     @State private var searchTask: Task<Void, Never>?
     @State private var isSearching = false
+    @State private var searchGeneration: UInt = 0
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            // Options row
+            HStack {
+                Button {
+                    model.searchCaseSensitive.toggle()
+                    triggerSearch()
+                } label: {
+                    Text("Aa")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(
+                            model.searchCaseSensitive ? Color.accentColor : .secondary
+                        )
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(model.searchCaseSensitive
+                                    ? Color.accentColor.opacity(0.15)
+                                    : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Match Case")
+
+                Spacer()
+
+                if !model.searchResults.isEmpty {
+                    Text("\(model.searchResults.count) results")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            Divider()
+
+            // Results
             if isSearching {
                 ProgressView()
                     .controlSize(.small)
@@ -48,6 +87,11 @@ struct SearchPanelView: View {
 
     // MARK: - Search Logic
 
+    private func triggerSearch() {
+        searchTask?.cancel()
+        performSearch()
+    }
+
     private func debounceSearch() {
         searchTask?.cancel()
         searchTask = Task {
@@ -67,6 +111,9 @@ struct SearchPanelView: View {
         let root = model.fileTreeRootPath
         let caseSensitive = model.searchCaseSensitive
 
+        searchGeneration &+= 1
+        let generation = searchGeneration
+
         isSearching = true
         Task.detached {
             let fileResults = ImpulseCore.searchFiles(root: root, query: query)
@@ -79,6 +126,8 @@ struct SearchPanelView: View {
             let combined = dedupedFiles + contentResults
 
             await MainActor.run {
+                // Only apply results if this is still the latest search.
+                guard generation == searchGeneration else { return }
                 model.searchResults = combined
                 isSearching = false
             }

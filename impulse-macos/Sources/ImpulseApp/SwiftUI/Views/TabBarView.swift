@@ -2,10 +2,11 @@ import SwiftUI
 import AppKit
 
 /// Tab bar styled like Finder: full-width pill tabs dividing the strip equally.
-/// Hidden when there is only one tab.
+/// Hidden when there is only one tab. Supports drag-drop reordering.
 struct TabBarView: View {
     var windowModel: WindowModel
     @State private var hoveredIndex: Int? = nil
+    @State private var draggedTabId: Int? = nil
 
     var body: some View {
         if windowModel.tabDisplayInfos.count > 1 {
@@ -13,6 +14,16 @@ struct TabBarView: View {
                 ForEach(windowModel.tabDisplayInfos) { tab in
                     singleTab(tab)
                         .id(tab.id)
+                        .opacity(draggedTabId == tab.id ? 0.4 : 1.0)
+                        .onDrag {
+                            draggedTabId = tab.id
+                            return NSItemProvider(object: "\(tab.id)" as NSString)
+                        }
+                        .onDrop(of: [.text], delegate: TabDropDelegate(
+                            tabId: tab.id,
+                            windowModel: windowModel,
+                            draggedTabId: $draggedTabId
+                        ))
                 }
             }
             .padding(.horizontal, 8)
@@ -43,7 +54,6 @@ struct TabBarView: View {
 
             Spacer(minLength: 0)
 
-            // Close button — only on hover
             if !tab.isPinned && isHovered {
                 Button(action: { windowModel.onTabClosed?(tab.id) }) {
                     Image(systemName: "xmark")
@@ -72,5 +82,38 @@ struct TabBarView: View {
         .onHover { hovering in
             hoveredIndex = hovering ? tab.id : nil
         }
+    }
+}
+
+// MARK: - Tab Drop Delegate
+
+private struct TabDropDelegate: DropDelegate {
+    let tabId: Int
+    let windowModel: WindowModel
+    @Binding var draggedTabId: Int?
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let from = draggedTabId, from != tabId else { return false }
+        windowModel.onTabMoved?(from, tabId)
+        draggedTabId = nil
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let from = draggedTabId, from != tabId else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            windowModel.onTabMoved?(from, tabId)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedTabId != nil
     }
 }

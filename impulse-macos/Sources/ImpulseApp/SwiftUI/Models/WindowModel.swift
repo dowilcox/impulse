@@ -42,6 +42,9 @@ final class WindowModel {
     var fileTreeNodes: [FileTreeNode] = []
     var fileTreeRootPath: String = ""
 
+    /// Path of the currently focused/highlighted node in the file tree.
+    var focusedNodePath: String? = nil
+
     // MARK: Search
 
     var searchQuery: String = ""

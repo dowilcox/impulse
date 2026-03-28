@@ -45,87 +45,6 @@ private final class ImpulseWindow: NSWindow {
     }
 }
 
-// MARK: - Sidebar Toggle Button
-
-/// Custom toggle button for the sidebar Files/Search mode switch.
-/// Styled with rounded corners, theme-aware colors, and hover tracking.
-private final class SidebarToggleButton: NSButton {
-
-    var isActive: Bool = false { didSet { updateVisualState() } }
-
-    private var isHovered: Bool = false { didSet { updateVisualState() } }
-    private var trackingArea: NSTrackingArea?
-
-    // Theme colors
-    private var bgHighlight: NSColor = .controlAccentColor
-    private var fgColor: NSColor = .labelColor
-    private var fgDarkColor: NSColor = .secondaryLabelColor
-    private var accentColor: NSColor = .systemCyan
-
-    init(title: String) {
-        super.init(frame: .zero)
-        self.title = title
-        isBordered = false
-        bezelStyle = .inline
-        font = NSFont.appFont(ofSize: 12, weight: .semibold)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = 6
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    func applyTheme(bgHighlight: NSColor, fg: NSColor, fgDark: NSColor, cyan: NSColor) {
-        self.bgHighlight = bgHighlight
-        self.fgColor = fg
-        self.fgDarkColor = fgDark
-        self.accentColor = cyan
-        updateVisualState()
-    }
-
-    private func updateVisualState() {
-        if isActive {
-            layer?.backgroundColor = accentColor.withAlphaComponent(0.15).cgColor
-            contentTintColor = accentColor
-        } else if isHovered {
-            layer?.backgroundColor = bgHighlight.cgColor
-            contentTintColor = fgColor
-        } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
-            contentTintColor = fgDarkColor
-        }
-    }
-
-    override var intrinsicContentSize: NSSize {
-        let base = super.intrinsicContentSize
-        return NSSize(width: base.width + 24, height: max(26, base.height + 8))
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let existing = trackingArea { removeTrackingArea(existing) }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { isHovered = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false }
-
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: .pointingHand)
-    }
-}
-
 // MARK: - Main Window Controller
 
 /// The primary window controller for Impulse. Each window contains:
@@ -137,34 +56,6 @@ private final class SidebarToggleButton: NSButton {
 ///
 /// Multiple windows can coexist; each owns its own TabManager and sidebar state.
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitViewDelegate, NSToolbarDelegate {
-
-    // MARK: - Titlebar Buttons
-
-    private let sidebarToggleButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .inline
-        btn.isBordered = false
-        btn.toolTip = "Toggle Sidebar"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.imageScaling = .scaleProportionallyDown
-        btn.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        btn.setContentHuggingPriority(.defaultLow, for: .vertical)
-        btn.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        btn.wantsLayer = true
-        btn.layer?.cornerRadius = 6
-        return btn
-    }()
-
-    private let newTabButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .inline
-        btn.isBordered = false
-        btn.toolTip = "New Terminal Tab"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.imageScaling = .scaleProportionallyDown
-        btn.setContentHuggingPriority(.required, for: .horizontal)
-        return btn
-    }()
 
     // MARK: - State
 
@@ -205,72 +96,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
     /// The sidebar search panel for project-wide search.
     private let searchPanel: SearchPanel
 
-    /// Toggle buttons in the sidebar header to switch between files and search.
-    private let filesToggle = SidebarToggleButton(title: "Files")
-    private let searchToggle = SidebarToggleButton(title: "Search")
-
-    /// Button to toggle visibility of hidden (dot) files in the file tree.
-    private let toggleHiddenButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .texturedRounded
-        btn.isBordered = false
-        btn.toolTip = "Toggle Hidden Files"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return btn
-    }()
-
-    /// Button to collapse all expanded directories in the file tree.
-    private let collapseAllButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .texturedRounded
-        btn.isBordered = false
-        btn.toolTip = "Collapse All"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return btn
-    }()
-
-    /// The project header row (toolbar buttons), hidden when Search is active.
-    private let projectHeaderView: NSView = {
-        let v = NSView()
-        v.wantsLayer = true
-        v.translatesAutoresizingMaskIntoConstraints = false
-        return v
-    }()
-
-    /// Button to create a new file in the project root.
-    private let newFileButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .texturedRounded
-        btn.isBordered = false
-        btn.toolTip = "New File"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return btn
-    }()
-
-    /// Button to create a new folder in the project root.
-    private let newFolderButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .texturedRounded
-        btn.isBordered = false
-        btn.toolTip = "New Folder"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return btn
-    }()
-
-    /// Button to refresh the file tree.
-    private let refreshButton: PointerButton = {
-        let btn = PointerButton()
-        btn.bezelStyle = .texturedRounded
-        btn.isBordered = false
-        btn.toolTip = "Refresh File Tree"
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return btn
-    }()
+    // Old AppKit sidebar buttons removed — replaced by NSToolbar items.
 
     /// Manages the tab bar and tab content lifecycle.
     let tabManager: TabManager
@@ -448,60 +274,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         toolbar.delegate = self
         window.toolbar = toolbar
 
-        filesToggle.target = self
-        filesToggle.action = #selector(filesToggleClicked(_:))
-        filesToggle.isActive = true
-        searchToggle.target = self
-        searchToggle.action = #selector(searchToggleClicked(_:))
-        filesToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.accent)
-        searchToggle.applyTheme(bgHighlight: theme.bgHighlight, fg: theme.fg, fgDark: theme.fgDark, cyan: theme.accent)
-
-        // Set toolbar button icons from shared SVG icon cache, falling back to
-        // SF Symbols if the cache hasn't loaded (e.g. missing bundle resources).
-        sidebarToggleButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
-            ?? NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
-        newTabButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-plus")
-            ?? NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
-        toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-closed")
-            ?? NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "Toggle Hidden Files")
-        collapseAllButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-collapse")
-            ?? NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Collapse All")
-        newFileButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-new-file")
-            ?? NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")
-        newFolderButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-new-folder")
-            ?? NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")
-        refreshButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-refresh")
-            ?? NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
-
-        sidebarToggleButton.target = self
-        sidebarToggleButton.action = #selector(toggleSidebarAction(_:))
-        sidebarToggleButton.contentTintColor = theme.fgDark
-
-        newTabButton.target = self
-        newTabButton.action = #selector(newTabAction(_:))
-        newTabButton.contentTintColor = theme.fgDark
-
-        toggleHiddenButton.target = self
-        toggleHiddenButton.action = #selector(toggleHiddenAction(_:))
-        toggleHiddenButton.contentTintColor = theme.fgDark
-
-        collapseAllButton.target = self
-        collapseAllButton.action = #selector(collapseAllAction(_:))
-        collapseAllButton.contentTintColor = theme.fgDark
-
-        newFileButton.target = self
-        newFileButton.action = #selector(newFileAction(_:))
-        newFileButton.contentTintColor = theme.fgDark
-
-        newFolderButton.target = self
-        newFolderButton.action = #selector(newFolderAction(_:))
-        newFolderButton.contentTintColor = theme.fgDark
-
-        refreshButton.target = self
-        refreshButton.action = #selector(refreshTreeAction(_:))
-        refreshButton.contentTintColor = theme.fgDark
-
-
         setupLayout()
         setupNotificationObservers()
         setupCustomKeybindingMonitor()
@@ -533,11 +305,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
                 self.windowModel.fileTreeRootPath = rootPath
             }
         }
-        if settings.sidebarShowHidden {
-            toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: "toolbar-eye-open")
-                ?? NSImage(systemSymbolName: "eye", accessibilityDescription: "Toggle Hidden Files")
-        }
-
         // Wire the tab close handler for save confirmation on unsaved editor tabs.
         tabManager.tabCloseHandler = { [weak self] index in
             self?.requestCloseTab(index: index)
@@ -972,59 +739,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
 
 
     @objc private func filesToggleClicked(_ sender: Any?) {
-        filesToggle.isActive = true
-        searchToggle.isActive = false
-        fileTreeView.isHidden = false
-        searchPanel.isHidden = true
-        projectHeaderView.isHidden = false
+        windowModel.sidebarPanel = .files
+        windowModel.searchQuery = ""
     }
 
     @objc private func searchToggleClicked(_ sender: Any?) {
-        filesToggle.isActive = false
-        searchToggle.isActive = true
-        fileTreeView.isHidden = true
-        searchPanel.isHidden = false
-        projectHeaderView.isHidden = true
-        searchPanel.focus()
+        windowModel.sidebarPanel = .search
     }
 
-    /// Toggles the sidebar visibility with animation.
+    /// Toggles the sidebar visibility via NavigationSplitView's responder chain.
     func toggleSidebar() {
         sidebarVisible.toggle()
-        updateSidebarToggleIcon()
-        // Unhide before the animation so the layout engine can process
-        // the visibility change and the split view animates correctly.
-        if sidebarVisible {
-            sidebarContainer.isHidden = false
-        }
-        NSAnimationContext.runAnimationGroup({ [self] context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            if sidebarVisible {
-                splitView.animator().setPosition(sidebarTargetWidth, ofDividerAt: 0)
-            } else {
-                splitView.animator().setPosition(0, ofDividerAt: 0)
-            }
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
-            if !self.sidebarVisible {
-                self.sidebarContainer.isHidden = true
-            }
-        })
-    }
-
-    /// Update the sidebar toggle button icon to reflect the current state.
-    private func updateSidebarToggleIcon() {
-        let icon = tabManager.iconCache?.toolbarIcon(name: "toolbar-sidebar")
-            ?? NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
-        icon?.isTemplate = true
-        sidebarToggleButton.image = icon
-        sidebarToggleButton.contentTintColor = sidebarVisible
-            ? theme.cyan
-            : theme.fgDark
-        sidebarToggleButton.layer?.backgroundColor = sidebarVisible
-            ? theme.bgHighlight.cgColor
-            : NSColor.clear.cgColor
+        NSApp.sendAction(NSSelectorFromString("toggleSidebar:"), to: nil, from: nil)
     }
 
     // MARK: - Custom Keybinding Monitor
@@ -1243,29 +969,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         // Window background — use bgSurface so the titlebar blends with the tab bar
         window?.backgroundColor = newTheme.bgSurface
 
-        // Tab bar container and titlebar buttons
-        tabBarContainer.layer?.backgroundColor = newTheme.bgSurface.cgColor
-        updateSidebarToggleIcon()
-        newTabButton.contentTintColor = newTheme.fgDark
+        // Old AppKit sidebar chrome removed — SwiftUI observes windowModel.theme.
 
-        // Sidebar background — uses bgDark (one step lighter than bgSurface)
-        sidebarContainer.layer?.backgroundColor = newTheme.bgDark.cgColor
-
-        // Sidebar toggle buttons
-        filesToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.accent)
-        searchToggle.applyTheme(bgHighlight: newTheme.bgHighlight, fg: newTheme.fg, fgDark: newTheme.fgDark, cyan: newTheme.accent)
-
-        // Sidebar toolbar buttons
-        newFileButton.contentTintColor = newTheme.fgDark
-        newFolderButton.contentTintColor = newTheme.fgDark
-        toggleHiddenButton.contentTintColor = newTheme.fgDark
-        refreshButton.contentTintColor = newTheme.fgDark
-        collapseAllButton.contentTintColor = newTheme.fgDark
-
-        // Project header area — deepest layer
-        projectHeaderView.layer?.backgroundColor = newTheme.bgSurface.cgColor
-
-        // Sidebar views
+        // Sidebar views (kept for data loading)
         fileTreeView.applyTheme(newTheme)
         searchPanel.applyTheme(newTheme)
 
@@ -2365,14 +2071,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSplitV
         }
 
         // Re-apply sidebar show-hidden preference.
-        if fileTreeView.showHidden != settings.sidebarShowHidden {
+        if windowModel.showHiddenFiles != settings.sidebarShowHidden {
+            windowModel.showHiddenFiles = settings.sidebarShowHidden
             fileTreeView.showHidden = settings.sidebarShowHidden
-            let svgName = settings.sidebarShowHidden ? "toolbar-eye-open" : "toolbar-eye-closed"
-            let sfName = settings.sidebarShowHidden ? "eye" : "eye.slash"
-            toggleHiddenButton.image = tabManager.iconCache?.toolbarIcon(name: svgName)
-                ?? NSImage(systemSymbolName: sfName, accessibilityDescription: "Toggle Hidden Files")
+            updateToggleHiddenToolbarItem()
             if !fileTreeRootPath.isEmpty {
-                fileTreeView.setRootPath(fileTreeRootPath)
+                windowModel.onRefreshTree?()
             }
         }
     }
