@@ -22,9 +22,21 @@ private struct FileNodeView: View {
     var model: WindowModel
     let depth: Int
     @State private var isHovered = false
+    @State private var isDropTarget = false
 
     private var isActiveFile: Bool {
         !node.isDirectory && node.path == model.activeFilePath
+    }
+
+    private var rowBackground: Color {
+        if isDropTarget && node.isDirectory {
+            return Color.accentColor.opacity(0.3)
+        } else if isActiveFile {
+            return Color.accentColor.opacity(0.2)
+        } else if isHovered {
+            return Color.primary.opacity(0.06)
+        }
+        return Color.clear
     }
 
     var body: some View {
@@ -50,13 +62,17 @@ private struct FileNodeView: View {
             .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(isActiveFile
-                        ? Color.accentColor.opacity(0.2)
-                        : isHovered ? Color.primary.opacity(0.06) : Color.clear)
+                    .fill(rowBackground)
             )
             .contentShape(Rectangle())
             .onHover { hovering in
                 isHovered = hovering
+            }
+            .onDrag {
+                NSItemProvider(object: node.path as NSString)
+            }
+            .onDrop(of: [.fileURL, .text], isTargeted: $isDropTarget) { providers in
+                handleDrop(providers: providers)
             }
             .onTapGesture {
                 if node.isDirectory {
@@ -88,6 +104,42 @@ private struct FileNodeView: View {
                 }
             }
         }
+    }
+
+    /// Handles dropping a file/folder onto this node (must be a directory).
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        // Determine the target directory.
+        let targetDir: String
+        if node.isDirectory {
+            targetDir = node.path
+        } else {
+            targetDir = (node.path as NSString).deletingLastPathComponent
+        }
+
+        for provider in providers {
+            // Try to get a file path string (from internal drag).
+            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { data, _ in
+                guard let pathData = data as? Data,
+                      let sourcePath = String(data: pathData, encoding: .utf8) else { return }
+                let sourceName = (sourcePath as NSString).lastPathComponent
+                let destPath = (targetDir as NSString).appendingPathComponent(sourceName)
+                guard sourcePath != destPath,
+                      !destPath.hasPrefix(sourcePath + "/") else { return } // can't move into self
+                DispatchQueue.main.async {
+                    do {
+                        try FileManager.default.moveItem(atPath: sourcePath, toPath: destPath)
+                        model.onRefreshTree?()
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = "Move Failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.runModal()
+                    }
+                }
+            }
+        }
+        return true
     }
 
     @ViewBuilder
