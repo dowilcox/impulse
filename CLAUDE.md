@@ -103,34 +103,57 @@ C-compatible wrappers around `impulse-core` and `impulse-editor` for the macOS S
 
 ### impulse-macos (Swift Package, macOS frontend)
 
-The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
+The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **macOS 14+** (for `@Observable`). Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
+
+**Architecture:** The window uses a hybrid AppKit/SwiftUI approach. `MainWindowController` (AppKit) owns the window, NSToolbar, and tab content lifecycle. A single `NSHostingView` fills the window content area with a SwiftUI `NavigationSplitView` that renders the sidebar, tab bar, and status bar. Terminal and editor views remain AppKit (`NSView`) and are embedded via `NSViewRepresentable`. The `@Observable WindowModel` class is the bridge — AppKit mutates it, SwiftUI observes it.
+
+#### App lifecycle & wiring
 
 - **ImpulseApp.swift** — App entry point.
 - **AppState.swift** — Global static flags (`isDev`) set once at startup.
 - **AppDelegate.swift** — NSApplication delegate, app lifecycle.
-- **MainWindow.swift** — Main window setup, layout, and signal wiring.
+- **MainWindow.swift** — `MainWindowController`: window setup, `NSToolbarDelegate` (sidebar toggle, new file/folder, refresh, collapse, hidden files, new tab, search — placed in titlebar like Apple apps using `.sidebarTrackingSeparator`), `NSHostingView` creation, `WindowModel` callback wiring, status bar syncing, file tree syncing. Uses `titlebarAppearsTransparent = true` and `titlebarSeparatorStyle = .none` for seamless toolbar/tab bar integration.
 - **MainWindowController+LSP.swift** — LSP integration extension: background polling of LSP events (diagnostics, completions), batched processing, and main-thread dispatch.
-- **TabManager.swift** — Tab management (custom tab bar mixing terminal and editor tabs).
+- **TabManager.swift** — Tab management: tab creation/selection/close/reorder, content view lifecycle, `syncToWindowModel()` pushes tab info and `activeFilePath` to `WindowModel`.
 - **Notifications.swift** — Centralized `NSNotification.Name` constants for theme/settings changes, tab management events, and search operations.
 - **ResourceBundle.swift** — Bundle resource locator handling both packaged `.app` and development contexts for SwiftPM resources.
 - **ShellEscape.swift** — String extension for shell-escaping arguments.
+
+#### SwiftUI views (all visual chrome)
+
+- **SwiftUI/Models/WindowModel.swift** — `@Observable` state class shared between AppKit and SwiftUI. Contains tab display info, sidebar state, file tree nodes, status bar fields, theme, icon cache, active file path, and callback closures for SwiftUI→AppKit communication.
+- **SwiftUI/Views/MainContentView.swift** — Root SwiftUI view: `NavigationSplitView` with sidebar + detail (tab bar, content area, status bar).
+- **SwiftUI/Views/SidebarView.swift** — Switches between `FileTreeListView` and `SearchPanelView` based on search state.
+- **SwiftUI/Views/FileTreeListView.swift** — Recursive file tree using `ScrollView` + `LazyVStack` (not `List`, to avoid NSOutlineView/DisclosureGroup click conflicts). Manual chevron expand/collapse, themed SVG icons via `IconCache`, git status colored file names and badges, hover highlighting, active file highlighting, context menus (new file, new folder, rename, delete, reveal in Finder, copy path).
+- **SwiftUI/Views/TabBarView.swift** — Finder-style tab bar: full-width pill tabs, hidden with one tab, hover-reveal close buttons, drag-drop reordering via `DropDelegate`.
+- **SwiftUI/Views/StatusBarView.swift** — Bottom status bar: shell name, git branch, CWD, blame info, cursor position, language, encoding, indent, preview toggle.
+- **SwiftUI/Views/SearchPanelView.swift** — Search results display with case-sensitive toggle, result count, debounced search with generation counter to prevent stale results.
+- **SwiftUI/Representables/ContentAreaRepresentable.swift** — `NSViewRepresentable` wrapping `TabManager.contentView` in a `ContentContainer` that syncs frames and posts resize notifications for SwiftTerm sizing.
+
+#### AppKit components (terminal, editor, data loading)
+
 - **Terminal/TerminalContainer.swift** — Terminal view with splitting support.
 - **Terminal/TerminalTab.swift** — Terminal tab using SwiftTerm for terminal emulation.
 - **Editor/EditorTab.swift** — Monaco editor tab via WKWebView.
 - **Editor/EditorProtocol.swift** — Bidirectional JSON messaging with Monaco (mirrors `impulse-editor` protocol).
 - **Editor/EditorWebViewPool.swift** — WebView pooling for editor instances.
-- **Sidebar/FileTreeView.swift** — File tree with lazy-loaded directory expansion.
-- **Sidebar/FileTreeNode.swift** — Tree node model for the file tree.
-- **Sidebar/FileIcons.swift** — Maps file extensions to bundled SVG icons.
-- **Sidebar/SearchPanel.swift** — Project-wide file and content search UI.
+
+#### Sidebar data (AppKit, kept for data loading — not rendered)
+
+- **Sidebar/FileTreeView.swift** — NSOutlineView-based file tree. Kept alive for `refreshTree()`, `showNameInputAlert()`, `rootNodes` data loading, but not displayed (SwiftUI `FileTreeListView` renders the tree).
+- **Sidebar/FileTreeNode.swift** — `@Observable` tree node model. Lazy-loads children via `FileManager`, supports git status enrichment. `.DS_Store` files are always filtered out.
+- **Sidebar/FileIcons.swift** — `IconCache` class: loads SVG icons from bundle, recolors with theme colors, caches as `NSImage`. Used by both `FileTreeListView` and `TabManager` for file/folder/toolbar icons.
+- **Sidebar/SearchPanel.swift** — AppKit search panel (kept for `setRootPath()` data, not rendered).
+
+#### Other AppKit UI
+
 - **UI/CommandPalette.swift** — Command palette (equivalent to Linux Ctrl+Shift+P).
-- **UI/CustomTabBar.swift** — Native tab bar widget.
 - **UI/MenuBuilder.swift** — macOS menu bar construction.
-- **UI/StatusBar.swift** — Status bar with CWD, git branch, cursor position, etc.
+- **UI/StatusBar.swift** — AppKit status bar (receives updates alongside `WindowModel` for compatibility; will be removed when fully migrated).
 - **Settings/Settings.swift** — `Settings` struct (Codable), stored at `~/Library/Application Support/impulse/settings.json`.
 - **Settings/SettingsFormSheet.swift** — Settings editor form.
 - **Settings/SettingsWindow.swift** — Settings window controller.
-- **Theme/Theme.swift** — Color theme constants matching the Linux themes.
+- **Theme/Theme.swift** — Color theme constants matching the Linux themes. Includes `bgSurface`, `border`, `accent` fields for the SwiftUI UI.
 - **Keybindings/Keybindings.swift** — Keybinding registry and handling.
 - **Bridge/ImpulseCore.swift** — Swift wrapper calling `impulse-ffi` C functions.
 - **CImpulseFFI/** — C header module (`impulse_ffi.h` + `module.modulemap`) for Swift-to-Rust bridging.
@@ -139,6 +162,8 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Communicates w
 
 - **Shared state in GTK (Linux):** `Rc<RefCell<T>>` for mutable state shared across signal closures (single-threaded GTK main loop).
 - **CSS styling (Linux):** All visual styling lives in `theme.rs` as a single formatted CSS string, applied via `add_css_class()`. No external CSS files.
+- **SwiftUI/AppKit bridge (macOS):** `@Observable WindowModel` is the single source of truth for UI state. AppKit code (MainWindowController, TabManager) mutates it; SwiftUI views observe it for automatic re-rendering. Communication from SwiftUI back to AppKit uses callback closures on WindowModel (e.g., `onTabSelected`, `onOpenFile`, `onRefreshTree`). The NSToolbar uses `NSToolbarDelegate` with `.sidebarTrackingSeparator` to place items in the correct column. SwiftUI's `.toolbar {}` and `.searchable()` modifiers do NOT work inside `NSHostingView` — all toolbar items must be native `NSToolbarItem`.
+- **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with recursive `FileNodeView`, NOT `List` + `DisclosureGroup` (which has known click-handling conflicts with NSOutlineView). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. The old AppKit `FileTreeView` is kept alive (hidden) for its `showNameInputAlert()` dialog and data-loading methods but will be fully removed once those are migrated to SwiftUI.
 - **Error handling:** Public APIs in `impulse-core` return `Result<T, String>`. Non-fatal errors use `log::warn!`.
 - **Shell integration flow:** Shell scripts emit OSC escapes -> terminal emulator passes raw bytes -> `OscParser` in pty.rs strips and interprets them -> `PtyMessage` events sent to frontend via `PtyEventSender`. This flow is identical on both platforms.
 - **Settings schema:** Both platforms use the same `Settings` struct and JSON format. The `settings.rs` module in each frontend should share the same data model (or it should be moved to `impulse-core` if divergence becomes a problem).
@@ -256,4 +281,4 @@ sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
 
 ### macOS
 
-Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.
+Requires **macOS 14 (Sonoma) or later** for the `@Observable` macro used in the SwiftUI layer. Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit, SwiftUI, and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.
