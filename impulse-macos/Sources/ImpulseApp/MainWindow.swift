@@ -940,7 +940,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         tabManager.applyTheme(newTheme)
 
         // Re-render previews with updated theme
-        let themeJSON = ThemeManager.markdownThemeJSON(forName: newTheme.name)
+        let themeJSON = ThemeManager.markdownThemeJSON(forName: newTheme.id)
         for tab in tabManager.tabs {
             if case .editor(let editor) = tab {
                 editor.refreshPreview(themeJSON: themeJSON, bgColor: newTheme.bg)
@@ -1880,7 +1880,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               let fp = editor.filePath,
               EditorTab.isPreviewableFile(fp) else { return }
 
-        let themeJSON = ThemeManager.markdownThemeJSON(forName: theme.name)
+        let themeJSON = ThemeManager.markdownThemeJSON(forName: theme.id)
         if let isPreviewing = editor.togglePreview(themeJSON: themeJSON, bgColor: theme.bg) {
             statusBar.showPreviewButton(isPreviewing: isPreviewing)
             windowModel.isPreviewing = isPreviewing

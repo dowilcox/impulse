@@ -31,7 +31,7 @@ thread_local! {
 }
 
 fn theme_to_monaco_cached(theme: &ResolvedTheme) -> MonacoThemeDefinition {
-    let key = theme.name.clone();
+    let key = theme.id.clone();
     MONACO_THEME_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some((ref cached_key, ref cached_def)) = *cache {

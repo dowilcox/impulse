@@ -69,6 +69,7 @@ extension NSColor {
 /// All color fields are stored as hex strings (e.g. "#1F1F28").
 /// Computed NSColor properties are provided for AppKit usage.
 struct Theme: Codable {
+    let id: String
     let name: String
     let isLight: Bool
     let bg: String
@@ -115,6 +116,7 @@ struct Theme: Codable {
     let terminalPalette: [String]
 
     enum CodingKeys: String, CodingKey {
+        case id
         case name
         case isLight = "is_light"
         case bg

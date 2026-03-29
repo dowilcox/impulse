@@ -115,6 +115,7 @@ pub struct TerminalPalette {
 /// frontends, the Monaco converter, and the FFI layer consume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedTheme {
+    pub id: String,
     pub name: String,
     pub is_light: bool,
     // UI backgrounds
@@ -296,7 +297,10 @@ pub fn parse_theme(toml_str: &str) -> Result<ThemeFile, String> {
 
 /// Resolve a parsed `ThemeFile` into a fully-populated `ResolvedTheme`.
 /// Fills in all defaults and derived values from the palette.
-pub fn resolve_theme(tf: &ThemeFile) -> ResolvedTheme {
+/// The `id` parameter is the lookup key (e.g. `"rose-pine"`, not the display
+/// name `"Rosé Pine"`). It is stored so consumers can look up related
+/// resources (like the Monaco theme) without a display-name → ID mapping.
+pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
     let p = &tf.palette;
     let is_light = tf.variant == "light";
 
@@ -524,6 +528,7 @@ pub fn resolve_theme(tf: &ThemeFile) -> ResolvedTheme {
     };
 
     ResolvedTheme {
+        id: id.to_string(),
         name: tf.name.clone(),
         is_light,
         bg: p.bg.clone(),
@@ -625,12 +630,13 @@ pub fn builtin_theme(name: &str) -> Option<ResolvedTheme> {
     BUILTIN_THEMES
         .iter()
         .find(|(id, _)| *id == normalized)
-        .and_then(|(_, toml_str)| {
+        .and_then(|(id, toml_str)| {
             parse_theme(toml_str)
                 .map_err(|e| log::warn!("Failed to parse built-in theme '{name}': {e}"))
                 .ok()
+                .map(|tf| (id, tf))
         })
-        .map(|tf| resolve_theme(&tf))
+        .map(|(id, tf)| resolve_theme(id, &tf))
 }
 
 /// Discover user themes from the platform config directory.
@@ -658,11 +664,17 @@ pub fn discover_user_themes() -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// Load a user theme from a file path.
+/// The theme ID is derived from the filename stem (e.g. `my-theme.toml` → `"my-theme"`).
 pub fn load_user_theme(path: &std::path::Path) -> Result<ResolvedTheme, String> {
+    let id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("custom")
+        .to_string();
     let contents =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read theme file: {e}"))?;
     let tf = parse_theme(&contents)?;
-    Ok(resolve_theme(&tf))
+    Ok(resolve_theme(&id, &tf))
 }
 
 /// Return all available theme names: built-in first, then user themes.
@@ -796,7 +808,8 @@ mod tests {
         for (id, toml_str) in BUILTIN_THEMES {
             let tf = parse_theme(toml_str)
                 .unwrap_or_else(|e| panic!("Failed to parse built-in theme '{id}': {e}"));
-            let resolved = resolve_theme(&tf);
+            let resolved = resolve_theme(id, &tf);
+            assert_eq!(resolved.id, *id, "Theme '{id}' has wrong id");
             assert!(!resolved.bg.is_empty(), "Theme '{id}' has empty bg");
             assert!(!resolved.fg.is_empty(), "Theme '{id}' has empty fg");
             assert_eq!(
@@ -934,7 +947,8 @@ mod tests {
             magenta = "#bb9af7"
         "##;
         let tf = parse_theme(toml).expect("Minimal theme should parse");
-        let resolved = resolve_theme(&tf);
+        let resolved = resolve_theme("minimal", &tf);
+        assert_eq!(resolved.id, "minimal");
         assert_eq!(resolved.name, "Minimal");
         assert!(!resolved.is_light);
         // All derived fields should be populated

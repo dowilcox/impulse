@@ -111,7 +111,7 @@ enum TabEntry {
             )
             container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
         case .editor(let editor):
-            editor.applyTheme(ThemeManager.monacoTheme(forName: theme.name))
+            editor.applyTheme(ThemeManager.monacoTheme(forName: theme.id))
         case .imagePreview(_, let view):
             view.layer?.backgroundColor = theme.bgColor.cgColor
         }
@@ -267,7 +267,7 @@ final class TabManager: NSObject {
 
         // Read file content off the main thread, then create the editor tab on main.
         let editorOptions = editorOptionsFromSettings()
-        let themeDef = ThemeManager.monacoTheme(forName: theme.name)
+        let themeDef = ThemeManager.monacoTheme(forName: theme.id)
         let language = languageIdForPath(path)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -316,7 +316,7 @@ final class TabManager: NSObject {
 
         let editorOptions = editorOptionsFromSettings()
         editorTab.applySettings(editorOptions)
-        let themeDef = ThemeManager.monacoTheme(forName: theme.name)
+        let themeDef = ThemeManager.monacoTheme(forName: theme.id)
         editorTab.applyTheme(themeDef)
 
         let entry = TabEntry.editor(editorTab)
