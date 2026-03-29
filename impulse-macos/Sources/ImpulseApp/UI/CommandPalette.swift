@@ -411,7 +411,7 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         container.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
         container.wantsLayer = true
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = theme.border.cgColor
+        container.layer?.borderColor = theme.borderColor.cgColor
         tableView.reloadData()
     }
 }

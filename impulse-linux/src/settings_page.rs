@@ -1140,7 +1140,7 @@ pub fn show_settings_window(
     let current_theme = settings.borrow().color_scheme.clone();
     let theme_index = available_themes
         .iter()
-        .position(|t| *t == current_theme)
+        .position(|t| t == &current_theme)
         .unwrap_or(0) as u32;
 
     let theme_row = adw::ComboRow::new();
@@ -1152,9 +1152,9 @@ pub fn show_settings_window(
         let on_changed = Rc::clone(&on_changed);
         theme_row.connect_selected_notify(move |row| {
             let idx = row.selected() as usize;
-            if let Some(&val) = available_themes.get(idx) {
+            if let Some(val) = available_themes.get(idx) {
                 let mut s = settings.borrow_mut();
-                s.color_scheme = val.to_string();
+                s.color_scheme = val.clone();
                 settings::save(&s);
                 on_changed(&s);
             }

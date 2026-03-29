@@ -75,7 +75,7 @@ final class WindowModel {
 
     // MARK: Theme
 
-    var theme: Theme = ThemeManager.nord
+    var theme: Theme = ThemeManager.theme(forName: "nord")
 
     // MARK: Icons
 

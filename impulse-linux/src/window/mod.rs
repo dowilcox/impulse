@@ -655,7 +655,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     // Track the current CSS provider so we can swap themes at runtime
     let css_provider: Rc<RefCell<gtk4::CssProvider>> = {
         let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
-        Rc::new(RefCell::new(crate::theme::load_css(theme)))
+        Rc::new(RefCell::new(crate::theme::load_css(&theme)))
     };
 
     // Main vertical layout
@@ -709,7 +709,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Sidebar
     let initial_theme = crate::theme::get_theme(&settings.borrow().color_scheme);
-    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings, initial_theme);
+    let (sidebar_widget, sidebar_state) = sidebar::build_sidebar(&settings, &initial_theme);
     sidebar_widget.set_visible(settings.borrow().sidebar_visible);
     paned.set_start_child(Some(&sidebar_widget));
 
@@ -970,7 +970,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 if editor::is_editor(&child) {
                     let s = settings.borrow();
                     let theme = crate::theme::get_theme(&s.color_scheme);
-                    if let Some(is_previewing) = editor::toggle_preview(child.upcast_ref(), theme) {
+                    if let Some(is_previewing) = editor::toggle_preview(child.upcast_ref(), &theme) {
                         status_bar_for_click
                             .borrow()
                             .show_preview_button(is_previewing);
@@ -1005,33 +1005,33 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 let new_theme = crate::theme::get_theme(&s.color_scheme);
                 let display = gtk4::gdk::Display::default().expect("No display");
                 gtk4::style_context_remove_provider_for_display(&display, &*css_provider.borrow());
-                let new_provider = crate::theme::load_css(new_theme);
+                let new_provider = crate::theme::load_css(&new_theme);
                 *css_provider.borrow_mut() = new_provider;
 
                 // Switch light/dark window chrome based on theme base
                 let style_manager = libadwaita::StyleManager::default();
-                if new_theme.base == "vs" {
+                if new_theme.is_light {
                     style_manager.set_color_scheme(libadwaita::ColorScheme::ForceLight);
                 } else {
                     style_manager.set_color_scheme(libadwaita::ColorScheme::ForceDark);
                 }
 
                 // Update sidebar file icons for the new theme
-                sidebar_state.update_theme(new_theme);
+                sidebar_state.update_theme(&new_theme);
 
                 // Apply to all open tabs
                 for i in 0..tab_view.n_pages() {
                     let page = tab_view.nth_page(i);
                     let child = page.child();
                     if let Some(term) = crate::terminal_container::get_active_terminal(&child) {
-                        crate::terminal::apply_settings(&term, s, new_theme, &copy_on_select_flag);
+                        crate::terminal::apply_settings(&term, s, &new_theme, &copy_on_select_flag);
                     } else if crate::editor::is_editor(&child) {
                         crate::editor::apply_settings(child.upcast_ref::<gtk4::Widget>(), s);
-                        crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
+                        crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), &new_theme);
                         // Re-render preview if currently previewing
                         crate::editor::refresh_preview(
                             child.upcast_ref::<gtk4::Widget>(),
-                            new_theme,
+                            &new_theme,
                         );
                     }
                 }
@@ -1227,7 +1227,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                                 let s = settings.borrow();
                                 let theme = crate::theme::get_theme(&s.color_scheme);
                                 if let Some(is_previewing) =
-                                    editor::toggle_preview(child.upcast_ref(), theme)
+                                    editor::toggle_preview(child.upcast_ref(), &theme)
                                 {
                                     status_bar.borrow().show_preview_button(is_previewing);
                                 }
@@ -1498,7 +1498,7 @@ pub(super) fn make_split_terminal(
                 orientation,
                 &|term| setup(term),
                 &s,
-                theme,
+                &theme,
                 copy_on_select_flag.clone(),
                 &shell_cache,
             );

@@ -1264,3 +1264,87 @@ pub extern "C" fn impulse_matches_file_pattern(
         }),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Theme API
+// ---------------------------------------------------------------------------
+
+/// Return a JSON array of all available theme names (built-in + user).
+#[no_mangle]
+pub extern "C" fn impulse_available_themes() -> *mut c_char {
+    ffi_catch(
+        to_c_string("[]"),
+        AssertUnwindSafe(|| {
+            let names = impulse_core::theme::available_themes();
+            let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string());
+            to_c_string(&json)
+        }),
+    )
+}
+
+/// Return the display name for a theme ID.
+#[no_mangle]
+pub extern "C" fn impulse_theme_display_name(id: *const c_char) -> *mut c_char {
+    ffi_catch(
+        to_c_string(""),
+        AssertUnwindSafe(|| {
+            let id = match to_rust_str(id) {
+                Some(s) => s,
+                None => return to_c_string(""),
+            };
+            to_c_string(&impulse_core::theme::theme_display_name(&id))
+        }),
+    )
+}
+
+/// Resolve a theme by name and return the full `ResolvedTheme` as JSON.
+#[no_mangle]
+pub extern "C" fn impulse_get_theme(name: *const c_char) -> *mut c_char {
+    ffi_catch(
+        to_c_string("{}"),
+        AssertUnwindSafe(|| {
+            let name = match to_rust_str(name) {
+                Some(s) => s,
+                None => "nord".to_string(),
+            };
+            let theme = impulse_core::theme::get_theme(&name);
+            to_c_string(&impulse_core::theme::theme_to_json(&theme))
+        }),
+    )
+}
+
+/// Resolve a theme by name and return the `MonacoThemeDefinition` as JSON.
+#[no_mangle]
+pub extern "C" fn impulse_get_monaco_theme(name: *const c_char) -> *mut c_char {
+    ffi_catch(
+        to_c_string("{}"),
+        AssertUnwindSafe(|| {
+            let name = match to_rust_str(name) {
+                Some(s) => s,
+                None => "nord".to_string(),
+            };
+            let theme = impulse_core::theme::get_theme(&name);
+            let monaco = impulse_editor::protocol::theme_to_monaco(&theme);
+            let json = serde_json::to_string(&monaco).unwrap_or_else(|_| "{}".to_string());
+            to_c_string(&json)
+        }),
+    )
+}
+
+/// Resolve a theme by name and return the `MarkdownThemeColors` as JSON.
+#[no_mangle]
+pub extern "C" fn impulse_get_markdown_theme(name: *const c_char) -> *mut c_char {
+    ffi_catch(
+        to_c_string("{}"),
+        AssertUnwindSafe(|| {
+            let name = match to_rust_str(name) {
+                Some(s) => s,
+                None => "nord".to_string(),
+            };
+            let theme = impulse_core::theme::get_theme(&name);
+            let md_colors = impulse_editor::markdown::theme_to_markdown_colors(&theme);
+            let json = serde_json::to_string(&md_colors).unwrap_or_else(|_| "{}".to_string());
+            to_c_string(&json)
+        }),
+    )
+}

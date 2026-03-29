@@ -105,15 +105,15 @@ enum TabEntry {
         switch self {
         case .terminal(let container):
             let termTheme = TerminalTheme(
-                bg: theme.bgHex,
-                fg: theme.fgHex,
-                terminalPalette: theme.terminalPalette.map { $0.hexString }
+                bg: theme.bg,
+                fg: theme.fg,
+                terminalPalette: theme.terminalPalette
             )
-            container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlight)
+            container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
         case .editor(let editor):
-            editor.applyTheme(theme.monacoThemeDefinition())
+            editor.applyTheme(ThemeManager.monacoTheme(forName: theme.name))
         case .imagePreview(_, let view):
-            view.layer?.backgroundColor = theme.bg.cgColor
+            view.layer?.backgroundColor = theme.bgColor.cgColor
         }
     }
 }
@@ -195,7 +195,7 @@ final class TabManager: NSObject {
 
         contentView = NSView()
         contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = theme.bg.cgColor
+        contentView.layer?.backgroundColor = theme.bgColor.cgColor
 
         super.init()
     }
@@ -208,9 +208,9 @@ final class TabManager: NSObject {
         let dir = directory ?? NSHomeDirectory()
         let termSettings = settings.terminalSettings(directory: dir)
         let termTheme = TerminalTheme(
-            bg: theme.bgHex,
-            fg: theme.fgHex,
-            terminalPalette: theme.terminalPalette.map { $0.hexString }
+            bg: theme.bg,
+            fg: theme.fg,
+            terminalPalette: theme.terminalPalette
         )
         let container = TerminalContainer(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
@@ -218,7 +218,7 @@ final class TabManager: NSObject {
             theme: termTheme,
             initialCommand: initialCommand
         )
-        container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlight)
+        container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
         let entry = TabEntry.terminal(container)
         insertTab(entry)
     }
@@ -267,7 +267,7 @@ final class TabManager: NSObject {
 
         // Read file content off the main thread, then create the editor tab on main.
         let editorOptions = editorOptionsFromSettings()
-        let themeDef = theme.monacoThemeDefinition()
+        let themeDef = ThemeManager.monacoTheme(forName: theme.name)
         let language = languageIdForPath(path)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -316,7 +316,7 @@ final class TabManager: NSObject {
 
         let editorOptions = editorOptionsFromSettings()
         editorTab.applySettings(editorOptions)
-        let themeDef = theme.monacoThemeDefinition()
+        let themeDef = ThemeManager.monacoTheme(forName: theme.name)
         editorTab.applyTheme(themeDef)
 
         let entry = TabEntry.editor(editorTab)
@@ -706,7 +706,7 @@ final class TabManager: NSObject {
 
     func applyTheme(_ theme: Theme) {
         self.theme = theme
-        contentView.layer?.backgroundColor = theme.bg.cgColor
+        contentView.layer?.backgroundColor = theme.bgColor.cgColor
         if let cache = iconCache {
             cache.rebuild(theme: theme)
         } else {

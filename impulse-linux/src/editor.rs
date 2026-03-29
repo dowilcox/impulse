@@ -8,7 +8,7 @@ use webkit6::prelude::*;
 
 use crate::editor_webview::{self, MonacoEditorHandle};
 use crate::settings::Settings;
-use crate::theme::ThemeColors;
+use impulse_core::theme::ResolvedTheme;
 use impulse_editor::markdown;
 use impulse_editor::protocol::EditorEvent;
 
@@ -62,7 +62,7 @@ const LARGE_FILE_THRESHOLD: u64 = 5 * 1024 * 1024; // 5 MB
 pub fn create_editor<F>(
     file_path: &str,
     settings: &Settings,
-    theme: &ThemeColors,
+    theme: &ResolvedTheme,
     on_event: F,
 ) -> (gtk4::Box, Rc<MonacoEditorHandle>)
 where
@@ -106,7 +106,7 @@ where
 /// default directory in the save-as dialog.
 pub fn create_untitled_editor<F>(
     settings: &Settings,
-    theme: &ThemeColors,
+    theme: &ResolvedTheme,
     cwd: Option<String>,
     on_event: F,
 ) -> (gtk4::Box, Rc<MonacoEditorHandle>)
@@ -190,7 +190,7 @@ pub fn apply_settings(widget: &gtk4::Widget, settings: &Settings) {
 }
 
 /// Apply theme changes to an existing Monaco editor.
-pub fn apply_theme(widget: &gtk4::Widget, theme: &ThemeColors) {
+pub fn apply_theme(widget: &gtk4::Widget, theme: &ResolvedTheme) {
     if let Some(handle) = get_handle_for_widget(widget) {
         handle.set_theme(theme);
     }
@@ -218,31 +218,15 @@ pub fn is_previewable_file(path: &str) -> bool {
 }
 
 /// Map the application theme to markdown preview colors.
-pub fn theme_to_markdown_colors(theme: &ThemeColors) -> markdown::MarkdownThemeColors {
-    markdown::MarkdownThemeColors {
-        bg: theme.bg.to_string(),
-        fg: theme.fg.to_string(),
-        heading: theme.cyan.to_string(),
-        link: theme.blue.to_string(),
-        code_bg: theme.bg_dark.to_string(),
-        border: theme.bg_highlight.to_string(),
-        blockquote_fg: theme.comment.to_string(),
-        hljs_keyword: theme.magenta.to_string(),
-        hljs_string: theme.green.to_string(),
-        hljs_number: theme.orange.to_string(),
-        hljs_comment: theme.comment.to_string(),
-        hljs_function: theme.blue.to_string(),
-        hljs_type: theme.yellow.to_string(),
-        font_family: "Inter, system-ui, sans-serif".to_string(),
-        code_font_family: "'JetBrains Mono', monospace".to_string(),
-    }
+pub fn theme_to_markdown_colors(theme: &ResolvedTheme) -> markdown::MarkdownThemeColors {
+    markdown::theme_to_markdown_colors(theme)
 }
 
 /// Toggle preview for an editor widget (markdown or SVG).
 ///
 /// Returns the new `is_previewing` state, or `None` if the widget is not a
 /// previewable file type or doesn't have a stack.
-pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool> {
+pub fn toggle_preview(widget: &gtk4::Widget, theme: &ResolvedTheme) -> Option<bool> {
     let handle = get_handle_for_widget(widget)?;
     let file_path = handle.file_path.borrow().clone();
     if !is_previewable_file(&file_path) {
@@ -265,7 +249,7 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
 
     let html = if is_svg_file(&file_path) {
         // SVG preview — embed raw SVG in themed HTML
-        match impulse_editor::svg::render_svg_preview(&content, theme.bg) {
+        match impulse_editor::svg::render_svg_preview(&content, &theme.bg) {
             Some(h) => h,
             None => return None,
         }
@@ -292,7 +276,7 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
             .vexpand(true)
             .build();
         let bg_rgba =
-            gtk4::gdk::RGBA::parse(theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
+            gtk4::gdk::RGBA::parse(&theme.bg).unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
         preview_wv.set_background_color(&bg_rgba);
 
         if let Some(wk_settings) = webkit6::prelude::WebViewExt::settings(&preview_wv) {
@@ -347,7 +331,7 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
 }
 
 /// Re-render the preview with new theme colors (for theme changes).
-pub fn refresh_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
+pub fn refresh_preview(widget: &gtk4::Widget, theme: &ResolvedTheme) {
     let handle = match get_handle_for_widget(widget) {
         Some(h) => h,
         None => return,
@@ -366,7 +350,7 @@ pub fn refresh_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
     let file_path = handle.file_path.borrow().clone();
 
     let html = if is_svg_file(&file_path) {
-        match impulse_editor::svg::render_svg_preview(&content, theme.bg) {
+        match impulse_editor::svg::render_svg_preview(&content, &theme.bg) {
             Some(h) => h,
             None => return,
         }
@@ -390,7 +374,7 @@ pub fn refresh_preview(widget: &gtk4::Widget, theme: &ThemeColors) {
                 .map(|p| format!("file://{}/", p.display()));
             preview_wv.load_html(&html, base_uri.as_deref());
 
-            let bg_rgba = gtk4::gdk::RGBA::parse(theme.bg)
+            let bg_rgba = gtk4::gdk::RGBA::parse(&theme.bg)
                 .unwrap_or(gtk4::gdk::RGBA::new(0.17, 0.14, 0.27, 1.0));
             preview_wv.set_background_color(&bg_rgba);
         }

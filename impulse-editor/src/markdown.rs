@@ -28,6 +28,29 @@ pub struct MarkdownThemeColors {
     pub code_font_family: String,
 }
 
+/// Convert a [`ResolvedTheme`] into [`MarkdownThemeColors`] for the markdown preview.
+pub fn theme_to_markdown_colors(
+    theme: &impulse_core::theme::ResolvedTheme,
+) -> MarkdownThemeColors {
+    MarkdownThemeColors {
+        bg: theme.bg.clone(),
+        fg: theme.fg.clone(),
+        heading: theme.cyan.clone(),
+        link: theme.syntax_link.clone(),
+        code_bg: theme.bg_dark.clone(),
+        border: theme.bg_highlight.clone(),
+        blockquote_fg: theme.fg_comment.clone(),
+        hljs_keyword: theme.syntax_keyword.clone(),
+        hljs_string: theme.syntax_string.clone(),
+        hljs_number: theme.syntax_number.clone(),
+        hljs_comment: theme.syntax_comment.clone(),
+        hljs_function: theme.syntax_function.clone(),
+        hljs_type: theme.syntax_type.clone(),
+        font_family: "Inter, system-ui, sans-serif".to_string(),
+        code_font_family: "'JetBrains Mono', monospace".to_string(),
+    }
+}
+
 /// Recognised markdown file extensions.
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
 

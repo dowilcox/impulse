@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use gtk4::gdk;
 use gtk4::glib;
 
-use crate::theme::ThemeColors;
+use impulse_core::theme::ResolvedTheme;
 
 // ---------------------------------------------------------------------------
 // Embedded SVGs (Material Icon Theme, MIT license)
@@ -103,17 +103,17 @@ enum ColorField {
 }
 
 impl ColorField {
-    fn resolve(self, theme: &ThemeColors) -> &'static str {
+    fn resolve(self, theme: &ResolvedTheme) -> &str {
         match self {
-            ColorField::Orange => theme.orange,
-            ColorField::Blue => theme.blue,
-            ColorField::Yellow => theme.yellow,
-            ColorField::Green => theme.green,
-            ColorField::Cyan => theme.cyan,
-            ColorField::Magenta => theme.magenta,
-            ColorField::Red => theme.red,
-            ColorField::Comment => theme.comment,
-            ColorField::Fg => theme.fg,
+            ColorField::Orange => &theme.orange,
+            ColorField::Blue => &theme.blue,
+            ColorField::Yellow => &theme.yellow,
+            ColorField::Green => &theme.green,
+            ColorField::Cyan => &theme.cyan,
+            ColorField::Magenta => &theme.magenta,
+            ColorField::Red => &theme.red,
+            ColorField::Comment => &theme.fg_comment,
+            ColorField::Fg => &theme.fg,
         }
     }
 }
@@ -608,7 +608,7 @@ pub struct IconCache {
 }
 
 impl IconCache {
-    pub fn new(theme: &ThemeColors) -> Self {
+    pub fn new(theme: &ResolvedTheme) -> Self {
         let mut cache = Self {
             textures: HashMap::with_capacity(ALL_ICONS.len()),
         };
@@ -616,12 +616,12 @@ impl IconCache {
         cache
     }
 
-    pub fn rebuild(&mut self, theme: &ThemeColors) {
+    pub fn rebuild(&mut self, theme: &ResolvedTheme) {
         self.textures.clear();
         self.build(theme);
     }
 
-    fn build(&mut self, theme: &ThemeColors) {
+    fn build(&mut self, theme: &ResolvedTheme) {
         for icon in ALL_ICONS {
             let color = icon.color.resolve(theme);
             if let Some(texture) = render_svg_to_texture(icon.svg, color) {

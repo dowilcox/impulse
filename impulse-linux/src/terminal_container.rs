@@ -35,7 +35,7 @@ pub fn split_terminal(
     orientation: gtk4::Orientation,
     setup_terminal: &dyn Fn(&vte4::Terminal),
     settings: &crate::settings::Settings,
-    theme: &crate::theme::ThemeColors,
+    theme: &impulse_core::theme::ResolvedTheme,
     copy_on_select_flag: Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
 ) -> Option<vte4::Terminal> {

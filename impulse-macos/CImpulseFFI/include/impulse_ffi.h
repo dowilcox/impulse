@@ -65,6 +65,13 @@ char *impulse_settings_load_json(const char *json);
 char *impulse_settings_validate_json(const char *json);
 bool impulse_matches_file_pattern(const char *path, const char *pattern);
 
+// Theme API
+char *impulse_available_themes(void);
+char *impulse_theme_display_name(const char *id);
+char *impulse_get_theme(const char *name);
+char *impulse_get_monaco_theme(const char *name);
+char *impulse_get_markdown_theme(const char *name);
+
 // Update checking
 char *impulse_check_for_update(void);
 const char *impulse_get_version(void);

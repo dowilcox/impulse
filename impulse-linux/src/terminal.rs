@@ -6,7 +6,7 @@ use gtk4::prelude::*;
 use std::path::PathBuf;
 use vte4::prelude::*;
 
-use crate::theme::ThemeColors;
+use impulse_core::theme::ResolvedTheme;
 
 const FILTERED_LD_VARS: &[&str] = &[
     "LD_PRELOAD",
@@ -71,7 +71,7 @@ impl ShellSpawnCache {
 /// Create a new VTE terminal widget configured with Impulse shell integration.
 pub fn create_terminal(
     settings: &crate::settings::Settings,
-    theme: &ThemeColors,
+    theme: &ResolvedTheme,
     copy_on_select_flag: Rc<Cell<bool>>,
 ) -> vte4::Terminal {
     let terminal = vte4::Terminal::new();
@@ -174,14 +174,14 @@ pub fn create_terminal(
 pub fn apply_settings(
     terminal: &vte4::Terminal,
     settings: &crate::settings::Settings,
-    theme: &ThemeColors,
+    theme: &ResolvedTheme,
     copy_on_select_flag: &Cell<bool>,
 ) {
-    let palette = theme.terminal_palette_rgba();
+    let palette = crate::theme::terminal_palette_rgba(theme);
     let palette_refs: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
     terminal.set_colors(
-        Some(&theme.fg_rgba()),
-        Some(&theme.bg_rgba()),
+        Some(&crate::theme::fg_rgba(theme)),
+        Some(&crate::theme::bg_rgba(theme)),
         &palette_refs,
     );
 

@@ -1348,9 +1348,9 @@ extension FileTreeView: NSOutlineViewDelegate {
         rowView.indentLevel = outlineView.level(forItem: item)
         // Apply theme-derived colors for hover/selection/indent guides
         if let theme = currentTheme {
-            rowView.hoverColor = theme.accent.withAlphaComponent(0.08)
-            rowView.selectionColor = theme.accent.withAlphaComponent(0.15)
-            rowView.guideColor = theme.border.withAlphaComponent(0.4)
+            rowView.hoverColor = theme.accentColor.withAlphaComponent(0.08)
+            rowView.selectionColor = theme.accentColor.withAlphaComponent(0.15)
+            rowView.guideColor = theme.borderColor.withAlphaComponent(0.4)
         }
         return rowView
     }

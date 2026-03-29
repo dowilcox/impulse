@@ -429,7 +429,7 @@ final class SettingsWindowController: NSWindowController {
         previewBox.heightAnchor.constraint(equalToConstant: 200).isActive = true
 
         let theme = ThemeManager.theme(forName: settings.colorScheme)
-        previewBox.fillColor = theme.bg
+        previewBox.fillColor = theme.bgColor
         previewBox.contentView = buildColorPreview(theme: theme)
 
         addSection(to: stack, title: "Color Scheme", subtitle: "Theme applied to editor, terminal, and UI", rows: [
@@ -466,7 +466,7 @@ final class SettingsWindowController: NSWindowController {
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
 
-        let colors: [(String, NSColor)] = [
+        let colors: [(String, String)] = [
             ("Background", theme.bg),
             ("Background Dark", theme.bgDark),
             ("Foreground", theme.fg),
@@ -477,7 +477,7 @@ final class SettingsWindowController: NSWindowController {
             ("Red", theme.red),
             ("Yellow", theme.yellow),
             ("Orange", theme.orange),
-            ("Comment", theme.comment),
+            ("Comment", theme.fgComment),
         ]
 
         // Show color swatches in rows
@@ -488,10 +488,10 @@ final class SettingsWindowController: NSWindowController {
         row2.orientation = .horizontal
         row2.spacing = 8
 
-        for (index, (name, color)) in colors.enumerated() {
+        for (index, (name, hex)) in colors.enumerated() {
             let swatch = NSView()
             swatch.wantsLayer = true
-            swatch.layer?.backgroundColor = color.cgColor
+            swatch.layer?.backgroundColor = NSColor(hex: hex).cgColor
             swatch.layer?.cornerRadius = 4
             swatch.translatesAutoresizingMaskIntoConstraints = false
             swatch.widthAnchor.constraint(equalToConstant: 32).isActive = true
@@ -510,17 +510,17 @@ final class SettingsWindowController: NSWindowController {
 
         // Terminal palette row
         let paletteLabel = NSTextField(labelWithString: "Terminal Palette:")
-        paletteLabel.textColor = theme.fg
+        paletteLabel.textColor = theme.fgColor
         paletteLabel.font = NSFont.appFont(ofSize: 11)
         stack.addArrangedSubview(paletteLabel)
 
         let paletteRow = NSStackView()
         paletteRow.orientation = .horizontal
         paletteRow.spacing = 2
-        for color in theme.terminalPalette {
+        for hex in theme.terminalPalette {
             let swatch = NSView()
             swatch.wantsLayer = true
-            swatch.layer?.backgroundColor = color.cgColor
+            swatch.layer?.backgroundColor = NSColor(hex: hex).cgColor
             swatch.layer?.cornerRadius = 2
             swatch.translatesAutoresizingMaskIntoConstraints = false
             swatch.widthAnchor.constraint(equalToConstant: 20).isActive = true
@@ -1226,7 +1226,7 @@ final class SettingsWindowController: NSWindowController {
 
         let theme = ThemeManager.theme(forName: name)
         if let previewBox = findView(withIdentifier: "colorPreviewBox", in: window?.contentView) as? NSBox {
-            previewBox.fillColor = theme.bg
+            previewBox.fillColor = theme.bgColor
             previewBox.contentView = buildColorPreview(theme: theme)
         }
 

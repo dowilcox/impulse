@@ -125,7 +125,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     let (editor_widget, _handle) = editor::create_editor(
                         path,
                         &settings.borrow(),
-                        theme,
+                        &theme,
                         {
                             let lsp_tx = lsp_tx.clone();
                             let doc_versions = doc_versions.clone();

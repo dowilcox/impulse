@@ -186,7 +186,7 @@ pub(super) fn make_create_tab(
     move || {
         let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
         let term =
-            terminal::create_terminal(&settings.borrow(), theme, copy_on_select_flag.clone());
+            terminal::create_terminal(&settings.borrow(), &theme, copy_on_select_flag.clone());
         setup_terminal_signals(&term);
         terminal::spawn_shell(&term, &shell_cache, None);
 

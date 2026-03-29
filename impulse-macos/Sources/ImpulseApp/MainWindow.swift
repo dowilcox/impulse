@@ -235,7 +235,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
-        window.backgroundColor = theme.bgSurface
+        window.backgroundColor = theme.bgSurfaceColor
 
         super.init(window: window)
         window.delegate = self
@@ -934,16 +934,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window?.appearance = NSAppearance(named: newTheme.isLight ? .aqua : .darkAqua)
 
         // Window background — use bgSurface so the titlebar blends with the tab bar
-        window?.backgroundColor = newTheme.bgSurface
+        window?.backgroundColor = newTheme.bgSurfaceColor
 
         // Tab manager (propagates to all tabs)
         tabManager.applyTheme(newTheme)
 
         // Re-render previews with updated theme
-        let themeJSON = markdownThemeJSON()
+        let themeJSON = ThemeManager.markdownThemeJSON(forName: newTheme.name)
         for tab in tabManager.tabs {
             if case .editor(let editor) = tab {
-                editor.refreshPreview(themeJSON: themeJSON, bgColor: theme.bgHex)
+                editor.refreshPreview(themeJSON: themeJSON, bgColor: newTheme.bg)
             }
         }
     }
@@ -1870,30 +1870,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Shows a dialog asking for a line number and navigates the active editor to it.
     // MARK: - Markdown Preview
 
-    /// Build the JSON representation of MarkdownThemeColors from the current theme.
-    private func markdownThemeJSON() -> String {
-        let dict: [String: String] = [
-            "bg": theme.bgHex,
-            "fg": theme.fgHex,
-            "heading": theme.cyanHex,
-            "link": theme.blueHex,
-            "code_bg": theme.bgDarkHex,
-            "border": theme.bgHighlightHex,
-            "blockquote_fg": theme.comment.hexString,
-            "hljs_keyword": theme.magentaHex,
-            "hljs_string": theme.greenHex,
-            "hljs_number": theme.orangeHex,
-            "hljs_comment": theme.comment.hexString,
-            "hljs_function": theme.blueHex,
-            "hljs_type": theme.yellowHex,
-            "font_family": "Inter, system-ui, sans-serif",
-            "code_font_family": "'JetBrains Mono', monospace",
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
-              let json = String(data: data, encoding: .utf8) else { return "{}" }
-        return json
-    }
-
     @objc private func previewButtonClicked(_ sender: Any?) {
         togglePreview()
     }
@@ -1904,8 +1880,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
               let fp = editor.filePath,
               EditorTab.isPreviewableFile(fp) else { return }
 
-        let themeJSON = markdownThemeJSON()
-        if let isPreviewing = editor.togglePreview(themeJSON: themeJSON, bgColor: theme.bgHex) {
+        let themeJSON = ThemeManager.markdownThemeJSON(forName: theme.name)
+        if let isPreviewing = editor.togglePreview(themeJSON: themeJSON, bgColor: theme.bg) {
             statusBar.showPreviewButton(isPreviewing: isPreviewing)
             windowModel.isPreviewing = isPreviewing
         }

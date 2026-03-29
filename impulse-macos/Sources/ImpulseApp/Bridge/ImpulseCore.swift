@@ -520,6 +520,36 @@ final class ImpulseCore {
         }
     }
 
+    // MARK: - Theme API
+
+    /// Returns the list of all available theme names (built-in + user).
+    static func availableThemes() -> [String] {
+        guard let json = consumeCString(impulse_available_themes()) else { return [] }
+        guard let data = json.data(using: .utf8),
+              let names = try? JSONSerialization.jsonObject(with: data) as? [String] else { return [] }
+        return names
+    }
+
+    /// Returns the display name for a theme ID.
+    static func themeDisplayName(id: String) -> String {
+        return consumeCString(impulse_theme_display_name(id)) ?? id
+    }
+
+    /// Returns the full ResolvedTheme as a JSON string for decoding into `Theme`.
+    static func getTheme(name: String) -> String {
+        return consumeCString(impulse_get_theme(name)) ?? "{}"
+    }
+
+    /// Returns the MonacoThemeDefinition as a JSON string.
+    static func getMonacoTheme(name: String) -> String {
+        return consumeCString(impulse_get_monaco_theme(name)) ?? "{}"
+    }
+
+    /// Returns the MarkdownThemeColors as a JSON string.
+    static func getMarkdownTheme(name: String) -> String {
+        return consumeCString(impulse_get_markdown_theme(name)) ?? "{}"
+    }
+
     // MARK: - Settings
 
     /// Return default settings as a JSON string.

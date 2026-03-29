@@ -199,7 +199,7 @@ fn main() {
     app.connect_startup(move |_app| {
         let initial_theme = theme::get_theme(&settings::load().color_scheme);
         let style_manager = adw::StyleManager::default();
-        if initial_theme.base == "vs" {
+        if initial_theme.is_light {
             style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
         } else {
             style_manager.set_color_scheme(adw::ColorScheme::ForceDark);

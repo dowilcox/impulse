@@ -6,6 +6,7 @@ description = "Shared Monaco editor protocol and assets for Impulse IDE"
 license = "GPL-3.0-only"
 
 [dependencies]
+impulse-core = { path = "../impulse-core" }
 include_dir = "0.7"
 log = { workspace = true }
 serde = { workspace = true }

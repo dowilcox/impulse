@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::file_icons::IconCache;
 use crate::project_search;
 use crate::settings;
-use crate::theme::ThemeColors;
+use impulse_core::theme::ResolvedTheme;
 
 type EventCallback = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
 use impulse_core::filesystem::FileEntry;
@@ -37,7 +37,7 @@ pub struct TabTreeState {
 /// Build the sidebar widget containing file tree and search panel.
 pub fn build_sidebar(
     settings: &Rc<RefCell<settings::Settings>>,
-    theme: &ThemeColors,
+    theme: &ResolvedTheme,
 ) -> (gtk4::Box, SidebarState) {
     let sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     sidebar.add_css_class("sidebar");
@@ -1524,7 +1524,7 @@ impl SidebarState {
     }
 
     /// Rebuild the icon cache for a new theme and re-render the tree.
-    pub fn update_theme(&self, theme: &ThemeColors) {
+    pub fn update_theme(&self, theme: &ResolvedTheme) {
         self.icon_cache.borrow_mut().rebuild(theme);
         let nodes = self.tree_nodes.borrow().clone();
         render_tree(&self.file_tree_list, &nodes, &self.icon_cache.borrow());

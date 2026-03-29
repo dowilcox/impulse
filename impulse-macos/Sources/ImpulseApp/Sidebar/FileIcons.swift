@@ -9,15 +9,15 @@ enum IconColorField {
 
     func resolve(_ theme: Theme) -> String {
         switch self {
-        case .orange:  return theme.orangeHex
-        case .blue:    return theme.blueHex
-        case .yellow:  return theme.yellowHex
-        case .green:   return theme.greenHex
-        case .cyan:    return theme.cyanHex
-        case .magenta: return theme.magentaHex
-        case .red:     return theme.redHex
-        case .comment: return theme.commentHex
-        case .fg:      return theme.fgHex
+        case .orange:  return theme.orange
+        case .blue:    return theme.blue
+        case .yellow:  return theme.yellow
+        case .green:   return theme.green
+        case .cyan:    return theme.cyan
+        case .magenta: return theme.magenta
+        case .red:     return theme.red
+        case .comment: return theme.fgComment
+        case .fg:      return theme.fg
         }
     }
 }

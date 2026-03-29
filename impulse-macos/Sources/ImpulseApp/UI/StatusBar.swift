@@ -262,20 +262,20 @@ final class StatusBar: NSView {
 
     /// Applies the given theme colors to the status bar and all labels.
     func applyTheme(_ theme: Theme) {
-        layer?.backgroundColor = theme.bgSurface.cgColor
-        topBorder.layer?.backgroundColor = theme.border.cgColor
-        separatorView.layer?.backgroundColor = theme.border.withAlphaComponent(0.4).cgColor
+        layer?.backgroundColor = theme.bgSurfaceColor.cgColor
+        topBorder.layer?.backgroundColor = theme.borderColor.cgColor
+        separatorView.layer?.backgroundColor = theme.borderColor.withAlphaComponent(0.4).cgColor
 
-        cwdLabel.textColor = theme.fg
-        gitBranchLabel.textColor = theme.magenta
-        shellNameLabel.textColor = theme.cyan
-        cursorPositionLabel.textColor = theme.fgDark
-        languageLabel.textColor = theme.blue
-        encodingLabel.textColor = theme.fgDark
-        indentInfoLabel.textColor = theme.fgDark
-        blameLabel.textColor = theme.fgDark
-        previewButton.applyTheme(borderColor: theme.green, bgDark: theme.bgSurface)
-        updateButton.contentTintColor = theme.yellow
+        cwdLabel.textColor = theme.fgColor
+        gitBranchLabel.textColor = theme.magentaColor
+        shellNameLabel.textColor = theme.cyanColor
+        cursorPositionLabel.textColor = theme.fgMutedColor
+        languageLabel.textColor = theme.blueColor
+        encodingLabel.textColor = theme.fgMutedColor
+        indentInfoLabel.textColor = theme.fgMutedColor
+        blameLabel.textColor = theme.fgMutedColor
+        previewButton.applyTheme(borderColor: theme.greenColor, bgDark: theme.bgSurfaceColor)
+        updateButton.contentTintColor = theme.yellowColor
     }
 
     // MARK: - Update Notification

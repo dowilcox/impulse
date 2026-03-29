@@ -75,7 +75,7 @@ pub(super) fn setup_capture_phase_keys(
                         let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                         let term = terminal::create_terminal(
                             &settings.borrow(),
-                            theme,
+                            &theme,
                             copy_on_select.clone(),
                         );
                         setup_terminal_signals(&term);
@@ -165,7 +165,7 @@ pub(super) fn setup_capture_phase_keys(
                         let s = md_preview_settings.borrow();
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         if let Some(is_previewing) =
-                            editor::toggle_preview(child.upcast_ref(), theme)
+                            editor::toggle_preview(child.upcast_ref(), &theme)
                         {
                             md_preview_status_bar
                                 .borrow()
@@ -355,7 +355,7 @@ pub(super) fn setup_shortcut_controller(
                 let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                 let (editor_widget, _handle) = editor::create_untitled_editor(
                     &settings.borrow(),
-                    theme,
+                    &theme,
                     cwd.clone(),
                     {
                         let lsp_tx = lsp_tx.clone();
@@ -1019,7 +1019,7 @@ pub(super) fn setup_shortcut_controller(
                         let s = settings.borrow();
                         let theme = crate::theme::get_theme(&s.color_scheme);
                         if let Some(is_previewing) =
-                            editor::toggle_preview(child.upcast_ref(), theme)
+                            editor::toggle_preview(child.upcast_ref(), &theme)
                         {
                             status_bar.borrow().show_preview_button(is_previewing);
                         }
@@ -1085,7 +1085,7 @@ pub(super) fn setup_shortcut_controller(
                 let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
                 let term = terminal::create_terminal(
                     &settings.borrow(),
-                    theme,
+                    &theme,
                     copy_on_select_flag.clone(),
                 );
                 setup_terminal_signals(&term);

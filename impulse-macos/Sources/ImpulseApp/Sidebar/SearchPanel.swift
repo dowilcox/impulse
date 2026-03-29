@@ -175,20 +175,20 @@ final class SearchPanel: NSView {
     func applyTheme(_ theme: Theme) {
         currentTheme = theme
         resultsTableView.backgroundColor = .clear
-        statusLabel.textColor = theme.fgDark
+        statusLabel.textColor = theme.fgMutedColor
 
         // Style the case-sensitive toggle
-        caseSensitiveButton.contentTintColor = theme.fgDark
+        caseSensitiveButton.contentTintColor = theme.fgMutedColor
 
         // Style the search row container and field to match the theme
-        searchRowStack.layer?.backgroundColor = theme.bgHighlight.cgColor
-        searchIcon.contentTintColor = theme.fgDark
-        searchField.textColor = theme.fg
-        (searchField.currentEditor() as? NSTextView)?.insertionPointColor = theme.fg
+        searchRowStack.layer?.backgroundColor = theme.bgHighlightColor.cgColor
+        searchIcon.contentTintColor = theme.fgMutedColor
+        searchField.textColor = theme.fgColor
+        (searchField.currentEditor() as? NSTextView)?.insertionPointColor = theme.fgColor
         searchField.placeholderAttributedString = NSAttributedString(
             string: "Search files and content...",
             attributes: [
-                .foregroundColor: theme.fgDark,
+                .foregroundColor: theme.fgMutedColor,
                 .font: searchField.font ?? NSFont.appFont(ofSize: 13),
             ]
         )
@@ -200,11 +200,11 @@ final class SearchPanel: NSView {
         // Update button visual state
         if let theme = currentTheme {
             if sender.state == .on {
-                caseSensitiveButton.layer?.backgroundColor = theme.bgHighlight.cgColor
-                caseSensitiveButton.contentTintColor = theme.cyan
+                caseSensitiveButton.layer?.backgroundColor = theme.bgHighlightColor.cgColor
+                caseSensitiveButton.contentTintColor = theme.cyanColor
             } else {
                 caseSensitiveButton.layer?.backgroundColor = NSColor.clear.cgColor
-                caseSensitiveButton.contentTintColor = theme.fgDark
+                caseSensitiveButton.contentTintColor = theme.fgMutedColor
             }
         }
         triggerSearch()
