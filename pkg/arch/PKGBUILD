@@ -2,11 +2,12 @@
 pkgname=impulse
 pkgver=__VERSION__
 pkgrel=1
-pkgdesc='Terminal-first development environment'
+pkgdesc='Terminal-first development environment (Qt6)'
 arch=('x86_64')
 url='https://github.com/dowilcox/impulse'
 license=('GPL-3.0-only')
-depends=('gtk4' 'libadwaita' 'vte4' 'gtksourceview5' 'webkitgtk-6.0')
+depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'qt6-quickcontrols2')
+makedepends=('rust' 'cargo' 'cmake' 'qt6-tools')
 source=('impulse' 'dev.impulse.Impulse.desktop' 'impulse-logo.svg')
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 
