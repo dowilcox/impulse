@@ -35,7 +35,6 @@ Item {
     }
 
     // Container for dynamically created tab content views.
-    // We use a map keyed by tab index string for O(1) lookup.
     property var contentItems: ({})
     property var contentComponents: ({
         "terminal": Qt.createComponent("TerminalView.qml"),
@@ -56,14 +55,12 @@ Item {
 
         // Check if this is an image
         var ext = path.split(".").pop().toLowerCase()
-        var imageExts = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
-        if (imageExts.indexOf(ext) >= 0 && !editorBridge.is_previewable_file(path)) {
+        var imageExts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
+        if (imageExts.indexOf(ext) >= 0) {
             windowModel.create_tab("image")
         } else {
-            windowModel.create_tab("editor")
+            windowModel.create_editor_tab(path)
         }
-        // The backend will fire tabSwitched, causing us to create the view.
-        // We store the pending file/line info.
         pendingFilePath = path
         pendingLine = line || 0
     }
@@ -74,7 +71,6 @@ Item {
     function saveActiveEditor() {
         var info = currentTabInfo()
         if (info && info.tabType === "editor" && info.filePath) {
-            // Signal the editor view to save
             var view = contentItems[windowModel.active_tab_index]
             if (view && view.saveFile) {
                 view.saveFile()
@@ -118,7 +114,6 @@ Item {
             var component = contentComponents[tabType]
 
             if (tabType === "image") {
-                // Create image display inline
                 var imgItem = imageComponent.createObject(contentContainer, {
                     "source": "file://" + (info.filePath || "")
                 })
@@ -129,7 +124,6 @@ Item {
                 var item = component.createObject(contentContainer, {})
                 if (item) {
                     contentItems[idx] = item
-                    // If there's a pending file, open it
                     if (pendingFilePath.length > 0 && tabType === "editor" && item.openFile) {
                         item.openFile(pendingFilePath)
                         if (pendingLine > 0) {
@@ -139,6 +133,8 @@ Item {
                         pendingLine = 0
                     }
                 }
+            } else if (component && component.status === Component.Error) {
+                console.warn("Failed to load component for tab type:", tabType, component.errorString())
             }
         }
 
@@ -151,7 +147,6 @@ Item {
 
     // Clean up views when tabs are closed
     onTabsChanged: {
-        // Remove content items for indices that no longer exist
         var toRemove = []
         for (var key in contentItems) {
             var k = parseInt(key)
@@ -169,30 +164,27 @@ Item {
     }
 
     // ── Placeholder when no tabs ──────────────────────────────────────────────
-    Rectangle {
+    Pane {
         anchors.fill: parent
-        color: theme.bg
         visible: windowModel.tab_count === 0
 
         Column {
             anchors.centerIn: parent
             spacing: 16
 
-            Text {
+            Label {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Impulse"
                 font.pixelSize: 28
                 font.bold: true
-                color: theme.fg_muted
-                opacity: 0.5
+                opacity: 0.4
             }
 
-            Text {
+            Label {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Ctrl+T  New Terminal\nCtrl+P  Quick Open\nCtrl+,  Settings"
                 font.pixelSize: 13
-                color: theme.fg_muted
-                opacity: 0.4
+                opacity: 0.3
                 horizontalAlignment: Text.AlignHCenter
                 lineHeight: 1.6
             }
@@ -206,13 +198,13 @@ Item {
         visible: windowModel.tab_count > 0
     }
 
-    // ── Image viewer component (inline, no separate file) ─────────────────────
+    // ── Image viewer component ────────────────────────────────────────────────
     Component {
         id: imageComponent
 
-        Rectangle {
-            color: theme.bg
+        Pane {
             property alias source: imgElement.source
+            padding: 16
 
             Image {
                 id: imgElement
@@ -224,13 +216,12 @@ Item {
                 mipmap: true
             }
 
-            Text {
+            Label {
                 anchors.bottom: parent.bottom
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottomMargin: 12
                 text: imgElement.sourceSize.width + " x " + imgElement.sourceSize.height
                 font.pixelSize: 12
-                color: theme.fg_muted
                 visible: imgElement.status === Image.Ready
             }
         }

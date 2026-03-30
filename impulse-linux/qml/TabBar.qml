@@ -6,15 +6,13 @@ import QtQuick.Layouts
 import dev.impulse.app
 
 // Custom tab bar for Impulse. This file shadows QtQuick.Controls.TabBar
-// within the dev.impulse.app module. Files that need the Controls TabBar
-// should import QtQuick.Controls with a namespace alias (e.g., QQC2).
+// within the dev.impulse.app module.
 
-Rectangle {
+ToolBar {
     id: tabBarRoot
     height: windowModel.tab_count <= 1 ? 0 : 36
     visible: windowModel.tab_count > 1
-    color: theme.bg_dark
-    clip: true
+    position: ToolBar.Header
 
     Behavior on height { NumberAnimation { duration: 120 } }
 
@@ -24,15 +22,6 @@ Rectangle {
         } catch (e) {
             return []
         }
-    }
-
-    // Bottom border
-    Rectangle {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 1
-        color: theme.border
     }
 
     RowLayout {
@@ -57,11 +46,9 @@ Rectangle {
                 Repeater {
                     model: tabBarRoot.tabs.length
 
-                    Rectangle {
+                    ToolButton {
                         id: tabDelegate
-                        width: tabContent.implicitWidth + 24
-                        height: tabBarRoot.height - 1  // leave room for bottom border
-                        radius: 6
+                        height: tabBarRoot.height
 
                         readonly property var tabInfo: tabBarRoot.tabs[index] || {}
                         readonly property bool isActive: index === windowModel.active_tab_index
@@ -69,23 +56,48 @@ Rectangle {
                         readonly property string tabType: tabInfo.tabType || "terminal"
                         readonly property bool isModified: !!tabInfo.isModified
 
-                        color: {
-                            if (isActive) return theme.bg
-                            if (tabMouse.containsMouse) return theme.bg_highlight
-                            return "transparent"
-                        }
+                        checked: isActive
+                        flat: !isActive
 
-                        // Active tab accent underline
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            height: 2
-                            radius: 1
-                            color: theme.accent
-                            visible: isActive
+                        contentItem: RowLayout {
+                            spacing: 4
+
+                            // Tab type icon
+                            Label {
+                                text: {
+                                    switch (tabType) {
+                                        case "terminal": return ">"
+                                        case "editor":   return isModified ? "\u25CF" : "\u25CB"
+                                        case "image":    return "\uD83D\uDDBC"
+                                        default:         return "\u25CB"
+                                    }
+                                }
+                                font.pixelSize: tabType === "terminal" ? 13 : 10
+                                font.bold: tabType === "terminal"
+                            }
+
+                            // Tab title
+                            Label {
+                                text: tabTitle
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 160
+                            }
+
+                            // Close button
+                            ToolButton {
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                                visible: isActive || tabDelegate.hovered
+                                icon.name: "window-close"
+                                icon.width: 12
+                                icon.height: 12
+                                onClicked: windowModel.close_tab(index)
+
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Close Tab"
+                                ToolTip.delay: 600
+                            }
                         }
 
                         // Drag support
@@ -98,7 +110,7 @@ Rectangle {
 
                         DragHandler {
                             id: tabDragHandler
-                            target: null  // we handle position manually if needed
+                            target: null
                         }
 
                         DropArea {
@@ -111,65 +123,12 @@ Rectangle {
                             }
                         }
 
-                        RowLayout {
-                            id: tabContent
-                            anchors.centerIn: parent
-                            spacing: 4
-
-                            // Tab type icon
-                            Text {
-                                text: {
-                                    switch (tabType) {
-                                        case "terminal": return ">"
-                                        case "editor":   return isModified ? "\u25CF" : "\u25CB"
-                                        case "image":    return "\uD83D\uDDBC"
-                                        default:         return "\u25CB"
-                                    }
-                                }
-                                font.pixelSize: tabType === "terminal" ? 13 : 10
-                                font.bold: tabType === "terminal"
-                                color: isActive ? theme.accent : theme.fg_muted
-                            }
-
-                            // Tab title
-                            Text {
-                                text: tabTitle
-                                font.pixelSize: 12
-                                color: isActive ? theme.fg : theme.fg_muted
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 160
-                            }
-
-                            // Close button (visible on hover or active)
-                            Rectangle {
-                                Layout.preferredWidth: 18
-                                Layout.preferredHeight: 18
-                                radius: 9
-                                visible: isActive || tabMouse.containsMouse
-                                color: closeHover.containsMouse ? theme.bg_highlight : "transparent"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u00D7"
-                                    font.pixelSize: 14
-                                    color: closeHover.containsMouse ? theme.fg : theme.fg_muted
-                                }
-
-                                MouseArea {
-                                    id: closeHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: windowModel.close_tab(index)
-                                }
-                            }
-                        }
+                        onClicked: windowModel.select_tab(index)
 
                         MouseArea {
-                            id: tabMouse
                             anchors.fill: parent
-                            hoverEnabled: true
-                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-                            z: -1  // below close button
+                            acceptedButtons: Qt.MiddleButton | Qt.RightButton
+                            z: -1
 
                             onClicked: function(mouse) {
                                 if (mouse.button === Qt.MiddleButton) {
@@ -177,8 +136,6 @@ Rectangle {
                                 } else if (mouse.button === Qt.RightButton) {
                                     tabContextMenu.tabIndex = index
                                     tabContextMenu.popup()
-                                } else {
-                                    windowModel.select_tab(index)
                                 }
                             }
                         }
@@ -189,18 +146,8 @@ Rectangle {
 
         // ── New tab button ────────────────────────────────────────────────
         ToolButton {
-            id: addTabBtn
-            Layout.preferredWidth: 28
-            Layout.preferredHeight: 28
-            text: "+"
-            font.pixelSize: 16
-            palette.buttonText: theme.fg_muted
-            background: Rectangle {
-                color: addTabBtn.hovered ? theme.bg_highlight : "transparent"
-                radius: 6
-            }
+            icon.name: "list-add"
             onClicked: windowModel.create_tab("terminal")
-
             ToolTip.visible: hovered
             ToolTip.text: "New Terminal (Ctrl+T)"
             ToolTip.delay: 600
@@ -212,18 +159,10 @@ Rectangle {
         id: tabContextMenu
         property int tabIndex: -1
 
-        background: Rectangle {
-            color: theme.bg_surface
-            border.color: theme.border
-            border.width: 1
-            radius: 6
-        }
-
         MenuItem {
             text: "Close"
+            icon.name: "window-close"
             onTriggered: windowModel.close_tab(tabContextMenu.tabIndex)
-            contentItem: Text { text: parent.text; color: theme.fg; font.pixelSize: 13 }
-            background: Rectangle { color: parent.highlighted ? theme.bg_highlight : "transparent" }
         }
         MenuItem {
             text: "Close Others"
@@ -234,8 +173,6 @@ Rectangle {
                     if (i !== idx) windowModel.close_tab(i)
                 }
             }
-            contentItem: Text { text: parent.text; color: parent.enabled ? theme.fg : theme.fg_muted; font.pixelSize: 13 }
-            background: Rectangle { color: parent.highlighted ? theme.bg_highlight : "transparent" }
         }
         MenuItem {
             text: "Close All"
@@ -244,8 +181,6 @@ Rectangle {
                     windowModel.close_tab(i)
                 }
             }
-            contentItem: Text { text: parent.text; color: theme.fg; font.pixelSize: 13 }
-            background: Rectangle { color: parent.highlighted ? theme.bg_highlight : "transparent" }
         }
     }
 }

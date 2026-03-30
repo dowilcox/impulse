@@ -26,6 +26,7 @@ pub mod qobject {
         #[qproperty(QString, encoding)]
         #[qproperty(QString, indent_info)]
         #[qproperty(QString, blame_info)]
+        #[qproperty(QString, project_root)]
         type WindowModel = super::WindowModelRust;
 
         #[qinvokable]
@@ -45,6 +46,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn move_tab(self: Pin<&mut WindowModel>, from_index: i32, to_index: i32);
+
+        #[qinvokable]
+        fn create_editor_tab(self: Pin<&mut WindowModel>, path: &QString);
+
+        #[qinvokable]
+        fn set_tab_title(self: Pin<&mut WindowModel>, index: i32, title: &QString);
 
         #[qsignal]
         fn directory_changed(self: Pin<&mut WindowModel>);
@@ -70,6 +77,8 @@ struct TabDisplayInfo {
     is_modified: bool,
     #[serde(rename = "tabType")]
     tab_type: String,
+    #[serde(rename = "filePath")]
+    file_path: String,
 }
 
 pub struct WindowModelRust {
@@ -87,6 +96,7 @@ pub struct WindowModelRust {
     encoding: QString,
     indent_info: QString,
     blame_info: QString,
+    project_root: QString,
     // Internal state not exposed as properties
     tabs: Vec<TabDisplayInfo>,
 }
@@ -110,6 +120,16 @@ impl Default for WindowModelRust {
             encoding: QString::from("UTF-8"),
             indent_info: QString::from("Spaces: 4"),
             blame_info: QString::default(),
+            project_root: {
+                let exe = std::env::current_exe().unwrap_or_default();
+                let exe_str = exe.to_string_lossy();
+                if let Some(idx) = exe_str.find("/target/") {
+                    QString::from(&exe_str[..idx + 1])
+                } else {
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    QString::from(format!("{}/", cwd.display()).as_str())
+                }
+            },
             tabs: Vec::new(),
         }
     }
@@ -147,6 +167,7 @@ impl qobject::WindowModel {
 
     pub fn create_tab(mut self: Pin<&mut Self>, tab_type: &QString) {
         let tab_type_str = tab_type.to_string();
+        eprintln!("[impulse] WindowModel::create_tab: {}", tab_type_str);
 
         let title = match tab_type_str.as_str() {
             "terminal" => format!("Terminal {}", self.tabs.len() + 1),
@@ -168,6 +189,7 @@ impl qobject::WindowModel {
             icon,
             is_modified: false,
             tab_type: tab_type_str,
+            file_path: String::new(),
         };
 
         self.as_mut().rust_mut().tabs.push(info);
@@ -235,6 +257,39 @@ impl qobject::WindowModel {
         }
 
         self.as_mut().rebuild_tabs_json();
+    }
+
+    pub fn create_editor_tab(mut self: Pin<&mut Self>, path: &QString) {
+        let path_str = path.to_string();
+        let title = std::path::Path::new(&path_str)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+
+        let info = TabDisplayInfo {
+            title,
+            icon: "file".to_string(),
+            is_modified: false,
+            tab_type: "editor".to_string(),
+            file_path: path_str,
+        };
+
+        self.as_mut().rust_mut().tabs.push(info);
+        let new_count = self.tabs.len() as i32;
+        let new_index = new_count - 1;
+
+        self.as_mut().set_tab_count(new_count);
+        self.as_mut().set_active_tab_index(new_index);
+        self.as_mut().rebuild_tabs_json();
+        self.as_mut().tab_switched();
+    }
+
+    pub fn set_tab_title(mut self: Pin<&mut Self>, index: i32, title: &QString) {
+        let idx = index as usize;
+        if idx < self.tabs.len() {
+            self.as_mut().rust_mut().tabs[idx].title = title.to_string();
+            self.as_mut().rebuild_tabs_json();
+        }
     }
 
     fn rebuild_tabs_json(self: Pin<&mut Self>) {

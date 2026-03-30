@@ -5,35 +5,19 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import dev.impulse.app
 
-Popup {
+Dialog {
     id: quickOpenRoot
     modal: true
-    focus: true
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    width: Math.min(560, parent.width * 0.6)
-    height: Math.min(420, parent.height * 0.6)
-    padding: 0
+    title: "Quick Open"
+    standardButtons: Dialog.Close
+    width: Math.min(560, parent ? parent.width * 0.6 : 560)
+    height: Math.min(420, parent ? parent.height * 0.6 : 420)
+    anchors.centerIn: Overlay.overlay
 
     signal fileSelected(string path)
 
     property var fileResults: []
     property int selectedIndex: 0
-
-    background: Rectangle {
-        color: theme.bg_surface
-        border.color: theme.border
-        border.width: 1
-        radius: 8
-
-        // Shadow
-        layer.enabled: true
-        layer.effect: Item {}  // placeholder; real shadow requires ShaderEffect or GraphicalEffects
-    }
-
-    // Overlay dimming
-    Overlay.modal: Rectangle {
-        color: Qt.rgba(0, 0, 0, 0.4)
-    }
 
     onOpened: {
         searchInput.text = ""
@@ -44,65 +28,31 @@ Popup {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 0
-        spacing: 0
+        spacing: 8
 
         // ── Search input ──────────────────────────────────────────────────
-        Rectangle {
+        TextField {
+            id: searchInput
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            color: theme.bg_surface
-            radius: 8
+            placeholderText: "Type to search files..."
+            font.pixelSize: 14
 
-            // Only round top corners
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: parent.radius
-                color: parent.color
-            }
+            onTextChanged: quickOpenDebounce.restart()
 
-            TextField {
-                id: searchInput
-                anchors.fill: parent
-                anchors.margins: 8
-                placeholderText: "Type to search files..."
-                color: theme.fg
-                font.pixelSize: 14
-                leftPadding: 12
-                rightPadding: 12
-
-                background: Rectangle {
-                    color: theme.bg
-                    border.color: searchInput.activeFocus ? theme.accent : theme.border
-                    border.width: 1
-                    radius: 6
-                }
-
-                onTextChanged: {
-                    quickOpenDebounce.restart()
-                }
-
-                Keys.onDownPressed: {
-                    if (selectedIndex < fileResults.length - 1) {
-                        selectedIndex++
-                        resultsList.positionViewAtIndex(selectedIndex, ListView.Contain)
-                    }
-                }
-                Keys.onUpPressed: {
-                    if (selectedIndex > 0) {
-                        selectedIndex--
-                        resultsList.positionViewAtIndex(selectedIndex, ListView.Contain)
-                    }
-                }
-                Keys.onReturnPressed: {
-                    acceptSelection()
-                }
-                Keys.onEnterPressed: {
-                    acceptSelection()
+            Keys.onDownPressed: {
+                if (selectedIndex < fileResults.length - 1) {
+                    selectedIndex++
+                    resultsList.positionViewAtIndex(selectedIndex, ListView.Contain)
                 }
             }
+            Keys.onUpPressed: {
+                if (selectedIndex > 0) {
+                    selectedIndex--
+                    resultsList.positionViewAtIndex(selectedIndex, ListView.Contain)
+                }
+            }
+            Keys.onReturnPressed: acceptSelection()
+            Keys.onEnterPressed: acceptSelection()
         }
 
         Timer {
@@ -120,7 +70,6 @@ Popup {
             }
         }
 
-        // Listen for search results
         Connections {
             target: searchModel
             function onSearch_completed() {
@@ -131,13 +80,6 @@ Popup {
                 }
                 quickOpenRoot.selectedIndex = 0
             }
-        }
-
-        // ── Separator ─────────────────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: theme.border
         }
 
         // ── Results list ──────────────────────────────────────────────────
@@ -151,36 +93,15 @@ Popup {
 
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
-                background: Rectangle { color: "transparent" }
-                contentItem: Rectangle {
-                    implicitWidth: 6
-                    radius: 3
-                    color: theme.fg_muted
-                    opacity: 0.4
-                }
             }
 
-            delegate: Rectangle {
-                id: fileResultDelegate
+            delegate: ItemDelegate {
                 width: resultsList.width
-                height: 36
-                color: {
-                    if (index === selectedIndex) return theme.bg_highlight
-                    if (fileResultMouse.containsMouse) return Qt.rgba(
-                        parseInt(theme.bg_highlight.substring(1, 3), 16) / 255,
-                        parseInt(theme.bg_highlight.substring(3, 5), 16) / 255,
-                        parseInt(theme.bg_highlight.substring(5, 7), 16) / 255,
-                        0.5
-                    )
-                    return "transparent"
-                }
+                highlighted: index === selectedIndex
 
                 readonly property var fileData: fileResults[index] || {}
                 readonly property string fullPath: fileData.path || ""
-                readonly property string fileName: {
-                    var parts = fullPath.split("/")
-                    return parts[parts.length - 1]
-                }
+                readonly property string fileName: fullPath.split("/").pop()
                 readonly property string relativePath: {
                     var root = searchModel.root_path || windowModel.current_directory
                     if (root.length > 0 && fullPath.indexOf(root) === 0) {
@@ -189,125 +110,38 @@ Popup {
                     return fullPath
                 }
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
+                contentItem: RowLayout {
                     spacing: 8
 
-                    // File icon
-                    Text {
-                        text: {
-                            var ext = fileName.split(".").pop().toLowerCase()
-                            switch (ext) {
-                                case "rs":   return "R"
-                                case "js":   return "J"
-                                case "ts":   return "T"
-                                case "py":   return "P"
-                                case "qml":  return "Q"
-                                case "html": return "H"
-                                case "css":  return "C"
-                                case "json": return "{}"
-                                case "md":   return "M"
-                                case "sh":   return "$"
-                                default:     return "\uD83D\uDCC4"
-                            }
-                        }
-                        font.pixelSize: 14
-                        color: {
-                            var ext = fileName.split(".").pop().toLowerCase()
-                            switch (ext) {
-                                case "rs":   return theme.orange
-                                case "js":   return theme.yellow
-                                case "ts":   return theme.blue
-                                case "py":   return theme.green
-                                case "qml":  return theme.magenta
-                                default:     return theme.fg_muted
-                            }
-                        }
-                        Layout.preferredWidth: 20
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    // File name
-                    Text {
+                    Label {
                         text: fileName
                         font.pixelSize: 13
                         font.bold: true
-                        color: theme.fg
                         elide: Text.ElideRight
-                        Layout.alignment: Qt.AlignVCenter
                     }
 
-                    // Relative path
-                    Text {
+                    Label {
                         text: relativePath
                         font.pixelSize: 11
-                        color: theme.fg_muted
+                        opacity: 0.6
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
                     }
                 }
 
-                MouseArea {
-                    id: fileResultMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        selectedIndex = index
-                        acceptSelection()
-                    }
+                onClicked: {
+                    selectedIndex = index
+                    acceptSelection()
                 }
             }
         }
 
         // ── Footer ────────────────────────────────────────────────────────
-        Rectangle {
+        Label {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            color: theme.bg_dark
-            radius: 8
-
-            // Only round bottom corners
-            Rectangle {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: parent.radius
-                color: parent.color
-            }
-
-            // Top border
-            Rectangle {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: 1
-                color: theme.border
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                anchors.topMargin: 1
-
-                Text {
-                    text: fileResults.length + " file" + (fileResults.length !== 1 ? "s" : "")
-                    font.pixelSize: 11
-                    color: theme.fg_muted
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Text {
-                    text: "\u2191\u2193 Navigate  \u23CE Open  Esc Close"
-                    font.pixelSize: 11
-                    color: theme.fg_muted
-                }
-            }
+            text: fileResults.length + " file" + (fileResults.length !== 1 ? "s" : "") + "   \u2191\u2193 Navigate  \u23CE Open  Esc Close"
+            font.pixelSize: 11
+            opacity: 0.6
         }
     }
 

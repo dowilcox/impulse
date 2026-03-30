@@ -2,12 +2,11 @@
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import dev.impulse.app
 
-Rectangle {
+Pane {
     id: fileTreeRoot
-    color: theme.bg_dark
+    padding: 0
 
     // Parsed flat tree data from JSON provided by the Rust backend.
     // Each node has: name, path, isDir, isExpanded, depth, gitStatus, childCount
@@ -37,13 +36,6 @@ Rectangle {
 
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AsNeeded
-            background: Rectangle { color: "transparent" }
-            contentItem: Rectangle {
-                implicitWidth: 6
-                radius: 3
-                color: theme.fg_muted
-                opacity: 0.4
-            }
         }
 
         delegate: FileNodeDelegate {
@@ -54,11 +46,9 @@ Rectangle {
     }
 
     // Empty-state placeholder
-    Text {
+    Label {
         anchors.centerIn: parent
         text: "No files"
-        font.pixelSize: 13
-        color: theme.fg_muted
         opacity: 0.5
         visible: flatList.length === 0
     }

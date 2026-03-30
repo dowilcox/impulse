@@ -5,68 +5,43 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import dev.impulse.app
 
-Rectangle {
+Pane {
     id: sidebarRoot
-    color: theme.bg_dark
+    padding: 0
 
     // Whether we are showing the search panel instead of the file tree
     property bool searchMode: false
 
-    // Right-side border
-    Rectangle {
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: 1
-        color: theme.border
-    }
-
     ColumnLayout {
         anchors.fill: parent
-        anchors.rightMargin: 1  // leave room for border
         spacing: 0
 
         // ── Toolbar ───────────────────────────────────────────────────────
-        Rectangle {
+        ToolBar {
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            color: theme.bg_dark
+            position: ToolBar.Header
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 6
-                anchors.rightMargin: 6
+                anchors.leftMargin: 4
+                anchors.rightMargin: 4
                 spacing: 2
 
                 ToolButton {
-                    id: filesBtn
                     text: "Files"
-                    font.pixelSize: 12
                     font.bold: !sidebarRoot.searchMode
-                    palette.buttonText: sidebarRoot.searchMode ? theme.fg_muted : theme.fg
-                    background: Rectangle {
-                        color: !sidebarRoot.searchMode ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
+                    checked: !sidebarRoot.searchMode
                     onClicked: sidebarRoot.searchMode = false
-
                     ToolTip.visible: hovered
                     ToolTip.text: "File Explorer"
                     ToolTip.delay: 600
                 }
 
                 ToolButton {
-                    id: searchBtn
                     text: "Search"
-                    font.pixelSize: 12
                     font.bold: sidebarRoot.searchMode
-                    palette.buttonText: sidebarRoot.searchMode ? theme.fg : theme.fg_muted
-                    background: Rectangle {
-                        color: sidebarRoot.searchMode ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
+                    checked: sidebarRoot.searchMode
                     onClicked: sidebarRoot.searchMode = true
-
                     ToolTip.visible: hovered
                     ToolTip.text: "Project Search"
                     ToolTip.delay: 600
@@ -75,85 +50,44 @@ Rectangle {
                 Item { Layout.fillWidth: true }
 
                 ToolButton {
-                    id: newFileBtn
-                    text: "\uFF0B"  // full-width plus
-                    font.pixelSize: 14
+                    icon.name: "document-new"
                     visible: !sidebarRoot.searchMode
-                    palette.buttonText: theme.fg_muted
-                    background: Rectangle {
-                        color: newFileBtn.hovered ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
                     onClicked: newFileDialog.open()
-
                     ToolTip.visible: hovered
                     ToolTip.text: "New File"
                     ToolTip.delay: 600
                 }
 
                 ToolButton {
-                    id: newFolderBtn
-                    text: "\uD83D\uDCC1"
-                    font.pixelSize: 13
+                    icon.name: "folder-new"
                     visible: !sidebarRoot.searchMode
-                    palette.buttonText: theme.fg_muted
-                    background: Rectangle {
-                        color: newFolderBtn.hovered ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
                     onClicked: newFolderDialog.open()
-
                     ToolTip.visible: hovered
                     ToolTip.text: "New Folder"
                     ToolTip.delay: 600
                 }
 
                 ToolButton {
-                    id: hiddenBtn
-                    text: fileTreeModel.show_hidden ? "H" : "h"
-                    font.pixelSize: 12
-                    font.bold: fileTreeModel.show_hidden
+                    icon.name: fileTreeModel.show_hidden ? "view-visible" : "view-hidden"
                     visible: !sidebarRoot.searchMode
-                    palette.buttonText: fileTreeModel.show_hidden ? theme.accent : theme.fg_muted
-                    background: Rectangle {
-                        color: hiddenBtn.hovered ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
+                    checked: fileTreeModel.show_hidden
                     onClicked: {
                         fileTreeModel.show_hidden = !fileTreeModel.show_hidden
                         fileTreeModel.refresh()
                     }
-
                     ToolTip.visible: hovered
                     ToolTip.text: fileTreeModel.show_hidden ? "Hide Hidden Files" : "Show Hidden Files"
                     ToolTip.delay: 600
                 }
 
                 ToolButton {
-                    id: refreshBtn
-                    text: "\u21BB"
-                    font.pixelSize: 14
+                    icon.name: "view-refresh"
                     visible: !sidebarRoot.searchMode
-                    palette.buttonText: theme.fg_muted
-                    background: Rectangle {
-                        color: refreshBtn.hovered ? theme.bg_highlight : "transparent"
-                        radius: 4
-                    }
                     onClicked: fileTreeModel.refresh()
-
                     ToolTip.visible: hovered
                     ToolTip.text: "Refresh"
                     ToolTip.delay: 600
                 }
-            }
-
-            // Bottom border for toolbar
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: 1
-                color: theme.border
             }
         }
 
@@ -183,20 +117,14 @@ Rectangle {
         anchors.centerIn: Overlay.overlay
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
-        background: Rectangle { color: theme.bg_surface; border.color: theme.border; border.width: 1; radius: 6 }
 
         ColumnLayout {
             spacing: 8
-            Label {
-                text: "File name:"
-                color: theme.fg
-            }
+            Label { text: "File name:" }
             TextField {
                 id: newFileInput
                 Layout.preferredWidth: 280
-                color: theme.fg
                 placeholderText: "filename.ext"
-                background: Rectangle { color: theme.bg; border.color: theme.border; border.width: 1; radius: 4 }
                 onAccepted: newFileDialog.accept()
             }
         }
@@ -219,20 +147,14 @@ Rectangle {
         anchors.centerIn: Overlay.overlay
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
-        background: Rectangle { color: theme.bg_surface; border.color: theme.border; border.width: 1; radius: 6 }
 
         ColumnLayout {
             spacing: 8
-            Label {
-                text: "Folder name:"
-                color: theme.fg
-            }
+            Label { text: "Folder name:" }
             TextField {
                 id: newFolderInput
                 Layout.preferredWidth: 280
-                color: theme.fg
                 placeholderText: "folder-name"
-                background: Rectangle { color: theme.bg; border.color: theme.border; border.width: 1; radius: 4 }
                 onAccepted: newFolderDialog.accept()
             }
         }

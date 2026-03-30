@@ -6,9 +6,19 @@ import dev.impulse.app
 
 ApplicationWindow {
     id: root
-    title: windowModel.current_directory.length > 0
-           ? windowModel.current_directory + " — Impulse"
-           : "Impulse"
+
+    // Resource paths — project root resolved from Rust via executable path
+    readonly property string iconsDir: "file://" + windowModel.project_root + "assets/icons/"
+    readonly property string fontsDir: "file://" + windowModel.project_root + "impulse-editor/vendor/fonts/"
+
+    title: {
+        var t = "Impulse"
+        if (contentArea.activeEditorPath.length > 0) {
+            var name = contentArea.activeEditorPath.split("/").pop()
+            t = (contentArea.activeEditorModified ? "\u25CF " : "") + name + " \u2014 Impulse"
+        }
+        return t
+    }
     width: 1280
     height: 800
     visible: true
@@ -31,227 +41,143 @@ ApplicationWindow {
             theme.set_theme("nord")
             windowModel.set_directory("/home/dowilcox")
             fileTreeModel.load_root("/home/dowilcox")
+            searchModel.root_path = "/home/dowilcox"
+            // Open a terminal tab on launch
+            windowModel.create_tab("terminal")
         }
     }
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     Shortcut { sequence: "Ctrl+B"; onActivated: windowModel.toggle_sidebar() }
     Shortcut { sequence: "Ctrl+T"; onActivated: windowModel.create_tab("terminal") }
+    Shortcut {
+        sequence: "Ctrl+W"
+        onActivated: {
+            if (windowModel.tab_count > 0) {
+                windowModel.close_tab(windowModel.active_tab_index)
+            }
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+S"
+        onActivated: contentArea.saveActiveEditor()
+    }
+    Shortcut {
+        sequence: "Ctrl+P"
+        onActivated: quickOpenDialog.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+P"
+        onActivated: commandPalette.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+G"
+        onActivated: goToLineDialog.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+Tab"
+        onActivated: {
+            if (windowModel.tab_count > 1) {
+                var next = (windowModel.active_tab_index + 1) % windowModel.tab_count
+                windowModel.select_tab(next)
+            }
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+Tab"
+        onActivated: {
+            if (windowModel.tab_count > 1) {
+                var prev = (windowModel.active_tab_index - 1 + windowModel.tab_count) % windowModel.tab_count
+                windowModel.select_tab(prev)
+            }
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+F"
+        onActivated: {
+            windowModel.sidebar_visible = true
+            sidebar.searchMode = true
+        }
+    }
+
+    // ── Wire file tree clicks to content area ────────────────────────────────
+    Connections {
+        target: fileTreeModel
+        function onFile_activated(path) {
+            contentArea.openFile(path)
+        }
+    }
+
+    // ── Wire search result clicks to content area ────────────────────────────
+    Connections {
+        target: searchModel
+        function onResult_selected(path, line) {  // Fixed signal name from camelCase
+            contentArea.openFile(path, line)
+        }
+    }
 
     // ── Main layout ──────────────────────────────────────────────────────────
-    SplitView {
+    ColumnLayout {
         anchors.fill: parent
-        orientation: Qt.Horizontal
+        spacing: 0
 
-        // ── Sidebar ──────────────────────────────────────────────────────
-        Pane {
-            id: sidebar
-            SplitView.preferredWidth: 260
-            SplitView.minimumWidth: 180
-            SplitView.maximumWidth: root.width * 0.5
-            visible: windowModel.sidebar_visible
-            padding: 0
+        SplitView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            orientation: Qt.Horizontal
 
+            // ── Sidebar ──────────────────────────────────────────────────
+            Sidebar {
+                id: sidebar
+                SplitView.preferredWidth: 260
+                SplitView.minimumWidth: 180
+                SplitView.maximumWidth: root.width * 0.5
+                visible: windowModel.sidebar_visible
+            }
+
+            // ── Content column (tab bar + content + placeholder) ─────────
             ColumnLayout {
-                anchors.fill: parent
+                SplitView.fillWidth: true
                 spacing: 0
 
-                // Sidebar header
-                ToolBar {
+                TabBar {
+                    id: tabBar
                     Layout.fillWidth: true
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 4
-
-                        Label {
-                            text: "Files"
-                            font.bold: true
-                        }
-                        Item { Layout.fillWidth: true }
-                        ToolButton {
-                            icon.name: "view-refresh"
-                            display: AbstractButton.IconOnly
-                            onClicked: fileTreeModel.refresh()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Refresh"
-                            ToolTip.delay: 600
-                        }
-                    }
                 }
 
-                // File tree
-                ScrollView {
+                ContentArea {
+                    id: contentArea
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    clip: true
-
-                    ListView {
-                        id: fileTree
-                        model: treeNodes.length
-                        boundsBehavior: Flickable.StopAtBounds
-
-                        property var treeNodes: {
-                            try { return JSON.parse(fileTreeModel.tree_json) }
-                            catch(e) { return [] }
-                        }
-
-                        delegate: ItemDelegate {
-                            id: treeDelegate
-                            width: fileTree.width
-                            height: 28
-                            padding: 0
-                            leftPadding: 8 + (node.depth || 0) * 18
-
-                            property var node: fileTree.treeNodes[index] || ({})
-
-                            contentItem: RowLayout {
-                                spacing: 6
-
-                                // Expand chevron
-                                Label {
-                                    text: treeDelegate.node.isDir
-                                          ? (treeDelegate.node.isExpanded ? "▾" : "▸") : ""
-                                    font.pixelSize: 10
-                                    opacity: 0.6
-                                    Layout.preferredWidth: 12
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-
-                                // Icon
-                                Label {
-                                    text: treeDelegate.node.isDir ? "📁" : "📄"
-                                    font.pixelSize: 13
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-
-                                // File name
-                                Label {
-                                    text: treeDelegate.node.name || ""
-                                    font.pixelSize: 13
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    Layout.alignment: Qt.AlignVCenter
-                                    color: {
-                                        var gs = treeDelegate.node.gitStatus
-                                        if (gs === "M") return theme.yellow
-                                        if (gs === "A") return theme.green
-                                        if (gs === "D") return theme.red
-                                        return palette.text
-                                    }
-                                }
-
-                                // Git badge
-                                Label {
-                                    visible: !!treeDelegate.node.gitStatus
-                                    text: treeDelegate.node.gitStatus || ""
-                                    font.pixelSize: 9
-                                    font.bold: true
-                                    opacity: 0.7
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-                            }
-
-                            onClicked: {
-                                if (treeDelegate.node.isDir) {
-                                    fileTreeModel.toggle_expand(treeDelegate.node.path)
-                                }
-                            }
-                        }
-
-                        // Empty state
-                        Label {
-                            anchors.centerIn: parent
-                            text: "No files"
-                            opacity: 0.4
-                            visible: fileTree.treeNodes.length === 0
-                        }
-                    }
                 }
             }
         }
 
-        // ── Content + Status bar ─────────────────────────────────────────
-        Page {
-            SplitView.fillWidth: true
-            padding: 0
-
-            // Content area
-            Pane {
-                anchors.fill: parent
-                anchors.bottomMargin: statusBar.height
-
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 16
-
-                    Label {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "Impulse"
-                        font.pixelSize: 28
-                        font.bold: true
-                        opacity: 0.4
-                    }
-                    Label {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "Ctrl+T  New Terminal\nCtrl+B  Toggle Sidebar\nCtrl+P  Quick Open"
-                        font.pixelSize: 13
-                        opacity: 0.3
-                        horizontalAlignment: Text.AlignHCenter
-                        lineHeight: 1.6
-                    }
-                }
-            }
-
-            // Status bar
-            ToolBar {
-                id: statusBar
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 28
-                position: ToolBar.Footer
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 0
-
-                    Label {
-                        text: windowModel.shell_name
-                        font.pixelSize: 12
-                    }
-                    ToolSeparator { Layout.preferredHeight: 14 }
-                    Label {
-                        text: "⎇ " + windowModel.git_branch
-                        font.pixelSize: 12
-                        visible: windowModel.git_branch.length > 0
-                    }
-                    ToolSeparator { visible: windowModel.git_branch.length > 0; Layout.preferredHeight: 14 }
-                    Label {
-                        text: {
-                            var dir = windowModel.current_directory
-                            if (dir.indexOf("/home/dowilcox") === 0) dir = "~" + dir.substring(14)
-                            return dir
-                        }
-                        font.pixelSize: 12
-                        elide: Text.ElideMiddle
-                        Layout.maximumWidth: 300
-                    }
-                    Item { Layout.fillWidth: true }
-                    Label {
-                        text: "Ln " + windowModel.cursor_line + ", Col " + windowModel.cursor_column
-                        font.pixelSize: 12
-                        visible: windowModel.cursor_line > 0
-                    }
-                    ToolSeparator { visible: windowModel.cursor_line > 0; Layout.preferredHeight: 14 }
-                    Label {
-                        text: windowModel.encoding
-                        font.pixelSize: 12
-                    }
-                }
-            }
+        StatusBar {
+            id: statusBar
+            Layout.fillWidth: true
         }
+    }
+
+    // ── Dialogs (hidden by default) ──────────────────────────────────────────
+    QuickOpenDialog {
+        id: quickOpenDialog
+        x: Math.round((root.width - width) / 2)
+        y: Math.round(root.height * 0.2)
+        onFileSelected: function(path) {
+            contentArea.openFile(path)
+        }
+    }
+
+    CommandPalette {
+        id: commandPalette
+        x: Math.round((root.width - width) / 2)
+        y: Math.round(root.height * 0.2)
+    }
+
+    GoToLineDialog {
+        id: goToLineDialog
+        x: Math.round((root.width - width) / 2)
+        y: Math.round(root.height * 0.25)
     }
 }

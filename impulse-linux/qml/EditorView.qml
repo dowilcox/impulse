@@ -77,10 +77,7 @@ Item {
         if (!previewVisible || filePath.length === 0) return
 
         var ext = filePath.split(".").pop().toLowerCase()
-        if (ext === "md" || ext === "markdown") {
-            sendCommand("getContent", "{}")
-            // The content will come back via editorEvent, handled below
-        } else if (ext === "svg") {
+        if (ext === "md" || ext === "markdown" || ext === "svg") {
             sendCommand("getContent", "{}")
         }
     }
@@ -129,13 +126,10 @@ Item {
                 break
 
             case "content":
-                // Response to getContent command — used for save and preview
                 if (payload.content !== undefined) {
-                    // Save flow
                     if (filePath.length > 0) {
                         editorBridge.save_file(filePath, payload.content)
                     }
-                    // Preview flow
                     if (previewVisible) {
                         refreshPreviewFromContent(payload.content)
                     }
@@ -149,10 +143,6 @@ Item {
 
             case "languageChanged":
                 windowModel.language = payload.languageId || ""
-                break
-
-            case "scroll":
-                // Could sync preview scroll position
                 break
         }
     }
@@ -191,20 +181,12 @@ Item {
         anchors.fill: parent
         orientation: Qt.Horizontal
 
-        handle: Rectangle {
-            implicitWidth: previewVisible ? 1 : 0
-            color: theme.border
-        }
-
         // ── Monaco editor ─────────────────────────────────────────────────
         WebEngineView {
             id: monacoWebView
             SplitView.fillWidth: true
             SplitView.minimumWidth: 200
 
-            backgroundColor: theme.bg
-
-            // Load the editor HTML from the embedded assets
             Component.onCompleted: {
                 editorBridge.ensure_monaco_extracted()
                 var html = editorBridge.get_editor_html()
@@ -214,23 +196,14 @@ Item {
                 }
             }
 
-            // Handle JS messages from Monaco
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceId) {
-                // Monaco sends events by calling console.log with a JSON prefix
                 if (message.indexOf("IMPULSE_EVENT:") === 0) {
                     var json = message.substring(14)
                     try {
                         var evt = JSON.parse(json)
                         editorBridge.handle_event(json)
-                    } catch (e) {
-                        // Not a valid event
-                    }
+                    } catch (e) {}
                 }
-            }
-
-            // WebChannel setup for bidirectional messaging
-            webChannel: WebChannel {
-                id: editorChannel
             }
 
             settings.javascriptEnabled: true
@@ -238,7 +211,6 @@ Item {
             settings.localContentCanAccessFileUrls: true
             settings.errorPageEnabled: false
 
-            // Prevent context menu from appearing (Monaco has its own)
             onContextMenuRequested: function(request) {
                 request.accepted = true
             }
@@ -250,7 +222,6 @@ Item {
             visible: previewVisible
             SplitView.preferredWidth: previewVisible ? parent.width * 0.4 : 0
             SplitView.minimumWidth: previewVisible ? 200 : 0
-            backgroundColor: theme.bg
 
             settings.javascriptEnabled: true
             settings.localContentCanAccessFileUrls: true
