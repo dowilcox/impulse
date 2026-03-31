@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
+// TODO: Migrate to Material Icon Theme (JSON-driven lookup from assets/icons/material/).
+//       See impulse-macos FileIcons.swift for reference implementation with folder-specific
+//       icons and 1158+ extension mappings.
 
 import QtQuick
 import QtQuick.Controls

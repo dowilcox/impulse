@@ -188,7 +188,15 @@ ICONS_DST="impulse-macos/Sources/ImpulseApp/Resources/icons"
 
 mkdir -p "${ICONS_DST}"
 cp -f "${ICONS_SRC}"/*.svg "${ICONS_DST}/"
-echo "    OK: File icons copied to ${ICONS_DST}"
+
+# Copy material file/folder icons
+MATERIAL_SRC="assets/icons/material"
+MATERIAL_DST="${ICONS_DST}/material"
+mkdir -p "${MATERIAL_DST}"
+cp -f "${MATERIAL_SRC}"/*.svg "${MATERIAL_DST}/"
+cp -f "${MATERIAL_SRC}"/icon-mapping.json "${MATERIAL_DST}/"
+cp -f "${MATERIAL_SRC}"/LICENSE "${MATERIAL_DST}/"
+echo "    OK: File icons copied to ${ICONS_DST} (+ material/)"
 
 # ── Step 3: Build Swift app ───────────────────────────────────────────
 
