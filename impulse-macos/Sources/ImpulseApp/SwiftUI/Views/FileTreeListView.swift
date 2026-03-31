@@ -4,6 +4,7 @@ import AppKit
 /// Displays the project file tree as a scrollable outline.
 struct FileTreeListView: View {
     var model: WindowModel
+    @State private var isRootDropTarget = false
 
     var body: some View {
         ScrollView {
@@ -12,7 +13,18 @@ struct FileTreeListView: View {
                     FileNodeView(node: node, model: model, depth: 0)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onDrop(of: [.fileURL], isTargeted: $isRootDropTarget) { providers in
+            FileDropHelper.handleDrop(
+                providers: providers,
+                targetDir: model.fileTreeRootPath,
+                projectRoot: model.fileTreeRootPath,
+                onComplete: { model.onRefreshTree?() }
+            )
+            return true
+        }
+        .background(isRootDropTarget ? Color.accentColor.opacity(0.08) : Color.clear)
     }
 }
 
@@ -106,43 +118,21 @@ private struct FileNodeView: View {
         }
     }
 
-    /// Handles dropping a file/folder onto this node (must be a directory).
+    /// Handles dropping files/folders onto this node.
+    /// Internal project files are moved; external files (from Finder) are copied.
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        // Determine the target directory.
         let targetDir: String
         if node.isDirectory {
             targetDir = node.path
         } else {
             targetDir = (node.path as NSString).deletingLastPathComponent
         }
-
-        for provider in providers {
-            // Try to get a file path string (from internal drag).
-            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { data, _ in
-                guard let pathData = data as? Data,
-                      let sourcePath = String(data: pathData, encoding: .utf8),
-                      sourcePath.hasPrefix("/"),
-                      FileManager.default.fileExists(atPath: sourcePath) else { return }
-                let normalizedSource = (sourcePath as NSString).standardizingPath
-                let sourceName = (normalizedSource as NSString).lastPathComponent
-                let destPath = ((targetDir as NSString).appendingPathComponent(sourceName) as NSString).standardizingPath
-                // Can't move to same location or into itself.
-                guard normalizedSource != destPath,
-                      !destPath.hasPrefix(normalizedSource + "/") else { return }
-                DispatchQueue.main.async {
-                    do {
-                        try FileManager.default.moveItem(atPath: sourcePath, toPath: destPath)
-                        model.onRefreshTree?()
-                    } catch {
-                        let alert = NSAlert()
-                        alert.messageText = "Move Failed"
-                        alert.informativeText = error.localizedDescription
-                        alert.alertStyle = .warning
-                        alert.runModal()
-                    }
-                }
-            }
-        }
+        FileDropHelper.handleDrop(
+            providers: providers,
+            targetDir: targetDir,
+            projectRoot: model.fileTreeRootPath,
+            onComplete: { model.onRefreshTree?() }
+        )
         return true
     }
 
@@ -331,5 +321,104 @@ struct FileTreeRow: View {
 
     private var gitNameColor: Color {
         gitInfo?.color ?? (node.gitStatus == .ignored ? .secondary : .primary)
+    }
+}
+
+// MARK: - File Drop Helper
+
+/// Shared logic for handling file drops from Finder or internal tree moves.
+enum FileDropHelper {
+    /// Processes drop providers, copying external files or moving internal ones.
+    static func handleDrop(
+        providers: [NSItemProvider],
+        targetDir: String,
+        projectRoot: String,
+        onComplete: @escaping () -> Void
+    ) {
+        for provider in providers {
+            // Prefer file URL (Finder drops and modern pasteboard).
+            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
+                    guard let urlData = data as? Data,
+                          let url = URL(dataRepresentation: urlData, relativeTo: nil),
+                          url.isFileURL else { return }
+                    let sourcePath = url.path
+                    DispatchQueue.main.async {
+                        processFile(source: sourcePath, targetDir: targetDir,
+                                    projectRoot: projectRoot, onComplete: onComplete)
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier("public.text") {
+                // Fallback for internal drags that only provide text.
+                provider.loadItem(forTypeIdentifier: "public.text", options: nil) { data, _ in
+                    guard let pathData = data as? Data,
+                          let sourcePath = String(data: pathData, encoding: .utf8),
+                          sourcePath.hasPrefix("/"),
+                          FileManager.default.fileExists(atPath: sourcePath) else { return }
+                    DispatchQueue.main.async {
+                        processFile(source: sourcePath, targetDir: targetDir,
+                                    projectRoot: projectRoot, onComplete: onComplete)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Moves an internal file or copies an external file to the target directory.
+    /// Shows a confirmation dialog if the destination already exists.
+    private static func processFile(
+        source: String,
+        targetDir: String,
+        projectRoot: String,
+        onComplete: @escaping () -> Void
+    ) {
+        let fm = FileManager.default
+        let normalizedSource = (source as NSString).standardizingPath
+        let sourceName = (normalizedSource as NSString).lastPathComponent
+        let destPath = ((targetDir as NSString).appendingPathComponent(sourceName) as NSString).standardizingPath
+
+        // Can't drop onto itself or into itself.
+        guard normalizedSource != destPath,
+              !destPath.hasPrefix(normalizedSource + "/") else { return }
+
+        let isInternal = normalizedSource.hasPrefix((projectRoot as NSString).standardizingPath)
+
+        // If destination exists, ask to replace.
+        if fm.fileExists(atPath: destPath) {
+            let alert = NSAlert()
+            alert.messageText = "An item named \"\(sourceName)\" already exists"
+            alert.informativeText = isInternal
+                ? "Do you want to replace it? The original will be moved."
+                : "Do you want to replace it with the one you're copying?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            do {
+                try fm.removeItem(atPath: destPath)
+            } catch {
+                showError("Replace Failed", error.localizedDescription)
+                return
+            }
+        }
+
+        do {
+            if isInternal {
+                try fm.moveItem(atPath: normalizedSource, toPath: destPath)
+            } else {
+                try fm.copyItem(atPath: normalizedSource, toPath: destPath)
+            }
+            onComplete()
+        } catch {
+            showError(isInternal ? "Move Failed" : "Copy Failed", error.localizedDescription)
+        }
+    }
+
+    private static func showError(_ title: String, _ message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 }
