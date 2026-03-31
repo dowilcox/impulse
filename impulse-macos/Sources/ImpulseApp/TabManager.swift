@@ -145,6 +145,11 @@ final class TabManager: NSObject {
     /// Per-tab pinned state, indexed in parallel with `tabs`.
     private(set) var pinnedTabs: [Bool] = []
 
+    /// Stable unique IDs for each tab, indexed in parallel with `tabs`.
+    /// Used by SwiftUI to track tab identity across reorders.
+    private var tabUniqueIds: [Int] = []
+    private var nextTabUniqueId: Int = 0
+
     /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
     private var openFilePaths: Set<String> = []
 
@@ -384,6 +389,8 @@ final class TabManager: NSObject {
         }
         tabs.insert(entry, at: insertionIndex)
         pinnedTabs.insert(false, at: insertionIndex)
+        tabUniqueIds.insert(nextTabUniqueId, at: insertionIndex)
+        nextTabUniqueId += 1
 
         // Track open file paths for O(1) deduplication.
         switch entry {
@@ -461,6 +468,7 @@ final class TabManager: NSObject {
 
         tabs.remove(at: index)
         pinnedTabs.remove(at: index)
+        tabUniqueIds.remove(at: index)
         rebuildSegments()
 
         if tabs.isEmpty {
@@ -552,6 +560,7 @@ final class TabManager: NSObject {
 
                 tabs.remove(at: i)
                 pinnedTabs.remove(at: i)
+                tabUniqueIds.remove(at: i)
             }
         }
 
@@ -594,8 +603,10 @@ final class TabManager: NSObject {
 
         let entry = tabs.remove(at: sourceIndex)
         let pinned = pinnedTabs.remove(at: sourceIndex)
+        let uid = tabUniqueIds.remove(at: sourceIndex)
         tabs.insert(entry, at: destinationIndex)
         pinnedTabs.insert(pinned, at: destinationIndex)
+        tabUniqueIds.insert(uid, at: destinationIndex)
 
         // Track the moved tab's new position.
         if selectedIndex == sourceIndex {
@@ -730,7 +741,8 @@ final class TabManager: NSObject {
         guard let ws = windowModel else { return }
         let infos = tabs.enumerated().map { (i, tab) in
             TabDisplayInfo(
-                id: i,
+                id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
+                index: i,
                 title: tab.title,
                 icon: tabIcon(for: tab),
                 isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,

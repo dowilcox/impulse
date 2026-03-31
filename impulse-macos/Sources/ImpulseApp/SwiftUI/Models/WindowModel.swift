@@ -12,7 +12,8 @@ enum SidebarPanel {
 
 /// Lightweight snapshot of a tab for the SwiftUI tab bar.
 struct TabDisplayInfo: Identifiable {
-    let id: Int
+    let id: Int       // Stable unique ID (survives reorders)
+    let index: Int    // Current position in the tab array
     let title: String
     let icon: NSImage?
     let isPinned: Bool
