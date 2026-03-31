@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-core"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "dirs",
  "git2",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-editor"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "ammonia",
  "dirs",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-ffi"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "git2",
  "impulse-core",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-linux"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "cxx",
  "cxx-qt",
