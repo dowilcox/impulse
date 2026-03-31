@@ -13,23 +13,45 @@ Item {
     property bool isModified: false
     property bool previewVisible: false
     property bool isPreviewable: false
+    // Cache latest content from the editor for saves
+    property string cachedContent: ""
+    // Track whether this editor's Monaco is ready
+    property bool monacoReady: false
 
     // ── Public API ────────────────────────────────────────────────────────────
     function openFile(path) {
         filePath = path
+        isModified = false
         isPreviewable = editorBridge.is_previewable_file(path)
-        editorBridge.open_file(path)
+        // open_file reads the file and returns an OpenFile command JSON
+        var cmdJson = editorBridge.open_file(path)
+        if (cmdJson.length > 0 && cmdJson.indexOf("error") < 0) {
+            // Cache the initial content
+            try {
+                var cmd = JSON.parse(cmdJson)
+                cachedContent = cmd.content || ""
+            } catch (e) {}
+            // If Monaco is already loaded, send the command
+            if (monacoReady) {
+                sendToMonaco(cmdJson)
+            }
+            // Otherwise, the Ready handler will re-open via filePath
+            var lang = editorBridge.language_from_path(path)
+            windowModel.language = lang
+        }
     }
 
     function saveFile() {
-        if (filePath.length > 0) {
-            sendCommand("getContent", "{}")
+        if (filePath.length > 0 && cachedContent.length > 0) {
+            editorBridge.save_file(filePath, cachedContent)
         }
     }
 
     function goToLine(line) {
-        var params = JSON.stringify({ lineNumber: line })
-        sendCommand("revealLine", params)
+        var cmdJson = editorBridge.make_command_json("GoToPosition", JSON.stringify({ line: line - 1, column: 0 }))
+        if (cmdJson.length > 0 && monacoReady) {
+            sendToMonaco(cmdJson)
+        }
     }
 
     function togglePreview() {
@@ -39,111 +61,117 @@ Item {
         }
     }
 
-    // ── Send a command to Monaco via JavaScript ───────────────────────────────
-    function sendCommand(commandType, paramsJson) {
-        var cmdJson = editorBridge.make_command_json(commandType, paramsJson || "{}")
-        if (cmdJson.length > 0 && monacoWebView.loading === false) {
-            monacoWebView.runJavaScript(
-                "window.handleCommand(" + cmdJson + ")",
-                function(result) {}
-            )
-        }
+    // ── Send a command object to this editor's Monaco ─────────────────────────
+    function sendToMonaco(cmdJson) {
+        monacoWebView.runJavaScript(
+            "window.handleCommand(" + cmdJson + ")",
+            function(result) {}
+        )
     }
 
     // ── Apply theme to Monaco ─────────────────────────────────────────────────
     function applyTheme() {
         var monacoTheme = theme.monaco_theme_json
-        if (monacoTheme.length > 0) {
-            sendCommand("setTheme", monacoTheme)
+        if (monacoTheme.length > 0 && monacoReady) {
+            var cmdJson = editorBridge.make_command_json("SetTheme", monacoTheme)
+            if (cmdJson.length > 0) {
+                sendToMonaco(cmdJson)
+            }
         }
     }
 
     // ── Apply editor settings ─────────────────────────────────────────────────
     function applySettings() {
+        if (!monacoReady) return
         var opts = {
-            fontFamily: settings.font_family,
-            fontSize: settings.font_size,
-            tabSize: settings.tab_width,
-            insertSpaces: settings.use_spaces,
-            wordWrap: settings.word_wrap ? "on" : "off",
-            minimap: { enabled: settings.minimap_enabled },
-            lineNumbers: settings.show_line_numbers ? "on" : "off"
+            font_family: settings.font_family,
+            font_size: settings.font_size,
+            tab_size: settings.tab_width,
+            insert_spaces: settings.use_spaces,
+            word_wrap: settings.word_wrap ? "on" : "off",
+            minimap_enabled: settings.minimap_enabled,
+            line_numbers: settings.show_line_numbers ? "on" : "off",
+            render_whitespace: settings.render_whitespace,
+            sticky_scroll: settings.sticky_scroll,
+            bracket_pair_colorization: settings.bracket_pair_colorization,
+            indent_guides: settings.indent_guides,
+            font_ligatures: settings.font_ligatures,
+            folding: settings.folding,
+            scroll_beyond_last_line: settings.scroll_beyond_last_line,
+            smooth_scrolling: settings.smooth_scrolling,
+            cursor_style: settings.editor_cursor_style,
+            cursor_blinking: settings.editor_cursor_blinking
         }
-        sendCommand("updateOptions", JSON.stringify(opts))
+        var cmdJson = editorBridge.make_command_json("UpdateSettings", JSON.stringify(opts))
+        if (cmdJson.length > 0) {
+            sendToMonaco(cmdJson)
+        }
     }
 
     // ── Update markdown/SVG preview ───────────────────────────────────────────
     function updatePreview() {
-        if (!previewVisible || filePath.length === 0) return
+        if (!previewVisible || filePath.length === 0 || cachedContent.length === 0) return
+        refreshPreviewFromContent(cachedContent)
+    }
 
-        var ext = filePath.split(".").pop().toLowerCase()
-        if (ext === "md" || ext === "markdown" || ext === "svg") {
-            sendCommand("getContent", "{}")
+    // ── Handle events directly from THIS editor's Monaco (no shared bridge) ──
+    function handleJsEvent(json) {
+        var evt
+        try {
+            evt = JSON.parse(json)
+        } catch (e) {
+            return
+        }
+
+        var eventType = evt.type || ""
+
+        switch (eventType) {
+            case "Ready":
+                monacoReady = true
+                applyTheme()
+                applySettings()
+                if (filePath.length > 0) {
+                    var cmdJson = editorBridge.open_file(filePath)
+                    if (cmdJson.length > 0 && cmdJson.indexOf("error") < 0) {
+                        sendToMonaco(cmdJson)
+                    }
+                }
+                break
+
+            case "FileOpened":
+                var lang = editorBridge.language_from_path(filePath)
+                windowModel.language = lang
+                break
+
+            case "ContentChanged":
+                isModified = true
+                cachedContent = evt.content || ""
+                if (previewVisible) {
+                    refreshPreviewFromContent(cachedContent)
+                }
+                break
+
+            case "CursorMoved":
+                windowModel.cursor_line = evt.line || 0
+                windowModel.cursor_column = evt.column || 0
+                break
+
+            case "SaveRequested":
+                saveFile()
+                break
+
+            case "FocusChanged":
+                break
         }
     }
 
-    // ── Connections to EditorBridge ────────────────────────────────────────────
+    // ── Only listen for file_saved from bridge (stateless, safe to share) ─────
     Connections {
         target: editorBridge
-        function onEditor_event(eventType, payloadJson) {
-            editorViewRoot.handleEditorEvent(eventType, payloadJson)
-        }
         function onFile_saved(path) {
             if (path === editorViewRoot.filePath) {
                 editorViewRoot.isModified = false
             }
-        }
-    }
-
-    function handleEditorEvent(eventType, payloadJson) {
-        var payload
-        try {
-            payload = JSON.parse(payloadJson)
-        } catch (e) {
-            payload = {}
-        }
-
-        switch (eventType) {
-            case "ready":
-                applyTheme()
-                applySettings()
-                if (filePath.length > 0) {
-                    var lang = editorBridge.language_from_path(filePath)
-                    sendCommand("openFile", JSON.stringify({
-                        path: filePath,
-                        content: payload.content || "",
-                        language: lang
-                    }))
-                }
-                break
-
-            case "contentChanged":
-                isModified = true
-                editorBridge.content_changed(filePath, payload.content || "")
-                if (previewVisible) {
-                    refreshPreviewFromContent(payload.content || "")
-                }
-                break
-
-            case "content":
-                if (payload.content !== undefined) {
-                    if (filePath.length > 0) {
-                        editorBridge.save_file(filePath, payload.content)
-                    }
-                    if (previewVisible) {
-                        refreshPreviewFromContent(payload.content)
-                    }
-                }
-                break
-
-            case "cursorChanged":
-                windowModel.cursor_line = payload.lineNumber || 0
-                windowModel.cursor_column = payload.column || 0
-                break
-
-            case "languageChanged":
-                windowModel.language = payload.languageId || ""
-                break
         }
     }
 
@@ -196,13 +224,11 @@ Item {
                 }
             }
 
+            // Handle events directly from THIS Monaco instance — no shared signal broadcast
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceId) {
                 if (message.indexOf("IMPULSE_EVENT:") === 0) {
                     var json = message.substring(14)
-                    try {
-                        var evt = JSON.parse(json)
-                        editorBridge.handle_event(json)
-                    } catch (e) {}
+                    editorViewRoot.handleJsEvent(json)
                 }
             }
 

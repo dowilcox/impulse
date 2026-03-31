@@ -10,7 +10,11 @@ function sendToHost(msgObj) {
     window.webkit.messageHandlers &&
     window.webkit.messageHandlers.impulse
   ) {
+    // macOS WKWebView
     window.webkit.messageHandlers.impulse.postMessage(json);
+  } else {
+    // Qt WebEngine: QML intercepts console messages with this prefix
+    console.log("IMPULSE_EVENT:" + json);
   }
 }
 
@@ -580,6 +584,9 @@ function handleCommand(cmd) {
     console.error("Command handler error for", cmd.type, ":", e);
   }
 }
+
+// Expose handleCommand globally for Qt WebEngine (QML calls window.handleCommand directly)
+window.handleCommand = handleCommand;
 
 // ---------------------------------------------------------------------------
 // Command handler: called from Rust via evaluate_javascript

@@ -177,9 +177,7 @@ impl FileTreeModelRust {
 impl qobject::FileTreeModel {
     pub fn load_root(mut self: Pin<&mut Self>, path: &QString) {
         let path_str = path.to_string();
-        eprintln!("[impulse] FileTreeModel::load_root called with: {}", path_str);
         if path_str.is_empty() {
-            eprintln!("[impulse] load_root: path is empty, returning");
             return;
         }
 
@@ -188,8 +186,6 @@ impl qobject::FileTreeModel {
         self.as_mut().rust_mut().rebuild_tree();
 
         let json = self.as_ref().tree_json().clone();
-        let json_len = json.to_string().len();
-        eprintln!("[impulse] FileTreeModel: tree rebuilt, JSON length: {}", json_len);
         self.as_mut().set_tree_json(json);
         self.as_mut().tree_changed();
     }

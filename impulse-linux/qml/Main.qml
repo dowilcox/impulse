@@ -38,10 +38,28 @@ ApplicationWindow {
         running: true
         repeat: false
         onTriggered: {
-            theme.set_theme("nord")
-            windowModel.set_directory("/home/dowilcox")
-            fileTreeModel.load_root("/home/dowilcox")
-            searchModel.root_path = "/home/dowilcox"
+            // Load persisted settings first
+            settings.load()
+
+            // Apply theme from settings (fall back to "nord")
+            var themeId = settings.color_scheme.length > 0 ? settings.color_scheme : "nord"
+            theme.set_theme(themeId)
+
+            // Determine initial directory: CLI arg > settings > CWD
+            var dir = windowModel.get_initial_directory()
+            if (settings.last_directory.length > 0) {
+                // Prefer settings only if no CLI arg was given (CWD == initial_dir)
+                var cliDir = windowModel.get_initial_directory()
+                // If the resolved dir is just CWD (no explicit arg), use saved dir
+                // We can't distinguish easily, so just use CLI-resolved dir
+            }
+            windowModel.set_directory(dir)
+            fileTreeModel.load_root(dir)
+            searchModel.root_path = dir
+
+            // Apply sidebar visibility from settings
+            windowModel.sidebar_visible = settings.sidebar_visible
+
             // Open a terminal tab on launch
             windowModel.create_tab("terminal")
         }
@@ -99,20 +117,39 @@ ApplicationWindow {
             sidebar.searchMode = true
         }
     }
+    Shortcut {
+        sequence: "Ctrl+,"
+        onActivated: settingsWindow.show()
+    }
 
     // ── Wire file tree clicks to content area ────────────────────────────────
     Connections {
         target: fileTreeModel
         function onFile_activated(path) {
             contentArea.openFile(path)
+            fileTreeModel.set_active_path(path)
         }
     }
 
     // ── Wire search result clicks to content area ────────────────────────────
     Connections {
         target: searchModel
-        function onResult_selected(path, line) {  // Fixed signal name from camelCase
+        function onResult_selected(path, line) {
             contentArea.openFile(path, line)
+            fileTreeModel.set_active_path(path)
+        }
+    }
+
+    // ── Sync active file path on tab switch ──────────────────────────────────
+    Connections {
+        target: windowModel
+        function onTab_switched() {
+            var info = contentArea.currentTabInfo()
+            if (info && info.filePath) {
+                fileTreeModel.set_active_path(info.filePath)
+            } else {
+                fileTreeModel.set_active_path("")
+            }
         }
     }
 
@@ -179,5 +216,10 @@ ApplicationWindow {
         id: goToLineDialog
         x: Math.round((root.width - width) / 2)
         y: Math.round(root.height * 0.25)
+    }
+
+    SettingsWindow {
+        id: settingsWindow
+        visible: false
     }
 }

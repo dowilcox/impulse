@@ -7,6 +7,7 @@ import dev.impulse.app
 
 Item {
     id: termViewRoot
+    clip: true
 
     // Load bundled JetBrains Mono font
     FontLoader {
@@ -18,12 +19,11 @@ Item {
     QMLTermWidget {
         id: termWidget
         anchors.fill: parent
-        focus: true
 
         font.family: jetbrainsFont.status === FontLoader.Ready ? jetbrainsFont.name : "Monospace"
-        font.pixelSize: 14
+        font.pixelSize: settings.terminal_font_size > 0 ? settings.terminal_font_size : 16
 
-        colorScheme: "Linux"
+        colorScheme: theme.is_light ? "BlackOnWhite" : "DarkPastels"
 
         session: QMLTermSession {
             id: termSession
@@ -44,6 +44,33 @@ Item {
 
         Component.onCompleted: {
             termSession.startShellProgram()
+        }
+
+        // Re-grab focus when this view becomes visible (tab switch)
+        onVisibleChanged: {
+            if (visible) {
+                termWidget.forceActiveFocus()
+            }
+        }
+    }
+
+    // Give terminal focus when clicked
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
+        onPressed: function(mouse) { mouse.accepted = false }
+        cursorShape: Qt.IBeamCursor
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            termWidget.forceActiveFocus()
+        }
+    }
+
+    // Grab focus on activation
+    onActiveFocusChanged: {
+        if (activeFocus) {
             termWidget.forceActiveFocus()
         }
     }

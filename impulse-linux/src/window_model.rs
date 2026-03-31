@@ -53,6 +53,9 @@ pub mod qobject {
         #[qinvokable]
         fn set_tab_title(self: Pin<&mut WindowModel>, index: i32, title: &QString);
 
+        #[qinvokable]
+        fn get_initial_directory(self: &WindowModel) -> QString;
+
         #[qsignal]
         fn directory_changed(self: Pin<&mut WindowModel>);
 
@@ -71,6 +74,7 @@ use std::pin::Pin;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TabDisplayInfo {
+    id: u64,
     title: String,
     icon: String,
     #[serde(rename = "isModified")]
@@ -99,11 +103,11 @@ pub struct WindowModelRust {
     project_root: QString,
     // Internal state not exposed as properties
     tabs: Vec<TabDisplayInfo>,
+    next_tab_id: u64,
 }
 
 impl Default for WindowModelRust {
     fn default() -> Self {
-        eprintln!("[impulse] WindowModelRust::default() called - QML is creating WindowModel");
         let shell = impulse_core::shell::get_default_shell_name();
         Self {
             sidebar_visible: true,
@@ -131,6 +135,7 @@ impl Default for WindowModelRust {
                 }
             },
             tabs: Vec::new(),
+            next_tab_id: 0,
         }
     }
 }
@@ -143,9 +148,6 @@ impl qobject::WindowModel {
 
     pub fn set_directory(mut self: Pin<&mut Self>, path: &QString) {
         let path_str = path.to_string();
-        eprintln!("[impulse] WindowModel::set_directory: {}", path_str);
-        // Also write to file as fallback debug
-        let _ = std::fs::write("/tmp/impulse-debug.txt", format!("set_directory called with: {}\n", path_str));
         if path_str.is_empty() {
             return;
         }
@@ -167,8 +169,6 @@ impl qobject::WindowModel {
 
     pub fn create_tab(mut self: Pin<&mut Self>, tab_type: &QString) {
         let tab_type_str = tab_type.to_string();
-        eprintln!("[impulse] WindowModel::create_tab: {}", tab_type_str);
-
         let title = match tab_type_str.as_str() {
             "terminal" => format!("Terminal {}", self.tabs.len() + 1),
             "editor" => "Untitled".to_string(),
@@ -184,7 +184,11 @@ impl qobject::WindowModel {
         }
         .to_string();
 
+        let tab_id = self.as_ref().rust().next_tab_id;
+        self.as_mut().rust_mut().next_tab_id += 1;
+
         let info = TabDisplayInfo {
+            id: tab_id,
             title,
             icon,
             is_modified: false,
@@ -266,7 +270,11 @@ impl qobject::WindowModel {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "Untitled".to_string());
 
+        let tab_id = self.as_ref().rust().next_tab_id;
+        self.as_mut().rust_mut().next_tab_id += 1;
+
         let info = TabDisplayInfo {
+            id: tab_id,
             title,
             icon: "file".to_string(),
             is_modified: false,
@@ -282,6 +290,41 @@ impl qobject::WindowModel {
         self.as_mut().set_active_tab_index(new_index);
         self.as_mut().rebuild_tabs_json();
         self.as_mut().tab_switched();
+    }
+
+    pub fn get_initial_directory(&self) -> QString {
+        // Check CLI args for a directory path
+        for arg in std::env::args().skip(1) {
+            if arg.starts_with('-') {
+                continue;
+            }
+            let path = std::path::Path::new(&arg);
+            if path.is_dir() {
+                if let Ok(canonical) = path.canonicalize() {
+                    return QString::from(canonical.to_string_lossy().as_ref());
+                }
+            }
+            // If arg is a file, use its parent directory
+            if path.is_file() {
+                if let Some(parent) = path.parent() {
+                    if let Ok(canonical) = parent.canonicalize() {
+                        return QString::from(canonical.to_string_lossy().as_ref());
+                    }
+                }
+            }
+        }
+
+        // Fall back to CWD
+        if let Ok(cwd) = std::env::current_dir() {
+            return QString::from(cwd.to_string_lossy().as_ref());
+        }
+
+        // Last resort: home directory
+        if let Some(home) = dirs::home_dir() {
+            return QString::from(home.to_string_lossy().as_ref());
+        }
+
+        QString::from("/")
     }
 
     pub fn set_tab_title(mut self: Pin<&mut Self>, index: i32, title: &QString) {

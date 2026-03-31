@@ -22,7 +22,7 @@ Dialog {
         var line = parseInt(lineInput.text)
         if (isNaN(line) || line < 1) return
 
-        var view = contentArea.contentItems[windowModel.active_tab_index]
+        var view = contentArea.activeView()
         if (view && view.goToLine) {
             view.goToLine(line)
         }

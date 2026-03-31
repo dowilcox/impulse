@@ -15,7 +15,11 @@ Item {
     }
     readonly property bool activeEditorModified: {
         var info = currentTabInfo()
-        return (info && info.tabType === "editor") ? !!info.isModified : false
+        if (info && info.tabType === "editor") {
+            var view = contentItems[info.id]
+            return view ? !!view.isModified : false
+        }
+        return false
     }
 
     property var tabs: {
@@ -34,7 +38,7 @@ Item {
         return null
     }
 
-    // Container for dynamically created tab content views.
+    // Container for dynamically created tab content views, keyed by tab id.
     property var contentItems: ({})
     property var contentComponents: ({
         "terminal": Qt.createComponent("TerminalView.qml"),
@@ -68,10 +72,16 @@ Item {
     property string pendingFilePath: ""
     property int pendingLine: 0
 
+    // Get the content view for the currently active tab
+    function activeView() {
+        var info = currentTabInfo()
+        return info ? (contentItems[info.id] || null) : null
+    }
+
     function saveActiveEditor() {
         var info = currentTabInfo()
         if (info && info.tabType === "editor" && info.filePath) {
-            var view = contentItems[windowModel.active_tab_index]
+            var view = contentItems[info.id]
             if (view && view.saveFile) {
                 view.saveFile()
             }
@@ -79,9 +89,12 @@ Item {
     }
 
     function goToLineInEditor(line) {
-        var view = contentItems[windowModel.active_tab_index]
-        if (view && view.goToLine) {
-            view.goToLine(line)
+        var info = currentTabInfo()
+        if (info) {
+            var view = contentItems[info.id]
+            if (view && view.goToLine) {
+                view.goToLine(line)
+            }
         }
     }
 
@@ -100,6 +113,7 @@ Item {
 
         var info = tabs[idx]
         if (!info) return
+        var tabId = info.id
 
         // Hide all content views
         for (var key in contentItems) {
@@ -109,7 +123,7 @@ Item {
         }
 
         // Create if not existing
-        if (!contentItems[idx]) {
+        if (!contentItems[tabId]) {
             var tabType = info.tabType || "terminal"
             var component = contentComponents[tabType]
 
@@ -118,12 +132,12 @@ Item {
                     "source": "file://" + (info.filePath || "")
                 })
                 if (imgItem) {
-                    contentItems[idx] = imgItem
+                    contentItems[tabId] = imgItem
                 }
             } else if (component && component.status === Component.Ready) {
                 var item = component.createObject(contentContainer, {})
                 if (item) {
-                    contentItems[idx] = item
+                    contentItems[tabId] = item
                     if (pendingFilePath.length > 0 && tabType === "editor" && item.openFile) {
                         item.openFile(pendingFilePath)
                         if (pendingLine > 0) {
@@ -139,27 +153,29 @@ Item {
         }
 
         // Show active content
-        if (contentItems[idx]) {
-            contentItems[idx].visible = true
-            contentItems[idx].anchors.fill = contentContainer
+        if (contentItems[tabId]) {
+            contentItems[tabId].visible = true
+            contentItems[tabId].anchors.fill = contentContainer
         }
     }
 
-    // Clean up views when tabs are closed
+    // Clean up views whose tabs no longer exist
     onTabsChanged: {
-        var toRemove = []
+        // Build set of current tab IDs
+        var liveIds = {}
+        for (var i = 0; i < tabs.length; i++) {
+            liveIds[tabs[i].id] = true
+        }
+
+        // Destroy views for closed tabs
         for (var key in contentItems) {
-            var k = parseInt(key)
-            if (k >= tabs.length) {
-                toRemove.push(key)
+            if (!liveIds[key] && contentItems[key]) {
+                contentItems[key].visible = false
+                contentItems[key].destroy()
+                delete contentItems[key]
             }
         }
-        for (var i = 0; i < toRemove.length; i++) {
-            if (contentItems[toRemove[i]]) {
-                contentItems[toRemove[i]].destroy()
-                delete contentItems[toRemove[i]]
-            }
-        }
+
         ensureContentView()
     }
 

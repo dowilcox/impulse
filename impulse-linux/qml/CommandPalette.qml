@@ -35,9 +35,10 @@ Dialog {
         { name: "Toggle Hidden Files",   shortcut: "",              action: function() { fileTreeModel.show_hidden = !fileTreeModel.show_hidden; fileTreeModel.refresh() } },
         { name: "Search in Files",       shortcut: "Ctrl+Shift+F", action: function() { sidebar.searchMode = true; windowModel.sidebar_visible = true } },
         { name: "Toggle Preview",        shortcut: "",              action: function() {
-            var view = contentArea.contentItems[windowModel.active_tab_index]
+            var view = contentArea.activeView()
             if (view && view.togglePreview) view.togglePreview()
         }},
+        { name: "Open Settings",           shortcut: "Ctrl+,",        action: function() { settingsWindow.show() } },
         { name: "Reset Settings",        shortcut: "",              action: function() { settings.reset_to_defaults() } },
         { name: "Install LSP Servers",   shortcut: "",              action: function() { lspBridge.install_servers() } },
         { name: "Check LSP Status",      shortcut: "",              action: function() { lspBridge.check_server_status() } }

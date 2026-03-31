@@ -101,7 +101,7 @@ ToolBar {
             onClicked: {
                 var ca = contentArea
                 if (ca) {
-                    var view = ca.contentItems[windowModel.active_tab_index]
+                    var view = ca.activeView()
                     if (view && view.togglePreview) {
                         view.togglePreview()
                     }
