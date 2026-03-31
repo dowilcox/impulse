@@ -99,7 +99,9 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
         .include_unmodified(false)
-        .include_ignored(true);
+        .include_ignored(true)
+        .update_index(true)
+        .no_refresh(false);
 
     // Restrict to the requested directory relative to the repo root.
     // When at the repo root (empty relative path), skip pathspec entirely
@@ -260,7 +262,9 @@ pub fn get_all_git_statuses(
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
         .include_unmodified(false)
-        .include_ignored(true);
+        .include_ignored(true)
+        .update_index(true)
+        .no_refresh(false);
 
     let statuses = repo
         .statuses(Some(&mut opts))

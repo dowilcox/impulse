@@ -942,7 +942,7 @@ final class FileTreeView: NSView {
         guard !rootPath.isEmpty else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
+        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
         timer.setEventHandler { [weak self] in
             self?.pollGitStatus()
         }

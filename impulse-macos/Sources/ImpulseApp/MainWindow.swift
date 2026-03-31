@@ -1252,7 +1252,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 guard let terminal = notification.object as? TerminalTab,
                       self.tabManager.ownsTerminal(terminal) else { return }
                 if let dir = notification.userInfo?["directory"] as? String {
-                    self.switchFileTreeRoot(dir)
+                    if dir == self.fileTreeRootPath {
+                        // Same directory — just refresh git status (a command
+                        // may have changed git state without changing CWD).
+                        self.fileTreeView.refreshGitStatus()
+                        self.invalidateGitBranchCache()
+                    } else {
+                        self.switchFileTreeRoot(dir)
+                    }
                 }
             }
         )
@@ -1717,7 +1724,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         lspDidSave(editor: editor)
         invalidateGitBranchCache()
         applyGitDiffDecorations(editor: editor)
-        fileTreeView.refreshGitStatus()
+        // Direct git status refresh (skip the debounce — saves are explicit
+        // user actions that warrant immediate feedback).
+        let nodes = fileTreeView.rootNodes
+        let root = fileTreeView.rootPath
+        if !root.isEmpty {
+            DispatchQueue.global(qos: .userInitiated).async {
+                FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
+            }
+        }
 
         // Commands on save: run any matching commands
         for cmd in settings.commandsOnSave {
@@ -2165,11 +2180,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // Refresh git diff decorations for the active editor tab when the
-        // window regains focus (git state may have changed externally).
+        // Refresh git state when the window regains focus — git status may
+        // have changed externally (e.g. commits from another terminal).
         if let editor = tabManager.selectedEditor {
             applyGitDiffDecorations(editor: editor)
         }
+        fileTreeView.refreshGitStatus()
     }
 
     func windowWillClose(_ notification: Notification) {
