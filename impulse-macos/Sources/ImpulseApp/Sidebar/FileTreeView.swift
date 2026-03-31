@@ -153,6 +153,17 @@ final class FileTreeView: NSView {
     // Debounce work item for git status refresh → reload.
     private var gitRefreshDebounce: DispatchWorkItem?
 
+    // Guards against overlapping tree rebuilds. If a refresh is requested while
+    // one is already in progress, we set needsAnotherRefresh and re-trigger
+    // when the current rebuild completes.
+    private var isRefreshingTree = false
+    private var needsAnotherRefresh = false
+
+    // Guard against overlapping git status calls from poll timer and
+    // refreshGitStatus() running concurrently.
+    private var isGitStatusInProgress = false
+    private var needsAnotherGitStatus = false
+
     // Scroll position to restore after a full tree reload + git status refresh.
     private var pendingScrollRestore: NSPoint?
 
@@ -334,16 +345,29 @@ final class FileTreeView: NSView {
 
     /// Re-fetch git status for the current tree and reload visible cells to
     /// reflect any changes. Heavy work runs on a background queue.
+    /// Coalesces overlapping requests: if a git status call is already in
+    /// progress, the request is deferred until the current one completes.
     func refreshGitStatus() {
         gitRefreshDebounce?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            guard !self.isGitStatusInProgress else {
+                self.needsAnotherGitStatus = true
+                return
+            }
+            self.isGitStatusInProgress = true
             let nodes = self.rootNodes
             let root = self.rootPath
             DispatchQueue.global(qos: .utility).async {
                 FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
                 DispatchQueue.main.async { [weak self] in
-                    self?.reloadVisibleRows()
+                    guard let self else { return }
+                    self.isGitStatusInProgress = false
+                    self.reloadVisibleRows()
+                    if self.needsAnotherGitStatus {
+                        self.needsAnotherGitStatus = false
+                        self.refreshGitStatus()
+                    }
                 }
             }
         }
@@ -390,8 +414,16 @@ final class FileTreeView: NSView {
 
     /// Rebuild the tree from disk, preserving expansion state. Heavy work
     /// (filesystem scan + git status) runs on a background queue.
+    /// Coalesces overlapping requests: if called while a rebuild is already
+    /// in progress, the current rebuild finishes and then a fresh one starts.
     func refreshTree() {
         guard !rootPath.isEmpty else { return }
+
+        if isRefreshingTree {
+            needsAnotherRefresh = true
+            return
+        }
+        isRefreshingTree = true
 
         // Collect expanded paths before rebuilding.
         let expandedPaths = collectExpandedPaths(rootNodes)
@@ -402,6 +434,17 @@ final class FileTreeView: NSView {
             let newNodes = FileTreeNode.buildTree(rootPath: root, showHidden: hidden)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.isRefreshingTree = false
+
+                // If more events arrived during the rebuild, start a fresh
+                // refresh with the latest filesystem state instead of applying
+                // the now-stale result.
+                if self.needsAnotherRefresh {
+                    self.needsAnotherRefresh = false
+                    self.refreshTree()
+                    return
+                }
+
                 // Save scroll position before reloading.
                 let savedOrigin = self.scrollView.contentView.bounds.origin
                 self.rootNodes = newNodes
@@ -942,7 +985,7 @@ final class FileTreeView: NSView {
         guard !rootPath.isEmpty else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
+        timer.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
         timer.setEventHandler { [weak self] in
             self?.pollGitStatus()
         }
@@ -959,6 +1002,10 @@ final class FileTreeView: NSView {
     /// the tree if the status map changed since the last poll.
     private func pollGitStatus() {
         guard !rootPath.isEmpty else { return }
+        // Skip if a git status call is already in progress (from refreshGitStatus
+        // or a previous poll). The next timer tick will pick up the change.
+        guard !isGitStatusInProgress else { return }
+        isGitStatusInProgress = true
         let root = rootPath
         let nodes = rootNodes
         let previousHash = lastGitStatusHash
@@ -977,12 +1024,19 @@ final class FileTreeView: NSView {
             }
             let hash = hasher.finalize()
 
-            guard hash != previousHash else { return }
+            guard hash != previousHash else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.isGitStatusInProgress = false
+                }
+                return
+            }
 
-            // Hash changed — apply statuses directly from the batch result.
-            FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
+            // Hash changed — apply the already-fetched statuses directly
+            // (avoids a redundant getAllGitStatuses FFI call).
+            FileTreeNode.applyGitStatuses(nodes: nodes, dirPath: root, batchStatuses: batchStatuses)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.isGitStatusInProgress = false
                 self.lastGitStatusHash = hash
                 self.reloadVisibleRows()
             }
@@ -990,14 +1044,16 @@ final class FileTreeView: NSView {
     }
 
     /// Called when the dispatch source fires. Debounces rapid events by
-    /// scheduling a refresh 300ms in the future.
+    /// scheduling a refresh 500ms in the future. The longer window reduces
+    /// redundant rebuilds during burst changes (e.g. Claude Code editing
+    /// many files in quick succession).
     private func handleFileSystemEvent() {
         debounceWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.refreshTree()
         }
         debounceWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     // MARK: Private Helpers

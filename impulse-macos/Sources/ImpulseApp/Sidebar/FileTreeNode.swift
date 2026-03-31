@@ -121,6 +121,17 @@ final class FileTreeNode: Identifiable {
     ) {
         // The batch call runs on the current thread (expected to be background).
         let batchStatuses = ImpulseCore.getAllGitStatuses(repoPath: repoPath)
+        applyGitStatuses(nodes: nodes, dirPath: dirPath, batchStatuses: batchStatuses)
+    }
+
+    /// Apply pre-fetched batch git statuses to nodes. Use this when the caller
+    /// already has the batch statuses (e.g. from a poll that computed a hash)
+    /// to avoid a redundant FFI call.
+    static func applyGitStatuses(
+        nodes: [FileTreeNode],
+        dirPath: String,
+        batchStatuses: [String: [String: String]]
+    ) {
         let updates = collectStatusUpdates(
             nodes: nodes,
             dirPath: dirPath,
