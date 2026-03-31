@@ -35,6 +35,8 @@ struct TabBarView: View {
                                 .onChanged { value in
                                     if draggedTabId == nil {
                                         draggedTabId = tab.id
+                                        // Select the tab on drag start, like Finder.
+                                        windowModel.onTabSelected?(tab.index)
                                     }
                                     dragOffset = value.translation.width
                                 }
@@ -158,19 +160,27 @@ struct TabBarView: View {
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .frame(height: 28)
+        .frame(height: 30)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isDragging
-                    ? Color(nsColor: .controlBackgroundColor).opacity(0.95)
-                    : isSelected
-                        ? Color.primary.opacity(0.15)
-                        : isHovered ? Color.primary.opacity(0.06) : .clear)
+            Group {
+                if isSelected || isDragging {
+                    Capsule().fill(.thickMaterial)
+                } else if isHovered {
+                    Capsule().fill(Color.white.opacity(0.04))
+                }
+            }
         )
-        .foregroundStyle(isSelected ? .primary : .secondary)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .scaleEffect(isDragging ? 1.03 : 1.0)
-        .shadow(color: isDragging ? .black.opacity(0.25) : .clear, radius: 6, y: 2)
+        .overlay(
+            Capsule()
+                .strokeBorder(
+                    isSelected || isDragging
+                        ? Color.white.opacity(0.2)
+                        : isHovered ? Color.white.opacity(0.08) : .clear,
+                    lineWidth: 1
+                )
+        )
+        .foregroundStyle(isSelected || isDragging ? .primary : .secondary)
+        .contentShape(Capsule())
         .simultaneousGesture(TapGesture().onEnded {
             windowModel.onTabSelected?(tab.index)
         })
