@@ -339,33 +339,29 @@ final class TabManager: NSObject {
         languageIdForPath(path)
     }
 
-    /// Creates an image preview tab with a scrollable NSImageView.
+    /// Creates an image preview tab that scales large images to fit.
     private func addImagePreviewTab(path: String) {
         let container = NSView()
         container.wantsLayer = true
 
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
         let imageView = NSImageView()
         imageView.image = NSImage(contentsOfFile: path)
-        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.imageAlignment = .alignCenter
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        // Prevent the image's natural size from expanding the container.
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
 
-        scrollView.documentView = imageView
-        container.addSubview(scrollView)
+        container.addSubview(imageView)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
 
         let entry = TabEntry.imagePreview(path: path, view: container)

@@ -794,8 +794,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // Create or reuse preview WebView
         if previewWebView == nil {
             let config = WKWebViewConfiguration()
-            // Do NOT enable allowFileAccessFromFileURLs — the baseURL handles
-            // relative image resolution and the CSP restricts scripts.
+            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
             let wv = WKWebView(frame: bounds, configuration: config)
             wv.navigationDelegate = previewNavigationDelegate
             wv.translatesAutoresizingMaskIntoConstraints = false
@@ -809,9 +808,22 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             previewWebView = wv
         }
 
-        // Load HTML with the file's parent as base URL for relative images
-        let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
-        previewWebView?.loadHTMLString(html, baseURL: baseURL)
+        // Write HTML to a temp file so loadFileURL grants read access to the
+        // file's directory tree (loadHTMLString doesn't allow local file loads).
+        let parentDir = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+        let tempFile = parentDir.appendingPathComponent(".impulse-preview.html")
+        do {
+            try html.write(to: tempFile, atomically: true, encoding: .utf8)
+            previewWebView?.loadFileURL(tempFile, allowingReadAccessTo: parentDir)
+            // Clean up temp file after a short delay to allow WKWebView to read it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                try? FileManager.default.removeItem(at: tempFile)
+            }
+        } catch {
+            // Fallback to loadHTMLString if temp file creation fails.
+            let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+            previewWebView?.loadHTMLString(html, baseURL: baseURL)
+        }
         previewWebView?.isHidden = false
         webView?.isHidden = true
         isPreviewing = true
@@ -822,8 +834,17 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func refreshPreview(themeJSON: String, bgColor: String) {
         guard isPreviewing, let fp = filePath else { return }
         guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else { return }
-        let baseURL = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
-        previewWebView?.loadHTMLString(html, baseURL: baseURL)
+        let parentDir = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+        let tempFile = parentDir.appendingPathComponent(".impulse-preview.html")
+        do {
+            try html.write(to: tempFile, atomically: true, encoding: .utf8)
+            previewWebView?.loadFileURL(tempFile, allowingReadAccessTo: parentDir)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                try? FileManager.default.removeItem(at: tempFile)
+            }
+        } catch {
+            previewWebView?.loadHTMLString(html, baseURL: parentDir)
+        }
     }
 
     /// Render preview HTML for a file (markdown or SVG). Returns `nil` on failure

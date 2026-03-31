@@ -94,6 +94,7 @@ struct StatusBarView: View {
                     )
             }
             .buttonStyle(.plain)
+            .padding(.trailing, 4)
         }
     }
 
