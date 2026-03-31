@@ -194,6 +194,28 @@ private struct FileNodeView: View {
             }
         }
 
+        if !node.isDirectory,
+           node.gitStatus == .modified || node.gitStatus == .added {
+            Divider()
+            Button("Discard Changes", role: .destructive) {
+                let alert = NSAlert()
+                alert.messageText = "Discard Changes"
+                alert.informativeText = "Are you sure you want to discard all changes to \"\(node.name)\"? This cannot be undone."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Discard")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                if ImpulseCore.gitDiscardChanges(filePath: node.path, workspaceRoot: model.fileTreeRootPath) {
+                    NotificationCenter.default.post(
+                        name: .impulseReloadEditorFile,
+                        object: nil,
+                        userInfo: ["filePath": node.path]
+                    )
+                    model.onRefreshTree?()
+                }
+            }
+        }
+
         Divider()
 
         Button("Rename…") {

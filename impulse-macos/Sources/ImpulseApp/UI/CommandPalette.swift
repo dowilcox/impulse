@@ -19,40 +19,47 @@ struct PaletteCommand {
 /// search field filters commands by title (case-insensitive substring match).
 /// Pressing Enter or clicking a row executes the command's action and
 /// dismisses the palette. Pressing Escape dismisses without executing.
-final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
 
     // MARK: - Properties
 
-    private let searchField = NSSearchField()
+    private let searchField = NSTextField()
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
 
     private(set) var commands: [PaletteCommand] = []
     private(set) var filteredCommands: [PaletteCommand] = []
+    private var clickMonitor: Any?
+    private weak var ownerWindow: NSWindow?
 
-    /// The palette width as a fraction of the parent window width, capped
-    /// to reasonable bounds.
     private static let paletteWidth: CGFloat = 500
     private static let maxVisibleRows: Int = 12
-    private static let rowHeight: CGFloat = 32
+    private static let rowHeight: CGFloat = 30
+    private static let rowSpacing: CGFloat = 2
 
     // MARK: - Initialization
 
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Self.paletteWidth, height: 400),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
+
+        // Hide the title bar visually while keeping proper key window behavior.
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
 
         isOpaque = false
         hasShadow = true
         backgroundColor = .clear
         level = .floating
         isMovableByWindowBackground = false
-        hidesOnDeactivate = true
-        becomesKeyOnlyIfNeeded = false
+        hidesOnDeactivate = false
 
         let container = NSVisualEffectView()
         container.material = .hudWindow
@@ -75,21 +82,28 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = "Type a command..."
         searchField.focusRingType = .none
-        searchField.font = NSFont.appFont(ofSize: 14)
+        searchField.font = NSFont.appFont(ofSize: 16)
+        searchField.isBezeled = false
+        searchField.drawsBackground = false
+        searchField.textColor = .labelColor
         searchField.delegate = self
-        searchField.target = self
-        searchField.action = #selector(searchFieldAction(_:))
 
         container.addSubview(searchField)
 
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
         ])
     }
 
     private func setupTableView(in container: NSView) {
+        // Thin separator between search and list
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(separator)
+
         let titleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
         titleColumn.title = ""
         titleColumn.resizingMask = .autoresizingMask
@@ -97,9 +111,9 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
 
         let shortcutColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("shortcut"))
         shortcutColumn.title = ""
-        shortcutColumn.width = 100
+        shortcutColumn.width = 120
         shortcutColumn.minWidth = 80
-        shortcutColumn.maxWidth = 140
+        shortcutColumn.maxWidth = 160
         shortcutColumn.resizingMask = .userResizingMask
         tableView.addTableColumn(shortcutColumn)
 
@@ -119,14 +133,19 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         scrollView.hasHorizontalScroller = false
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
 
         container.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
+            separator.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            separator.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            separator.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+            scrollView.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
         ])
     }
 
@@ -244,11 +263,14 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
     /// Positions the palette centered horizontally near the top of the given
     /// window and makes it key.
     func show(relativeTo parentWindow: NSWindow) {
+        self.ownerWindow = parentWindow
+
         let parentFrame = parentWindow.frame
         let paletteWidth = min(Self.paletteWidth, parentFrame.width - 40)
         let visibleRows = min(filteredCommands.count, Self.maxVisibleRows)
         let tableHeight = CGFloat(visibleRows) * Self.rowHeight
-        let totalHeight = 12 + 22 + 8 + tableHeight + 8   // padding + search + gap + table + bottom
+        // top padding(16) + search(~19) + gap(12) + separator(1) + gap(6) + table + bottom(6)
+        let totalHeight: CGFloat = 16 + 19 + 12 + 1 + 6 + tableHeight + 6
 
         let x = parentFrame.origin.x + (parentFrame.width - paletteWidth) / 2
         let y = parentFrame.origin.y + parentFrame.height - totalHeight - 60
@@ -261,18 +283,65 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
 
         if !filteredCommands.isEmpty {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            tableView.scrollRowToVisible(0)
         }
 
+        // Attach as child so the palette moves with the parent window.
+        parentWindow.addChildWindow(self, ordered: .above)
         makeKeyAndOrderFront(nil)
-        searchField.becomeFirstResponder()
+        makeFirstResponder(searchField)
+
+        // Dismiss on click outside.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.isVisible else { return event }
+            if event.window !== self {
+                self.dismiss()
+            }
+            return event
+        }
     }
 
-    /// Dismisses the palette.
+    /// Dismisses the palette and cleans up.
     func dismiss() {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
+        ownerWindow?.removeChildWindow(self)
         orderOut(nil)
         searchField.stringValue = ""
         filteredCommands = commands
+        // Return key focus to the parent window.
+        ownerWindow?.makeKeyAndOrderFront(nil)
     }
+
+    // MARK: - Key Event Handling
+
+    /// Intercepts key events before the responder chain so that Escape,
+    /// Return, and arrow keys work even while the search field editor has focus.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            switch event.keyCode {
+            case 53: // Escape
+                dismiss()
+                return
+            case 36, 76: // Return / Enter (main + numpad)
+                executeSelectedCommand()
+                return
+            case 125: // Down arrow
+                moveSelection(by: 1)
+                return
+            case 126: // Up arrow
+                moveSelection(by: -1)
+                return
+            default:
+                break
+            }
+        }
+        super.sendEvent(event)
+    }
+
+    override var canBecomeKey: Bool { true }
 
     // MARK: - Filtering
 
@@ -292,7 +361,14 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         }
     }
 
-    // MARK: - Execution
+    // MARK: - Selection & Execution
+
+    private func moveSelection(by delta: Int) {
+        let current = tableView.selectedRow
+        let next = max(0, min(current + delta, filteredCommands.count - 1))
+        tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        tableView.scrollRowToVisible(next)
+    }
 
     private func executeSelectedCommand() {
         let row = tableView.selectedRow
@@ -307,39 +383,6 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
     func controlTextDidChange(_ obj: Notification) {
         applyFilter()
     }
-
-    // MARK: - Key Handling
-
-    @objc private func searchFieldAction(_ sender: Any?) {
-        executeSelectedCommand()
-    }
-
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 53: // Escape
-            dismiss()
-
-        case 36: // Return / Enter
-            executeSelectedCommand()
-
-        case 125: // Down arrow
-            let nextRow = min(tableView.selectedRow + 1, filteredCommands.count - 1)
-            if nextRow >= 0 {
-                tableView.selectRowIndexes(IndexSet(integer: nextRow), byExtendingSelection: false)
-                tableView.scrollRowToVisible(nextRow)
-            }
-
-        case 126: // Up arrow
-            let prevRow = max(tableView.selectedRow - 1, 0)
-            tableView.selectRowIndexes(IndexSet(integer: prevRow), byExtendingSelection: false)
-            tableView.scrollRowToVisible(prevRow)
-
-        default:
-            super.keyDown(with: event)
-        }
-    }
-
-    override var canBecomeKey: Bool { true }
 
     // MARK: - NSTableViewDataSource
 
@@ -357,34 +400,52 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
 
         if identifier.rawValue == "title" {
             let cellId = NSUserInterfaceItemIdentifier("TitleCell")
-            let cell: NSTextField
-            if let existing = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField {
-                cell = existing
+            let cellView: NSTableCellView
+            if let existing = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTableCellView {
+                cellView = existing
             } else {
-                cell = NSTextField(labelWithString: "")
-                cell.identifier = cellId
-                cell.font = NSFont.appFont(ofSize: 13)
-                cell.lineBreakMode = .byTruncatingTail
+                cellView = NSTableCellView()
+                cellView.identifier = cellId
+                let tf = NSTextField(labelWithString: "")
+                tf.font = NSFont.appFont(ofSize: 13)
+                tf.lineBreakMode = .byTruncatingTail
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                cellView.addSubview(tf)
+                cellView.textField = tf
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor),
+                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                ])
             }
-            cell.stringValue = command.title
-            cell.textColor = .labelColor
-            return cell
+            cellView.textField?.stringValue = command.title
+            cellView.textField?.textColor = .labelColor
+            return cellView
 
         } else if identifier.rawValue == "shortcut" {
             let cellId = NSUserInterfaceItemIdentifier("ShortcutCell")
-            let cell: NSTextField
-            if let existing = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField {
-                cell = existing
+            let cellView: NSTableCellView
+            if let existing = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTableCellView {
+                cellView = existing
             } else {
-                cell = NSTextField(labelWithString: "")
-                cell.identifier = cellId
-                cell.font = NSFont.appFont(ofSize: 12)
-                cell.alignment = .right
-                cell.lineBreakMode = .byClipping
+                cellView = NSTableCellView()
+                cellView.identifier = cellId
+                let tf = NSTextField(labelWithString: "")
+                tf.font = NSFont.appFont(ofSize: 12)
+                tf.alignment = .right
+                tf.lineBreakMode = .byClipping
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                cellView.addSubview(tf)
+                cellView.textField = tf
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor),
+                    tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                ])
             }
-            cell.stringValue = command.shortcut ?? ""
-            cell.textColor = .secondaryLabelColor
-            return cell
+            cellView.textField?.stringValue = command.shortcut ?? ""
+            cellView.textField?.textColor = .secondaryLabelColor
+            return cellView
         }
 
         return nil
@@ -394,13 +455,22 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         return Self.rowHeight
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let id = NSUserInterfaceItemIdentifier("PaletteRow")
+        if let existing = tableView.makeView(withIdentifier: id, owner: nil) as? PaletteRowView {
+            return existing
+        }
+        let rowView = PaletteRowView()
+        rowView.identifier = id
+        return rowView
+    }
+
     @objc private func rowDoubleClicked(_ sender: Any?) {
         executeSelectedCommand()
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        // Selection change handled by arrow keys and mouse; no additional
-        // action needed.
+        // Selection change handled by sendEvent; no additional action needed.
     }
 
     // MARK: - Theme
@@ -415,3 +485,18 @@ final class CommandPaletteWindow: NSPanel, NSSearchFieldDelegate, NSTableViewDat
         tableView.reloadData()
     }
 }
+
+// MARK: - Custom Row View
+
+/// Draws a rounded, horizontally-inset selection highlight instead of the
+/// default full-bleed rectangle.
+private final class PaletteRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        let inset = bounds.insetBy(dx: 8, dy: 2)
+        let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        path.fill()
+    }
+}
+
