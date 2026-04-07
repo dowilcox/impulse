@@ -24,4 +24,15 @@ pub enum TerminalEvent {
     CursorBlinkingChange,
     /// Terminal requested exit.
     Exit,
+    /// Working directory changed (OSC 7).
+    CwdChanged(String),
+    /// Shell prompt started (OSC 133;A).
+    PromptStart,
+    /// Command execution started (OSC 133;B).
+    CommandStart,
+    /// Command execution ended with exit code (OSC 133;D).
+    CommandEnd(i32),
+    /// Internal: Term sends PtyWrite for device query responses (e.g., DA1).
+    /// Filtered out in poll_events() and forwarded back to the PTY as input.
+    PtyWrite(String),
 }
