@@ -487,6 +487,131 @@ final class ImpulseCore {
         impulse_npm_is_available()
     }
 
+    // MARK: - Terminal Backend
+
+    /// Creates a new terminal backend and returns an opaque handle.
+    ///
+    /// - Parameters:
+    ///   - configJson: JSON-encoded `TerminalBackendConfig`.
+    ///   - cols: Initial column count.
+    ///   - rows: Initial row count.
+    ///   - cellWidth: Cell width in pixels (for pixel-accurate resize).
+    ///   - cellHeight: Cell height in pixels.
+    /// - Returns: An opaque handle, or `nil` on failure.
+    static func terminalCreate(configJson: String, cols: UInt16, rows: UInt16, cellWidth: UInt16, cellHeight: UInt16) -> OpaquePointer? {
+        let raw = configJson.withCString { ptr in
+            impulse_terminal_create(ptr, CUnsignedShort(cols), CUnsignedShort(rows), CUnsignedShort(cellWidth), CUnsignedShort(cellHeight))
+        }
+        guard let raw else { return nil }
+        return OpaquePointer(raw)
+    }
+
+    /// Destroys a terminal backend handle.
+    static func terminalDestroy(handle: OpaquePointer) {
+        impulse_terminal_destroy(UnsafeMutableRawPointer(handle))
+    }
+
+    /// Writes raw data to the terminal's PTY input.
+    static func terminalWrite(handle: OpaquePointer, data: Data) {
+        data.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            impulse_terminal_write(UnsafeMutableRawPointer(handle), ptr, UInt(rawBuf.count))
+        }
+    }
+
+    /// Resizes the terminal grid and notifies the PTY.
+    static func terminalResize(handle: OpaquePointer, cols: UInt16, rows: UInt16, cellWidth: UInt16, cellHeight: UInt16) {
+        impulse_terminal_resize(UnsafeMutableRawPointer(handle), CUnsignedShort(cols), CUnsignedShort(rows), CUnsignedShort(cellWidth), CUnsignedShort(cellHeight))
+    }
+
+    /// Fills `buffer` with a binary grid snapshot and returns the number of
+    /// bytes written.
+    static func terminalGridSnapshot(handle: OpaquePointer, buffer: UnsafeMutablePointer<UInt8>, bufferSize: Int) -> Int {
+        return Int(impulse_terminal_grid_snapshot(UnsafeMutableRawPointer(handle), buffer, UInt(bufferSize)))
+    }
+
+    /// Returns the buffer size needed for a grid snapshot at the current
+    /// terminal dimensions.
+    static func terminalGridSnapshotSize(handle: OpaquePointer) -> Int {
+        return Int(impulse_terminal_grid_snapshot_size(UnsafeMutableRawPointer(handle)))
+    }
+
+    /// Polls for pending terminal events. Returns a JSON array string, or
+    /// `nil` if no events are pending.
+    static func terminalPollEvents(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_poll_events(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Starts a text selection at the given grid position.
+    ///
+    /// - Parameter kind: Selection kind — 0 = simple, 1 = block, 2 = semantic, 3 = line.
+    static func terminalStartSelection(handle: OpaquePointer, col: UInt16, row: UInt16, kind: UInt8) {
+        impulse_terminal_start_selection(UnsafeMutableRawPointer(handle), CUnsignedShort(col), CUnsignedShort(row), kind)
+    }
+
+    /// Extends the current selection to the given grid position.
+    static func terminalUpdateSelection(handle: OpaquePointer, col: UInt16, row: UInt16) {
+        impulse_terminal_update_selection(UnsafeMutableRawPointer(handle), CUnsignedShort(col), CUnsignedShort(row))
+    }
+
+    /// Clears the current text selection.
+    static func terminalClearSelection(handle: OpaquePointer) {
+        impulse_terminal_clear_selection(UnsafeMutableRawPointer(handle))
+    }
+
+    /// Returns the currently selected text, or `nil` if nothing is selected.
+    static func terminalSelectedText(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_selected_text(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Scrolls the terminal viewport by `delta` lines (negative = up).
+    static func terminalScroll(handle: OpaquePointer, delta: Int32) {
+        impulse_terminal_scroll(UnsafeMutableRawPointer(handle), delta)
+    }
+
+    /// Returns terminal mode flags as a JSON string.
+    static func terminalMode(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_mode(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Notifies the terminal of focus changes (for focus-in/out reporting).
+    static func terminalSetFocus(handle: OpaquePointer, focused: Bool) {
+        impulse_terminal_set_focus(UnsafeMutableRawPointer(handle), focused)
+    }
+
+    /// Returns the child process PID, or 0 if not available.
+    static func terminalChildPid(handle: OpaquePointer) -> UInt32 {
+        return impulse_terminal_child_pid(UnsafeMutableRawPointer(handle))
+    }
+
+    /// Starts a search in the terminal scrollback. Returns a JSON result string.
+    static func terminalSearch(handle: OpaquePointer, pattern: String) -> String? {
+        return pattern.withCString { ptr in
+            guard let result = impulse_terminal_search(UnsafeMutableRawPointer(handle), ptr) else { return nil }
+            return consumeCString(result)
+        }
+    }
+
+    /// Advances to the next search match. Returns a JSON result string.
+    static func terminalSearchNext(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_search_next(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Advances to the previous search match. Returns a JSON result string.
+    static func terminalSearchPrev(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_search_prev(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Clears the current terminal search.
+    static func terminalSearchClear(handle: OpaquePointer) {
+        impulse_terminal_search_clear(UnsafeMutableRawPointer(handle))
+    }
+
     /// Returns the installation status of system (non-managed) LSP servers
     /// as an array of dictionaries with `command`, `installed`, and
     /// `resolvedPath` keys.
