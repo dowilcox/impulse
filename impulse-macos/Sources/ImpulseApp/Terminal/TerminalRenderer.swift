@@ -463,6 +463,8 @@ class TerminalRenderer: NSView {
     // MARK: Text Run Drawing
 
     /// Draw a run of text at the given grid position using CoreText.
+    /// Each glyph is forced to advance by exactly cellWidth so text aligns
+    /// perfectly with the grid (cursor, selection, background fills).
     private func drawTextRun(
         context: CGContext, text: String, col: Int, rowY: CGFloat,
         fgR: UInt8, fgG: UInt8, fgB: UInt8,
@@ -477,18 +479,26 @@ class TerminalRenderer: NSView {
         )
 
         let font = fontForStyle(bold: bold, italic: italic)
-        let attrs: [CFString: Any] = [
-            kCTFontAttributeName: font,
-            kCTForegroundColorAttributeName: color,
-        ]
-        let attrString = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!
-        let line = CTLineCreateWithAttributedString(attrString)
+        let cw = fontMetrics.cellWidth
+        let baseX = padding + CGFloat(col) * cw
+        let textY = rowY + fontMetrics.ascent
 
-        let x = padding + CGFloat(col) * fontMetrics.cellWidth
-        // In a flipped view with textMatrix scaled to (1, -1), position at
-        // (x, rowY + ascent) so text renders downward from the top of the cell.
-        context.textPosition = CGPoint(x: x, y: rowY + fontMetrics.ascent)
-        CTLineDraw(line, context)
+        // Draw each character at its exact cell position to prevent drift.
+        // CoreText's natural advances may differ slightly from cellWidth,
+        // causing characters to misalign with the grid over long runs.
+        var charCol = 0
+        for ch in text.unicodeScalars {
+            let str = String(ch) as CFString
+            let attrs: [CFString: Any] = [
+                kCTFontAttributeName: font,
+                kCTForegroundColorAttributeName: color,
+            ]
+            let attrStr = CFAttributedStringCreate(nil, str, attrs as CFDictionary)!
+            let line = CTLineCreateWithAttributedString(attrStr)
+            context.textPosition = CGPoint(x: baseX + CGFloat(charCol) * cw, y: textY)
+            CTLineDraw(line, context)
+            charCol += 1
+        }
     }
 
     // MARK: Font Variant Cache
