@@ -19,6 +19,7 @@ use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
 use crate::grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
+use crate::search::{SearchResult, TerminalSearch};
 
 // ---------------------------------------------------------------------------
 // Event proxy — bridges alacritty events to our channel
@@ -187,6 +188,7 @@ pub struct TerminalBackend {
     rows: u16,
     colors: ConfiguredColors,
     child_pid: u32,
+    search: TerminalSearch,
 }
 
 impl TerminalBackend {
@@ -230,6 +232,7 @@ impl TerminalBackend {
             rows,
             colors,
             child_pid,
+            search: TerminalSearch::new(),
         })
     }
 
@@ -264,7 +267,7 @@ impl TerminalBackend {
 
     /// Write the visible grid into a pre-allocated binary buffer.
     /// Returns the number of bytes written.
-    pub fn write_grid_to_buffer(&self, buf: &mut [u8]) -> usize {
+    pub fn write_grid_to_buffer(&mut self, buf: &mut [u8]) -> usize {
         let term = self.term.lock();
         let content = term.renderable_content();
         let term_colors = content.colors;
@@ -320,8 +323,7 @@ impl TerminalBackend {
             }
         }
 
-        // TODO: search match ranges will be added in Task 9.
-        let search_ranges: Vec<HighlightRange> = Vec::new();
+        let search_ranges = self.search.visible_matches(&term);
 
         let required = buffer::buffer_size(
             num_cols as u16, num_lines as u16,
@@ -459,9 +461,27 @@ impl TerminalBackend {
         let _ = self.event_loop_sender.send(Msg::Shutdown);
     }
 
-    /// Access the term lock (for search module in Task 9).
-    pub(crate) fn term(&self) -> &Arc<FairMutex<Term<EventProxy>>> {
-        &self.term
+    /// Search for a regex pattern in the terminal. Returns the first match.
+    pub fn search(&mut self, pattern: &str) -> SearchResult {
+        let term = self.term.lock();
+        self.search.search(&term, pattern)
+    }
+
+    /// Find the next search match after the current one.
+    pub fn search_next(&mut self) -> SearchResult {
+        let term = self.term.lock();
+        self.search.search_next(&term)
+    }
+
+    /// Find the previous search match before the current one.
+    pub fn search_prev(&mut self) -> SearchResult {
+        let term = self.term.lock();
+        self.search.search_prev(&term)
+    }
+
+    /// Clear the current search state.
+    pub fn search_clear(&mut self) {
+        self.search.clear();
     }
 
     fn drain_pty_writes(&self) {

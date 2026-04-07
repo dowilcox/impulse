@@ -8,6 +8,7 @@ mod buffer;
 mod config;
 mod event;
 mod grid;
+mod search;
 
 pub use backend::{SelectionKind, TerminalBackend};
 pub use buffer::{
@@ -17,3 +18,4 @@ pub use buffer::{
 pub use config::{TerminalColors, TerminalConfig};
 pub use event::TerminalEvent;
 pub use grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
+pub use search::SearchResult;

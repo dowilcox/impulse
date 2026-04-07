@@ -1546,13 +1546,19 @@ pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32
     }))
 }
 
-// Search FFI functions — stubbed for now, implemented in Task 9.
+// Search FFI functions.
 
 #[no_mangle]
-pub extern "C" fn impulse_terminal_search(handle: *mut TerminalHandle, _pattern: *const c_char) -> *mut c_char {
+pub extern "C" fn impulse_terminal_search(handle: *mut TerminalHandle, pattern: *const c_char) -> *mut c_char {
     ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
         if handle.is_null() { return to_c_string("{}"); }
-        to_c_string("{}")
+        let h = unsafe { &mut *handle };
+        let pat = to_rust_str(pattern).unwrap_or_default();
+        let result = h.backend.search(&pat);
+        match serde_json::to_string(&result) {
+            Ok(json) => to_c_string(&json),
+            Err(_) => to_c_string("{}"),
+        }
     }))
 }
 
@@ -1560,7 +1566,12 @@ pub extern "C" fn impulse_terminal_search(handle: *mut TerminalHandle, _pattern:
 pub extern "C" fn impulse_terminal_search_next(handle: *mut TerminalHandle) -> *mut c_char {
     ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
         if handle.is_null() { return to_c_string("{}"); }
-        to_c_string("{}")
+        let h = unsafe { &mut *handle };
+        let result = h.backend.search_next();
+        match serde_json::to_string(&result) {
+            Ok(json) => to_c_string(&json),
+            Err(_) => to_c_string("{}"),
+        }
     }))
 }
 
@@ -1568,7 +1579,12 @@ pub extern "C" fn impulse_terminal_search_next(handle: *mut TerminalHandle) -> *
 pub extern "C" fn impulse_terminal_search_prev(handle: *mut TerminalHandle) -> *mut c_char {
     ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
         if handle.is_null() { return to_c_string("{}"); }
-        to_c_string("{}")
+        let h = unsafe { &mut *handle };
+        let result = h.backend.search_prev();
+        match serde_json::to_string(&result) {
+            Ok(json) => to_c_string(&json),
+            Err(_) => to_c_string("{}"),
+        }
     }))
 }
 
@@ -1576,5 +1592,7 @@ pub extern "C" fn impulse_terminal_search_prev(handle: *mut TerminalHandle) -> *
 pub extern "C" fn impulse_terminal_search_clear(handle: *mut TerminalHandle) {
     ffi_catch((), AssertUnwindSafe(|| {
         if handle.is_null() { return; }
+        let h = unsafe { &mut *handle };
+        h.backend.search_clear();
     }))
 }

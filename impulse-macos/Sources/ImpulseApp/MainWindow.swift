@@ -831,10 +831,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         termSearchHeightConstraint?.constant = 0
         termSearchField.stringValue = ""
 
-        // Return focus to the active terminal.
+        // Clear search state and return focus to the active terminal.
         if let container = tabManager.selectedTerminal,
            let terminal = container.activeTerminal {
-            // TODO: Terminal search is wired in Task 9.
+            terminal.searchClear()
             terminal.focus()
         }
     }
@@ -842,23 +842,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     @objc private func termSearchFieldChanged(_ sender: NSSearchField) {
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
-
-        // TODO: Terminal search is wired in Task 9.
-        let _ = sender.stringValue
+        let query = sender.stringValue
+        if query.isEmpty {
+            terminal.searchClear()
+        } else {
+            terminal.search(query)
+        }
     }
 
     @objc private func termSearchNext(_ sender: Any?) {
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
-        // TODO: Terminal search is wired in Task 9.
-        let _ = termSearchField.stringValue
+        terminal.searchNext()
     }
 
     @objc private func termSearchPrev(_ sender: Any?) {
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
-        // TODO: Terminal search is wired in Task 9.
-        let _ = termSearchField.stringValue
+        terminal.searchPrev()
     }
 
     @objc private func termSearchClose(_ sender: Any?) {

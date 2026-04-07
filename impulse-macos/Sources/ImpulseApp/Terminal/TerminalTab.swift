@@ -522,6 +522,13 @@ class TerminalTab: NSView {
         window?.makeFirstResponder(renderer)
     }
 
+    // MARK: Search
+
+    func search(_ pattern: String) { backend?.search(pattern) }
+    func searchNext() { backend?.searchNext() }
+    func searchPrev() { backend?.searchPrev() }
+    func searchClear() { backend?.searchClear() }
+
     // MARK: CWD Polling
 
     private func startCwdPolling() {
