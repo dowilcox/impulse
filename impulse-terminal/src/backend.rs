@@ -1,12 +1,12 @@
 //! Terminal backend — owns the alacritty_terminal::Term and PTY event loop.
 
-use std::borrow::Cow;
+use std::io::Read;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
-use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
+use alacritty_terminal::event::{Event as AlacEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
@@ -28,13 +28,12 @@ use crate::search::{SearchResult, TerminalSearch};
 #[derive(Clone)]
 struct EventProxy {
     event_tx: Sender<TerminalEvent>,
-    pty_write_tx: Sender<String>,
 }
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: AlacEvent) {
         match event {
-            AlacEvent::PtyWrite(text) => { let _ = self.pty_write_tx.send(text); }
+            AlacEvent::PtyWrite(text) => { let _ = self.event_tx.send(TerminalEvent::PtyWrite(text)); }
             AlacEvent::Wakeup => { let _ = self.event_tx.send(TerminalEvent::Wakeup); }
             AlacEvent::Title(title) => { let _ = self.event_tx.send(TerminalEvent::TitleChanged(title)); }
             AlacEvent::ResetTitle => { let _ = self.event_tx.send(TerminalEvent::ResetTitle); }
@@ -174,16 +173,26 @@ impl SelectionKind {
 }
 
 // ---------------------------------------------------------------------------
+// BackendMsg — commands sent to the PTY read thread
+// ---------------------------------------------------------------------------
+
+/// Messages sent from the main thread to the PTY read thread.
+enum BackendMsg {
+    Input(Vec<u8>),
+    Resize { cols: u16, rows: u16, cell_width: u16, cell_height: u16 },
+    Shutdown,
+}
+
+// ---------------------------------------------------------------------------
 // TerminalBackend
 // ---------------------------------------------------------------------------
 
 /// The main terminal backend. One instance per terminal tab/split.
 pub struct TerminalBackend {
     term: Arc<FairMutex<Term<EventProxy>>>,
-    event_loop_sender: EventLoopSender,
+    cmd_tx: Sender<BackendMsg>,
     event_rx: Receiver<TerminalEvent>,
-    pty_write_rx: Receiver<String>,
-    _pty_thread: Option<JoinHandle<(EventLoop<tty::Pty, EventProxy>, alacritty_terminal::event_loop::State)>>,
+    _read_thread: Option<JoinHandle<()>>,
     cols: u16,
     rows: u16,
     colors: ConfiguredColors,
@@ -201,15 +210,15 @@ impl TerminalBackend {
         cell_height: u16,
     ) -> Result<Self, String> {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        let (pty_write_tx, pty_write_rx) = crossbeam_channel::unbounded();
-        let proxy = EventProxy { event_tx, pty_write_tx };
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
+        let proxy = EventProxy { event_tx: event_tx.clone() };
 
         let alac_config = config.to_alacritty_config();
         let pty_options = config.to_pty_options();
         let colors = ConfiguredColors::from_config(&config);
 
         let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
-        let term = Term::new(alac_config, &size, proxy.clone());
+        let term = Term::new(alac_config, &size, proxy);
         let term = Arc::new(FairMutex::new(term));
 
         let window_size = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
@@ -217,17 +226,19 @@ impl TerminalBackend {
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
 
-        let event_loop = EventLoop::new(Arc::clone(&term), proxy, pty, pty_options.drain_on_exit, false)
-            .map_err(|e| format!("Failed to create event loop: {e}"))?;
-        let event_loop_sender = event_loop.channel();
-        let pty_thread = event_loop.spawn();
+        let term_clone = Arc::clone(&term);
+        let read_thread = std::thread::Builder::new()
+            .name("impulse-pty-reader".into())
+            .spawn(move || {
+                Self::read_loop(pty, term_clone, event_tx, cmd_rx);
+            })
+            .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
 
         Ok(Self {
             term,
-            event_loop_sender,
+            cmd_tx,
             event_rx,
-            pty_write_rx,
-            _pty_thread: Some(pty_thread),
+            _read_thread: Some(read_thread),
             cols,
             rows,
             colors,
@@ -236,11 +247,106 @@ impl TerminalBackend {
         })
     }
 
+    /// The PTY read loop — runs on a dedicated thread.
+    ///
+    /// Reads bytes from the PTY, scans for OSC sequences, feeds data to
+    /// alacritty's terminal state machine, and processes commands from the
+    /// main thread (input, resize, shutdown).
+    fn read_loop(
+        pty: tty::Pty,
+        term: Arc<FairMutex<Term<EventProxy>>>,
+        event_tx: Sender<TerminalEvent>,
+        cmd_rx: Receiver<BackendMsg>,
+    ) {
+        let mut buf = [0u8; 0x10000]; // 64KB read buffer
+        let mut processor: Processor = Processor::new();
+        let mut scanner = crate::osc_scanner::OscScanner::new();
+
+        // Clone the PTY file descriptor for reading.
+        // The original fd is used for writing (via BackendMsg::Input).
+        let reader_file = pty.file().try_clone().expect("Failed to clone PTY fd");
+        let mut reader = std::io::BufReader::new(reader_file);
+
+        // We need mutable access to the Pty for on_resize and writing.
+        // Since we own it, we can use an Arc<Mutex> for the rare write/resize path.
+        let pty = Arc::new(std::sync::Mutex::new(pty));
+        let pty_for_loop = Arc::clone(&pty);
+
+        loop {
+            // Drain commands (non-blocking).
+            loop {
+                match cmd_rx.try_recv() {
+                    Ok(BackendMsg::Input(data)) => {
+                        if let Ok(p) = pty_for_loop.lock() {
+                            use std::io::Write;
+                            let _ = p.file().write_all(&data);
+                        }
+                    }
+                    Ok(BackendMsg::Resize { cols, rows, cell_width, cell_height }) => {
+                        let ws = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
+                        if let Ok(mut p) = pty_for_loop.lock() {
+                            p.on_resize(ws);
+                        }
+                        let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
+                        term.lock().resize(size);
+                    }
+                    Ok(BackendMsg::Shutdown) => return,
+                    Err(_) => break, // Channel empty
+                }
+            }
+
+            // Read from PTY.
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    let _ = event_tx.send(TerminalEvent::Exit);
+                    return;
+                }
+                Ok(n) => {
+                    // Scan for OSC sequences.
+                    scanner.scan(&buf[..n]);
+                    for osc_event in scanner.drain_events() {
+                        match osc_event {
+                            crate::osc_scanner::OscEvent::CwdChanged(path) => {
+                                let _ = event_tx.send(TerminalEvent::CwdChanged(path));
+                            }
+                            crate::osc_scanner::OscEvent::PromptStart => {
+                                let _ = event_tx.send(TerminalEvent::PromptStart);
+                            }
+                            crate::osc_scanner::OscEvent::CommandStart => {
+                                let _ = event_tx.send(TerminalEvent::CommandStart);
+                            }
+                            crate::osc_scanner::OscEvent::CommandEnd(code) => {
+                                let _ = event_tx.send(TerminalEvent::CommandEnd(code));
+                            }
+                        }
+                    }
+
+                    // Feed bytes to alacritty's terminal state machine.
+                    {
+                        let mut term_locked = term.lock();
+                        processor.advance(&mut *term_locked, &buf[..n]);
+                    }
+
+                    // Notify frontend of content change.
+                    let _ = event_tx.send(TerminalEvent::Wakeup);
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(_) => {
+                    let _ = event_tx.send(TerminalEvent::Exit);
+                    return;
+                }
+            }
+        }
+    }
+
     /// Send input bytes to the PTY.
     pub fn write(&self, data: &[u8]) {
-        self.drain_pty_writes();
         if !data.is_empty() {
-            let _ = self.event_loop_sender.send(Msg::Input(Cow::Owned(data.to_vec())));
+            let _ = self.cmd_tx.send(BackendMsg::Input(data.to_vec()));
         }
     }
 
@@ -249,18 +355,20 @@ impl TerminalBackend {
         if cols == self.cols && rows == self.rows { return; }
         self.cols = cols;
         self.rows = rows;
-        let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
-        self.term.lock().resize(size);
-        let ws = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
-        let _ = self.event_loop_sender.send(Msg::Resize(ws));
+        let _ = self.cmd_tx.send(BackendMsg::Resize { cols, rows, cell_width, cell_height });
     }
 
     /// Poll for terminal events (non-blocking).
     pub fn poll_events(&self) -> Vec<TerminalEvent> {
-        self.drain_pty_writes();
         let mut events = Vec::new();
         while let Ok(ev) = self.event_rx.try_recv() {
-            events.push(ev);
+            match &ev {
+                TerminalEvent::PtyWrite(text) => {
+                    // PtyWrite responses need to go back to the PTY.
+                    let _ = self.cmd_tx.send(BackendMsg::Input(text.as_bytes().to_vec()));
+                }
+                _ => events.push(ev),
+            }
         }
         events
     }
@@ -458,7 +566,7 @@ impl TerminalBackend {
 
     /// Shut down the terminal.
     pub fn shutdown(&self) {
-        let _ = self.event_loop_sender.send(Msg::Shutdown);
+        let _ = self.cmd_tx.send(BackendMsg::Shutdown);
     }
 
     /// Search for a regex pattern in the terminal. Returns the first match.
@@ -484,11 +592,6 @@ impl TerminalBackend {
         self.search.clear();
     }
 
-    fn drain_pty_writes(&self) {
-        while let Ok(text) = self.pty_write_rx.try_recv() {
-            let _ = self.event_loop_sender.send(Msg::Input(Cow::Owned(text.into_bytes())));
-        }
-    }
 }
 
 impl Drop for TerminalBackend {
