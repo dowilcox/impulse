@@ -74,6 +74,10 @@ enum TerminalBackendEvent {
     case clipboardLoad
     case cursorBlinkingChange
     case exit
+    case cwdChanged(String)
+    case promptStart
+    case commandStart
+    case commandEnd(Int32)
 }
 
 // MARK: - Grid Buffer Reader
@@ -288,6 +292,8 @@ final class TerminalBackend {
                 case "ClipboardLoad": events.append(.clipboardLoad)
                 case "CursorBlinkingChange": events.append(.cursorBlinkingChange)
                 case "Exit": events.append(.exit)
+                case "PromptStart": events.append(.promptStart)
+                case "CommandStart": events.append(.commandStart)
                 default: break
                 }
             } else if let dict = item as? [String: Any] {
@@ -297,6 +303,10 @@ final class TerminalBackend {
                     events.append(.childExited(Int32(code)))
                 } else if let text = dict["ClipboardStore"] as? String {
                     events.append(.clipboardStore(text))
+                } else if let path = dict["CwdChanged"] as? String {
+                    events.append(.cwdChanged(path))
+                } else if let code = dict["CommandEnd"] as? Int {
+                    events.append(.commandEnd(Int32(code)))
                 }
             }
         }

@@ -131,6 +131,19 @@ class TerminalTab: NSView {
                 object: self,
                 userInfo: nil
             )
+        case .cwdChanged(let path):
+            currentWorkingDirectory = path
+            NotificationCenter.default.post(
+                name: .terminalCwdChanged,
+                object: self,
+                userInfo: ["directory": path]
+            )
+        case .promptStart:
+            break // Future: scroll-to-prompt navigation
+        case .commandStart:
+            break // Future: command timing
+        case .commandEnd(_):
+            break // Future: exit code display in status bar
         }
     }
 
@@ -542,7 +555,7 @@ class TerminalTab: NSView {
 
     private func startCwdPolling() {
         cwdPollTimer?.invalidate()
-        cwdPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        cwdPollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             guard let self, let backend = self.backend, !backend.isShutdown else { return }
             if let cwd = backend.queryCwd(), cwd != self.currentWorkingDirectory {
                 self.currentWorkingDirectory = cwd
