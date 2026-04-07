@@ -9,6 +9,7 @@ mod config;
 mod event;
 mod grid;
 mod search;
+pub mod osc_scanner;
 
 pub use backend::{SelectionKind, TerminalBackend};
 pub use buffer::{
