@@ -1,57 +1,43 @@
 import AppKit
 import os.log
-import SwiftTerm
 
 // MARK: - TerminalTab
 
-/// Wraps a SwiftTerm `LocalProcessTerminalView` for use as a single terminal tab
-/// in the Impulse IDE. Manages shell spawning, theming, and lifecycle notifications.
-class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
+/// Wraps a `TerminalRenderer` backed by `TerminalBackend` (alacritty_terminal)
+/// for use as a single terminal tab in the Impulse IDE. Manages shell spawning,
+/// theming, and lifecycle notifications.
+class TerminalTab: NSView {
 
     // MARK: Public Properties
 
     /// Display title for this terminal tab; defaults to the shell name.
     private(set) var tabTitle: String
 
-    /// Current working directory reported by the shell via OSC 7.
+    /// Current working directory reported by the shell via CWD polling.
     private(set) var currentWorkingDirectory: String
 
-    /// PID of the running shell process, or 0 if not yet spawned.
-    private(set) var shellPid: pid_t = 0
+    /// The renderer view that draws the terminal grid.
+    let renderer: TerminalRenderer
 
     // MARK: Private Properties
 
-    let terminalView: ImpulseTerminalView
+    private var backend: TerminalBackend?
 
     /// Local event monitor for copy-on-select behaviour.
     private var mouseUpMonitor: Any?
 
-    /// Local event monitor for forwarding scroll wheel events to TUI apps
-    /// that have enabled mouse reporting.
-    private var scrollMonitor: Any?
-
-    /// Local event monitor for Shift+Enter (sends CSI u sequence for multi-line
-    /// input in tools like Claude Code).
-    private var shiftEnterMonitor: Any?
-
-    /// Local event monitor that strips the `.numericPad` modifier flag from
-    /// regular arrow key events. macOS sets `.numericPad` on arrow keys even
-    /// though they aren't keypad keys. SwiftTerm checks this flag and sends
-    /// keypad-variant Kitty sequences (e.g. KP_Up = `\e[57417u`) that TUI
-    /// apps like Claude Code don't recognize.
-    private var arrowKeyMonitor: Any?
-
-    /// Regular arrow key keyCodes. macOS incorrectly flags these as numericPad.
-    private static let arrowKeyCodes: Set<UInt16> = [123, 124, 125, 126]
-
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
-    /// KVO observation for window's firstResponder changes.
-    private var firstResponderObservation: NSKeyValueObservation?
-
     /// Temp files/directories created for shell integration (cleaned up in deinit).
     private var shellIntegrationTempPaths: [URL] = []
+
+    /// Stored settings/theme for later use when creating the backend.
+    private var currentSettings: TerminalSettings?
+    private var currentTheme: TerminalTheme?
+
+    /// Timer for polling the child process CWD.
+    private var cwdPollTimer: Timer?
 
 
     // MARK: Initializer
@@ -61,16 +47,17 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         self.tabTitle = shellName
         self.currentWorkingDirectory = NSHomeDirectory()
 
-        self.terminalView = ImpulseTerminalView(frame: frameRect)
+        self.renderer = TerminalRenderer(
+            frame: frameRect,
+            fontFamily: "JetBrains Mono",
+            fontSize: 14
+        )
         super.init(frame: frameRect)
 
-        terminalView.processDelegate = self
-        addSubview(terminalView)
+        addSubview(renderer)
         setupConstraints()
         setupDragAndDrop()
-        // Copy-on-select is not installed here; call setCopyOnSelect(enabled:)
-        // after configureTerminal() to respect the user's setting.
-
+        wireRendererCallbacks()
     }
 
     @available(*, unavailable)
@@ -78,61 +65,72 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         fatalError("init(coder:) is not supported")
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        firstResponderObservation?.invalidate()
-        firstResponderObservation = nil
-
-        guard let window else {
-            // Removed from window — tear down monitors.
-            removeScrollAndKeyMonitors()
-            return
-        }
-
-        // Observe first responder changes on the window. Install scroll wheel
-        // and Shift+Enter monitors only while our terminal view is focused,
-        // so we don't accumulate N monitors across N split panes.
-        firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
-            guard let self else { return }
-            self.handleFirstResponderChange()
-        }
-        // Handle current state immediately.
-        handleFirstResponderChange()
-    }
-
-    private func handleFirstResponderChange() {
-        let isFocused = window?.firstResponder === terminalView
-        if isFocused {
-            if scrollMonitor == nil { setupScrollWheelForwarding() }
-            if shiftEnterMonitor == nil { setupShiftEnter() }
-            if arrowKeyMonitor == nil { setupArrowKeyFix() }
-        } else {
-            removeScrollAndKeyMonitors()
-        }
-    }
-
-    private func removeScrollAndKeyMonitors() {
-        if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
-        if let m = shiftEnterMonitor { NSEvent.removeMonitor(m); shiftEnterMonitor = nil }
-        if let m = arrowKeyMonitor { NSEvent.removeMonitor(m); arrowKeyMonitor = nil }
-    }
-
     deinit {
-        firstResponderObservation?.invalidate()
-        if let monitor = scrollMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        cwdPollTimer?.invalidate()
         if let monitor = mouseUpMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = shiftEnterMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = arrowKeyMonitor {
             NSEvent.removeMonitor(monitor)
         }
         for path in shellIntegrationTempPaths {
             try? FileManager.default.removeItem(at: path)
+        }
+    }
+
+    // MARK: Renderer Callbacks
+
+    private func wireRendererCallbacks() {
+        renderer.onEvent = { [weak self] event in
+            guard let self else { return }
+            self.handleBackendEvent(event)
+        }
+        renderer.onPaste = { [weak self] in
+            self?.pasteFromClipboard()
+        }
+        renderer.onCopy = { [weak self] in
+            self?.copySelection()
+        }
+    }
+
+    private func handleBackendEvent(_ event: TerminalBackendEvent) {
+        switch event {
+        case .wakeup:
+            break // Handled by renderer refresh loop.
+        case .titleChanged(let title):
+            tabTitle = title
+            NotificationCenter.default.post(
+                name: .terminalTitleChanged,
+                object: self,
+                userInfo: ["title": title]
+            )
+        case .resetTitle:
+            tabTitle = ImpulseCore.getUserLoginShellName()
+            NotificationCenter.default.post(
+                name: .terminalTitleChanged,
+                object: self,
+                userInfo: ["title": tabTitle]
+            )
+        case .bell:
+            NSSound.beep()
+        case .childExited(let code):
+            NotificationCenter.default.post(
+                name: .terminalProcessTerminated,
+                object: self,
+                userInfo: ["exitCode": code]
+            )
+        case .clipboardStore(let text):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        case .clipboardLoad:
+            if let text = NSPasteboard.general.string(forType: .string) {
+                backend?.write(text)
+            }
+        case .cursorBlinkingChange:
+            break
+        case .exit:
+            NotificationCenter.default.post(
+                name: .terminalProcessTerminated,
+                object: self,
+                userInfo: nil
+            )
         }
     }
 
@@ -142,13 +140,17 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     /// the tab is removed from the view hierarchy to ensure child processes
     /// (and any programs running inside the shell) are cleaned up.
     func terminateProcess() {
-        let pid = terminalView.process?.shellPid ?? 0
+        cwdPollTimer?.invalidate()
+        cwdPollTimer = nil
+        renderer.stopRefreshLoop()
+
+        guard let backend, !backend.isShutdown else { return }
+        let pid = backend.childPid()
         if pid > 0 {
-            // Collect all descendant PIDs before sending any signals, so we have
-            // the full tree even if intermediate processes exit during cleanup.
+            // Collect all descendant PIDs before sending any signals.
             let descendants = collectDescendants(of: pid)
 
-            // Send SIGHUP to the shell's process group (covers same-group children).
+            // Send SIGHUP to the shell's process group.
             let pgid = getpgid(pid)
             if pgid > 0 {
                 killpg(pgid, SIGHUP)
@@ -156,8 +158,7 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 kill(pid, SIGHUP)
             }
 
-            // Send SIGTERM to each descendant individually — catches processes
-            // that called setpgid()/setsid() and left the shell's process group.
+            // Send SIGTERM to each descendant individually.
             for desc in descendants {
                 kill(desc, SIGTERM)
             }
@@ -167,14 +168,12 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 escalateKill(shellPid: pid, descendants: descendants)
             }
         }
-        terminalView.terminate()
+        backend.shutdown()
     }
 
     /// Recursively collect all descendant PIDs of a given process using
-    /// `proc_listchildpids()`. Returns PIDs in leaf-first order so callers
-    /// can kill bottom-up.
+    /// `proc_listchildpids()`. Returns PIDs in leaf-first order.
     private func collectDescendants(of pid: pid_t) -> [pid_t] {
-        // First call with 0 buffer to get the count of children.
         let count = proc_listchildpids(pid, nil, 0)
         guard count > 0 else { return [] }
 
@@ -190,7 +189,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         for i in 0..<childCount {
             let child = pids[i]
             guard child > 0 else { continue }
-            // Recurse into grandchildren first (leaf-first ordering).
             result.append(contentsOf: collectDescendants(of: child))
             result.append(child)
         }
@@ -202,12 +200,10 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         let allPids = descendants + [shellPid]
         DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
             for pid in allPids {
-                // Probe whether the process is still alive.
                 if kill(pid, 0) == 0 {
                     kill(pid, SIGKILL)
                 }
             }
-            // Reap zombies so they don't linger in the process table.
             for pid in allPids {
                 var status: Int32 = 0
                 waitpid(pid, &status, WNOHANG)
@@ -225,12 +221,11 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         if enabled {
             mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
                 guard let self else { return event }
-                let pt = self.terminalView.convert(event.locationInWindow, from: nil)
-                guard self.terminalView.bounds.contains(pt) else { return event }
+                let pt = self.renderer.convert(event.locationInWindow, from: nil)
+                guard self.renderer.bounds.contains(pt) else { return event }
                 DispatchQueue.main.async { [weak self] in
                     guard let self,
-                          self.terminalView.selectionActive,
-                          let text = self.terminalView.getSelection(),
+                          let text = self.backend?.selectedText(),
                           !text.isEmpty else { return }
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
@@ -245,143 +240,62 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         }
     }
 
-    // MARK: Scroll Wheel Forwarding
+    // MARK: Clipboard
 
-    /// Installs a local event monitor that intercepts scroll wheel events over
-    /// the terminal view when the running application has enabled mouse reporting.
-    /// SwiftTerm's default `scrollWheel` always scrolls the terminal buffer;
-    /// this monitor forwards scroll events as mouse button 4/5 (scroll up/down)
-    /// so TUI apps (opencode, lazygit, htop, etc.) can receive them.
-    private func setupScrollWheelForwarding() {
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self else { return event }
-            guard event.deltaY != 0 else { return event }
+    /// Paste text from the system clipboard to the terminal PTY.
+    func pasteFromClipboard() {
+        let clipboard = NSPasteboard.general
 
-            // Only intercept events targeting our window, and only when this
-            // terminal is actually visible (not hidden behind another tab).
-            guard let eventWindow = event.window,
-                  eventWindow === self.window,
-                  !self.isHiddenOrHasHiddenAncestor else { return event }
-
-            // Only intercept events that actually hit our terminal view.
-            // Use hitTest for accurate view targeting (respects clipping,
-            // overlapping views, and the responder chain).
-            let windowPt = event.locationInWindow
-            guard let contentView = eventWindow.contentView else { return event }
-            let viewPt = contentView.convert(windowPt, from: nil)
-            guard let hitView = contentView.hitTest(viewPt),
-                  hitView === self.terminalView || hitView.isDescendant(of: self.terminalView) else {
-                return event
+        // Prefer text when available.
+        if var text = clipboard.string(forType: .string) {
+            // Strip trailing newlines/carriage returns.
+            while text.hasSuffix("\n") || text.hasSuffix("\r") {
+                text.removeLast()
             }
 
-            let pt = self.terminalView.convert(windowPt, from: nil)
+            // Normalize CRLF and standalone CR to LF.
+            text = text.replacingOccurrences(of: "\r\n", with: "\n")
+            text = text.replacingOccurrences(of: "\r", with: "\n")
 
-            // Only forward when the app has requested mouse reporting.
-            let terminal = self.terminalView.terminal!
-            guard self.terminalView.allowMouseReporting,
-                  terminal.mouseMode != .off else {
-                return event
+            guard !text.isEmpty else { return }
+            guard let backend else { return }
+
+            // Wrap in bracketed paste if the running program supports it.
+            if let mode = backend.mode(), mode.bracketedPaste {
+                backend.write("\u{1b}[200~")
             }
+            backend.write(text)
+            if let mode = backend.mode(), mode.bracketedPaste {
+                backend.write("\u{1b}[201~")
+            }
+            return
+        }
 
-            // Compute grid position from mouse coordinates. Subtract the 8px
-            // padding on each side so the grid aligns with actual cell positions.
-            let padding: CGFloat = 8
-            let contentWidth = self.terminalView.frame.width - padding * 2
-            let contentHeight = self.terminalView.frame.height - padding * 2
-            let cellWidth = contentWidth / CGFloat(terminal.cols)
-            let cellHeight = contentHeight / CGFloat(terminal.rows)
-            let col = min(max(0, Int((pt.x - padding) / cellWidth)), terminal.cols - 1)
-            let row = min(max(0, Int((self.terminalView.frame.height - pt.y - padding) / cellHeight)), terminal.rows - 1)
-
-            // Terminal protocol: button 4 = scroll up, button 5 = scroll down.
-            let flags = event.modifierFlags
-            let button = event.deltaY > 0 ? 4 : 5
-            let buttonFlags = terminal.encodeButton(
-                button: button, release: false,
-                shift: flags.contains(.shift),
-                meta: flags.contains(.option),
-                control: flags.contains(.control)
-            )
-            terminal.sendEvent(buttonFlags: buttonFlags, x: col, y: row)
-
-            // Consume the event so SwiftTerm doesn't also scroll the buffer.
-            return nil
+        // Fall back to image: save as a temp PNG and paste the path.
+        if let image = clipboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
+           let tiffData = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            let tmpPath = NSTemporaryDirectory() + "impulse-clipboard-\(timestamp).png"
+            do {
+                try pngData.write(to: URL(fileURLWithPath: tmpPath))
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: tmpPath
+                )
+                let escaped = tmpPath.shellEscaped
+                backend?.write(escaped)
+            } catch {
+                os_log(.error, "Failed to save clipboard image: %{public}@", error.localizedDescription)
+            }
         }
     }
 
-    // MARK: Shift+Enter
-
-    /// Installs a local event monitor that intercepts Shift+Enter and sends the
-    /// CSI u escape sequence (`\e[13;2u`) to the terminal PTY. This enables
-    /// multi-line input in tools like Claude Code that detect Shift+Enter.
-    private func setupShiftEnter() {
-        shiftEnterMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-
-            // Only intercept Shift+Return (without Cmd/Ctrl/Option).
-            // Check both keyCode (hardware scan code) and characters for
-            // robustness across keyboard layouts (JIS, ISO, etc.).
-            let isReturn = event.keyCode == 36 || event.keyCode == 76 // Return or numpad Enter
-                || event.charactersIgnoringModifiers == "\r"
-            guard isReturn,
-                  event.modifierFlags.contains(.shift),
-                  !event.modifierFlags.contains(.command),
-                  !event.modifierFlags.contains(.control) else {
-                return event
-            }
-
-            // Only handle when our terminal view is the first responder.
-            guard self.window?.firstResponder === self.terminalView else {
-                return event
-            }
-
-            // Send CSI u sequence for Shift+Return.
-            let bytes: [UInt8] = [0x1B, 0x5B, 0x31, 0x33, 0x3B, 0x32, 0x75] // \e[13;2u
-            self.terminalView.send(data: bytes[...])
-            return nil // consume the event
-        }
-    }
-
-    // MARK: Arrow Key Fix
-
-    /// Installs a local event monitor that strips the `.numericPad` modifier
-    /// flag from regular arrow key events. macOS sets `.numericPad` on arrow
-    /// keys (keyCodes 123-126) even though they are not keypad keys. SwiftTerm
-    /// checks this flag and emits keypad-variant Kitty keyboard sequences
-    /// (KP_Up/KP_Down/KP_Left/KP_Right) that TUI apps don't recognize.
-    private func setupArrowKeyFix() {
-        arrowKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-
-            // Only fix events targeting our terminal view.
-            guard self.window?.firstResponder === self.terminalView else {
-                return event
-            }
-
-            // Only fix regular arrow keys that macOS incorrectly flags as numericPad.
-            guard Self.arrowKeyCodes.contains(event.keyCode),
-                  event.modifierFlags.contains(.numericPad) else {
-                return event
-            }
-
-            // Create a new event without the .numericPad flag so SwiftTerm
-            // sends regular (non-keypad) arrow escape sequences.
-            guard let fixed = NSEvent.keyEvent(
-                with: event.type,
-                location: event.locationInWindow,
-                modifierFlags: event.modifierFlags.subtracting(.numericPad),
-                timestamp: event.timestamp,
-                windowNumber: event.windowNumber,
-                context: nil,
-                characters: event.characters ?? "",
-                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
-                isARepeat: event.isARepeat,
-                keyCode: event.keyCode
-            ) else {
-                return event
-            }
-            return fixed
-        }
+    /// Copy the current selection to the system clipboard.
+    func copySelection() {
+        guard let text = backend?.selectedText(), !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     // MARK: Drag & Drop
@@ -404,20 +318,16 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             return false
         }
 
-        // Build a space-separated, shell-escaped list of file paths.
         let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
-        guard !paths.isEmpty else { return false }
+        guard !paths.isEmpty, let backend else { return false }
 
-        // Send the escaped paths to the terminal, wrapped in bracketed paste
-        // if the running program supports it (prevents misinterpretation as
-        // typed input in TUI apps).
-        let bytes = Array(paths.utf8)
-        if let terminal = terminalView.terminal, terminal.bracketedPasteMode {
-            terminalView.send(data: EscapeSequences.bracketedPasteStart[0...])
+        // Wrap in bracketed paste if the running program supports it.
+        if let mode = backend.mode(), mode.bracketedPaste {
+            backend.write("\u{1b}[200~")
         }
-        terminalView.send(data: bytes[...])
-        if let terminal = terminalView.terminal, terminal.bracketedPasteMode {
-            terminalView.send(data: EscapeSequences.bracketedPasteEnd[0...])
+        backend.write(paths)
+        if let mode = backend.mode(), mode.bracketedPaste {
+            backend.write("\u{1b}[201~")
         }
         return true
     }
@@ -425,44 +335,26 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
     // MARK: Auto Layout
 
     private func setupConstraints() {
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        renderer.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            renderer.topAnchor.constraint(equalTo: topAnchor),
+            renderer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            renderer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            renderer.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
     // MARK: Configuration
 
-    /// Apply visual settings and theme to the terminal view.
+    /// Apply visual settings and theme to the terminal.
     func configureTerminal(settings: TerminalSettings, theme: TerminalTheme) {
+        self.currentSettings = settings
+        self.currentTheme = theme
+
         // Font
         let fontSize = CGFloat(settings.terminalFontSize)
-        if !settings.terminalFontFamily.isEmpty,
-           let customFont = NSFont(name: settings.terminalFontFamily, size: fontSize) {
-            terminalView.font = customFont
-        } else {
-            terminalView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        }
-
-        // Colors
-        applyTheme(theme: theme)
-
-        // Cursor style
-        let terminal = terminalView.getTerminal()
-        switch settings.terminalCursorShape {
-        case "beam":
-            terminal.options.cursorStyle = settings.terminalCursorBlink ? .blinkBar : .steadyBar
-        case "underline":
-            terminal.options.cursorStyle = settings.terminalCursorBlink ? .blinkUnderline : .steadyUnderline
-        default:
-            terminal.options.cursorStyle = settings.terminalCursorBlink ? .blinkBlock : .steadyBlock
-        }
-
-        // Scrollback
-        terminal.options.scrollback = settings.terminalScrollback
+        let fontFamily = settings.terminalFontFamily.isEmpty ? "JetBrains Mono" : settings.terminalFontFamily
+        renderer.updateFont(family: fontFamily, size: fontSize)
 
         // Copy on select
         setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
@@ -470,34 +362,30 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     /// Update terminal colors from a theme at runtime.
     func applyTheme(theme: TerminalTheme) {
-        terminalView.nativeForegroundColor = NSColor(hex: theme.fg)
-        terminalView.nativeBackgroundColor = NSColor(hex: theme.bg)
-
-        let palette = theme.terminalPalette.map { hex in
-            colorFromHex(hex)
-        }
-        if palette.count == 16 {
-            terminalView.installColors(palette)
-        }
+        currentTheme = theme
+        // Theme is applied when the backend is created. For a live running
+        // terminal the backend reads colors from its config. A full "live
+        // recolor" would require the backend to support a recolor API.
+        // For now we just store the new theme so new terminals get it.
+        renderer.needsDisplay = true
     }
 
     // MARK: Shell Spawning
 
     /// Spawn the user's login shell inside this terminal.
     /// If `initialCommand` is provided, it is sent to the PTY immediately after
-    /// the process starts (the PTY buffers the bytes until the shell reads them).
+    /// the process starts.
     func spawnShell(initialDirectory: String? = nil, initialCommand: String? = nil) {
         let shellPath = ImpulseCore.getUserLoginShell()
         let shellName = (shellPath as NSString).lastPathComponent
 
-        var environment: [String] = [
-            "TERM=xterm-256color",
-            "TERM_PROGRAM=Impulse",
-            "COLORTERM=truecolor",
+        var envDict: [String: String] = [
+            "TERM": "xterm-256color",
+            "TERM_PROGRAM": "Impulse",
+            "COLORTERM": "truecolor",
         ]
 
-        // Dangerous linker/loader environment variables that could be used for
-        // library injection attacks. Filter these out of the inherited environment.
+        // Dangerous linker/loader environment variables.
         let dangerousEnvKeys: Set<String> = [
             "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
             "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH",
@@ -505,21 +393,16 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
             "LD_PROFILE", "LD_DYNAMIC_WEAK", "LD_BIND_NOW"
         ]
 
-        // Inherit the current process environment
+        // Inherit the current process environment.
         for (key, value) in ProcessInfo.processInfo.environment {
-            // Skip keys we set explicitly
-            if key == "TERM" || key == "TERM_PROGRAM" || key == "COLORTERM" {
-                continue
-            }
-            // Skip dangerous linker/loader variables
+            if key == "TERM" || key == "TERM_PROGRAM" || key == "COLORTERM" { continue }
             if dangerousEnvKeys.contains(key) { continue }
-            environment.append("\(key)=\(value)")
+            envDict[key] = value
         }
 
         var args: [String] = []
 
         // Add shell integration (OSC 7 CWD tracking, OSC 133 command boundaries).
-        // Each shell type requires a different injection method.
         let shellType = shellName.lowercased()
         if shellType == "fish" {
             if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
@@ -528,8 +411,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                 args.append("--login")
             }
         } else if shellType == "zsh" {
-            // Zsh requires a ZDOTDIR trick: create a temp directory with wrapper
-            // rc files that source the user's originals then inject integration.
             if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
                 let home = NSHomeDirectory()
                 let zdotdir = FileManager.default.temporaryDirectory
@@ -556,18 +437,15 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                         """
                     try zshrc.write(to: zdotdir.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
 
-                    environment.append("ZDOTDIR=\(zdotdir.path)")
+                    envDict["ZDOTDIR"] = zdotdir.path
                     args.append("--login")
                 } catch {
-                    // Fall back to plain login shell if temp files fail
                     args.append("--login")
                 }
             } else {
                 args.append("--login")
             }
         } else if shellType == "bash" {
-            // Bash supports --rcfile to inject a custom rc that sources the
-            // user's .bashrc then appends integration.
             if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
                 let home = NSHomeDirectory()
                 let rcPath = FileManager.default.temporaryDirectory
@@ -583,7 +461,6 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
                     shellIntegrationTempPaths.append(rcPath)
                     args.append(contentsOf: ["--rcfile", rcPath.path])
                 } catch {
-                    // Fall back to plain login shell
                     args.append("--login")
                 }
             } else {
@@ -592,14 +469,43 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
         }
 
         let workingDir = initialDirectory ?? currentWorkingDirectory
+        let settings = currentSettings ?? TerminalSettings()
+        let theme = currentTheme ?? TerminalTheme()
 
-        terminalView.startProcess(
-            executable: shellPath,
-            args: args,
-            environment: environment,
-            execName: nil,
-            currentDirectory: workingDir
+        let config = TerminalBackendConfig.from(
+            settings: settings,
+            theme: theme,
+            shellPath: shellPath,
+            shellArgs: args,
+            environment: envDict,
+            workingDirectory: workingDir
         )
+
+        // Calculate grid dimensions from renderer bounds.
+        let metrics = renderer.fontMetrics
+        let viewWidth = renderer.bounds.width > 0 ? renderer.bounds.width : 800
+        let viewHeight = renderer.bounds.height > 0 ? renderer.bounds.height : 600
+        let (cols, rows) = metrics.gridSize(
+            viewWidth: viewWidth, viewHeight: viewHeight, padding: renderer.padding
+        )
+
+        do {
+            let newBackend = try TerminalBackend(
+                config: config,
+                cols: UInt16(cols),
+                rows: UInt16(rows),
+                cellWidth: UInt16(metrics.cellWidth),
+                cellHeight: UInt16(metrics.cellHeight)
+            )
+            self.backend = newBackend
+            renderer.backend = newBackend
+            renderer.startRefreshLoop()
+
+            // Start CWD polling timer (1 second interval).
+            startCwdPolling()
+        } catch {
+            os_log(.error, "Failed to create terminal backend: %{public}@", String(describing: error))
+        }
 
         if let initialCommand {
             sendCommand(initialCommand)
@@ -608,56 +514,29 @@ class TerminalTab: NSView, LocalProcessTerminalViewDelegate {
 
     /// Send a text string (e.g. a shell command + newline) to the terminal's PTY.
     func sendCommand(_ text: String) {
-        let bytes = Array(text.utf8) + [0x0A]  // Append newline (Enter)
-        terminalView.send(data: bytes[...])
+        backend?.write(text + "\n")
     }
 
     /// Make this terminal the first responder.
     func focus() {
-        window?.makeFirstResponder(terminalView)
+        window?.makeFirstResponder(renderer)
     }
 
-    // MARK: LocalProcessTerminalViewDelegate
+    // MARK: CWD Polling
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        guard let directory = directory, !directory.isEmpty else { return }
-
-        // The directory may come as a file:// URL from OSC 7
-        let path: String
-        if directory.hasPrefix("file://") {
-            path = URL(string: directory)?.path ?? directory
-        } else {
-            path = directory
+    private func startCwdPolling() {
+        cwdPollTimer?.invalidate()
+        cwdPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, let backend = self.backend, !backend.isShutdown else { return }
+            if let cwd = backend.queryCwd(), cwd != self.currentWorkingDirectory {
+                self.currentWorkingDirectory = cwd
+                NotificationCenter.default.post(
+                    name: .terminalCwdChanged,
+                    object: self,
+                    userInfo: ["directory": cwd]
+                )
+            }
         }
-
-        currentWorkingDirectory = path
-        NotificationCenter.default.post(
-            name: .terminalCwdChanged,
-            object: self,
-            userInfo: ["directory": path]
-        )
-    }
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        // Size changes are handled internally by SwiftTerm's PTY bridging.
-        // No additional action needed.
-    }
-
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        tabTitle = title
-        NotificationCenter.default.post(
-            name: .terminalTitleChanged,
-            object: self,
-            userInfo: ["title": title]
-        )
-    }
-
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
-        NotificationCenter.default.post(
-            name: .terminalProcessTerminated,
-            object: self,
-            userInfo: exitCode.map { ["exitCode": $0] }
-        )
     }
 }
 
@@ -687,94 +566,3 @@ struct TerminalTheme {
         "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
     ]
 }
-
-// MARK: - ImpulseTerminalView
-
-/// Subclass of `LocalProcessTerminalView` that fixes alternate screen buffer
-/// restoration. SwiftTerm's default `bufferActivated` only updates the scroller
-/// but never triggers a view redraw, so exiting a TUI app (e.g. vim, Claude Code)
-/// leaves stale content on screen. This override forces a full repaint.
-class ImpulseTerminalView: LocalProcessTerminalView {
-    override func bufferActivated(source: Terminal) {
-        super.bufferActivated(source: source)
-        needsDisplay = true
-    }
-
-    /// Override paste to strip trailing newlines/carriage returns from pasted
-    /// text. Clipboard content copied from websites or documents often includes
-    /// a trailing newline that the shell interprets as Enter, causing accidental
-    /// command execution or splitting a single command into multiple commands.
-    ///
-    /// If the clipboard contains only an image (no text), the image is saved to
-    /// a temporary PNG file and its shell-escaped path is pasted, so CLI tools
-    /// like Claude Code can consume it.
-    override func paste(_ sender: Any) {
-        let clipboard = NSPasteboard.general
-
-        // Prefer text when available — this is the normal paste path.
-        if var text = clipboard.string(forType: .string) {
-            // Strip trailing newlines and carriage returns. Clipboard content
-            // from web pages and documents commonly includes trailing newlines
-            // that would cause accidental command execution.
-            while text.hasSuffix("\n") || text.hasSuffix("\r") {
-                text.removeLast()
-            }
-
-            // Normalize CRLF and standalone CR to LF for consistent handling.
-            text = text.replacingOccurrences(of: "\r\n", with: "\n")
-            text = text.replacingOccurrences(of: "\r", with: "\n")
-
-            guard !text.isEmpty else { return }
-
-            // Replicate SwiftTerm's paste logic with bracketed paste support
-            guard let terminal = terminal else { return }
-            if terminal.bracketedPasteMode {
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
-            send(txt: text)
-            if terminal.bracketedPasteMode {
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            }
-            return
-        }
-
-        // Fall back to image: save as a temp PNG and paste the path.
-        if let image = clipboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
-           let tiffData = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmap.representation(using: .png, properties: [:]) {
-            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
-            let tmpPath = NSTemporaryDirectory() + "impulse-clipboard-\(timestamp).png"
-            do {
-                try pngData.write(to: URL(fileURLWithPath: tmpPath))
-                // Restrict permissions to owner-only.
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: tmpPath
-                )
-                let escaped = tmpPath.shellEscaped
-                guard let data = escaped.data(using: .utf8) else { return }
-                send(data: ArraySlice(data))
-            } catch {
-                os_log(.error, "Failed to save clipboard image: %{public}@", error.localizedDescription)
-            }
-        }
-    }
-}
-
-// MARK: - Color Helpers
-
-/// Convert a hex color string to a SwiftTerm `Color` (UInt16 components, 0-65535 range).
-private func colorFromHex(_ hex: String) -> Color {
-    let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        .replacingOccurrences(of: "#", with: "")
-    guard cleaned.count == 6, let value = UInt32(cleaned, radix: 16) else {
-        return Color(red: 0, green: 0, blue: 0)
-    }
-    let r = UInt16((value >> 16) & 0xFF)
-    let g = UInt16((value >> 8) & 0xFF)
-    let b = UInt16(value & 0xFF)
-    // Scale 8-bit (0-255) to 16-bit (0-65535)
-    return Color(red: r * 257, green: g * 257, blue: b * 257)
-}
-
-// NSColor(hex:) is defined in Theme/Theme.swift

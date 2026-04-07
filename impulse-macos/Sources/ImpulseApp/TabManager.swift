@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 // MARK: - Tab Info
 

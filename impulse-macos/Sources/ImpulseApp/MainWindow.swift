@@ -834,7 +834,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // Return focus to the active terminal.
         if let container = tabManager.selectedTerminal,
            let terminal = container.activeTerminal {
-            // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+            // TODO: Terminal search is wired in Task 9.
             terminal.focus()
         }
     }
@@ -843,21 +843,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
 
-        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        // TODO: Terminal search is wired in Task 9.
         let _ = sender.stringValue
     }
 
     @objc private func termSearchNext(_ sender: Any?) {
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
-        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        // TODO: Terminal search is wired in Task 9.
         let _ = termSearchField.stringValue
     }
 
     @objc private func termSearchPrev(_ sender: Any?) {
         guard let container = tabManager.selectedTerminal,
               let terminal = container.activeTerminal else { return }
-        // TODO: SwiftTerm SearchService is a stub; implement terminal search when API is available.
+        // TODO: Terminal search is wired in Task 9.
         let _ = termSearchField.stringValue
     }
 

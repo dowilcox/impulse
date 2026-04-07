@@ -6,8 +6,8 @@ import AppKit
 ///
 /// We use a traditional NSApplication-based launch rather than SwiftUI's @main App
 /// protocol because the app requires deep AppKit integration: NSSplitView,
-/// NSToolbar with custom tab segments, WKWebView for Monaco, and SwiftTerm for
-/// terminal emulation. Running the NSApplication run loop directly gives full
+/// NSToolbar with custom tab segments, WKWebView for Monaco, and a custom
+/// terminal renderer. Running the NSApplication run loop directly gives full
 /// control over the responder chain, menu bar, and window lifecycle.
 
 @main
