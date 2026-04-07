@@ -12,6 +12,40 @@ import json
 import re
 import sys
 
+# Extensions that VS Code's material-icon-theme maps via languageIds rather than
+# file_suffixes.  The Zed port drops languageIds, so we inject these directly.
+# Only added when the icon name exists in file_icons and the extension isn't
+# already present in the upstream file_suffixes.
+LANGUAGE_ID_EXTENSIONS: dict[str, str] = {
+    # TypeScript / JavaScript
+    "ts": "typescript",
+    "js": "javascript",
+    "cjs": "javascript",
+    # PHP
+    "php": "php",
+    "php3": "php",
+    "php4": "php",
+    "php5": "php",
+    "php7": "php",
+    "php8": "php",
+    "phtml": "php",
+    # HTML
+    "html": "html",
+    # YAML
+    "yaml": "yaml",
+    "yml": "yaml",
+    # Objective-C / Objective-C++
+    "m": "objective-c",
+    "mm": "objective-cpp",
+    # MATLAB
+    "mat": "matlab",
+    # Diff / Patch
+    "diff": "diff",
+    "patch": "diff",
+    # Salesforce
+    "cls": "salesforce",
+}
+
 
 def strip_path_prefix(path: str) -> str:
     """Remove './icons/' prefix, leaving just the filename."""
@@ -53,6 +87,15 @@ def main():
         ext_lower = ext.lstrip(".").lower()
         if icon_name in file_icons:
             file_suffixes[ext_lower] = icon_name
+
+    # 2b. Inject common extensions that the upstream maps via VS Code languageIds
+    #     (which the Zed port drops).  Only add if the icon exists and the
+    #     extension wasn't already provided by the upstream.
+    injected = 0
+    for ext, icon_name in LANGUAGE_ID_EXTENSIONS.items():
+        if ext not in file_suffixes and icon_name in file_icons:
+            file_suffixes[ext] = icon_name
+            injected += 1
 
     # 3. file_stems: deduplicate to lowercase
     file_stems_raw = theme.get("file_stems", {})
@@ -96,7 +139,7 @@ def main():
 
     # Stats
     print(f"file_icons:        {len(file_icons)}")
-    print(f"file_suffixes:     {len(file_suffixes)}")
+    print(f"file_suffixes:     {len(file_suffixes)} ({injected} injected from languageIds)")
     print(f"file_stems:        {len(file_stems)}")
     print(f"named_directories: {len(named_directories)}")
     size_kb = len(json.dumps(result, separators=(",", ":"))) / 1024
