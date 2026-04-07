@@ -142,33 +142,42 @@ class TerminalTab: NSView {
     func terminateProcess() {
         cwdPollTimer?.invalidate()
         cwdPollTimer = nil
+
+        // Detach the backend from the renderer BEFORE stopping the display
+        // link.  CVDisplayLinkStop blocks until the current tick() callback
+        // completes; if tick() is mid-FFI call we'd deadlock.  Nil-ing the
+        // reference makes tick() return immediately via its guard.
+        let backendToShutdown = backend
+        backend = nil
+        renderer.backend = nil
         renderer.stopRefreshLoop()
 
-        guard let backend, !backend.isShutdown else { return }
-        let pid = backend.childPid()
-        if pid > 0 {
-            // Collect all descendant PIDs before sending any signals.
-            let descendants = collectDescendants(of: pid)
+        guard let backendToShutdown, !backendToShutdown.isShutdown else { return }
 
-            // Send SIGHUP to the shell's process group.
-            let pgid = getpgid(pid)
-            if pgid > 0 {
-                killpg(pgid, SIGHUP)
-            } else {
-                kill(pid, SIGHUP)
-            }
+        // Send signals and destroy the backend on a background queue so the
+        // main thread is never blocked by PTY teardown.
+        let pid = backendToShutdown.childPid()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            if pid > 0 {
+                let descendants = self?.collectDescendants(of: pid) ?? []
 
-            // Send SIGTERM to each descendant individually.
-            for desc in descendants {
-                kill(desc, SIGTERM)
-            }
+                let pgid = getpgid(pid)
+                if pgid > 0 {
+                    killpg(pgid, SIGHUP)
+                } else {
+                    kill(pid, SIGHUP)
+                }
 
-            // Schedule escalation: SIGKILL stragglers after a grace period.
-            if !descendants.isEmpty {
-                escalateKill(shellPid: pid, descendants: descendants)
+                for desc in descendants {
+                    kill(desc, SIGTERM)
+                }
+
+                if !descendants.isEmpty {
+                    self?.escalateKill(shellPid: pid, descendants: descendants)
+                }
             }
+            backendToShutdown.shutdown()
         }
-        backend.shutdown()
     }
 
     /// Recursively collect all descendant PIDs of a given process using
