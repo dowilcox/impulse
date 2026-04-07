@@ -1348,3 +1348,233 @@ pub extern "C" fn impulse_get_markdown_theme(name: *const c_char) -> *mut c_char
         }),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Terminal backend API
+// ---------------------------------------------------------------------------
+
+use impulse_terminal::{SelectionKind, TerminalBackend};
+
+struct TerminalHandle {
+    backend: TerminalBackend,
+    /// Pre-allocated buffer for grid snapshots.
+    snapshot_buf: Vec<u8>,
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_create(
+    config_json: *const c_char,
+    cols: u16,
+    rows: u16,
+    cell_width: u16,
+    cell_height: u16,
+) -> *mut TerminalHandle {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        let json = to_rust_str(config_json).unwrap_or_default();
+        let config: impulse_terminal::TerminalConfig = match serde_json::from_str(&json) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("Failed to parse terminal config: {e}");
+                return std::ptr::null_mut();
+            }
+        };
+        match TerminalBackend::new(config, cols, rows, cell_width, cell_height) {
+            Ok(backend) => {
+                let buf_size = backend.grid_buffer_size();
+                let handle = TerminalHandle {
+                    backend,
+                    snapshot_buf: vec![0u8; buf_size],
+                };
+                Box::into_raw(Box::new(handle))
+            }
+            Err(e) => {
+                log::error!("Failed to create terminal: {e}");
+                std::ptr::null_mut()
+            }
+        }
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_destroy(handle: *mut TerminalHandle) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if !handle.is_null() {
+            let h = unsafe { Box::from_raw(handle) };
+            h.backend.shutdown();
+            drop(h);
+        }
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_write(handle: *mut TerminalHandle, data: *const u8, len: usize) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() || data.is_null() || len == 0 { return; }
+        let h = unsafe { &*handle };
+        let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+        h.backend.write(bytes);
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_resize(
+    handle: *mut TerminalHandle, cols: u16, rows: u16, cell_width: u16, cell_height: u16,
+) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &mut *handle };
+        h.backend.resize(cols, rows, cell_width, cell_height);
+        let new_size = h.backend.grid_buffer_size();
+        h.snapshot_buf.resize(new_size, 0);
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_grid_snapshot(
+    handle: *mut TerminalHandle, out_buf: *mut u8, buf_len: usize,
+) -> usize {
+    ffi_catch(0, AssertUnwindSafe(|| {
+        if handle.is_null() || out_buf.is_null() { return 0; }
+        let h = unsafe { &mut *handle };
+        let written = h.backend.write_grid_to_buffer(&mut h.snapshot_buf);
+        if written == 0 || written > buf_len { return 0; }
+        unsafe { std::ptr::copy_nonoverlapping(h.snapshot_buf.as_ptr(), out_buf, written); }
+        written
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_grid_snapshot_size(handle: *mut TerminalHandle) -> usize {
+    ffi_catch(0, AssertUnwindSafe(|| {
+        if handle.is_null() { return 0; }
+        let h = unsafe { &*handle };
+        h.backend.grid_buffer_size()
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_poll_events(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return to_c_string("[]"); }
+        let h = unsafe { &*handle };
+        let events = h.backend.poll_events();
+        match serde_json::to_string(&events) {
+            Ok(json) => to_c_string(&json),
+            Err(_) => to_c_string("[]"),
+        }
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_start_selection(
+    handle: *mut TerminalHandle, col: u16, row: u16, kind: u8,
+) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.start_selection(col as usize, row as usize, SelectionKind::from_u8(kind));
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_update_selection(handle: *mut TerminalHandle, col: u16, row: u16) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.update_selection(col as usize, row as usize);
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_clear_selection(handle: *mut TerminalHandle) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.clear_selection();
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_selected_text(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return std::ptr::null_mut(); }
+        let h = unsafe { &*handle };
+        match h.backend.selected_text() {
+            Some(text) => to_c_string(&text),
+            None => std::ptr::null_mut(),
+        }
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_scroll(handle: *mut TerminalHandle, delta: i32) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.scroll(delta);
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return to_c_string("{}"); }
+        let h = unsafe { &*handle };
+        let mode = h.backend.mode();
+        match serde_json::to_string(&mode) {
+            Ok(json) => to_c_string(&json),
+            Err(_) => to_c_string("{}"),
+        }
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_set_focus(handle: *mut TerminalHandle, focused: bool) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.set_focus(focused);
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32 {
+    ffi_catch(0, AssertUnwindSafe(|| {
+        if handle.is_null() { return 0; }
+        let h = unsafe { &*handle };
+        h.backend.child_pid()
+    }))
+}
+
+// Search FFI functions — stubbed for now, implemented in Task 9.
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_search(handle: *mut TerminalHandle, _pattern: *const c_char) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return to_c_string("{}"); }
+        to_c_string("{}")
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_search_next(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return to_c_string("{}"); }
+        to_c_string("{}")
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_search_prev(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return to_c_string("{}"); }
+        to_c_string("{}")
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_search_clear(handle: *mut TerminalHandle) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+    }))
+}
