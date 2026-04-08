@@ -530,7 +530,7 @@ class TerminalTab: NSView {
             renderer.backend = newBackend
             renderer.startRefreshLoop()
 
-            // Start CWD polling timer (1 second interval).
+            // Start CWD polling timer (5 second interval).
             startCwdPolling()
         } catch {
             os_log(.error, "Failed to create terminal backend: %{public}@", String(describing: error))
