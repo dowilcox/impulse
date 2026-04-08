@@ -11,6 +11,7 @@
 //! called from C/Swift. Raw pointer dereferences inside `ffi_catch` are
 //! guarded by null checks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(private_interfaces)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -1355,6 +1356,7 @@ pub extern "C" fn impulse_get_markdown_theme(name: *const c_char) -> *mut c_char
 
 use impulse_terminal::{SelectionKind, TerminalBackend};
 
+/// Opaque handle passed across FFI — never constructed by external code.
 struct TerminalHandle {
     backend: TerminalBackend,
     /// Pre-allocated buffer for grid snapshots.
