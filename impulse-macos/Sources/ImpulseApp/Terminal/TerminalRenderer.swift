@@ -882,5 +882,6 @@ class TerminalRenderer: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         resizeToFit()
+        needsDisplay = true
     }
 }

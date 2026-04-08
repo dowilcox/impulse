@@ -191,6 +191,12 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         } else {
             activeTerminalIndex = min(index, terminals.count - 1)
             terminals[activeTerminalIndex].focus()
+            // Force a redraw on all remaining terminals. When the split
+            // view rearranges after pane removal, child views don't
+            // automatically get needsDisplay and stay black until resized.
+            for t in terminals {
+                t.renderer.needsDisplay = true
+            }
         }
     }
 
@@ -204,6 +210,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         remaining.removeFromSuperview()
         addSubview(remaining)
         constrainChildToFill(remaining)
+        remaining.renderer.needsDisplay = true
     }
 
     private func cleanUpEmptySplitViews() {

@@ -272,30 +272,36 @@ impl TerminalBackend {
         let pty = Arc::new(std::sync::Mutex::new(pty));
         let pty_for_loop = Arc::clone(&pty);
 
-        loop {
-            // Drain commands (non-blocking).
-            loop {
-                match cmd_rx.try_recv() {
-                    Ok(BackendMsg::Input(data)) => {
-                        if let Ok(p) = pty_for_loop.lock() {
-                            use std::io::Write;
-                            let _ = p.file().write_all(&data);
-                        }
+        // Helper closure: process a single BackendMsg. Returns false on Shutdown.
+        let handle_cmd = |msg: BackendMsg| -> bool {
+            match msg {
+                BackendMsg::Input(data) => {
+                    if let Ok(p) = pty_for_loop.lock() {
+                        use std::io::Write;
+                        let _ = p.file().write_all(&data);
                     }
-                    Ok(BackendMsg::Resize { cols, rows, cell_width, cell_height }) => {
-                        let ws = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
-                        if let Ok(mut p) = pty_for_loop.lock() {
-                            p.on_resize(ws);
-                        }
-                        let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
-                        term.lock().resize(size);
-                    }
-                    Ok(BackendMsg::Shutdown) => return,
-                    Err(_) => break, // Channel empty
+                    true
                 }
+                BackendMsg::Resize { cols, rows, cell_width, cell_height } => {
+                    let ws = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
+                    if let Ok(mut p) = pty_for_loop.lock() {
+                        p.on_resize(ws);
+                    }
+                    let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
+                    term.lock().resize(size);
+                    true
+                }
+                BackendMsg::Shutdown => false,
+            }
+        };
+
+        loop {
+            // Drain all pending commands first (non-blocking).
+            while let Ok(msg) = cmd_rx.try_recv() {
+                if !handle_cmd(msg) { return; }
             }
 
-            // Read from PTY.
+            // Try to read from PTY (non-blocking since fd is non-blocking).
             match reader.read(&mut buf) {
                 Ok(0) => {
                     let _ = event_tx.send(TerminalEvent::Exit);
@@ -332,7 +338,20 @@ impl TerminalBackend {
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    // PTY has no data. Block on the command channel with a
+                    // timeout so we wake instantly on input/resize/shutdown
+                    // instead of busy-polling with a sleep.
+                    crossbeam_channel::select! {
+                        recv(cmd_rx) -> msg => {
+                            match msg {
+                                Ok(msg) => { if !handle_cmd(msg) { return; } }
+                                Err(_) => return, // Channel closed
+                            }
+                        }
+                        default(std::time::Duration::from_millis(5)) => {
+                            // Timeout — retry PTY read.
+                        }
+                    }
                     continue;
                 }
                 Err(_) => {
@@ -476,9 +495,13 @@ impl TerminalBackend {
 
     /// Calculate the buffer size needed for a grid snapshot.
     pub fn grid_buffer_size(&self) -> usize {
-        let term = self.term.lock();
-        let lines = term.screen_lines() as u16;
-        let cols = term.columns() as u16;
+        // Use self.cols/rows (updated synchronously in resize()) rather than
+        // querying the term (which is resized asynchronously on the read
+        // thread). This prevents a race where the buffer is allocated for the
+        // old grid size, then write_grid_to_buffer() sees the new (larger)
+        // grid and returns 0 because the buffer is too small.
+        let lines = self.rows;
+        let cols = self.cols;
         // Allow up to lines*2 ranges for selection + search.
         buffer::buffer_size(cols, lines, lines, lines)
     }
