@@ -342,6 +342,11 @@ final class TerminalBackend {
         ImpulseCore.terminalScroll(handle: handle, delta: delta)
     }
 
+    func scrollToBottom() {
+        guard let handle, !isShutdown else { return }
+        ImpulseCore.terminalScrollToBottom(handle: handle)
+    }
+
     // MARK: - Mode / Focus
 
     func mode() -> TerminalModeFlags? {

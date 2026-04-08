@@ -89,6 +89,7 @@ void impulse_terminal_update_selection(void *handle, unsigned short col, unsigne
 void impulse_terminal_clear_selection(void *handle);
 char *impulse_terminal_selected_text(void *handle);
 void impulse_terminal_scroll(void *handle, int delta);
+void impulse_terminal_scroll_to_bottom(void *handle);
 char *impulse_terminal_mode(void *handle);
 void impulse_terminal_set_focus(void *handle, _Bool focused);
 unsigned int impulse_terminal_child_pid(void *handle);

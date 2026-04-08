@@ -1516,6 +1516,15 @@ pub extern "C" fn impulse_terminal_scroll(handle: *mut TerminalHandle, delta: i3
 }
 
 #[no_mangle]
+pub extern "C" fn impulse_terminal_scroll_to_bottom(handle: *mut TerminalHandle) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &*handle };
+        h.backend.scroll_to_bottom();
+    }))
+}
+
+#[no_mangle]
 pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> *mut c_char {
     ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
         if handle.is_null() { return to_c_string("{}"); }

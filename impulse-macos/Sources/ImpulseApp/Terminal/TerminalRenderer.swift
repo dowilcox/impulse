@@ -785,7 +785,7 @@ class TerminalRenderer: NSView {
         if !bytes.isEmpty {
             if isScrolledBack {
                 isScrolledBack = false
-                backend.scroll(delta: -999_999)
+                backend.scrollToBottom()
             }
             backend.write(bytes: bytes)
         }

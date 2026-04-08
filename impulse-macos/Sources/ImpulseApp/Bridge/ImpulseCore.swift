@@ -571,6 +571,11 @@ final class ImpulseCore {
         impulse_terminal_scroll(UnsafeMutableRawPointer(handle), delta)
     }
 
+    /// Scrolls the terminal viewport to the bottom (most recent output).
+    static func terminalScrollToBottom(handle: OpaquePointer) {
+        impulse_terminal_scroll_to_bottom(UnsafeMutableRawPointer(handle))
+    }
+
     /// Returns terminal mode flags as a JSON string.
     static func terminalMode(handle: OpaquePointer) -> String? {
         guard let ptr = impulse_terminal_mode(UnsafeMutableRawPointer(handle)) else { return nil }
