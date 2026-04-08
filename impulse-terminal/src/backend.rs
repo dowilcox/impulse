@@ -554,6 +554,11 @@ impl TerminalBackend {
         self.term.lock().scroll_display(alacritty_terminal::grid::Scroll::Bottom);
     }
 
+    /// Update the terminal's color palette at runtime (for live theme changes).
+    pub fn set_colors(&mut self, config: &TerminalConfig) {
+        self.colors = ConfiguredColors::from_config(config);
+    }
+
     /// Get the current terminal mode flags.
     pub fn mode(&self) -> TerminalMode {
         let mode = *self.term.lock().mode();

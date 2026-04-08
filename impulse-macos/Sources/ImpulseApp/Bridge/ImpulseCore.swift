@@ -612,6 +612,13 @@ final class ImpulseCore {
         impulse_terminal_search_clear(UnsafeMutableRawPointer(handle))
     }
 
+    /// Updates the terminal's color palette at runtime.
+    static func terminalSetColors(handle: OpaquePointer, configJson: String) {
+        configJson.withCString { ptr in
+            impulse_terminal_set_colors(UnsafeMutableRawPointer(handle), ptr)
+        }
+    }
+
     /// Returns the installation status of system (non-managed) LSP servers
     /// as an array of dictionaries with `command`, `installed`, and
     /// `resolvedPath` keys.

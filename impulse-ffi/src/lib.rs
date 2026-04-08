@@ -1538,6 +1538,18 @@ pub extern "C" fn impulse_terminal_set_focus(handle: *mut TerminalHandle, focuse
 }
 
 #[no_mangle]
+pub extern "C" fn impulse_terminal_set_colors(handle: *mut TerminalHandle, config_json: *const c_char) {
+    ffi_catch((), AssertUnwindSafe(|| {
+        if handle.is_null() { return; }
+        let h = unsafe { &mut *handle };
+        let json = to_rust_str(config_json).unwrap_or_default();
+        if let Ok(config) = serde_json::from_str::<impulse_terminal::TerminalConfig>(&json) {
+            h.backend.set_colors(&config);
+        }
+    }))
+}
+
+#[no_mangle]
 pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32 {
     ffi_catch(0, AssertUnwindSafe(|| {
         if handle.is_null() { return 0; }

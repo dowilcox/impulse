@@ -96,5 +96,6 @@ char *impulse_terminal_search(void *handle, const char *pattern);
 char *impulse_terminal_search_next(void *handle);
 char *impulse_terminal_search_prev(void *handle);
 void impulse_terminal_search_clear(void *handle);
+void impulse_terminal_set_colors(void *handle, const char *config_json);
 
 #endif

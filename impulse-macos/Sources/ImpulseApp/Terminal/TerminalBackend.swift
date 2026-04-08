@@ -402,6 +402,15 @@ final class TerminalBackend {
         ImpulseCore.terminalSearchClear(handle: handle)
     }
 
+    // MARK: - Colors
+
+    func setColors(config: TerminalBackendConfig) {
+        guard let handle, !isShutdown else { return }
+        guard let data = try? encoder.encode(config),
+              let json = String(data: data, encoding: .utf8) else { return }
+        ImpulseCore.terminalSetColors(handle: handle, configJson: json)
+    }
+
     // MARK: - Lifecycle
 
     func shutdown() {

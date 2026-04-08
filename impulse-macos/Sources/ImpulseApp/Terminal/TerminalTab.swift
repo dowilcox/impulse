@@ -385,10 +385,17 @@ class TerminalTab: NSView {
     /// Update terminal colors from a theme at runtime.
     func applyTheme(theme: TerminalTheme) {
         currentTheme = theme
-        // Theme is applied when the backend is created. For a live running
-        // terminal the backend reads colors from its config. A full "live
-        // recolor" would require the backend to support a recolor API.
-        // For now we just store the new theme so new terminals get it.
+        // Build a config with the new colors and push it to the backend.
+        let settings = currentSettings ?? TerminalSettings()
+        let config = TerminalBackendConfig.from(
+            settings: settings,
+            theme: theme,
+            shellPath: "",
+            shellArgs: [],
+            environment: [:],
+            workingDirectory: nil
+        )
+        backend?.setColors(config: config)
         renderer.needsDisplay = true
     }
 
