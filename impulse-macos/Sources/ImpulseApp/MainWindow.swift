@@ -269,8 +269,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 self.fileTreeView.showHidden = showHidden
                 self.fileTreeCacheInsert(key: rootPath, nodes: nodes)
                 // Push to SwiftUI sidebar
-                self.windowModel.fileTreeNodes = nodes
-                self.windowModel.fileTreeRootPath = rootPath
+                self.windowModel.updateFileTree(nodes, rootPath: rootPath)
             }
         }
         // Wire the tab close handler for save confirmation on unsaved editor tabs.
@@ -344,7 +343,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    self.windowModel.fileTreeNodes = nodes
+                    self.windowModel.updateFileTree(nodes)
                     self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
                     self.fileTreeCacheInsert(key: root, nodes: nodes)
                 }
@@ -363,6 +362,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 }
             }
             collapseRecursively(self.windowModel.fileTreeNodes)
+            self.windowModel.rebuildFlatTree()
         }
         windowModel.onToggleHidden = { [weak self] in
             guard let self else { return }
@@ -379,7 +379,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    self.windowModel.fileTreeNodes = nodes
+                    self.windowModel.updateFileTree(nodes)
                     self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
                     self.fileTreeView.showHidden = showHidden
                     self.fileTreeCacheInsert(key: root, nodes: nodes)
@@ -2073,8 +2073,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if let cached = fileTreeCache[dir] {
             fileTreeView.updateTree(nodes: cached, rootPath: dir, skipGitRefresh: true)
             fileTreeCacheTouch(key: dir)
-            windowModel.fileTreeNodes = cached
-            windowModel.fileTreeRootPath = dir
+            windowModel.updateFileTree(cached, rootPath: dir)
         }
 
         // Refresh from disk in the background.
@@ -2087,8 +2086,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 guard self.fileTreeRootPath == dir else { return }
                 self.fileTreeView.updateTree(nodes: nodes, rootPath: dir)
                 self.fileTreeCacheInsert(key: dir, nodes: nodes)
-                self.windowModel.fileTreeNodes = nodes
-                self.windowModel.fileTreeRootPath = dir
+                self.windowModel.updateFileTree(nodes, rootPath: dir)
                 if updateStatusBar {
                     self.statusBar.updateForTerminal(
                         cwd: dir,
