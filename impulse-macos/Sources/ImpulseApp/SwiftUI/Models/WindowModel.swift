@@ -43,6 +43,12 @@ final class WindowModel {
     var fileTreeNodes: [FileTreeNode] = []
     var fileTreeRootPath: String = ""
 
+    /// Flattened view of the file tree for LazyVStack rendering.
+    /// Rebuilt explicitly when tree structure changes (expand/collapse/rebuild),
+    /// NOT on git status changes — individual row views observe those directly
+    /// via @Bindable on each node.
+    var flatFileTree: [FlatTreeEntry] = []
+
     /// Path of the file currently open in the active editor tab.
     /// Used to highlight the active file in the sidebar.
     var activeFilePath: String? = nil
@@ -115,5 +121,20 @@ final class WindowModel {
         currentLanguage = info.language
         currentEncoding = info.encoding ?? "UTF-8"
         currentIndent = info.indentInfo
+    }
+
+    /// Replace the file tree nodes and rebuild the flat rendering list.
+    /// Use this instead of setting `fileTreeNodes` directly.
+    func updateFileTree(_ nodes: [FileTreeNode], rootPath: String? = nil) {
+        fileTreeNodes = nodes
+        if let rootPath { fileTreeRootPath = rootPath }
+        rebuildFlatTree()
+    }
+
+    /// Rebuild the flat tree from current nodes. Call after any structural
+    /// change (expand, collapse, children loaded) but NOT after git status
+    /// changes — row views observe those via @Bindable.
+    func rebuildFlatTree() {
+        flatFileTree = FileTreeNode.flatten(fileTreeNodes)
     }
 }
