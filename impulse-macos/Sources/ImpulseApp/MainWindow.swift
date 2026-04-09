@@ -260,6 +260,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let showHidden = settings.sidebarShowHidden
         fileTreeRootPath = rootPath
         searchPanel.setRootPath(rootPath)
+        fileTreeView.onTreeRefreshed = { [weak self] nodes in
+            guard let self else { return }
+            self.windowModel.updateFileTree(nodes, rootPath: self.fileTreeRootPath)
+            self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: nodes)
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
             DispatchQueue.main.async { [weak self] in
