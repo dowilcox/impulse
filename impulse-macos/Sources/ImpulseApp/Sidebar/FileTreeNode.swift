@@ -93,6 +93,38 @@ final class FileTreeNode: Identifiable {
         children = nodes
     }
 
+    /// Build children for a directory path without mutating any node.
+    /// Intended for background-thread use: call this off main thread, then
+    /// assign the result to `node.children` on the main thread.
+    static func buildChildren(path: String, showHidden: Bool) -> [FileTreeNode] {
+        let fm = FileManager.default
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+
+        guard let contents = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: showHidden ? [] : [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        var nodes: [FileTreeNode] = []
+        for itemURL in contents {
+            let itemName = itemURL.lastPathComponent
+            if !showHidden && itemName.hasPrefix(".") { continue }
+            if itemName == ".DS_Store" { continue }
+            let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            nodes.append(FileTreeNode(name: itemName, path: itemURL.path, isDirectory: isDir))
+        }
+
+        nodes.sort { lhs, rhs in
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+
+        return nodes
+    }
+
     // MARK: Building a Top-Level Tree
 
     /// Create the top-level nodes for the given root directory.
@@ -190,4 +222,38 @@ final class FileTreeNode: Identifiable {
         }
     }
 
+}
+
+// MARK: - Flat Tree Entry
+
+/// A single entry in the flattened file tree. Used by FileTreeListView for
+/// efficient virtualized rendering via LazyVStack (instead of recursive views).
+struct FlatTreeEntry: Identifiable {
+    let id: String
+    let node: FileTreeNode
+    let depth: Int
+}
+
+extension FileTreeNode {
+    /// Walk the tree and produce a flat array of all visible (expanded) nodes
+    /// with their depth levels. O(n) where n = total visible nodes.
+    static func flatten(_ nodes: [FileTreeNode], depth: Int = 0) -> [FlatTreeEntry] {
+        var result: [FlatTreeEntry] = []
+        result.reserveCapacity(nodes.count * 2)
+        flattenInto(&result, nodes: nodes, depth: depth)
+        return result
+    }
+
+    private static func flattenInto(
+        _ result: inout [FlatTreeEntry],
+        nodes: [FileTreeNode],
+        depth: Int
+    ) {
+        for node in nodes {
+            result.append(FlatTreeEntry(id: node.path, node: node, depth: depth))
+            if node.isDirectory && node.isExpanded, let children = node.children {
+                flattenInto(&result, nodes: children, depth: depth + 1)
+            }
+        }
+    }
 }
