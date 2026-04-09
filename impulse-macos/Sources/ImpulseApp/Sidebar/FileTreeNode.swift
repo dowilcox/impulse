@@ -52,45 +52,7 @@ final class FileTreeNode: Identifiable {
     /// (case-insensitive).
     func loadChildren(showHidden: Bool) {
         guard isDirectory else { return }
-
-        let fm = FileManager.default
-        let url = URL(fileURLWithPath: path, isDirectory: true)
-
-        guard let contents = try? fm.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: showHidden ? [] : [.skipsHiddenFiles]
-        ) else {
-            children = []
-            return
-        }
-
-        var nodes: [FileTreeNode] = []
-        for itemURL in contents {
-            let itemName = itemURL.lastPathComponent
-
-            // Skip hidden files when not requested.
-            if !showHidden && itemName.hasPrefix(".") {
-                continue
-            }
-
-            // Always skip .DS_Store — macOS metadata, never useful in a file tree.
-            if itemName == ".DS_Store" {
-                continue
-            }
-
-            let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            nodes.append(FileTreeNode(name: itemName, path: itemURL.path, isDirectory: isDir))
-        }
-
-        nodes.sort { lhs, rhs in
-            if lhs.isDirectory != rhs.isDirectory {
-                return lhs.isDirectory
-            }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-
-        children = nodes
+        children = Self.buildChildren(path: path, showHidden: showHidden)
     }
 
     /// Build children for a directory path without mutating any node.
