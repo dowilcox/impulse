@@ -70,6 +70,22 @@ class TerminalRenderer: NSView {
     /// Called when the user presses Cmd+C in the terminal.
     var onCopy: (() -> Void)?
 
+    /// Override cursor shape from user settings (0=Block, 1=Beam, 2=Underline).
+    /// Applied instead of the shape reported by the backend grid buffer.
+    var cursorShapeOverride: UInt8 = 0
+
+    /// Whether cursor blinking is enabled (from user settings).
+    var cursorBlinkEnabled: Bool = true {
+        didSet {
+            if cursorBlinkEnabled {
+                startBlinkTimer()
+            } else {
+                stopBlinkTimer()
+                cursorBlinkOn = true
+            }
+        }
+    }
+
     // MARK: Private Properties
 
     private var displayLink: CVDisplayLink?
@@ -77,6 +93,8 @@ class TerminalRenderer: NSView {
     private var isScrolledBack: Bool = false
     private var isSelecting = false
     private var needsRedraw = false
+    private var cursorBlinkOn: Bool = true
+    private var blinkTimer: DispatchSourceTimer?
 
     // Cached font variants for bold/italic.
     private var boldFont: CTFont?
@@ -98,6 +116,7 @@ class TerminalRenderer: NSView {
 
     deinit {
         stopRefreshLoop()
+        stopBlinkTimer()
     }
 
     // MARK: View Properties
@@ -145,6 +164,35 @@ class TerminalRenderer: NSView {
             CVDisplayLinkStop(link)
             displayLink = nil
         }
+    }
+
+    // MARK: Cursor Blink Timer
+
+    private func startBlinkTimer() {
+        stopBlinkTimer()
+        cursorBlinkOn = true
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.cursorBlinkOn.toggle()
+            self.needsDisplay = true
+        }
+        blinkTimer = timer
+        timer.resume()
+    }
+
+    private func stopBlinkTimer() {
+        blinkTimer?.cancel()
+        blinkTimer = nil
+    }
+
+    /// Reset blink phase to visible. Call on keyboard input so the cursor
+    /// stays solid while the user is typing.
+    func resetBlink() {
+        guard cursorBlinkEnabled else { return }
+        cursorBlinkOn = true
+        startBlinkTimer()
     }
 
     private func tick() {
@@ -414,8 +462,8 @@ class TerminalRenderer: NSView {
             }
         }
 
-        // 7. Draw cursor.
-        if grid.cursorVisible {
+        // 7. Draw cursor (respects blink phase and shape override from settings).
+        if grid.cursorVisible && cursorBlinkOn {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
             if cursorRow < lines && cursorCol < cols {
@@ -426,7 +474,7 @@ class TerminalRenderer: NSView {
                 // Use a contrasting cursor color.
                 let cursorColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
 
-                switch grid.cursorShape {
+                switch cursorShapeOverride {
                 case 0: // Block
                     context.setFillColor(cursorColor)
                     context.fill(cursorRect)
@@ -788,6 +836,7 @@ class TerminalRenderer: NSView {
                 backend.scrollToBottom()
             }
             backend.write(bytes: bytes)
+            resetBlink()
         }
     }
 

@@ -378,6 +378,16 @@ class TerminalTab: NSView {
         let fontFamily = settings.terminalFontFamily.isEmpty ? "JetBrains Mono" : settings.terminalFontFamily
         renderer.updateFont(family: fontFamily, size: fontSize)
 
+        // Cursor shape (0=Block, 1=Beam, 2=Underline)
+        renderer.cursorShapeOverride = switch settings.terminalCursorShape.lowercased() {
+        case "beam": 1
+        case "underline": 2
+        default: 0
+        }
+
+        // Cursor blink
+        renderer.cursorBlinkEnabled = settings.terminalCursorBlink
+
         // Copy on select
         setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
     }
