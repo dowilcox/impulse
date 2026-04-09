@@ -108,6 +108,11 @@ final class FileTreeView: NSView {
     private(set) var rootPath: String = ""
     var showHidden: Bool = false
 
+    /// Called on the main thread after the tree is rebuilt from a filesystem
+    /// watcher event. Passes the new root nodes so the caller can sync them
+    /// to WindowModel for the SwiftUI sidebar.
+    var onTreeRefreshed: (([FileTreeNode]) -> Void)?
+
     // Icon cache for themed file icons
     private var iconCache: IconCache?
 
@@ -457,6 +462,7 @@ final class FileTreeView: NSView {
                 NSAnimationContext.endGrouping()
                 self.rebuildNodeIndex()
                 self.watchExpandedSubdirectories(self.rootNodes)
+                self.onTreeRefreshed?(self.rootNodes)
                 // Restore scroll after AppKit finishes its layout pass.
                 self.pendingScrollRestore = savedOrigin
                 DispatchQueue.main.async { [weak self] in
