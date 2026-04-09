@@ -1,7 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// Displays the project file tree as a scrollable outline.
+/// Displays the project file tree as a flat, virtualized scrollable list.
+/// Each expanded directory's children appear as separate entries with
+/// calculated indentation — no recursive view nesting. This ensures
+/// LazyVStack only materializes visible rows regardless of how many
+/// folders are expanded.
 struct FileTreeListView: View {
     var model: WindowModel
     @State private var isRootDropTarget = false
@@ -9,8 +13,8 @@ struct FileTreeListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(model.fileTreeNodes) { node in
-                    FileNodeView(node: node, model: model, depth: 0)
+                ForEach(model.flatFileTree) { entry in
+                    FlatFileRowView(node: entry.node, depth: entry.depth, model: model)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -28,11 +32,12 @@ struct FileTreeListView: View {
     }
 }
 
-/// Recursive view for a single file tree node with manual expand/collapse.
-private struct FileNodeView: View {
+/// A single flat row in the file tree. Not recursive — children are separate
+/// entries in the flat list with incremented depth.
+private struct FlatFileRowView: View {
     @Bindable var node: FileTreeNode
-    var model: WindowModel
     let depth: Int
+    var model: WindowModel
     @State private var isHovered = false
     @State private var isDropTarget = false
 
@@ -52,69 +57,92 @@ private struct FileNodeView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 0) {
-                if depth > 0 {
-                    Spacer()
-                        .frame(width: CGFloat(depth) * 16)
-                }
+        HStack(spacing: 0) {
+            if depth > 0 {
+                Spacer()
+                    .frame(width: CGFloat(depth) * 16)
+            }
 
-                if node.isDirectory {
-                    Image(systemName: node.isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 16, height: 16)
-                } else {
-                    Spacer().frame(width: 16)
-                }
+            if node.isDirectory {
+                Image(systemName: node.isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 16, height: 16)
+            } else {
+                Spacer().frame(width: 16)
+            }
 
-                FileTreeRow(node: node, iconCache: model.iconCache)
+            FileTreeRow(node: node, iconCache: model.iconCache)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(rowBackground)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .onDrag { [nodePath = node.path] in
+            NSItemProvider(object: nodePath as NSString)
+        }
+        .onDrop(of: [.fileURL, .text], isTargeted: $isDropTarget) { providers in
+            handleDrop(providers: providers)
+        }
+        .onTapGesture {
+            if node.isDirectory {
+                handleDirectoryTap()
+            } else {
+                model.onOpenFile?(node.path, nil)
             }
-            .padding(.vertical, 3)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(rowBackground)
-            )
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                isHovered = hovering
+        }
+        .contextMenu { nodeContextMenu(for: node) }
+    }
+
+    // MARK: - Directory Expand/Collapse
+
+    private func handleDirectoryTap() {
+        if node.isExpanded {
+            // Collapse — always immediate.
+            withAnimation(.easeInOut(duration: 0.15)) {
+                node.isExpanded = false
+                model.rebuildFlatTree()
             }
-            .onDrag { [nodePath = node.path] in
-                NSItemProvider(object: nodePath as NSString)
+        } else if node.isLoaded {
+            // Already loaded — expand immediately.
+            withAnimation(.easeInOut(duration: 0.15)) {
+                node.isExpanded = true
+                model.rebuildFlatTree()
             }
-            .onDrop(of: [.fileURL, .text], isTargeted: $isDropTarget) { providers in
-                handleDrop(providers: providers)
-            }
-            .onTapGesture {
-                if node.isDirectory {
+            triggerGitStatusRefresh()
+        } else {
+            // Need to load children off main thread.
+            // Flip chevron immediately so the user knows their click registered.
+            node.isExpanded = true
+            let showHidden = model.showHiddenFiles
+            let path = node.path
+            DispatchQueue.global(qos: .userInitiated).async {
+                let children = FileTreeNode.buildChildren(path: path, showHidden: showHidden)
+                DispatchQueue.main.async {
+                    node.children = children
                     withAnimation(.easeInOut(duration: 0.15)) {
-                        node.isExpanded.toggle()
+                        model.rebuildFlatTree()
                     }
-                    if node.isExpanded && !node.isLoaded {
-                        node.loadChildren(showHidden: model.showHiddenFiles)
-                    }
-                    // Fetch git status for newly loaded children
-                    if node.isExpanded, let children = node.children, !children.isEmpty {
-                        let nodePath = node.path
-                        let rootPath = model.fileTreeRootPath
-                        DispatchQueue.global(qos: .utility).async {
-                            FileTreeNode.refreshGitStatus(
-                                nodes: children, repoPath: rootPath, dirPath: nodePath
-                            )
-                        }
-                    }
-                } else {
-                    model.onOpenFile?(node.path, nil)
+                    triggerGitStatusRefresh()
                 }
             }
-            .contextMenu { nodeContextMenu(for: node) }
+        }
+    }
 
-            if node.isDirectory && node.isExpanded, let children = node.children {
-                ForEach(children) { child in
-                    FileNodeView(node: child, model: model, depth: depth + 1)
-                }
-            }
+    private func triggerGitStatusRefresh() {
+        guard let children = node.children, !children.isEmpty else { return }
+        let nodePath = node.path
+        let rootPath = model.fileTreeRootPath
+        DispatchQueue.global(qos: .utility).async {
+            FileTreeNode.refreshGitStatus(
+                nodes: children, repoPath: rootPath, dirPath: nodePath
+            )
         }
     }
 
