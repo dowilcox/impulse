@@ -350,10 +350,7 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
         .fg_muted
         .clone()
         .or_else(|| p.muted.clone())
-        .unwrap_or_else(|| {
-            let target = if is_light { 0.55 } else { 0.55 };
-            mute_color(&p.fg, 0.6, target)
-        });
+        .unwrap_or_else(|| mute_color(&p.fg, 0.6, 0.55));
     let fg_comment = tf
         .ui
         .fg_comment

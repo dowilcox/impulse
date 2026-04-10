@@ -86,6 +86,19 @@ class TerminalRenderer: NSView {
         }
     }
 
+    /// Cursor color, typically derived from the theme's foreground color.
+    var cursorColor: CGColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
+
+    /// Whether bold text should use bright palette colors (0-7 → 8-15).
+    var boldIsBright: Bool = true
+
+    /// Whether to auto-scroll to the bottom when the terminal produces output.
+    var scrollOnOutput: Bool = true
+
+    /// 16-color ANSI palette (RGB triplets). Set from the theme.
+    /// Used to substitute bold text colors when `boldIsBright` is true.
+    var paletteRgb: [(UInt8, UInt8, UInt8)] = []
+
     // MARK: Private Properties
 
     private var displayLink: CVDisplayLink?
@@ -95,6 +108,18 @@ class TerminalRenderer: NSView {
     private var needsRedraw = false
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
+
+    // IME composition state. When non-empty, an IME is composing text that
+    // has not yet been committed to the PTY.
+    private var markedText: String = ""
+    private var markedSelection = NSRange(location: 0, length: 0)
+    private var currentKeyEvent: NSEvent?
+
+    // Hyperlink hover state.
+    private var hoverCol: Int = -1
+    private var hoverRow: Int = -1
+    private var hoverIsLink: Bool = false
+    private var trackingArea: NSTrackingArea?
 
     // Cached font variants for bold/italic.
     private var boldFont: CTFont?
@@ -210,6 +235,11 @@ class TerminalRenderer: NSView {
             }
         }
         if wakeup && !isScrolledBack {
+            // Auto-scroll to bottom on output when enabled and the user
+            // hasn't manually scrolled back.
+            if scrollOnOutput {
+                backend.scrollToBottom()
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.needsDisplay = true
             }
@@ -360,12 +390,27 @@ class TerminalRenderer: NSView {
                 let isItalic = flags & GridBufferReader.flagItalic != 0
                 let isDim = flags & GridBufferReader.flagDim != 0
                 let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x259F
+                let isWideChar = flags & GridBufferReader.flagWideChar != 0
+
+                // Bold-is-bright: if bold and the foreground matches one of
+                // the 8 normal ANSI palette colors, substitute with the bright
+                // variant (palette index + 8).
+                if isBold && boldIsBright && paletteRgb.count >= 16 {
+                    for i in 0..<8 {
+                        let (pr, pg, pb) = paletteRgb[i]
+                        if fgR == pr && fgG == pg && fgB == pb {
+                            let (br, bg, bb) = paletteRgb[i + 8]
+                            fgR = br; fgG = bg; fgB = bb
+                            break
+                        }
+                    }
+                }
 
                 // Check if we need to flush the current run.
                 let styleChanged = hasRun && (fgR != runFgR || fgG != runFgG || fgB != runFgB
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
 
-                if (styleChanged || isBoxDrawing) && hasRun && !runString.isEmpty {
+                if (styleChanged || isBoxDrawing || isWideChar) && hasRun && !runString.isEmpty {
                     drawTextRun(
                         context: context, text: runString, col: runStartCol, rowY: rowY,
                         fgR: runFgR, fgG: runFgG, fgB: runFgB,
@@ -373,6 +418,19 @@ class TerminalRenderer: NSView {
                     )
                     runString = ""
                     hasRun = false
+                }
+
+                if isWideChar {
+                    // Wide characters (East Asian fullwidth) occupy 2 cells.
+                    // Draw alone so subsequent runs restart at col + 2 (the
+                    // spacer cell at col + 1 is skipped by flagWideCharSpacer).
+                    drawTextRun(
+                        context: context, text: String(scalar),
+                        col: col, rowY: rowY,
+                        fgR: fgR, fgG: fgG, fgB: fgB,
+                        bold: isBold, italic: isItalic, dim: isDim
+                    )
+                    continue
                 }
 
                 if isBoxDrawing {
@@ -471,8 +529,8 @@ class TerminalRenderer: NSView {
                 let cursorY = padding + CGFloat(cursorRow) * ch
                 let cursorRect = CGRect(x: cursorX, y: cursorY, width: cw, height: ch)
 
-                // Use a contrasting cursor color.
-                let cursorColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
+                // Use the theme-derived cursor color.
+                let cursorColor = self.cursorColor
 
                 switch cursorShapeOverride {
                 case 0: // Block
@@ -505,6 +563,64 @@ class TerminalRenderer: NSView {
                     break
                 }
             }
+        }
+
+        // 8. Draw hover underline under hyperlinked cells when mouse is over one.
+        if hoverIsLink && hoverRow >= 0 && hoverCol >= 0 {
+            // Underline all contiguous cells on the same row with the hyperlink flag.
+            var startCol = hoverCol
+            while startCol > 0 {
+                let c = grid.cell(row: hoverRow, col: startCol - 1)
+                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                startCol -= 1
+            }
+            var endCol = hoverCol
+            while endCol < cols - 1 {
+                let c = grid.cell(row: hoverRow, col: endCol + 1)
+                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                endCol += 1
+            }
+            let yBase = padding + CGFloat(hoverRow) * ch + ch - 1
+            let x1 = padding + CGFloat(startCol) * cw
+            let x2 = padding + CGFloat(endCol + 1) * cw
+            context.setStrokeColor(cursorColor)
+            context.setLineWidth(1)
+            context.move(to: CGPoint(x: x1, y: yBase))
+            context.addLine(to: CGPoint(x: x2, y: yBase))
+            context.strokePath()
+        }
+
+        // 9. Draw IME marked text overlay at the cursor position.
+        if !markedText.isEmpty {
+            let cursorRow = grid.cursorRow
+            let cursorCol = grid.cursorCol
+            let startX = padding + CGFloat(cursorCol) * cw
+            let startY = padding + CGFloat(cursorRow) * ch
+
+            // Background for the marked text run.
+            let markedWidth = cw * CGFloat(max(1, markedText.count))
+            context.setFillColor(CGColor(srgbRed: 0.15, green: 0.15, blue: 0.2, alpha: 1.0))
+            context.fill(CGRect(x: startX, y: startY, width: markedWidth, height: ch))
+
+            // Draw the marked text using the current cursor color as fg.
+            var runText = ""
+            for char in markedText {
+                runText.append(char)
+            }
+            drawTextRun(
+                context: context, text: runText,
+                col: cursorCol, rowY: startY,
+                fgR: 255, fgG: 255, fgB: 255,
+                bold: false, italic: false, dim: false
+            )
+
+            // Underline the marked text to indicate active composition.
+            context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8))
+            context.setLineWidth(1)
+            let underlineY = startY + ch - 1
+            context.move(to: CGPoint(x: startX, y: underlineY))
+            context.addLine(to: CGPoint(x: startX + markedWidth, y: underlineY))
+            context.strokePath()
         }
     }
 
@@ -800,8 +916,76 @@ class TerminalRenderer: NSView {
             context.setFillColor(color)
             context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height))
 
+        // Eighth blocks (lower). 0x2581=1/8, 0x2582=2/8, ..., 0x2587=7/8, 0x2588=full.
+        case 0x2581, 0x2582, 0x2583, 0x2585, 0x2586, 0x2587:
+            let fraction = CGFloat(codepoint - 0x2580) / 8.0
+            let h = height * fraction
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y + height - h, width: width, height: h))
+
+        // Eighth blocks (left). 0x2589=7/8, ..., 0x258F=1/8.
+        case 0x2589, 0x258A, 0x258B, 0x258D, 0x258E, 0x258F:
+            let fraction = CGFloat(0x2590 - codepoint) / 8.0
+            let w = width * fraction
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: w, height: height))
+
+        // Shade blocks.
+        case 0x2591: // ░ light shade (25%)
+            context.setFillColor(color.copy(alpha: alpha * 0.25) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        case 0x2592: // ▒ medium shade (50%)
+            context.setFillColor(color.copy(alpha: alpha * 0.5) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        case 0x2593: // ▓ dark shade (75%)
+            context.setFillColor(color.copy(alpha: alpha * 0.75) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        // Quadrants.
+        case 0x2596: // ▖ lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x2597: // ▗ lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x2598: // ▘ upper left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+        case 0x259D: // ▝ upper right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+        case 0x2599: // ▙ upper left + lower half
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
+        case 0x259A: // ▚ upper left + lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259B: // ▛ upper half + lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259C: // ▜ upper half + lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259E: // ▞ upper right + lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259F: // ▟ upper right + lower half
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
+
         default:
             // Fall back to font glyph for unrecognized box-drawing characters.
+            // drawTextRun positions each glyph at an exact cell column so
+            // alignment with the grid is preserved regardless of the glyph's
+            // natural advance width.
             drawTextRun(
                 context: context, text: String(UnicodeScalar(codepoint)!),
                 col: Int((x - padding) / width), rowY: y,
@@ -823,7 +1007,21 @@ class TerminalRenderer: NSView {
             return
         }
 
-        guard let backend else { return }
+        // Route through the input manager so dead keys and IME composition
+        // work. interpretKeyEvents will call:
+        //   - insertText(_:) for committed text (including composed chars)
+        //   - setMarkedText(_:...) during composition
+        //   - doCommand(by:) for special keys (arrows, enter, tab, etc.)
+        // For the doCommand path we need to access the originating event to
+        // run it through KeyEncoder, so we stash it temporarily.
+        currentKeyEvent = event
+        interpretKeyEvents([event])
+        currentKeyEvent = nil
+    }
+
+    override func doCommand(by selector: Selector) {
+        // Special keys fall back to KeyEncoder using the current keyDown event.
+        guard let event = currentKeyEvent, let backend else { return }
         let mode = backend.mode()
         let bytes = KeyEncoder.encode(
             event: event,
@@ -848,10 +1046,83 @@ class TerminalRenderer: NSView {
         return false
     }
 
+    // MARK: Mouse Tracking (hover + hyperlinks)
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let (col, row) = gridPoint(from: event)
+        let colI = Int(col)
+        let rowI = Int(row)
+        if colI == hoverCol && rowI == hoverRow { return }
+        hoverCol = colI
+        hoverRow = rowI
+
+        // Check if the cell under the cursor is a hyperlink.
+        let wasLink = hoverIsLink
+        hoverIsLink = false
+        if let grid = backend?.gridSnapshot(),
+           rowI < grid.lines && colI < grid.cols {
+            let cell = grid.cell(row: rowI, col: colI)
+            if cell.flags & GridBufferReader.flagHyperlink != 0 {
+                hoverIsLink = true
+            }
+        }
+
+        if hoverIsLink != wasLink {
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoverIsLink {
+            hoverIsLink = false
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+        hoverCol = -1
+        hoverRow = -1
+    }
+
+    override func resetCursorRects() {
+        if hoverIsLink {
+            // Whole view uses pointing-hand cursor while hovering a link.
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+
+        // Cmd+Click on a hyperlink opens the URL.
+        if event.modifierFlags.contains(.command) {
+            let (col, row) = gridPoint(from: event)
+            if let uri = backend?.hyperlinkAt(col: Int(col), row: Int(row)),
+               let url = URL(string: uri) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
+
+        if reportMouseEvent(event, button: 0, motion: false, release: false) {
+            return
+        }
         let (col, row) = gridPoint(from: event)
         backend?.clearSelection()
         isSelecting = true
@@ -860,6 +1131,9 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if reportMouseEvent(event, button: 0, motion: true, release: false) {
+            return
+        }
         guard isSelecting else { return }
         let (col, row) = gridPoint(from: event)
         backend?.updateSelection(col: col, row: row)
@@ -867,7 +1141,140 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if reportMouseEvent(event, button: 0, motion: false, release: true) {
+            return
+        }
         isSelecting = false
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: false, release: false)
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: true, release: false)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: false, release: true)
+    }
+
+    // MARK: Mouse Reporting
+
+    /// If the terminal has mouse reporting enabled for the given event type,
+    /// encode and send the event to the PTY. Returns true if the event was
+    /// consumed (so the caller should not also run selection handling).
+    ///
+    /// `button` is 0=left, 1=middle, 2=right. `motion` is true for drag events.
+    /// `release` is true for button-up events.
+    private func reportMouseEvent(
+        _ event: NSEvent,
+        button: Int,
+        motion: Bool,
+        release: Bool
+    ) -> Bool {
+        guard let backend, let mode = backend.mode() else { return false }
+
+        // Determine if reporting is enabled for this event type.
+        // mouseReportClick: click events only (no motion/drag)
+        // mouseDrag: click + drag events
+        // mouseMotion: click + all motion events
+        let reportsPress = mode.mouseReportClick || mode.mouseDrag || mode.mouseMotion
+        guard reportsPress else { return false }
+        if motion && !mode.mouseDrag && !mode.mouseMotion {
+            return false
+        }
+
+        let (col, row) = gridPoint(from: event)
+
+        // Encode modifier flags.
+        var cb = button
+        if motion { cb += 32 }
+        if event.modifierFlags.contains(.shift) { cb += 4 }
+        if event.modifierFlags.contains(.option) { cb += 8 }
+        if event.modifierFlags.contains(.control) { cb += 16 }
+
+        if mode.mouseSgr {
+            // SGR format: CSI < Cb ; Cx ; Cy ; (M|m)
+            let suffix = release ? "m" : "M"
+            let seq = "\u{1B}[<\(cb);\(Int(col) + 1);\(Int(row) + 1)\(suffix)"
+            backend.write(seq)
+        } else {
+            // Legacy X10 format: CSI M Cb Cx Cy (each byte = value + 32)
+            // Release events use button code 3 in X10.
+            let x10Button = release ? 3 : cb
+            let cbByte = UInt8(clamping: x10Button + 32)
+            let cxByte = UInt8(clamping: Int(col) + 1 + 32)
+            let cyByte = UInt8(clamping: Int(row) + 1 + 32)
+            backend.write(bytes: [0x1B, 0x5B, 0x4D, cbByte, cxByte, cyByte])
+        }
+        return true
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let copyItem = NSMenuItem(
+            title: "Copy",
+            action: #selector(contextCopy(_:)),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        copyItem.isEnabled = backend?.selectedText() != nil
+        menu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(
+            title: "Paste",
+            action: #selector(contextPaste(_:)),
+            keyEquivalent: ""
+        )
+        pasteItem.target = self
+        pasteItem.isEnabled = NSPasteboard.general.string(forType: .string) != nil
+        menu.addItem(pasteItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let selectAllItem = NSMenuItem(
+            title: "Select All",
+            action: #selector(contextSelectAll(_:)),
+            keyEquivalent: ""
+        )
+        selectAllItem.target = self
+        menu.addItem(selectAllItem)
+
+        let clearItem = NSMenuItem(
+            title: "Clear",
+            action: #selector(contextClear(_:)),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func contextCopy(_ sender: Any?) {
+        onCopy?()
+    }
+
+    @objc private func contextPaste(_ sender: Any?) {
+        onPaste?()
+    }
+
+    @objc private func contextSelectAll(_ sender: Any?) {
+        guard let grid = backend?.gridSnapshot() else { return }
+        let lastCol = max(0, grid.cols - 1)
+        let lastRow = max(0, grid.lines - 1)
+        backend?.startSelection(col: 0, row: 0, kind: 1)
+        backend?.updateSelection(col: UInt16(lastCol), row: UInt16(lastRow))
+        needsDisplay = true
+    }
+
+    @objc private func contextClear(_ sender: Any?) {
+        // Send Ctrl+L to the shell to clear the screen.
+        backend?.write(bytes: [0x0C])
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -932,5 +1339,109 @@ class TerminalRenderer: NSView {
         super.setFrameSize(newSize)
         resizeToFit()
         needsDisplay = true
+    }
+}
+
+// MARK: - NSTextInputClient
+
+extension TerminalRenderer: NSTextInputClient {
+
+    // MARK: Inserting Text
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String {
+            text = s
+        } else if let attr = string as? NSAttributedString {
+            text = attr.string
+        } else {
+            return
+        }
+        guard !text.isEmpty, let backend else { return }
+        if isScrolledBack {
+            isScrolledBack = false
+            backend.scrollToBottom()
+        }
+        backend.write(text)
+        // Clear any composition state.
+        markedText = ""
+        markedSelection = NSRange(location: 0, length: 0)
+        resetBlink()
+        needsDisplay = true
+    }
+
+    // MARK: Marked Text (composition)
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String {
+            text = s
+        } else if let attr = string as? NSAttributedString {
+            text = attr.string
+        } else {
+            text = ""
+        }
+        markedText = text
+        markedSelection = selectedRange
+        needsDisplay = true
+    }
+
+    func unmarkText() {
+        markedText = ""
+        markedSelection = NSRange(location: 0, length: 0)
+        needsDisplay = true
+    }
+
+    func selectedRange() -> NSRange {
+        return NSRange(location: NSNotFound, length: 0)
+    }
+
+    func markedRange() -> NSRange {
+        if markedText.isEmpty {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: (markedText as NSString).length)
+    }
+
+    func hasMarkedText() -> Bool {
+        return !markedText.isEmpty
+    }
+
+    // MARK: Query Methods
+
+    func attributedSubstring(
+        forProposedRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSAttributedString? {
+        return nil
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        return []
+    }
+
+    /// Returns the screen rectangle for the given character range. The IME
+    /// uses this to position its candidate window. We return the cursor
+    /// position since marked text is drawn at the cursor.
+    func firstRect(
+        forCharacterRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSRect {
+        guard let window, let grid = backend?.gridSnapshot() else {
+            return NSRect.zero
+        }
+        let cw = fontMetrics.cellWidth
+        let ch = fontMetrics.cellHeight
+        let cursorX = padding + CGFloat(grid.cursorCol) * cw
+        // View coordinates are flipped; convert to AppKit bottom-up for window conversion.
+        let cursorYFromTop = padding + CGFloat(grid.cursorRow) * ch
+        let cursorYFromBottom = bounds.height - cursorYFromTop - ch
+        let viewRect = NSRect(x: cursorX, y: cursorYFromBottom, width: cw, height: ch)
+        let windowRect = self.convert(viewRect, to: nil)
+        return window.convertToScreen(windowRect)
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        return NSNotFound
     }
 }

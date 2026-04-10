@@ -1569,6 +1569,24 @@ pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32
     }))
 }
 
+/// Return the OSC 8 hyperlink URI at the given grid cell, or NULL if none.
+/// Caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_hyperlink_at(
+    handle: *mut TerminalHandle,
+    col: u32,
+    row: u32,
+) -> *mut c_char {
+    ffi_catch(std::ptr::null_mut(), AssertUnwindSafe(|| {
+        if handle.is_null() { return std::ptr::null_mut(); }
+        let h = unsafe { &*handle };
+        match h.backend.hyperlink_at(col as usize, row as usize) {
+            Some(uri) => to_c_string(&uri),
+            None => std::ptr::null_mut(),
+        }
+    }))
+}
+
 // Search FFI functions.
 
 #[no_mangle]

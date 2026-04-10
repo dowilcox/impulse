@@ -176,6 +176,7 @@ struct GridBufferReader {
     static let flagHidden: UInt16 = 1 << 6
     static let flagWideChar: UInt16 = 1 << 7
     static let flagWideCharSpacer: UInt16 = 1 << 8
+    static let flagHyperlink: UInt16 = 1 << 13
 
     // MARK: - Private helpers
 
@@ -385,7 +386,7 @@ final class TerminalBackend {
         return path.isEmpty ? nil : path
     }
 
-    // MARK: - Search (stubs, wired in Task 9)
+    // MARK: - Search
 
     func search(_ pattern: String) {
         guard let handle, !isShutdown else { return }
@@ -414,6 +415,14 @@ final class TerminalBackend {
         guard let data = try? encoder.encode(config),
               let json = String(data: data, encoding: .utf8) else { return }
         ImpulseCore.terminalSetColors(handle: handle, configJson: json)
+    }
+
+    /// Returns the OSC 8 hyperlink URI at the given grid cell, or nil.
+    func hyperlinkAt(col: Int, row: Int) -> String? {
+        guard let handle, !isShutdown, col >= 0, row >= 0 else { return nil }
+        return ImpulseCore.terminalHyperlinkAt(
+            handle: handle, col: UInt32(col), row: UInt32(row)
+        )
     }
 
     // MARK: - Lifecycle

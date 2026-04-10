@@ -485,7 +485,10 @@ impl TerminalBackend {
                 let offset = cell_offset + (row * num_cols + col) * buffer::CELL_STRIDE;
                 let fg = self.colors.resolve(indexed.cell.fg, term_colors);
                 let bg = self.colors.resolve(indexed.cell.bg, term_colors);
-                let flags = convert_flags(indexed.cell.flags);
+                let mut flags = convert_flags(indexed.cell.flags);
+                if indexed.cell.hyperlink().is_some() {
+                    flags |= CellFlags::HYPERLINK;
+                }
                 buffer::write_cell(buf, offset, indexed.cell.c, fg, bg, flags);
             }
         }
@@ -557,6 +560,22 @@ impl TerminalBackend {
     /// Update the terminal's color palette at runtime (for live theme changes).
     pub fn set_colors(&mut self, config: &TerminalConfig) {
         self.colors = ConfiguredColors::from_config(config);
+    }
+
+    /// Return the hyperlink URI at the given grid cell, if any.
+    /// Used by the frontend for hover/click handling on OSC 8 hyperlinks.
+    pub fn hyperlink_at(&self, col: usize, row: usize) -> Option<String> {
+        let term = self.term.lock();
+        let point = alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(row as i32),
+            alacritty_terminal::index::Column(col),
+        );
+        let grid = term.grid();
+        if row >= grid.screen_lines() || col >= grid.columns() {
+            return None;
+        }
+        let cell = &grid[point];
+        cell.hyperlink().map(|h| h.uri().to_string())
     }
 
     /// Get the current terminal mode flags.
