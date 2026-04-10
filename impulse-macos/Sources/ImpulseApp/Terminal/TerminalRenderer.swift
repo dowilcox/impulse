@@ -884,6 +884,9 @@ class TerminalRenderer: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        if reportMouseEvent(event, button: 0, motion: false, release: false) {
+            return
+        }
         let (col, row) = gridPoint(from: event)
         backend?.clearSelection()
         isSelecting = true
@@ -892,6 +895,9 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if reportMouseEvent(event, button: 0, motion: true, release: false) {
+            return
+        }
         guard isSelecting else { return }
         let (col, row) = gridPoint(from: event)
         backend?.updateSelection(col: col, row: row)
@@ -899,7 +905,140 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if reportMouseEvent(event, button: 0, motion: false, release: true) {
+            return
+        }
         isSelecting = false
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: false, release: false)
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: true, release: false)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        _ = reportMouseEvent(event, button: 1, motion: false, release: true)
+    }
+
+    // MARK: Mouse Reporting
+
+    /// If the terminal has mouse reporting enabled for the given event type,
+    /// encode and send the event to the PTY. Returns true if the event was
+    /// consumed (so the caller should not also run selection handling).
+    ///
+    /// `button` is 0=left, 1=middle, 2=right. `motion` is true for drag events.
+    /// `release` is true for button-up events.
+    private func reportMouseEvent(
+        _ event: NSEvent,
+        button: Int,
+        motion: Bool,
+        release: Bool
+    ) -> Bool {
+        guard let backend, let mode = backend.mode() else { return false }
+
+        // Determine if reporting is enabled for this event type.
+        // mouseReportClick: click events only (no motion/drag)
+        // mouseDrag: click + drag events
+        // mouseMotion: click + all motion events
+        let reportsPress = mode.mouseReportClick || mode.mouseDrag || mode.mouseMotion
+        guard reportsPress else { return false }
+        if motion && !mode.mouseDrag && !mode.mouseMotion {
+            return false
+        }
+
+        let (col, row) = gridPoint(from: event)
+
+        // Encode modifier flags.
+        var cb = button
+        if motion { cb += 32 }
+        if event.modifierFlags.contains(.shift) { cb += 4 }
+        if event.modifierFlags.contains(.option) { cb += 8 }
+        if event.modifierFlags.contains(.control) { cb += 16 }
+
+        if mode.mouseSgr {
+            // SGR format: CSI < Cb ; Cx ; Cy ; (M|m)
+            let suffix = release ? "m" : "M"
+            let seq = "\u{1B}[<\(cb);\(Int(col) + 1);\(Int(row) + 1)\(suffix)"
+            backend.write(seq)
+        } else {
+            // Legacy X10 format: CSI M Cb Cx Cy (each byte = value + 32)
+            // Release events use button code 3 in X10.
+            let x10Button = release ? 3 : cb
+            let cbByte = UInt8(clamping: x10Button + 32)
+            let cxByte = UInt8(clamping: Int(col) + 1 + 32)
+            let cyByte = UInt8(clamping: Int(row) + 1 + 32)
+            backend.write(bytes: [0x1B, 0x5B, 0x4D, cbByte, cxByte, cyByte])
+        }
+        return true
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let copyItem = NSMenuItem(
+            title: "Copy",
+            action: #selector(contextCopy(_:)),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        copyItem.isEnabled = backend?.selectedText() != nil
+        menu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(
+            title: "Paste",
+            action: #selector(contextPaste(_:)),
+            keyEquivalent: ""
+        )
+        pasteItem.target = self
+        pasteItem.isEnabled = NSPasteboard.general.string(forType: .string) != nil
+        menu.addItem(pasteItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let selectAllItem = NSMenuItem(
+            title: "Select All",
+            action: #selector(contextSelectAll(_:)),
+            keyEquivalent: ""
+        )
+        selectAllItem.target = self
+        menu.addItem(selectAllItem)
+
+        let clearItem = NSMenuItem(
+            title: "Clear",
+            action: #selector(contextClear(_:)),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func contextCopy(_ sender: Any?) {
+        onCopy?()
+    }
+
+    @objc private func contextPaste(_ sender: Any?) {
+        onPaste?()
+    }
+
+    @objc private func contextSelectAll(_ sender: Any?) {
+        guard let grid = backend?.gridSnapshot() else { return }
+        let lastCol = max(0, grid.cols - 1)
+        let lastRow = max(0, grid.lines - 1)
+        backend?.startSelection(col: 0, row: 0, kind: 1)
+        backend?.updateSelection(col: UInt16(lastCol), row: UInt16(lastRow))
+        needsDisplay = true
+    }
+
+    @objc private func contextClear(_ sender: Any?) {
+        // Send Ctrl+L to the shell to clear the screen.
+        backend?.write(bytes: [0x0C])
     }
 
     override func scrollWheel(with event: NSEvent) {
