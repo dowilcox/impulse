@@ -16,7 +16,7 @@ pub enum EditorCommand {
         theme: Box<MonacoThemeDefinition>,
     },
     UpdateSettings {
-        options: EditorOptions,
+        options: Box<EditorOptions>,
     },
     ApplyDiagnostics {
         uri: String,
@@ -774,7 +774,7 @@ mod tests {
     #[test]
     fn editor_command_roundtrip_update_settings() {
         let cmd = EditorCommand::UpdateSettings {
-            options: EditorOptions {
+            options: Box::new(EditorOptions {
                 font_size: Some(16),
                 font_family: Some("Fira Code".to_string()),
                 tab_size: Some(2),
@@ -800,7 +800,7 @@ mod tests {
                 selection_highlight: None,
                 occurrences_highlight: None,
                 word_based_suggestions: None,
-            },
+            }),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: EditorCommand = serde_json::from_str(&json).unwrap();

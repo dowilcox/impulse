@@ -547,7 +547,7 @@ impl LspClient {
                 // memory allocation from a malicious server sending no newline.
                 let found_newline = loop {
                     let available = match reader.fill_buf().await {
-                        Ok(buf) if buf.is_empty() => return,
+                        Ok([]) => return,
                         Ok(buf) => buf,
                         Err(_) => return,
                     };

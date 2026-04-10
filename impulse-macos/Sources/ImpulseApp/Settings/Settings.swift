@@ -549,7 +549,11 @@ extension Settings {
             terminalCursorBlink: terminalCursorBlink,
             terminalScrollback: terminalScrollback,
             lastDirectory: directory ?? lastDirectory,
-            terminalCopyOnSelect: terminalCopyOnSelect
+            terminalCopyOnSelect: terminalCopyOnSelect,
+            terminalBell: terminalBell,
+            terminalScrollOnOutput: terminalScrollOnOutput,
+            terminalAllowHyperlink: terminalAllowHyperlink,
+            terminalBoldIsBright: terminalBoldIsBright
         )
     }
 }

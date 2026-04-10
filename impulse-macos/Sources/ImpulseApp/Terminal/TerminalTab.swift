@@ -109,7 +109,9 @@ class TerminalTab: NSView {
                 userInfo: ["title": tabTitle]
             )
         case .bell:
-            NSSound.beep()
+            if currentSettings?.terminalBell ?? true {
+                NSSound.beep()
+            }
         case .childExited(let code):
             NotificationCenter.default.post(
                 name: .terminalProcessTerminated,
@@ -597,6 +599,10 @@ struct TerminalSettings {
     var terminalScrollback: Int = 10_000
     var lastDirectory: String = ""
     var terminalCopyOnSelect: Bool = true
+    var terminalBell: Bool = false
+    var terminalScrollOnOutput: Bool = true
+    var terminalAllowHyperlink: Bool = true
+    var terminalBoldIsBright: Bool = true
 }
 
 /// Terminal color theme definition. Hex color strings (e.g. "#1F1F28").

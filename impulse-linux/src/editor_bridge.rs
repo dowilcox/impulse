@@ -223,7 +223,9 @@ impl qobject::EditorBridge {
                     params_value,
                 ) {
                     Ok(options) => {
-                        impulse_editor::protocol::EditorCommand::UpdateSettings { options }
+                        impulse_editor::protocol::EditorCommand::UpdateSettings {
+                            options: Box::new(options),
+                        }
                     }
                     Err(e) => {
                         log::warn!("Failed to parse UpdateSettings params: {}", e);

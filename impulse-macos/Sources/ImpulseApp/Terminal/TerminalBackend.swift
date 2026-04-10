@@ -385,7 +385,7 @@ final class TerminalBackend {
         return path.isEmpty ? nil : path
     }
 
-    // MARK: - Search (stubs, wired in Task 9)
+    // MARK: - Search
 
     func search(_ pattern: String) {
         guard let handle, !isShutdown else { return }
