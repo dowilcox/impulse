@@ -300,6 +300,10 @@ class TerminalTab: NSView {
         }
 
         // Fall back to image: save as a temp PNG and paste the path.
+        // TUI apps like Claude Code detect image attachments from a pasted
+        // path only when it arrives inside a bracketed paste event, so we
+        // write the raw path (no shell escaping) wrapped in the same
+        // bracketed-paste markers as the text branch.
         if let image = clipboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
            let tiffData = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiffData),
@@ -311,8 +315,14 @@ class TerminalTab: NSView {
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: tmpPath
                 )
-                let escaped = tmpPath.shellEscaped
-                backend?.write(escaped)
+                guard let backend else { return }
+                if let mode = backend.mode(), mode.bracketedPaste {
+                    backend.write("\u{1b}[200~")
+                }
+                backend.write(tmpPath)
+                if let mode = backend.mode(), mode.bracketedPaste {
+                    backend.write("\u{1b}[201~")
+                }
             } catch {
                 os_log(.error, "Failed to save clipboard image: %{public}@", error.localizedDescription)
             }

@@ -15,6 +15,14 @@ Item {
         source: "file://" + windowModel.project_root + "impulse-editor/vendor/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"
     }
 
+    // TODO: image clipboard paste fallback. macOS saves clipboard images to a
+    // temp PNG and pastes the path wrapped in bracketed-paste so Claude Code
+    // and other TUI apps can attach screenshots — see
+    // impulse-macos/.../Terminal/TerminalTab.swift pasteFromClipboard().
+    // QMLTermWidget handles paste internally; implementing this on Linux
+    // likely needs a custom paste action on Ctrl+Shift+V that inspects
+    // QGuiApplication::clipboard() and feeds the path via sendText.
+
     // ── Terminal widget ───────────────────────────────────────────────────────
     QMLTermWidget {
         id: termWidget
