@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-core"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "dirs",
  "git2",
@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-editor"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "ammonia",
  "dirs",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-ffi"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "crossbeam-channel",
  "git2",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-linux"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "cxx",
  "cxx-qt",
