@@ -916,8 +916,76 @@ class TerminalRenderer: NSView {
             context.setFillColor(color)
             context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height))
 
+        // Eighth blocks (lower). 0x2581=1/8, 0x2582=2/8, ..., 0x2587=7/8, 0x2588=full.
+        case 0x2581, 0x2582, 0x2583, 0x2585, 0x2586, 0x2587:
+            let fraction = CGFloat(codepoint - 0x2580) / 8.0
+            let h = height * fraction
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y + height - h, width: width, height: h))
+
+        // Eighth blocks (left). 0x2589=7/8, ..., 0x258F=1/8.
+        case 0x2589, 0x258A, 0x258B, 0x258D, 0x258E, 0x258F:
+            let fraction = CGFloat(0x2590 - codepoint) / 8.0
+            let w = width * fraction
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: w, height: height))
+
+        // Shade blocks.
+        case 0x2591: // ░ light shade (25%)
+            context.setFillColor(color.copy(alpha: alpha * 0.25) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        case 0x2592: // ▒ medium shade (50%)
+            context.setFillColor(color.copy(alpha: alpha * 0.5) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        case 0x2593: // ▓ dark shade (75%)
+            context.setFillColor(color.copy(alpha: alpha * 0.75) ?? color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height))
+
+        // Quadrants.
+        case 0x2596: // ▖ lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x2597: // ▗ lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x2598: // ▘ upper left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+        case 0x259D: // ▝ upper right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+        case 0x2599: // ▙ upper left + lower half
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
+        case 0x259A: // ▚ upper left + lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259B: // ▛ upper half + lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259C: // ▜ upper half + lower right
+            context.setFillColor(color)
+            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
+            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259E: // ▞ upper right + lower left
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
+        case 0x259F: // ▟ upper right + lower half
+            context.setFillColor(color)
+            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
+            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
+
         default:
             // Fall back to font glyph for unrecognized box-drawing characters.
+            // drawTextRun positions each glyph at an exact cell column so
+            // alignment with the grid is preserved regardless of the glyph's
+            // natural advance width.
             drawTextRun(
                 context: context, text: String(UnicodeScalar(codepoint)!),
                 col: Int((x - padding) / width), rowY: y,

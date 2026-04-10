@@ -141,11 +141,15 @@ class TerminalTab: NSView {
                 userInfo: ["directory": path]
             )
         case .promptStart:
-            break // Future: scroll-to-prompt navigation
+            // TODO: scroll-to-prompt navigation. Needs alacritty absolute-line
+            // tracking exposed through FFI so prompt positions survive scrollback.
+            break
         case .commandStart:
-            break // Future: command timing
+            // TODO: command timing — record start time per command.
+            break
         case .commandEnd(_):
-            break // Future: exit code display in status bar
+            // TODO: surface exit code in the status bar or tab title.
+            break
         }
     }
 
