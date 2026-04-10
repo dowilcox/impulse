@@ -97,7 +97,7 @@ C-compatible wrappers around `impulse-core` and `impulse-editor` for the macOS S
 
 ### impulse-macos (Swift Package, macOS frontend)
 
-The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **macOS 14+** (for `@Observable`). Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
+The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **macOS 26+ (Tahoe)**. Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
 
 **Architecture:** The window uses a hybrid AppKit/SwiftUI approach. `MainWindowController` (AppKit) owns the window, NSToolbar, and tab content lifecycle. A single `NSHostingView` fills the window content area with a SwiftUI `NavigationSplitView` that renders the sidebar, tab bar, and status bar. Terminal and editor views remain AppKit (`NSView`) and are embedded via `NSViewRepresentable`. The `@Observable WindowModel` class is the bridge — AppKit mutates it, SwiftUI observes it.
 
@@ -275,4 +275,4 @@ sudo pacman -S qt6-base qt6-declarative qt6-webengine qt6-quickcontrols2 cmake
 
 ### macOS
 
-Requires **macOS 14 (Sonoma) or later** for the `@Observable` macro used in the SwiftUI layer. Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit, SwiftUI, and WKWebView are provided by the system frameworks. Terminal emulation uses the [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) library (declared in `Package.swift`). OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.
+Requires **macOS 26 (Tahoe) or later**. Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit, SwiftUI, and WKWebView are provided by the system frameworks. Terminal emulation uses an in-tree backend (`impulse-terminal`) wrapping `alacritty_terminal`, rendered via CoreText + CoreGraphics in `TerminalRenderer.swift`. OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.

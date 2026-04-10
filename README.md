@@ -88,7 +88,7 @@ Download the latest package for your platform from [GitHub Releases](https://git
 
 Download `Impulse-X.Y.Z.dmg`, open it, and drag **Impulse.app** to your **Applications** folder.
 
-Requires macOS 13 (Ventura) or later.
+Requires **macOS 26 (Tahoe)** or later.
 
 ### Linux
 

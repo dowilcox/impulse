@@ -146,6 +146,11 @@ echo "Building Impulse v${VERSION} for macOS..."
 
 # ── Step 1: Build Rust FFI static library ─────────────────────────────
 
+# Match the Swift package's deployment target so the Rust-compiled
+# objects don't trigger "built for newer macOS version than being
+# linked" linker warnings at link time.
+export MACOSX_DEPLOYMENT_TARGET=26.0
+
 echo "==> Building impulse-ffi (Rust static library)..."
 cargo build --release -p impulse-ffi
 
@@ -265,7 +270,7 @@ cat > "${CONTENTS}/Info.plist" << PLIST
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>26.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticTermination</key>

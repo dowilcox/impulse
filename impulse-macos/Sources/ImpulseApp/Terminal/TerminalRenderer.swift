@@ -101,7 +101,7 @@ class TerminalRenderer: NSView {
 
     // MARK: Private Properties
 
-    private var displayLink: CVDisplayLink?
+    private var displayLink: CADisplayLink?
     private var scrollAccumulator: CGFloat = 0
     private var isScrolledBack: Bool = false
     private var isSelecting = false
@@ -182,29 +182,24 @@ class TerminalRenderer: NSView {
         }
     }
 
-    // MARK: CVDisplayLink Refresh Loop
+    // MARK: Display Link Refresh Loop
 
     func startRefreshLoop() {
         guard displayLink == nil else { return }
-        var link: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&link)
-        guard let link else { return }
-
-        let callback: CVDisplayLinkOutputCallback = { _, _, _, _, _, userInfo -> CVReturn in
-            let renderer = Unmanaged<TerminalRenderer>.fromOpaque(userInfo!).takeUnretainedValue()
-            renderer.tick()
-            return kCVReturnSuccess
-        }
-        CVDisplayLinkSetOutputCallback(link, callback, Unmanaged.passUnretained(self).toOpaque())
-        CVDisplayLinkStart(link)
+        // NSView.displayLink (macOS 15+) replaces the deprecated CVDisplayLink.
+        // Fires on the main thread at the display's refresh rate.
+        let link = self.displayLink(target: self, selector: #selector(displayLinkTick))
+        link.add(to: .main, forMode: .common)
         displayLink = link
     }
 
     func stopRefreshLoop() {
-        if let link = displayLink {
-            CVDisplayLinkStop(link)
-            displayLink = nil
-        }
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func displayLinkTick() {
+        tick()
     }
 
     // MARK: Cursor Blink Timer

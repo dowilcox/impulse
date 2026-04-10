@@ -1,10 +1,10 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "ImpulseApp",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v26)
     ],
     dependencies: [
     ],
@@ -22,6 +22,13 @@ let package = Package(
             resources: [
                 .copy("Resources/monaco"),
                 .copy("Resources/icons"),
+            ],
+            swiftSettings: [
+                // Stay in Swift 5 language mode to avoid the strict
+                // concurrency regressions that Swift 6 mode introduces
+                // in existing AppKit delegate code (nonisolated deinit
+                // touching non-Sendable stored properties, etc.).
+                .swiftLanguageMode(.v5),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L", "../target/release"]),
