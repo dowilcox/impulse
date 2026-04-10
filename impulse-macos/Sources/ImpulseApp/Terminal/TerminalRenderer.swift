@@ -119,7 +119,23 @@ class TerminalRenderer: NSView {
     private var hoverCol: Int = -1
     private var hoverRow: Int = -1
     private var hoverIsLink: Bool = false
+    /// When hovering a link, the cell-range [startCol, endCol) on hoverRow
+    /// that forms the link. Used to draw the hover underline and to resolve
+    /// the URI on Cmd+Click (for auto-detected URLs).
+    private var hoverLinkStartCol: Int = 0
+    private var hoverLinkEndCol: Int = 0
+    private var hoverLinkUri: String?
     private var trackingArea: NSTrackingArea?
+
+    /// Regex for auto-detecting plain URLs in terminal output.
+    /// Matches http/https URLs up to the first whitespace or common
+    /// trailing-punctuation boundary.
+    private static let urlRegex: NSRegularExpression? = {
+        try? NSRegularExpression(
+            pattern: #"https?://[^\s<>"'`]+"#,
+            options: []
+        )
+    }()
 
     // Cached font variants for bold/italic.
     private var boldFont: CTFont?
@@ -565,24 +581,12 @@ class TerminalRenderer: NSView {
             }
         }
 
-        // 8. Draw hover underline under hyperlinked cells when mouse is over one.
-        if hoverIsLink && hoverRow >= 0 && hoverCol >= 0 {
-            // Underline all contiguous cells on the same row with the hyperlink flag.
-            var startCol = hoverCol
-            while startCol > 0 {
-                let c = grid.cell(row: hoverRow, col: startCol - 1)
-                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
-                startCol -= 1
-            }
-            var endCol = hoverCol
-            while endCol < cols - 1 {
-                let c = grid.cell(row: hoverRow, col: endCol + 1)
-                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
-                endCol += 1
-            }
+        // 8. Draw hover underline across the hovered link (OSC 8 or detected URL).
+        if hoverIsLink && hoverRow >= 0 && hoverRow < lines
+            && hoverLinkEndCol > hoverLinkStartCol {
             let yBase = padding + CGFloat(hoverRow) * ch + ch - 1
-            let x1 = padding + CGFloat(startCol) * cw
-            let x2 = padding + CGFloat(endCol + 1) * cw
+            let x1 = padding + CGFloat(hoverLinkStartCol) * cw
+            let x2 = padding + CGFloat(hoverLinkEndCol) * cw
             context.setStrokeColor(cursorColor)
             context.setLineWidth(1)
             context.move(to: CGPoint(x: x1, y: yBase))
@@ -1074,11 +1078,39 @@ class TerminalRenderer: NSView {
         // Check if the cell under the cursor is a hyperlink.
         let wasLink = hoverIsLink
         hoverIsLink = false
+        hoverLinkUri = nil
+        hoverLinkStartCol = 0
+        hoverLinkEndCol = 0
+
         if let grid = backend?.gridSnapshot(),
            rowI < grid.lines && colI < grid.cols {
             let cell = grid.cell(row: rowI, col: colI)
+
+            // 1. OSC 8 hyperlink takes priority.
             if cell.flags & GridBufferReader.flagHyperlink != 0 {
                 hoverIsLink = true
+                // Expand to full contiguous hyperlink run on this row.
+                var s = colI
+                while s > 0 {
+                    let c = grid.cell(row: rowI, col: s - 1)
+                    if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                    s -= 1
+                }
+                var e = colI
+                while e < grid.cols - 1 {
+                    let c = grid.cell(row: rowI, col: e + 1)
+                    if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                    e += 1
+                }
+                hoverLinkStartCol = s
+                hoverLinkEndCol = e + 1
+                hoverLinkUri = backend?.hyperlinkAt(col: colI, row: rowI)
+            } else if let (uri, s, e) = detectUrlAt(col: colI, row: rowI, grid: grid) {
+                // 2. Auto-detected plain URL in the row text.
+                hoverIsLink = true
+                hoverLinkUri = uri
+                hoverLinkStartCol = s
+                hoverLinkEndCol = e
             }
         }
 
@@ -1091,11 +1123,66 @@ class TerminalRenderer: NSView {
     override func mouseExited(with event: NSEvent) {
         if hoverIsLink {
             hoverIsLink = false
+            hoverLinkUri = nil
             needsDisplay = true
             window?.invalidateCursorRects(for: self)
         }
         hoverCol = -1
         hoverRow = -1
+    }
+
+    /// Scan the row's text for a URL pattern and return the match that
+    /// contains the given column, along with the start/end column range.
+    private func detectUrlAt(
+        col: Int, row: Int, grid: GridBufferReader
+    ) -> (uri: String, startCol: Int, endCol: Int)? {
+        guard let regex = Self.urlRegex else { return nil }
+
+        // Build the row's text, tracking column for each character.
+        // Wide-char spacers are skipped so indices map 1:1 with cell columns.
+        var text = ""
+        var colForIndex: [Int] = []  // index in `text` → grid column
+        for c in 0..<grid.cols {
+            let cell = grid.cell(row: row, col: c)
+            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+            let ch = cell.character.value
+            // Treat NUL as space for the scan.
+            let scalar = (ch == 0) ? UnicodeScalar(0x20)! : cell.character
+            colForIndex.append(c)
+            text.append(Character(scalar))
+        }
+
+        let nsText = text as NSString
+        let matches = regex.matches(
+            in: text,
+            options: [],
+            range: NSRange(location: 0, length: nsText.length)
+        )
+        for match in matches {
+            var range = match.range
+            // Trim common trailing punctuation.
+            while range.length > 0 {
+                let lastIdx = range.location + range.length - 1
+                let ch = nsText.character(at: lastIdx)
+                if ch == 0x2E || ch == 0x2C || ch == 0x3B || ch == 0x3A
+                    || ch == 0x21 || ch == 0x3F || ch == 0x29 || ch == 0x5D {
+                    range.length -= 1
+                } else {
+                    break
+                }
+            }
+            if range.length == 0 { continue }
+            // Does this match contain the hovered column?
+            let lastIdx = range.location + range.length - 1
+            guard range.location < colForIndex.count, lastIdx < colForIndex.count else { continue }
+            let startCol = colForIndex[range.location]
+            let endCol = colForIndex[lastIdx] + 1
+            if col >= startCol && col < endCol {
+                let uri = nsText.substring(with: range)
+                return (uri, startCol, endCol)
+            }
+        }
+        return nil
     }
 
     override func resetCursorRects() {
@@ -1110,11 +1197,18 @@ class TerminalRenderer: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
 
-        // Cmd+Click on a hyperlink opens the URL.
+        // Cmd+Click on a hyperlink opens the URL. We first try the OSC 8
+        // link at the cell, then fall back to an auto-detected URL in the row.
         if event.modifierFlags.contains(.command) {
             let (col, row) = gridPoint(from: event)
-            if let uri = backend?.hyperlinkAt(col: Int(col), row: Int(row)),
-               let url = URL(string: uri) {
+            let colI = Int(col)
+            let rowI = Int(row)
+            var uri: String? = backend?.hyperlinkAt(col: colI, row: rowI)
+            if uri == nil, let grid = backend?.gridSnapshot(),
+               let detected = detectUrlAt(col: colI, row: rowI, grid: grid) {
+                uri = detected.uri
+            }
+            if let uri, let url = URL(string: uri) {
                 NSWorkspace.shared.open(url)
                 return
             }
