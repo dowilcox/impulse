@@ -86,6 +86,19 @@ class TerminalRenderer: NSView {
         }
     }
 
+    /// Cursor color, typically derived from the theme's foreground color.
+    var cursorColor: CGColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
+
+    /// Whether bold text should use bright palette colors (0-7 → 8-15).
+    var boldIsBright: Bool = true
+
+    /// Whether to auto-scroll to the bottom when the terminal produces output.
+    var scrollOnOutput: Bool = true
+
+    /// 16-color ANSI palette (RGB triplets). Set from the theme.
+    /// Used to substitute bold text colors when `boldIsBright` is true.
+    var paletteRgb: [(UInt8, UInt8, UInt8)] = []
+
     // MARK: Private Properties
 
     private var displayLink: CVDisplayLink?
@@ -210,6 +223,11 @@ class TerminalRenderer: NSView {
             }
         }
         if wakeup && !isScrolledBack {
+            // Auto-scroll to bottom on output when enabled and the user
+            // hasn't manually scrolled back.
+            if scrollOnOutput {
+                backend.scrollToBottom()
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.needsDisplay = true
             }
@@ -361,6 +379,20 @@ class TerminalRenderer: NSView {
                 let isDim = flags & GridBufferReader.flagDim != 0
                 let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x259F
 
+                // Bold-is-bright: if bold and the foreground matches one of
+                // the 8 normal ANSI palette colors, substitute with the bright
+                // variant (palette index + 8).
+                if isBold && boldIsBright && paletteRgb.count >= 16 {
+                    for i in 0..<8 {
+                        let (pr, pg, pb) = paletteRgb[i]
+                        if fgR == pr && fgG == pg && fgB == pb {
+                            let (br, bg, bb) = paletteRgb[i + 8]
+                            fgR = br; fgG = bg; fgB = bb
+                            break
+                        }
+                    }
+                }
+
                 // Check if we need to flush the current run.
                 let styleChanged = hasRun && (fgR != runFgR || fgG != runFgG || fgB != runFgB
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
@@ -471,8 +503,8 @@ class TerminalRenderer: NSView {
                 let cursorY = padding + CGFloat(cursorRow) * ch
                 let cursorRect = CGRect(x: cursorX, y: cursorY, width: cw, height: ch)
 
-                // Use a contrasting cursor color.
-                let cursorColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
+                // Use the theme-derived cursor color.
+                let cursorColor = self.cursorColor
 
                 switch cursorShapeOverride {
                 case 0: // Block

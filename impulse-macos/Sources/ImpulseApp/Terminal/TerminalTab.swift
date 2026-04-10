@@ -390,6 +390,21 @@ class TerminalTab: NSView {
         // Cursor blink
         renderer.cursorBlinkEnabled = settings.terminalCursorBlink
 
+        // Cursor color — derived from theme foreground.
+        renderer.cursorColor = cgColorFromHex(theme.fg)
+
+        // Palette (used for bold-is-bright substitution)
+        renderer.paletteRgb = theme.terminalPalette.map { hex in
+            let rgb = hexToRgbBytes(hex)
+            return (rgb.0, rgb.1, rgb.2)
+        }
+
+        // Bold-is-bright palette substitution
+        renderer.boldIsBright = settings.terminalBoldIsBright
+
+        // Auto-scroll on output
+        renderer.scrollOnOutput = settings.terminalScrollOnOutput
+
         // Copy on select
         setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
     }
@@ -408,6 +423,7 @@ class TerminalTab: NSView {
             workingDirectory: nil
         )
         backend?.setColors(config: config)
+        renderer.cursorColor = cgColorFromHex(theme.fg)
         renderer.needsDisplay = true
     }
 
@@ -603,6 +619,33 @@ struct TerminalSettings {
     var terminalScrollOnOutput: Bool = true
     var terminalAllowHyperlink: Bool = true
     var terminalBoldIsBright: Bool = true
+}
+
+/// Convert a hex color string (e.g. "#DCD7BA") to a CGColor.
+/// Falls back to white on parse failure.
+private func cgColorFromHex(_ hex: String) -> CGColor {
+    let (r, g, b) = hexToRgbBytes(hex)
+    return CGColor(
+        srgbRed: CGFloat(r) / 255.0,
+        green: CGFloat(g) / 255.0,
+        blue: CGFloat(b) / 255.0,
+        alpha: 1
+    )
+}
+
+/// Parse a hex color string into an (r, g, b) byte tuple.
+/// Falls back to white (255,255,255) on parse failure.
+func hexToRgbBytes(_ hex: String) -> (UInt8, UInt8, UInt8) {
+    let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "#", with: "")
+    guard cleaned.count == 6, let value = UInt32(cleaned, radix: 16) else {
+        return (255, 255, 255)
+    }
+    return (
+        UInt8((value >> 16) & 0xFF),
+        UInt8((value >> 8) & 0xFF),
+        UInt8(value & 0xFF)
+    )
 }
 
 /// Terminal color theme definition. Hex color strings (e.g. "#1F1F28").
