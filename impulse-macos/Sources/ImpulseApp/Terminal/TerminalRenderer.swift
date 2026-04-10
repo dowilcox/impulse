@@ -109,6 +109,12 @@ class TerminalRenderer: NSView {
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
 
+    // IME composition state. When non-empty, an IME is composing text that
+    // has not yet been committed to the PTY.
+    private var markedText: String = ""
+    private var markedSelection = NSRange(location: 0, length: 0)
+    private var currentKeyEvent: NSEvent?
+
     // Cached font variants for bold/italic.
     private var boldFont: CTFont?
     private var italicFont: CTFont?
@@ -538,6 +544,39 @@ class TerminalRenderer: NSView {
                 }
             }
         }
+
+        // 8. Draw IME marked text overlay at the cursor position.
+        if !markedText.isEmpty {
+            let cursorRow = grid.cursorRow
+            let cursorCol = grid.cursorCol
+            let startX = padding + CGFloat(cursorCol) * cw
+            let startY = padding + CGFloat(cursorRow) * ch
+
+            // Background for the marked text run.
+            let markedWidth = cw * CGFloat(max(1, markedText.count))
+            context.setFillColor(CGColor(srgbRed: 0.15, green: 0.15, blue: 0.2, alpha: 1.0))
+            context.fill(CGRect(x: startX, y: startY, width: markedWidth, height: ch))
+
+            // Draw the marked text using the current cursor color as fg.
+            var runText = ""
+            for char in markedText {
+                runText.append(char)
+            }
+            drawTextRun(
+                context: context, text: runText,
+                col: cursorCol, rowY: startY,
+                fgR: 255, fgG: 255, fgB: 255,
+                bold: false, italic: false, dim: false
+            )
+
+            // Underline the marked text to indicate active composition.
+            context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8))
+            context.setLineWidth(1)
+            let underlineY = startY + ch - 1
+            context.move(to: CGPoint(x: startX, y: underlineY))
+            context.addLine(to: CGPoint(x: startX + markedWidth, y: underlineY))
+            context.strokePath()
+        }
     }
 
     // MARK: Text Run Drawing
@@ -855,7 +894,21 @@ class TerminalRenderer: NSView {
             return
         }
 
-        guard let backend else { return }
+        // Route through the input manager so dead keys and IME composition
+        // work. interpretKeyEvents will call:
+        //   - insertText(_:) for committed text (including composed chars)
+        //   - setMarkedText(_:...) during composition
+        //   - doCommand(by:) for special keys (arrows, enter, tab, etc.)
+        // For the doCommand path we need to access the originating event to
+        // run it through KeyEncoder, so we stash it temporarily.
+        currentKeyEvent = event
+        interpretKeyEvents([event])
+        currentKeyEvent = nil
+    }
+
+    override func doCommand(by selector: Selector) {
+        // Special keys fall back to KeyEncoder using the current keyDown event.
+        guard let event = currentKeyEvent, let backend else { return }
         let mode = backend.mode()
         let bytes = KeyEncoder.encode(
             event: event,
@@ -1103,5 +1156,109 @@ class TerminalRenderer: NSView {
         super.setFrameSize(newSize)
         resizeToFit()
         needsDisplay = true
+    }
+}
+
+// MARK: - NSTextInputClient
+
+extension TerminalRenderer: NSTextInputClient {
+
+    // MARK: Inserting Text
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String {
+            text = s
+        } else if let attr = string as? NSAttributedString {
+            text = attr.string
+        } else {
+            return
+        }
+        guard !text.isEmpty, let backend else { return }
+        if isScrolledBack {
+            isScrolledBack = false
+            backend.scrollToBottom()
+        }
+        backend.write(text)
+        // Clear any composition state.
+        markedText = ""
+        markedSelection = NSRange(location: 0, length: 0)
+        resetBlink()
+        needsDisplay = true
+    }
+
+    // MARK: Marked Text (composition)
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String {
+            text = s
+        } else if let attr = string as? NSAttributedString {
+            text = attr.string
+        } else {
+            text = ""
+        }
+        markedText = text
+        markedSelection = selectedRange
+        needsDisplay = true
+    }
+
+    func unmarkText() {
+        markedText = ""
+        markedSelection = NSRange(location: 0, length: 0)
+        needsDisplay = true
+    }
+
+    func selectedRange() -> NSRange {
+        return NSRange(location: NSNotFound, length: 0)
+    }
+
+    func markedRange() -> NSRange {
+        if markedText.isEmpty {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: (markedText as NSString).length)
+    }
+
+    func hasMarkedText() -> Bool {
+        return !markedText.isEmpty
+    }
+
+    // MARK: Query Methods
+
+    func attributedSubstring(
+        forProposedRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSAttributedString? {
+        return nil
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        return []
+    }
+
+    /// Returns the screen rectangle for the given character range. The IME
+    /// uses this to position its candidate window. We return the cursor
+    /// position since marked text is drawn at the cursor.
+    func firstRect(
+        forCharacterRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSRect {
+        guard let window, let grid = backend?.gridSnapshot() else {
+            return NSRect.zero
+        }
+        let cw = fontMetrics.cellWidth
+        let ch = fontMetrics.cellHeight
+        let cursorX = padding + CGFloat(grid.cursorCol) * cw
+        // View coordinates are flipped; convert to AppKit bottom-up for window conversion.
+        let cursorYFromTop = padding + CGFloat(grid.cursorRow) * ch
+        let cursorYFromBottom = bounds.height - cursorYFromTop - ch
+        let viewRect = NSRect(x: cursorX, y: cursorYFromBottom, width: cw, height: ch)
+        let windowRect = self.convert(viewRect, to: nil)
+        return window.convertToScreen(windowRect)
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        return NSNotFound
     }
 }
