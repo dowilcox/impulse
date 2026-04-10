@@ -115,6 +115,12 @@ class TerminalRenderer: NSView {
     private var markedSelection = NSRange(location: 0, length: 0)
     private var currentKeyEvent: NSEvent?
 
+    // Hyperlink hover state.
+    private var hoverCol: Int = -1
+    private var hoverRow: Int = -1
+    private var hoverIsLink: Bool = false
+    private var trackingArea: NSTrackingArea?
+
     // Cached font variants for bold/italic.
     private var boldFont: CTFont?
     private var italicFont: CTFont?
@@ -384,6 +390,7 @@ class TerminalRenderer: NSView {
                 let isItalic = flags & GridBufferReader.flagItalic != 0
                 let isDim = flags & GridBufferReader.flagDim != 0
                 let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x259F
+                let isWideChar = flags & GridBufferReader.flagWideChar != 0
 
                 // Bold-is-bright: if bold and the foreground matches one of
                 // the 8 normal ANSI palette colors, substitute with the bright
@@ -403,7 +410,7 @@ class TerminalRenderer: NSView {
                 let styleChanged = hasRun && (fgR != runFgR || fgG != runFgG || fgB != runFgB
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
 
-                if (styleChanged || isBoxDrawing) && hasRun && !runString.isEmpty {
+                if (styleChanged || isBoxDrawing || isWideChar) && hasRun && !runString.isEmpty {
                     drawTextRun(
                         context: context, text: runString, col: runStartCol, rowY: rowY,
                         fgR: runFgR, fgG: runFgG, fgB: runFgB,
@@ -411,6 +418,19 @@ class TerminalRenderer: NSView {
                     )
                     runString = ""
                     hasRun = false
+                }
+
+                if isWideChar {
+                    // Wide characters (East Asian fullwidth) occupy 2 cells.
+                    // Draw alone so subsequent runs restart at col + 2 (the
+                    // spacer cell at col + 1 is skipped by flagWideCharSpacer).
+                    drawTextRun(
+                        context: context, text: String(scalar),
+                        col: col, rowY: rowY,
+                        fgR: fgR, fgG: fgG, fgB: fgB,
+                        bold: isBold, italic: isItalic, dim: isDim
+                    )
+                    continue
                 }
 
                 if isBoxDrawing {
@@ -545,7 +565,32 @@ class TerminalRenderer: NSView {
             }
         }
 
-        // 8. Draw IME marked text overlay at the cursor position.
+        // 8. Draw hover underline under hyperlinked cells when mouse is over one.
+        if hoverIsLink && hoverRow >= 0 && hoverCol >= 0 {
+            // Underline all contiguous cells on the same row with the hyperlink flag.
+            var startCol = hoverCol
+            while startCol > 0 {
+                let c = grid.cell(row: hoverRow, col: startCol - 1)
+                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                startCol -= 1
+            }
+            var endCol = hoverCol
+            while endCol < cols - 1 {
+                let c = grid.cell(row: hoverRow, col: endCol + 1)
+                if c.flags & GridBufferReader.flagHyperlink == 0 { break }
+                endCol += 1
+            }
+            let yBase = padding + CGFloat(hoverRow) * ch + ch - 1
+            let x1 = padding + CGFloat(startCol) * cw
+            let x2 = padding + CGFloat(endCol + 1) * cw
+            context.setStrokeColor(cursorColor)
+            context.setLineWidth(1)
+            context.move(to: CGPoint(x: x1, y: yBase))
+            context.addLine(to: CGPoint(x: x2, y: yBase))
+            context.strokePath()
+        }
+
+        // 9. Draw IME marked text overlay at the cursor position.
         if !markedText.isEmpty {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
@@ -933,10 +978,80 @@ class TerminalRenderer: NSView {
         return false
     }
 
+    // MARK: Mouse Tracking (hover + hyperlinks)
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let (col, row) = gridPoint(from: event)
+        let colI = Int(col)
+        let rowI = Int(row)
+        if colI == hoverCol && rowI == hoverRow { return }
+        hoverCol = colI
+        hoverRow = rowI
+
+        // Check if the cell under the cursor is a hyperlink.
+        let wasLink = hoverIsLink
+        hoverIsLink = false
+        if let grid = backend?.gridSnapshot(),
+           rowI < grid.lines && colI < grid.cols {
+            let cell = grid.cell(row: rowI, col: colI)
+            if cell.flags & GridBufferReader.flagHyperlink != 0 {
+                hoverIsLink = true
+            }
+        }
+
+        if hoverIsLink != wasLink {
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoverIsLink {
+            hoverIsLink = false
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+        hoverCol = -1
+        hoverRow = -1
+    }
+
+    override func resetCursorRects() {
+        if hoverIsLink {
+            // Whole view uses pointing-hand cursor while hovering a link.
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+
+        // Cmd+Click on a hyperlink opens the URL.
+        if event.modifierFlags.contains(.command) {
+            let (col, row) = gridPoint(from: event)
+            if let uri = backend?.hyperlinkAt(col: Int(col), row: Int(row)),
+               let url = URL(string: uri) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
+
         if reportMouseEvent(event, button: 0, motion: false, release: false) {
             return
         }

@@ -37,6 +37,9 @@ bitflags::bitflags! {
         const UNDERCURL         = 1 << 10;
         const DOTTED_UNDERLINE  = 1 << 11;
         const DASHED_UNDERLINE  = 1 << 12;
+        /// Cell is part of an OSC 8 hyperlink. Query the backend
+        /// with `hyperlink_at(col, row)` to get the URI.
+        const HYPERLINK         = 1 << 13;
     }
 }
 

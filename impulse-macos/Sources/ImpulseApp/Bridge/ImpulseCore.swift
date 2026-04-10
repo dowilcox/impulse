@@ -624,6 +624,15 @@ final class ImpulseCore {
         }
     }
 
+    /// Returns the OSC 8 hyperlink URI at the given grid cell, or nil.
+    static func terminalHyperlinkAt(handle: OpaquePointer, col: UInt32, row: UInt32) -> String? {
+        guard let cStr = impulse_terminal_hyperlink_at(UnsafeMutableRawPointer(handle), col, row) else {
+            return nil
+        }
+        defer { impulse_free_string(cStr) }
+        return String(cString: cStr)
+    }
+
     /// Returns the installation status of system (non-managed) LSP servers
     /// as an array of dictionaries with `command`, `installed`, and
     /// `resolvedPath` keys.
