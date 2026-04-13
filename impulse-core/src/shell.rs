@@ -1,4 +1,5 @@
 use portable_pty::CommandBuilder;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[cfg(unix)]
@@ -148,9 +149,52 @@ pub fn build_shell_command(
     shell_path: &str,
     shell_type: &ShellType,
 ) -> Result<(CommandBuilder, Vec<PathBuf>), std::io::Error> {
+    let launch = build_shell_launch_config(shell_path, shell_type)?;
+    let mut cmd = CommandBuilder::new(&launch.shell_path);
+    for arg in &launch.shell_args {
+        cmd.arg(arg);
+    }
+    for (key, value) in &launch.env_vars {
+        cmd.env(key, value);
+    }
+    cmd.env_remove("LD_PRELOAD");
+    cmd.env_remove("LD_LIBRARY_PATH");
+    cmd.env_remove("LD_AUDIT");
+    cmd.env_remove("DYLD_INSERT_LIBRARIES");
+    cmd.env_remove("DYLD_LIBRARY_PATH");
+    cmd.env_remove("DYLD_FRAMEWORK_PATH");
+    Ok((cmd, launch.temp_files))
+}
+
+/// Get the shell integration script content for a given shell type.
+/// Useful when the caller (e.g. VTE, SwiftTerm) manages its own PTY
+/// and just needs the script text to inject via env vars.
+pub fn get_integration_script(shell_type: &ShellType) -> &'static str {
+    match shell_type {
+        ShellType::Bash => BASH_INTEGRATION,
+        ShellType::Zsh => ZSH_INTEGRATION,
+        ShellType::Fish => FISH_INTEGRATION,
+    }
+}
+
+/// Shell launch configuration for frontends that manage their own PTY.
+pub struct ShellLaunchConfig {
+    pub shell_path: String,
+    pub shell_args: Vec<String>,
+    pub env_vars: HashMap<String, String>,
+    pub temp_files: Vec<PathBuf>,
+}
+
+/// Build shell arguments, environment, and temp files for shell integration.
+pub fn build_shell_launch_config(
+    shell_path: &str,
+    shell_type: &ShellType,
+) -> Result<ShellLaunchConfig, std::io::Error> {
+    let mut shell_args = Vec::new();
+    let mut env_vars = HashMap::new();
     let mut temp_files = Vec::new();
 
-    let mut cmd = match shell_type {
+    match shell_type {
         ShellType::Bash => {
             let home = dirs::home_dir()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -176,10 +220,8 @@ pub fn build_shell_command(
             write_secure_file(&rc_path, &rc_content)?;
             temp_files.push(rc_path.clone());
 
-            let mut cmd = CommandBuilder::new(shell_path);
-            cmd.arg("--rcfile");
-            cmd.arg(rc_path.to_string_lossy().as_ref());
-            cmd
+            shell_args.push("--rcfile".to_string());
+            shell_args.push(rc_path.to_string_lossy().into_owned());
         }
         ShellType::Zsh => {
             let home = dirs::home_dir()
@@ -241,43 +283,39 @@ pub fn build_shell_command(
             write_secure_file(&zshrc_path, &rc_content)?;
             temp_files.push(zshrc_path);
 
-            let mut cmd = CommandBuilder::new(shell_path);
-            cmd.arg("--login");
-            cmd.env("ZDOTDIR", zdotdir.to_string_lossy().as_ref());
-            cmd
+            shell_args.push("--login".to_string());
+            env_vars.insert(
+                "ZDOTDIR".to_string(),
+                zdotdir.to_string_lossy().into_owned(),
+            );
         }
         ShellType::Fish => {
-            let mut cmd = CommandBuilder::new(shell_path);
-            cmd.arg("--login");
-            cmd.arg("--init-command");
-            cmd.arg(FISH_INTEGRATION);
-            cmd
+            shell_args.push("--login".to_string());
+            shell_args.push("--init-command".to_string());
+            shell_args.push(FISH_INTEGRATION.to_string());
         }
-    };
+    }
 
-    cmd.env("TERM_PROGRAM", "Impulse");
-    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-    cmd.env("TERM", "xterm-256color");
-    cmd.env_remove("LD_PRELOAD");
-    cmd.env_remove("LD_LIBRARY_PATH");
-    cmd.env_remove("LD_AUDIT");
-    // macOS equivalents: prevent dylib injection into child shells
-    cmd.env_remove("DYLD_INSERT_LIBRARIES");
-    cmd.env_remove("DYLD_LIBRARY_PATH");
-    cmd.env_remove("DYLD_FRAMEWORK_PATH");
+    env_vars.insert("TERM_PROGRAM".to_string(), "Impulse".to_string());
+    env_vars.insert(
+        "TERM_PROGRAM_VERSION".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
+    env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
 
-    Ok((cmd, temp_files))
+    Ok(ShellLaunchConfig {
+        shell_path: shell_path.to_string(),
+        shell_args,
+        env_vars,
+        temp_files,
+    })
 }
 
-/// Get the shell integration script content for a given shell type.
-/// Useful when the caller (e.g. VTE, SwiftTerm) manages its own PTY
-/// and just needs the script text to inject via env vars.
-pub fn get_integration_script(shell_type: &ShellType) -> &'static str {
-    match shell_type {
-        ShellType::Bash => BASH_INTEGRATION,
-        ShellType::Zsh => ZSH_INTEGRATION,
-        ShellType::Fish => FISH_INTEGRATION,
-    }
+/// Prepare shell arguments and environment for frontends using their own PTY.
+pub fn prepare_shell_launch_config() -> Result<ShellLaunchConfig, std::io::Error> {
+    let shell_path = get_default_shell_path();
+    let shell_type = detect_shell_type(&shell_path);
+    build_shell_launch_config(&shell_path, &shell_type)
 }
 
 /// Prepare environment variables and arguments for spawning a shell with integration.

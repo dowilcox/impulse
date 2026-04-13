@@ -6,6 +6,7 @@ import dev.impulse.app
 
 ApplicationWindow {
     id: root
+    property bool startupComplete: false
 
     // Resource paths — project root resolved from Rust via executable path
     readonly property string iconsDir: "file://" + windowModel.project_root + "assets/icons/"
@@ -32,6 +33,13 @@ ApplicationWindow {
     SearchModel { id: searchModel }
     SettingsModel { id: settings }
 
+    Timer {
+        id: uiStateSaveDebounce
+        interval: 300
+        repeat: false
+        onTriggered: settings.save()
+    }
+
     // ── Startup ──────────────────────────────────────────────────────────────
     Timer {
         interval: 100
@@ -41,28 +49,44 @@ ApplicationWindow {
             // Load persisted settings first
             settings.load()
 
+            if (settings.window_width > 0)
+                root.width = settings.window_width
+            if (settings.window_height > 0)
+                root.height = settings.window_height
+
             // Apply theme from settings (fall back to "nord")
             var themeId = settings.color_scheme.length > 0 ? settings.color_scheme : "nord"
             theme.set_theme(themeId)
 
             // Determine initial directory: CLI arg > settings > CWD
             var dir = windowModel.get_initial_directory()
-            if (settings.last_directory.length > 0) {
-                // Prefer settings only if no CLI arg was given (CWD == initial_dir)
-                var cliDir = windowModel.get_initial_directory()
-                // If the resolved dir is just CWD (no explicit arg), use saved dir
-                // We can't distinguish easily, so just use CLI-resolved dir
+            if (!windowModel.has_startup_path() && settings.last_directory.length > 0) {
+                dir = settings.last_directory
             }
+
             windowModel.set_directory(dir)
+            fileTreeModel.show_hidden = settings.sidebar_show_hidden
             fileTreeModel.load_root(dir)
             searchModel.root_path = dir
 
             // Apply sidebar visibility from settings
             windowModel.sidebar_visible = settings.sidebar_visible
+            sidebar.SplitView.preferredWidth = settings.sidebar_width > 0 ? settings.sidebar_width : 260
 
             // Open a terminal tab on launch
             windowModel.create_tab("terminal")
+            startupComplete = true
         }
+    }
+
+    onClosing: function(close) {
+        settings.set_setting("window_width", Math.round(root.width).toString())
+        settings.set_setting("window_height", Math.round(root.height).toString())
+        settings.set_setting("sidebar_visible", windowModel.sidebar_visible ? "true" : "false")
+        settings.set_setting("sidebar_width", Math.round(sidebar.width).toString())
+        settings.set_setting("last_directory", windowModel.current_directory)
+        settings.set_setting("sidebar_show_hidden", fileTreeModel.show_hidden ? "true" : "false")
+        settings.save()
     }
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
@@ -150,6 +174,13 @@ ApplicationWindow {
             } else {
                 fileTreeModel.set_active_path("")
             }
+        }
+        function onDirectory_changed() {
+            if (!root.startupComplete)
+                return
+            searchModel.root_path = windowModel.current_directory
+            settings.set_setting("last_directory", windowModel.current_directory)
+            uiStateSaveDebounce.restart()
         }
     }
 

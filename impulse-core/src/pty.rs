@@ -289,7 +289,10 @@ impl PtyManager {
                 let _ = tx.send(());
             });
             if rx.recv_timeout(Duration::from_secs(5)).is_err() {
-                log::warn!("Timed out waiting for PTY child process {} to exit", session_id);
+                log::warn!(
+                    "Timed out waiting for PTY child process {} to exit",
+                    session_id
+                );
             }
             if let Some(handle) = reader_handle {
                 if let Err(e) = handle.join() {

@@ -3,9 +3,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use alacritty_terminal::tty::{Options as PtyOptions, Shell};
 use alacritty_terminal::term::Config as AlacrittyConfig;
-use alacritty_terminal::vte::ansi::{CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle};
+use alacritty_terminal::tty::{Options as PtyOptions, Shell};
+use alacritty_terminal::vte::ansi::{
+    CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
+};
 use serde::Deserialize;
 
 use crate::grid::{CursorShape, RgbColor};

@@ -2,8 +2,8 @@
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
-use alacritty_terminal::term::Term;
 use alacritty_terminal::term::search::RegexSearch;
+use alacritty_terminal::term::Term;
 use serde::Serialize;
 
 use crate::buffer::HighlightRange;
@@ -19,7 +19,11 @@ pub struct SearchResult {
 impl SearchResult {
     /// A "no match" sentinel value.
     pub fn no_match() -> Self {
-        Self { match_row: -1, match_start_col: -1, match_end_col: -1 }
+        Self {
+            match_row: -1,
+            match_start_col: -1,
+            match_end_col: -1,
+        }
     }
 }
 
@@ -182,8 +186,16 @@ impl TerminalSearch {
                         let start_row = m_start.line.0.max(0) as usize;
                         let end_row = (m_end.line.0.max(0) as usize).min(num_lines - 1);
                         for row in start_row..=end_row {
-                            let sc = if row == start_row { m_start.column.0 } else { 0 };
-                            let ec = if row == end_row { m_end.column.0 } else { num_cols - 1 };
+                            let sc = if row == start_row {
+                                m_start.column.0
+                            } else {
+                                0
+                            };
+                            let ec = if row == end_row {
+                                m_end.column.0
+                            } else {
+                                num_cols - 1
+                            };
                             ranges.push(HighlightRange {
                                 row: row as u16,
                                 start_col: sc as u16,

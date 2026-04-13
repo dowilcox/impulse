@@ -57,7 +57,10 @@ ToolBar {
         // Current directory (abbreviated)
         Label {
             text: {
-                var dir = windowModel.current_directory
+                var view = contentArea ? contentArea.activeView() : null
+                var dir = view && view.currentDirectory && view.currentDirectory.length > 0
+                    ? view.currentDirectory
+                    : windowModel.current_directory
                 var home = StandardPaths.writableLocation(StandardPaths.HomeLocation)
                 if (home && dir.indexOf(home) === 0) {
                     dir = "~" + dir.substring(home.length)

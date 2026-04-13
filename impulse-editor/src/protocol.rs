@@ -421,67 +421,259 @@ pub fn theme_to_monaco(theme: &impulse_core::theme::ResolvedTheme) -> MonacoThem
                 font_style: Some("italic".into()),
             },
             // Keywords
-            MonacoTokenRule { token: "keyword".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.control".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.declaration".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.type".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.other".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.flow".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.block".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.try".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.catch".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.choice".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
-            MonacoTokenRule { token: "keyword.modifier".into(), foreground: Some(strip(&theme.syntax_keyword)), font_style: None },
+            MonacoTokenRule {
+                token: "keyword".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.control".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.declaration".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.type".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.other".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.flow".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.block".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.try".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.catch".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.choice".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.modifier".into(),
+                foreground: Some(strip(&theme.syntax_keyword)),
+                font_style: None,
+            },
             // Constants & numbers
-            MonacoTokenRule { token: "keyword.constant".into(), foreground: Some(strip(&theme.syntax_constant)), font_style: None },
-            MonacoTokenRule { token: "number".into(), foreground: Some(strip(&theme.syntax_number)), font_style: None },
-            MonacoTokenRule { token: "number.hex".into(), foreground: Some(strip(&theme.syntax_number)), font_style: None },
-            MonacoTokenRule { token: "number.float".into(), foreground: Some(strip(&theme.syntax_number)), font_style: None },
-            MonacoTokenRule { token: "number.binary".into(), foreground: Some(strip(&theme.syntax_number)), font_style: None },
-            MonacoTokenRule { token: "number.octal".into(), foreground: Some(strip(&theme.syntax_number)), font_style: None },
-            MonacoTokenRule { token: "constant".into(), foreground: Some(strip(&theme.syntax_constant)), font_style: None },
-            MonacoTokenRule { token: "string.escape".into(), foreground: Some(strip(&theme.syntax_escape)), font_style: None },
+            MonacoTokenRule {
+                token: "keyword.constant".into(),
+                foreground: Some(strip(&theme.syntax_constant)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "number".into(),
+                foreground: Some(strip(&theme.syntax_number)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "number.hex".into(),
+                foreground: Some(strip(&theme.syntax_number)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "number.float".into(),
+                foreground: Some(strip(&theme.syntax_number)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "number.binary".into(),
+                foreground: Some(strip(&theme.syntax_number)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "number.octal".into(),
+                foreground: Some(strip(&theme.syntax_number)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "constant".into(),
+                foreground: Some(strip(&theme.syntax_constant)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "string.escape".into(),
+                foreground: Some(strip(&theme.syntax_escape)),
+                font_style: None,
+            },
             // Strings
-            MonacoTokenRule { token: "string".into(), foreground: Some(strip(&theme.syntax_string)), font_style: None },
-            MonacoTokenRule { token: "string.heredoc".into(), foreground: Some(strip(&theme.syntax_string)), font_style: None },
-            MonacoTokenRule { token: "string.raw".into(), foreground: Some(strip(&theme.syntax_string)), font_style: None },
-            MonacoTokenRule { token: "attribute.value".into(), foreground: Some(strip(&theme.syntax_string)), font_style: None },
+            MonacoTokenRule {
+                token: "string".into(),
+                foreground: Some(strip(&theme.syntax_string)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "string.heredoc".into(),
+                foreground: Some(strip(&theme.syntax_string)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "string.raw".into(),
+                foreground: Some(strip(&theme.syntax_string)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "attribute.value".into(),
+                foreground: Some(strip(&theme.syntax_string)),
+                font_style: None,
+            },
             // Operators, special strings, predefined
-            MonacoTokenRule { token: "string.key".into(), foreground: Some(strip(&theme.syntax_operator)), font_style: None },
-            MonacoTokenRule { token: "string.link".into(), foreground: Some(strip(&theme.syntax_link)), font_style: None },
-            MonacoTokenRule { token: "operator".into(), foreground: Some(strip(&theme.syntax_operator)), font_style: None },
-            MonacoTokenRule { token: "keyword.operator".into(), foreground: Some(strip(&theme.syntax_operator)), font_style: None },
-            MonacoTokenRule { token: "variable.predefined".into(), foreground: Some(strip(&theme.syntax_operator)), font_style: None },
-            MonacoTokenRule { token: "predefined".into(), foreground: Some(strip(&theme.syntax_operator)), font_style: None },
+            MonacoTokenRule {
+                token: "string.key".into(),
+                foreground: Some(strip(&theme.syntax_operator)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "string.link".into(),
+                foreground: Some(strip(&theme.syntax_link)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "operator".into(),
+                foreground: Some(strip(&theme.syntax_operator)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "keyword.operator".into(),
+                foreground: Some(strip(&theme.syntax_operator)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "variable.predefined".into(),
+                foreground: Some(strip(&theme.syntax_operator)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "predefined".into(),
+                foreground: Some(strip(&theme.syntax_operator)),
+                font_style: None,
+            },
             // Types, classes, annotations
-            MonacoTokenRule { token: "type".into(), foreground: Some(strip(&theme.syntax_type)), font_style: None },
-            MonacoTokenRule { token: "type.identifier".into(), foreground: Some(strip(&theme.syntax_type)), font_style: None },
-            MonacoTokenRule { token: "class".into(), foreground: Some(strip(&theme.syntax_type)), font_style: None },
-            MonacoTokenRule { token: "annotation".into(), foreground: Some(strip(&theme.syntax_attribute)), font_style: None },
-            MonacoTokenRule { token: "namespace".into(), foreground: Some(strip(&theme.syntax_type)), font_style: None },
-            MonacoTokenRule { token: "constructor".into(), foreground: Some(strip(&theme.syntax_type)), font_style: None },
-            MonacoTokenRule { token: "attribute.name".into(), foreground: Some(strip(&theme.syntax_attribute)), font_style: None },
+            MonacoTokenRule {
+                token: "type".into(),
+                foreground: Some(strip(&theme.syntax_type)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "type.identifier".into(),
+                foreground: Some(strip(&theme.syntax_type)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "class".into(),
+                foreground: Some(strip(&theme.syntax_type)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "annotation".into(),
+                foreground: Some(strip(&theme.syntax_attribute)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "namespace".into(),
+                foreground: Some(strip(&theme.syntax_type)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "constructor".into(),
+                foreground: Some(strip(&theme.syntax_type)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "attribute.name".into(),
+                foreground: Some(strip(&theme.syntax_attribute)),
+                font_style: None,
+            },
             // Functions
-            MonacoTokenRule { token: "function".into(), foreground: Some(strip(&theme.syntax_function)), font_style: None },
-            MonacoTokenRule { token: "function.declaration".into(), foreground: Some(strip(&theme.syntax_function)), font_style: None },
-            MonacoTokenRule { token: "function.call".into(), foreground: Some(strip(&theme.syntax_function)), font_style: None },
-            MonacoTokenRule { token: "predefined.function".into(), foreground: Some(strip(&theme.syntax_function)), font_style: None },
+            MonacoTokenRule {
+                token: "function".into(),
+                foreground: Some(strip(&theme.syntax_function)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "function.declaration".into(),
+                foreground: Some(strip(&theme.syntax_function)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "function.call".into(),
+                foreground: Some(strip(&theme.syntax_function)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "predefined.function".into(),
+                foreground: Some(strip(&theme.syntax_function)),
+                font_style: None,
+            },
             // Tags, invalid, regexp
-            MonacoTokenRule { token: "string.escape.invalid".into(), foreground: Some(strip(&theme.syntax_tag)), font_style: None },
-            MonacoTokenRule { token: "string.invalid".into(), foreground: Some(strip(&theme.syntax_tag)), font_style: None },
-            MonacoTokenRule { token: "regexp".into(), foreground: Some(strip(&theme.syntax_regexp)), font_style: None },
-            MonacoTokenRule { token: "tag".into(), foreground: Some(strip(&theme.syntax_tag)), font_style: None },
-            MonacoTokenRule { token: "metatag".into(), foreground: Some(strip(&theme.syntax_tag)), font_style: None },
-            MonacoTokenRule { token: "invalid".into(), foreground: Some(strip(&theme.syntax_tag)), font_style: None },
+            MonacoTokenRule {
+                token: "string.escape.invalid".into(),
+                foreground: Some(strip(&theme.syntax_tag)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "string.invalid".into(),
+                foreground: Some(strip(&theme.syntax_tag)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "regexp".into(),
+                foreground: Some(strip(&theme.syntax_regexp)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "tag".into(),
+                foreground: Some(strip(&theme.syntax_tag)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "metatag".into(),
+                foreground: Some(strip(&theme.syntax_tag)),
+                font_style: None,
+            },
+            MonacoTokenRule {
+                token: "invalid".into(),
+                foreground: Some(strip(&theme.syntax_tag)),
+                font_style: None,
+            },
             // Variables, emphasis
-            MonacoTokenRule { token: "variable".into(), foreground: Some(strip(&theme.syntax_variable)), font_style: None },
+            MonacoTokenRule {
+                token: "variable".into(),
+                foreground: Some(strip(&theme.syntax_variable)),
+                font_style: None,
+            },
             MonacoTokenRule {
                 token: "emphasis".into(),
                 foreground: Some(strip(&theme.syntax_variable)),
                 font_style: Some("italic".into()),
             },
             // Delimiters
-            MonacoTokenRule { token: "delimiter".into(), foreground: Some(strip(&theme.syntax_delimiter)), font_style: None },
+            MonacoTokenRule {
+                token: "delimiter".into(),
+                foreground: Some(strip(&theme.syntax_delimiter)),
+                font_style: None,
+            },
             // Strong (bold)
             MonacoTokenRule {
                 token: "strong".into(),

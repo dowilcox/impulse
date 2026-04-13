@@ -29,9 +29,7 @@ pub struct MarkdownThemeColors {
 }
 
 /// Convert a [`ResolvedTheme`] into [`MarkdownThemeColors`] for the markdown preview.
-pub fn theme_to_markdown_colors(
-    theme: &impulse_core::theme::ResolvedTheme,
-) -> MarkdownThemeColors {
+pub fn theme_to_markdown_colors(theme: &impulse_core::theme::ResolvedTheme) -> MarkdownThemeColors {
     MarkdownThemeColors {
         bg: theme.bg.clone(),
         fg: theme.fg.clone(),

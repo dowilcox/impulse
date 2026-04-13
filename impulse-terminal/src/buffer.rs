@@ -19,9 +19,9 @@
 //!     [7..10)  bg RGB
 //!     [10..12) flags (u16 LE, CellFlags)
 
-use crate::grid::{CellFlags, CursorState, RgbColor, TerminalMode};
 #[cfg(test)]
 use crate::grid::CursorShape;
+use crate::grid::{CellFlags, CursorState, RgbColor, TerminalMode};
 
 /// Bytes per cell in the binary buffer.
 pub const CELL_STRIDE: usize = 12;
@@ -88,7 +88,14 @@ pub fn write_header(
 
 /// Write a single cell into the buffer at the given offset.
 #[inline]
-pub fn write_cell(buf: &mut [u8], offset: usize, ch: char, fg: RgbColor, bg: RgbColor, flags: CellFlags) {
+pub fn write_cell(
+    buf: &mut [u8],
+    offset: usize,
+    ch: char,
+    fg: RgbColor,
+    bg: RgbColor,
+    flags: CellFlags,
+) {
     let cp = ch as u32;
     buf[offset..offset + 4].copy_from_slice(&cp.to_le_bytes());
     buf[offset + 4] = fg.r;
@@ -106,17 +113,32 @@ mod tests {
 
     #[test]
     fn test_buffer_size() {
-        assert_eq!(buffer_size(80, 24, 0, 0), FIXED_HEADER_SIZE + 80 * 24 * CELL_STRIDE);
-        assert_eq!(buffer_size(80, 24, 2, 1), FIXED_HEADER_SIZE + 3 * RANGE_ENTRY_SIZE + 80 * 24 * CELL_STRIDE);
+        assert_eq!(
+            buffer_size(80, 24, 0, 0),
+            FIXED_HEADER_SIZE + 80 * 24 * CELL_STRIDE
+        );
+        assert_eq!(
+            buffer_size(80, 24, 2, 1),
+            FIXED_HEADER_SIZE + 3 * RANGE_ENTRY_SIZE + 80 * 24 * CELL_STRIDE
+        );
     }
 
     #[test]
     fn test_write_header_roundtrip() {
         let cols: u16 = 80;
         let lines: u16 = 24;
-        let cursor = CursorState { row: 5, col: 10, shape: CursorShape::Beam, visible: true };
+        let cursor = CursorState {
+            row: 5,
+            col: 10,
+            shape: CursorShape::Beam,
+            visible: true,
+        };
         let mode = TerminalMode::SHOW_CURSOR | TerminalMode::APP_CURSOR;
-        let sel = vec![HighlightRange { row: 3, start_col: 5, end_col: 20 }];
+        let sel = vec![HighlightRange {
+            row: 3,
+            start_col: 5,
+            end_col: 20,
+        }];
 
         let buf_size = buffer_size(cols, lines, sel.len() as u16, 0);
         let mut buf = vec![0u8; buf_size];
@@ -149,13 +171,19 @@ mod tests {
 
         write_cell(&mut buf, 0, 'A', fg, bg, flags);
 
-        assert_eq!(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]), 'A' as u32);
+        assert_eq!(
+            u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            'A' as u32
+        );
         assert_eq!(buf[4], 255); // fg.r
         assert_eq!(buf[5], 128); // fg.g
-        assert_eq!(buf[6], 0);   // fg.b
-        assert_eq!(buf[7], 0);   // bg.r
-        assert_eq!(buf[8], 0);   // bg.g
-        assert_eq!(buf[9], 30);  // bg.b
-        assert_eq!(u16::from_le_bytes([buf[10], buf[11]]), (CellFlags::BOLD | CellFlags::ITALIC).bits());
+        assert_eq!(buf[6], 0); // fg.b
+        assert_eq!(buf[7], 0); // bg.r
+        assert_eq!(buf[8], 0); // bg.g
+        assert_eq!(buf[9], 30); // bg.b
+        assert_eq!(
+            u16::from_le_bytes([buf[10], buf[11]]),
+            (CellFlags::BOLD | CellFlags::ITALIC).bits()
+        );
     }
 }

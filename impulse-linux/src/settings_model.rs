@@ -107,6 +107,62 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use std::pin::Pin;
 
+fn normalize_setting_key(key: &str) -> &str {
+    match key {
+        "windowWidth" => "window_width",
+        "windowHeight" => "window_height",
+        "sidebarVisible" => "sidebar_visible",
+        "sidebarWidth" => "sidebar_width",
+        "lastDirectory" => "last_directory",
+        "openFilesJson" => "open_files_json",
+        "autoSave" => "auto_save",
+        "fontSize" => "font_size",
+        "fontFamily" => "font_family",
+        "tabWidth" => "tab_width",
+        "useSpaces" => "use_spaces",
+        "showLineNumbers" => "show_line_numbers",
+        "showRightMargin" => "show_right_margin",
+        "rightMarginPosition" => "right_margin_position",
+        "wordWrap" => "word_wrap",
+        "highlightCurrentLine" => "highlight_current_line",
+        "minimapEnabled" => "minimap_enabled",
+        "renderWhitespace" => "render_whitespace",
+        "stickyScroll" => "sticky_scroll",
+        "bracketPairColorization" => "bracket_pair_colorization",
+        "indentGuides" => "indent_guides",
+        "fontLigatures" => "font_ligatures",
+        "folding" => "folding",
+        "scrollBeyondLastLine" => "scroll_beyond_last_line",
+        "smoothScrolling" => "smooth_scrolling",
+        "editorCursorStyle" => "editor_cursor_style",
+        "editorCursorBlinking" => "editor_cursor_blinking",
+        "terminalScrollback" => "terminal_scrollback",
+        "terminalCursorShape" => "terminal_cursor_shape",
+        "terminalCursorBlink" => "terminal_cursor_blink",
+        "terminalBell" => "terminal_bell",
+        "terminalFontFamily" => "terminal_font_family",
+        "terminalFontSize" => "terminal_font_size",
+        "terminalCopyOnSelect" => "terminal_copy_on_select",
+        "terminalScrollOnOutput" => "terminal_scroll_on_output",
+        "terminalAllowHyperlink" => "terminal_allow_hyperlink",
+        "terminalBoldIsBright" => "terminal_bold_is_bright",
+        "editorLineHeight" => "editor_line_height",
+        "editorAutoClosingBrackets" => "editor_auto_closing_brackets",
+        "editorCursorSurroundingLines" => "editor_cursor_surrounding_lines",
+        "editorSelectionHighlight" => "editor_selection_highlight",
+        "editorOccurrencesHighlight" => "editor_occurrences_highlight",
+        "editorWordBasedSuggestions" => "editor_word_based_suggestions",
+        "sidebarShowHidden" => "sidebar_show_hidden",
+        "colorScheme" => "color_scheme",
+        "checkForUpdates" => "check_for_updates",
+        "keybindingOverridesJson" => "keybinding_overrides_json",
+        "fileTypeOverridesJson" => "file_type_overrides_json",
+        "commandsOnSaveJson" => "commands_on_save_json",
+        "customKeybindingsJson" => "custom_keybindings_json",
+        _ => key,
+    }
+}
+
 /// Return the platform settings file path.
 fn settings_path() -> std::path::PathBuf {
     let config_dir = dirs::config_dir().unwrap_or_else(|| {
@@ -398,9 +454,10 @@ impl qobject::SettingsModel {
 
     pub fn set_setting(mut self: Pin<&mut Self>, key: &QString, value: &QString) {
         let key_str = key.to_string();
+        let normalized_key = normalize_setting_key(&key_str);
         let val_str = value.to_string();
 
-        match key_str.as_str() {
+        match normalized_key {
             // Window
             "window_width" => {
                 if let Ok(v) = val_str.parse::<i32>() {
@@ -423,6 +480,10 @@ impl qobject::SettingsModel {
             "last_directory" => {
                 self.as_mut()
                     .set_last_directory(QString::from(val_str.as_str()));
+            }
+            "open_files_json" => {
+                self.as_mut()
+                    .set_open_files_json(QString::from(val_str.as_str()));
             }
             // Editor
             "auto_save" => {
@@ -486,8 +547,7 @@ impl qobject::SettingsModel {
                 self.as_mut().set_folding(val_str == "true");
             }
             "scroll_beyond_last_line" => {
-                self.as_mut()
-                    .set_scroll_beyond_last_line(val_str == "true");
+                self.as_mut().set_scroll_beyond_last_line(val_str == "true");
             }
             "smooth_scrolling" => {
                 self.as_mut().set_smooth_scrolling(val_str == "true");
@@ -526,8 +586,7 @@ impl qobject::SettingsModel {
                 }
             }
             "terminal_copy_on_select" => {
-                self.as_mut()
-                    .set_terminal_copy_on_select(val_str == "true");
+                self.as_mut().set_terminal_copy_on_select(val_str == "true");
             }
             "terminal_scroll_on_output" => {
                 self.as_mut()
@@ -538,8 +597,7 @@ impl qobject::SettingsModel {
                     .set_terminal_allow_hyperlink(val_str == "true");
             }
             "terminal_bold_is_bright" => {
-                self.as_mut()
-                    .set_terminal_bold_is_bright(val_str == "true");
+                self.as_mut().set_terminal_bold_is_bright(val_str == "true");
             }
             // Editor (additional)
             "editor_line_height" => {
@@ -581,6 +639,23 @@ impl qobject::SettingsModel {
             "check_for_updates" => {
                 self.as_mut().set_check_for_updates(val_str == "true");
             }
+            // Complex JSON fields
+            "keybinding_overrides_json" => {
+                self.as_mut()
+                    .set_keybinding_overrides_json(QString::from(val_str.as_str()));
+            }
+            "file_type_overrides_json" => {
+                self.as_mut()
+                    .set_file_type_overrides_json(QString::from(val_str.as_str()));
+            }
+            "commands_on_save_json" => {
+                self.as_mut()
+                    .set_commands_on_save_json(QString::from(val_str.as_str()));
+            }
+            "custom_keybindings_json" => {
+                self.as_mut()
+                    .set_custom_keybindings_json(QString::from(val_str.as_str()));
+            }
             _ => {
                 log::warn!("Unknown setting key: '{}'", key_str);
             }
@@ -593,9 +668,14 @@ impl qobject::SettingsModel {
         let json_str = json.to_string();
         match serde_json::from_str::<impulse_core::settings::FileTypeOverride>(&json_str) {
             Ok(override_entry) => {
-                self.as_mut().rust_mut().inner.file_type_overrides.push(override_entry);
-                let new_json = serde_json::to_string(&self.as_ref().rust().inner.file_type_overrides)
-                    .unwrap_or_else(|_| "[]".to_string());
+                self.as_mut()
+                    .rust_mut()
+                    .inner
+                    .file_type_overrides
+                    .push(override_entry);
+                let new_json =
+                    serde_json::to_string(&self.as_ref().rust().inner.file_type_overrides)
+                        .unwrap_or_else(|_| "[]".to_string());
                 self.as_mut()
                     .set_file_type_overrides_json(QString::from(new_json.as_str()));
                 self.as_mut().settings_changed();
@@ -609,7 +689,11 @@ impl qobject::SettingsModel {
     pub fn remove_file_type_override(mut self: Pin<&mut Self>, index: i32) {
         let idx = index as usize;
         if idx < self.as_ref().rust().inner.file_type_overrides.len() {
-            self.as_mut().rust_mut().inner.file_type_overrides.remove(idx);
+            self.as_mut()
+                .rust_mut()
+                .inner
+                .file_type_overrides
+                .remove(idx);
             let new_json = serde_json::to_string(&self.as_ref().rust().inner.file_type_overrides)
                 .unwrap_or_else(|_| "[]".to_string());
             self.as_mut()
@@ -622,7 +706,11 @@ impl qobject::SettingsModel {
         let json_str = json.to_string();
         match serde_json::from_str::<impulse_core::settings::CommandOnSave>(&json_str) {
             Ok(command) => {
-                self.as_mut().rust_mut().inner.commands_on_save.push(command);
+                self.as_mut()
+                    .rust_mut()
+                    .inner
+                    .commands_on_save
+                    .push(command);
                 let new_json = serde_json::to_string(&self.as_ref().rust().inner.commands_on_save)
                     .unwrap_or_else(|_| "[]".to_string());
                 self.as_mut()
@@ -662,8 +750,7 @@ impl qobject::SettingsModel {
             .set_open_files_json(new_state.open_files_json.clone());
         self.as_mut().set_auto_save(new_state.auto_save);
         self.as_mut().set_font_size(new_state.font_size);
-        self.as_mut()
-            .set_font_family(new_state.font_family.clone());
+        self.as_mut().set_font_family(new_state.font_family.clone());
         self.as_mut().set_tab_width(new_state.tab_width);
         self.as_mut().set_use_spaces(new_state.use_spaces);
         self.as_mut()
@@ -675,8 +762,7 @@ impl qobject::SettingsModel {
         self.as_mut().set_word_wrap(new_state.word_wrap);
         self.as_mut()
             .set_highlight_current_line(new_state.highlight_current_line);
-        self.as_mut()
-            .set_minimap_enabled(new_state.minimap_enabled);
+        self.as_mut().set_minimap_enabled(new_state.minimap_enabled);
         self.as_mut()
             .set_render_whitespace(new_state.render_whitespace.clone());
         self.as_mut().set_sticky_scroll(new_state.sticky_scroll);
@@ -741,5 +827,32 @@ impl qobject::SettingsModel {
 
         // Update the inner settings struct
         self.as_mut().rust_mut().inner = new_state.inner;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_setting_key;
+
+    #[test]
+    fn normalizes_camel_case_setting_keys() {
+        assert_eq!(normalize_setting_key("colorScheme"), "color_scheme");
+        assert_eq!(
+            normalize_setting_key("terminalFontSize"),
+            "terminal_font_size"
+        );
+        assert_eq!(
+            normalize_setting_key("customKeybindingsJson"),
+            "custom_keybindings_json"
+        );
+    }
+
+    #[test]
+    fn preserves_existing_snake_case_keys() {
+        assert_eq!(normalize_setting_key("sidebar_visible"), "sidebar_visible");
+        assert_eq!(
+            normalize_setting_key("commands_on_save_json"),
+            "commands_on_save_json"
+        );
     }
 }

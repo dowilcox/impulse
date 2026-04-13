@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 impulse-core = { path = "../impulse-core" }
 impulse-editor = { path = "../impulse-editor" }
+impulse-terminal = { path = "../impulse-terminal" }
 cxx = "1.0"
 cxx-qt = "0.8"
 cxx-qt-lib = { version = "0.8", features = ["qt_full"] }

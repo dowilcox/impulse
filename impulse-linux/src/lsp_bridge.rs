@@ -22,8 +22,11 @@ pub mod qobject {
         fn initialize(self: Pin<&mut LspBridge>, root_uri: &QString);
 
         #[qinvokable]
-        fn ensure_servers(self: Pin<&mut LspBridge>, language_id: &QString, file_uri: &QString)
-            -> i32;
+        fn ensure_servers(
+            self: Pin<&mut LspBridge>,
+            language_id: &QString,
+            file_uri: &QString,
+        ) -> i32;
 
         #[qinvokable]
         fn request(
@@ -56,11 +59,7 @@ pub mod qobject {
         fn install_servers(self: &LspBridge) -> QString;
 
         #[qsignal]
-        fn diagnostics_received(
-            self: Pin<&mut LspBridge>,
-            uri: QString,
-            diagnostics_json: QString,
-        );
+        fn diagnostics_received(self: Pin<&mut LspBridge>, uri: QString, diagnostics_json: QString);
 
         #[qsignal]
         fn server_initialized(self: Pin<&mut LspBridge>, server_id: QString);
@@ -153,22 +152,18 @@ impl qobject::LspBridge {
         self.as_mut().set_is_initialized(true);
     }
 
-    pub fn ensure_servers(
-        self: Pin<&mut Self>,
-        language_id: &QString,
-        file_uri: &QString,
-    ) -> i32 {
+    pub fn ensure_servers(self: Pin<&mut Self>, language_id: &QString, file_uri: &QString) -> i32 {
         let lang = language_id.to_string();
         let uri = file_uri.to_string();
 
-        let (runtime, registry) = match (self.rust().runtime.as_ref(), self.rust().registry.as_ref())
-        {
-            (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
-            _ => {
-                log::warn!("LspBridge::ensure_servers called before initialize");
-                return -1;
-            }
-        };
+        let (runtime, registry) =
+            match (self.rust().runtime.as_ref(), self.rust().registry.as_ref()) {
+                (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
+                _ => {
+                    log::warn!("LspBridge::ensure_servers called before initialize");
+                    return -1;
+                }
+            };
 
         runtime.block_on(async {
             let clients = registry.get_clients(&lang, &uri).await;
@@ -194,11 +189,11 @@ impl qobject::LspBridge {
             serde_json::from_str(&params_str).ok()
         };
 
-        let (runtime, registry) = match (self.rust().runtime.as_ref(), self.rust().registry.as_ref())
-        {
-            (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
-            _ => return QString::from("{\"error\":\"not initialized\"}"),
-        };
+        let (runtime, registry) =
+            match (self.rust().runtime.as_ref(), self.rust().registry.as_ref()) {
+                (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
+                _ => return QString::from("{\"error\":\"not initialized\"}"),
+            };
 
         runtime.block_on(async {
             let clients = registry.get_clients(&lang, &uri).await;
@@ -238,14 +233,14 @@ impl qobject::LspBridge {
             serde_json::from_str(&params_str).ok()
         };
 
-        let (runtime, registry) = match (self.rust().runtime.as_ref(), self.rust().registry.as_ref())
-        {
-            (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
-            _ => {
-                log::warn!("LspBridge::notify called before initialize");
-                return;
-            }
-        };
+        let (runtime, registry) =
+            match (self.rust().runtime.as_ref(), self.rust().registry.as_ref()) {
+                (Some(rt), Some(reg)) => (rt.clone(), reg.clone()),
+                _ => {
+                    log::warn!("LspBridge::notify called before initialize");
+                    return;
+                }
+            };
 
         runtime.block_on(async {
             let clients = registry.get_clients(&lang, &uri).await;

@@ -51,10 +51,19 @@ pub mod qobject {
         fn create_editor_tab(self: Pin<&mut WindowModel>, path: &QString);
 
         #[qinvokable]
+        fn create_image_tab(self: Pin<&mut WindowModel>, path: &QString);
+
+        #[qinvokable]
         fn set_tab_title(self: Pin<&mut WindowModel>, index: i32, title: &QString);
 
         #[qinvokable]
+        fn set_tab_title_by_id(self: Pin<&mut WindowModel>, tab_id: i32, title: &QString);
+
+        #[qinvokable]
         fn get_initial_directory(self: &WindowModel) -> QString;
+
+        #[qinvokable]
+        fn has_startup_path(self: &WindowModel) -> bool;
 
         #[qsignal]
         fn directory_changed(self: Pin<&mut WindowModel>);
@@ -71,6 +80,10 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+
+fn startup_args() -> impl Iterator<Item = String> {
+    std::env::args().skip(1).filter(|arg| !arg.starts_with('-'))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TabDisplayInfo {
@@ -294,10 +307,7 @@ impl qobject::WindowModel {
 
     pub fn get_initial_directory(&self) -> QString {
         // Check CLI args for a directory path
-        for arg in std::env::args().skip(1) {
-            if arg.starts_with('-') {
-                continue;
-            }
+        for arg in startup_args() {
             let path = std::path::Path::new(&arg);
             if path.is_dir() {
                 if let Ok(canonical) = path.canonicalize() {
@@ -327,12 +337,59 @@ impl qobject::WindowModel {
         QString::from("/")
     }
 
+    pub fn has_startup_path(&self) -> bool {
+        startup_args().next().is_some()
+    }
+
     pub fn set_tab_title(mut self: Pin<&mut Self>, index: i32, title: &QString) {
         let idx = index as usize;
         if idx < self.tabs.len() {
             self.as_mut().rust_mut().tabs[idx].title = title.to_string();
             self.as_mut().rebuild_tabs_json();
         }
+    }
+
+    pub fn set_tab_title_by_id(mut self: Pin<&mut Self>, tab_id: i32, title: &QString) {
+        let target_id = tab_id as u64;
+        if let Some(tab) = self
+            .as_mut()
+            .rust_mut()
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == target_id)
+        {
+            tab.title = title.to_string();
+            self.as_mut().rebuild_tabs_json();
+        }
+    }
+
+    pub fn create_image_tab(mut self: Pin<&mut Self>, path: &QString) {
+        let path_str = path.to_string();
+        let title = std::path::Path::new(&path_str)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Image".to_string());
+
+        let tab_id = self.as_ref().rust().next_tab_id;
+        self.as_mut().rust_mut().next_tab_id += 1;
+
+        let info = TabDisplayInfo {
+            id: tab_id,
+            title,
+            icon: "image".to_string(),
+            is_modified: false,
+            tab_type: "image".to_string(),
+            file_path: path_str,
+        };
+
+        self.as_mut().rust_mut().tabs.push(info);
+        let new_count = self.tabs.len() as i32;
+        let new_index = new_count - 1;
+
+        self.as_mut().set_tab_count(new_count);
+        self.as_mut().set_active_tab_index(new_index);
+        self.as_mut().rebuild_tabs_json();
+        self.as_mut().tab_switched();
     }
 
     fn rebuild_tabs_json(self: Pin<&mut Self>) {

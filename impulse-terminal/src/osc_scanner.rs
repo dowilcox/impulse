@@ -21,8 +21,8 @@ pub enum OscEvent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Normal,
-    Escape,   // Saw ESC (0x1B), expecting ']' for OSC
-    OscBody,  // Inside OSC payload, collecting until BEL or ST
+    Escape,  // Saw ESC (0x1B), expecting ']' for OSC
+    OscBody, // Inside OSC payload, collecting until BEL or ST
 }
 
 /// Maximum OSC payload size before we reset (prevents unbounded growth).
@@ -181,7 +181,10 @@ mod tests {
         let seq = b"\x1b]7;file://myhost/Users/test\x07";
         scanner.scan(seq);
         let events = scanner.drain_events();
-        assert_eq!(events, vec![OscEvent::CwdChanged("/Users/test".to_string())]);
+        assert_eq!(
+            events,
+            vec![OscEvent::CwdChanged("/Users/test".to_string())]
+        );
     }
 
     #[test]
@@ -190,7 +193,10 @@ mod tests {
         let seq = b"\x1b]7;file://host/Users/my%20dir/foo%2Fbar\x07";
         scanner.scan(seq);
         let events = scanner.drain_events();
-        assert_eq!(events, vec![OscEvent::CwdChanged("/Users/my dir/foo/bar".to_string())]);
+        assert_eq!(
+            events,
+            vec![OscEvent::CwdChanged("/Users/my dir/foo/bar".to_string())]
+        );
     }
 
     #[test]
@@ -239,10 +245,13 @@ mod tests {
         let data = b"hello\x1b]133;A\x07world\x1b]7;file://h/tmp\x07";
         scanner.scan(data);
         let events = scanner.drain_events();
-        assert_eq!(events, vec![
-            OscEvent::PromptStart,
-            OscEvent::CwdChanged("/tmp".to_string()),
-        ]);
+        assert_eq!(
+            events,
+            vec![
+                OscEvent::PromptStart,
+                OscEvent::CwdChanged("/tmp".to_string()),
+            ]
+        );
     }
 
     #[test]

@@ -6,13 +6,15 @@ use std::thread::JoinHandle;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::tty;
-use alacritty_terminal::vte::ansi::{Color as AlacColor, CursorShape as AlacCursorShape, NamedColor};
+use alacritty_terminal::vte::ansi::Processor;
+use alacritty_terminal::vte::ansi::{
+    Color as AlacColor, CursorShape as AlacCursorShape, NamedColor,
+};
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::buffer::{self, HighlightRange};
@@ -33,20 +35,38 @@ struct EventProxy {
 impl EventListener for EventProxy {
     fn send_event(&self, event: AlacEvent) {
         match event {
-            AlacEvent::PtyWrite(text) => { let _ = self.event_tx.send(TerminalEvent::PtyWrite(text)); }
-            AlacEvent::Wakeup => { let _ = self.event_tx.send(TerminalEvent::Wakeup); }
-            AlacEvent::Title(title) => { let _ = self.event_tx.send(TerminalEvent::TitleChanged(title)); }
-            AlacEvent::ResetTitle => { let _ = self.event_tx.send(TerminalEvent::ResetTitle); }
-            AlacEvent::Bell => { let _ = self.event_tx.send(TerminalEvent::Bell); }
-            AlacEvent::Exit => { let _ = self.event_tx.send(TerminalEvent::Exit); }
+            AlacEvent::PtyWrite(text) => {
+                let _ = self.event_tx.send(TerminalEvent::PtyWrite(text));
+            }
+            AlacEvent::Wakeup => {
+                let _ = self.event_tx.send(TerminalEvent::Wakeup);
+            }
+            AlacEvent::Title(title) => {
+                let _ = self.event_tx.send(TerminalEvent::TitleChanged(title));
+            }
+            AlacEvent::ResetTitle => {
+                let _ = self.event_tx.send(TerminalEvent::ResetTitle);
+            }
+            AlacEvent::Bell => {
+                let _ = self.event_tx.send(TerminalEvent::Bell);
+            }
+            AlacEvent::Exit => {
+                let _ = self.event_tx.send(TerminalEvent::Exit);
+            }
             AlacEvent::ChildExit(status) => {
                 // ExitStatus -> i32: use code() which returns Option<i32>, defaulting to -1.
                 let code = status.code().unwrap_or(-1);
                 let _ = self.event_tx.send(TerminalEvent::ChildExited(code));
             }
-            AlacEvent::ClipboardStore(_, text) => { let _ = self.event_tx.send(TerminalEvent::ClipboardStore(text)); }
-            AlacEvent::ClipboardLoad(_, _) => { let _ = self.event_tx.send(TerminalEvent::ClipboardLoad); }
-            AlacEvent::CursorBlinkingChange => { let _ = self.event_tx.send(TerminalEvent::CursorBlinkingChange); }
+            AlacEvent::ClipboardStore(_, text) => {
+                let _ = self.event_tx.send(TerminalEvent::ClipboardStore(text));
+            }
+            AlacEvent::ClipboardLoad(_, _) => {
+                let _ = self.event_tx.send(TerminalEvent::ClipboardLoad);
+            }
+            AlacEvent::CursorBlinkingChange => {
+                let _ = self.event_tx.send(TerminalEvent::CursorBlinkingChange);
+            }
             AlacEvent::ColorRequest(_, _)
             | AlacEvent::TextAreaSizeRequest(_)
             | AlacEvent::MouseCursorDirty => {}
@@ -64,9 +84,15 @@ struct TermSize {
 }
 
 impl Dimensions for TermSize {
-    fn total_lines(&self) -> usize { self.screen_lines }
-    fn screen_lines(&self) -> usize { self.screen_lines }
-    fn columns(&self) -> usize { self.columns }
+    fn total_lines(&self) -> usize {
+        self.screen_lines
+    }
+    fn screen_lines(&self) -> usize {
+        self.screen_lines
+    }
+    fn columns(&self) -> usize {
+        self.columns
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +152,11 @@ impl ConfiguredColors {
         }
     }
 
-    fn resolve(&self, color: AlacColor, term_colors: &alacritty_terminal::term::color::Colors) -> RgbColor {
+    fn resolve(
+        &self,
+        color: AlacColor,
+        term_colors: &alacritty_terminal::term::color::Colors,
+    ) -> RgbColor {
         match color {
             AlacColor::Spec(rgb) => RgbColor::new(rgb.r, rgb.g, rgb.b),
             AlacColor::Named(named) => {
@@ -179,7 +209,12 @@ impl SelectionKind {
 /// Messages sent from the main thread to the PTY read thread.
 enum BackendMsg {
     Input(Vec<u8>),
-    Resize { cols: u16, rows: u16, cell_width: u16, cell_height: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+        cell_width: u16,
+        cell_height: u16,
+    },
     Shutdown,
 }
 
@@ -211,17 +246,27 @@ impl TerminalBackend {
     ) -> Result<Self, String> {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
-        let proxy = EventProxy { event_tx: event_tx.clone() };
+        let proxy = EventProxy {
+            event_tx: event_tx.clone(),
+        };
 
         let alac_config = config.to_alacritty_config();
         let pty_options = config.to_pty_options();
         let colors = ConfiguredColors::from_config(&config);
 
-        let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
+        let size = TermSize {
+            columns: cols as usize,
+            screen_lines: rows as usize,
+        };
         let term = Term::new(alac_config, &size, proxy);
         let term = Arc::new(FairMutex::new(term));
 
-        let window_size = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
+        let window_size = WindowSize {
+            num_lines: rows,
+            num_cols: cols,
+            cell_width,
+            cell_height,
+        };
         let pty = tty::new(&pty_options, window_size, 0)
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
@@ -282,12 +327,25 @@ impl TerminalBackend {
                     }
                     true
                 }
-                BackendMsg::Resize { cols, rows, cell_width, cell_height } => {
-                    let ws = WindowSize { num_lines: rows, num_cols: cols, cell_width, cell_height };
+                BackendMsg::Resize {
+                    cols,
+                    rows,
+                    cell_width,
+                    cell_height,
+                } => {
+                    let ws = WindowSize {
+                        num_lines: rows,
+                        num_cols: cols,
+                        cell_width,
+                        cell_height,
+                    };
                     if let Ok(mut p) = pty_for_loop.lock() {
                         p.on_resize(ws);
                     }
-                    let size = TermSize { columns: cols as usize, screen_lines: rows as usize };
+                    let size = TermSize {
+                        columns: cols as usize,
+                        screen_lines: rows as usize,
+                    };
                     term.lock().resize(size);
                     true
                 }
@@ -298,7 +356,9 @@ impl TerminalBackend {
         loop {
             // Drain all pending commands first (non-blocking).
             while let Ok(msg) = cmd_rx.try_recv() {
-                if !handle_cmd(msg) { return; }
+                if !handle_cmd(msg) {
+                    return;
+                }
             }
 
             // Try to read from PTY (non-blocking since fd is non-blocking).
@@ -371,10 +431,17 @@ impl TerminalBackend {
 
     /// Resize the terminal grid and PTY.
     pub fn resize(&mut self, cols: u16, rows: u16, cell_width: u16, cell_height: u16) {
-        if cols == self.cols && rows == self.rows { return; }
+        if cols == self.cols && rows == self.rows {
+            return;
+        }
         self.cols = cols;
         self.rows = rows;
-        let _ = self.cmd_tx.send(BackendMsg::Resize { cols, rows, cell_width, cell_height });
+        let _ = self.cmd_tx.send(BackendMsg::Resize {
+            cols,
+            rows,
+            cell_width,
+            cell_height,
+        });
     }
 
     /// Poll for terminal events (non-blocking).
@@ -384,7 +451,9 @@ impl TerminalBackend {
             match &ev {
                 TerminalEvent::PtyWrite(text) => {
                     // PtyWrite responses need to go back to the PTY.
-                    let _ = self.cmd_tx.send(BackendMsg::Input(text.as_bytes().to_vec()));
+                    let _ = self
+                        .cmd_tx
+                        .send(BackendMsg::Input(text.as_bytes().to_vec()));
                 }
                 _ => events.push(ev),
             }
@@ -405,17 +474,39 @@ impl TerminalBackend {
 
         // Build mode flags.
         let mut mode_flags = TerminalMode::empty();
-        if mode.contains(TermMode::SHOW_CURSOR) { mode_flags |= TerminalMode::SHOW_CURSOR; }
-        if mode.contains(TermMode::APP_CURSOR) { mode_flags |= TerminalMode::APP_CURSOR; }
-        if mode.contains(TermMode::APP_KEYPAD) { mode_flags |= TerminalMode::APP_KEYPAD; }
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK) { mode_flags |= TerminalMode::MOUSE_REPORT_CLICK; }
-        if mode.contains(TermMode::MOUSE_MOTION) { mode_flags |= TerminalMode::MOUSE_MOTION; }
-        if mode.contains(TermMode::MOUSE_DRAG) { mode_flags |= TerminalMode::MOUSE_DRAG; }
-        if mode.contains(TermMode::SGR_MOUSE) { mode_flags |= TerminalMode::MOUSE_SGR; }
-        if mode.contains(TermMode::BRACKETED_PASTE) { mode_flags |= TerminalMode::BRACKETED_PASTE; }
-        if mode.contains(TermMode::FOCUS_IN_OUT) { mode_flags |= TerminalMode::FOCUS_IN_OUT; }
-        if mode.contains(TermMode::ALT_SCREEN) { mode_flags |= TerminalMode::ALT_SCREEN; }
-        if mode.contains(TermMode::LINE_WRAP) { mode_flags |= TerminalMode::LINE_WRAP; }
+        if mode.contains(TermMode::SHOW_CURSOR) {
+            mode_flags |= TerminalMode::SHOW_CURSOR;
+        }
+        if mode.contains(TermMode::APP_CURSOR) {
+            mode_flags |= TerminalMode::APP_CURSOR;
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            mode_flags |= TerminalMode::APP_KEYPAD;
+        }
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            mode_flags |= TerminalMode::MOUSE_REPORT_CLICK;
+        }
+        if mode.contains(TermMode::MOUSE_MOTION) {
+            mode_flags |= TerminalMode::MOUSE_MOTION;
+        }
+        if mode.contains(TermMode::MOUSE_DRAG) {
+            mode_flags |= TerminalMode::MOUSE_DRAG;
+        }
+        if mode.contains(TermMode::SGR_MOUSE) {
+            mode_flags |= TerminalMode::MOUSE_SGR;
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            mode_flags |= TerminalMode::BRACKETED_PASTE;
+        }
+        if mode.contains(TermMode::FOCUS_IN_OUT) {
+            mode_flags |= TerminalMode::FOCUS_IN_OUT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            mode_flags |= TerminalMode::ALT_SCREEN;
+        }
+        if mode.contains(TermMode::LINE_WRAP) {
+            mode_flags |= TerminalMode::LINE_WRAP;
+        }
 
         // Cursor state.
         let cursor_visible = mode.contains(TermMode::SHOW_CURSOR)
@@ -440,8 +531,16 @@ impl TerminalBackend {
             let start_line = sel.start.line.0.max(0) as usize;
             let end_line = (sel.end.line.0.max(0) as usize).min(num_lines.saturating_sub(1));
             for row in start_line..=end_line {
-                let sc = if row == start_line { sel.start.column.0 } else { 0 };
-                let ec = if row == end_line { sel.end.column.0 } else { num_cols.saturating_sub(1) };
+                let sc = if row == start_line {
+                    sel.start.column.0
+                } else {
+                    0
+                };
+                let ec = if row == end_line {
+                    sel.end.column.0
+                } else {
+                    num_cols.saturating_sub(1)
+                };
                 selection_ranges.push(HighlightRange {
                     row: row as u16,
                     start_col: sc as u16,
@@ -453,17 +552,24 @@ impl TerminalBackend {
         let search_ranges = self.search.visible_matches(&term);
 
         let required = buffer::buffer_size(
-            num_cols as u16, num_lines as u16,
-            selection_ranges.len() as u16, search_ranges.len() as u16,
+            num_cols as u16,
+            num_lines as u16,
+            selection_ranges.len() as u16,
+            search_ranges.len() as u16,
         );
-        if buf.len() < required { return 0; }
+        if buf.len() < required {
+            return 0;
+        }
 
         // Write header.
         let cell_offset = buffer::write_header(
             buf,
-            num_cols as u16, num_lines as u16,
-            &cursor_state, mode_flags,
-            &selection_ranges, &search_ranges,
+            num_cols as u16,
+            num_lines as u16,
+            &cursor_state,
+            mode_flags,
+            &selection_ranges,
+            &search_ranges,
         );
 
         // Initialize all cells to space with default colors.
@@ -473,7 +579,10 @@ impl TerminalBackend {
             buffer::write_cell(
                 buf,
                 cell_offset + i * buffer::CELL_STRIDE,
-                ' ', default_fg, default_bg, CellFlags::empty(),
+                ' ',
+                default_fg,
+                default_bg,
+                CellFlags::empty(),
             );
         }
 
@@ -522,7 +631,11 @@ impl TerminalBackend {
             SelectionKind::Semantic => SelectionType::Semantic,
             SelectionKind::Lines => SelectionType::Lines,
         };
-        term.selection = Some(Selection::new(ty, point, alacritty_terminal::index::Side::Left));
+        term.selection = Some(Selection::new(
+            ty,
+            point,
+            alacritty_terminal::index::Side::Left,
+        ));
     }
 
     /// Update the current selection endpoint.
@@ -549,12 +662,16 @@ impl TerminalBackend {
 
     /// Scroll the viewport. Positive = up (towards history), negative = down.
     pub fn scroll(&self, delta: i32) {
-        self.term.lock().scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+        self.term
+            .lock()
+            .scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
     }
 
     /// Scroll the viewport to the bottom.
     pub fn scroll_to_bottom(&self) {
-        self.term.lock().scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+        self.term
+            .lock()
+            .scroll_display(alacritty_terminal::grid::Scroll::Bottom);
     }
 
     /// Update the terminal's color palette at runtime (for live theme changes).
@@ -582,17 +699,39 @@ impl TerminalBackend {
     pub fn mode(&self) -> TerminalMode {
         let mode = *self.term.lock().mode();
         let mut flags = TerminalMode::empty();
-        if mode.contains(TermMode::SHOW_CURSOR) { flags |= TerminalMode::SHOW_CURSOR; }
-        if mode.contains(TermMode::APP_CURSOR) { flags |= TerminalMode::APP_CURSOR; }
-        if mode.contains(TermMode::APP_KEYPAD) { flags |= TerminalMode::APP_KEYPAD; }
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK) { flags |= TerminalMode::MOUSE_REPORT_CLICK; }
-        if mode.contains(TermMode::MOUSE_MOTION) { flags |= TerminalMode::MOUSE_MOTION; }
-        if mode.contains(TermMode::MOUSE_DRAG) { flags |= TerminalMode::MOUSE_DRAG; }
-        if mode.contains(TermMode::SGR_MOUSE) { flags |= TerminalMode::MOUSE_SGR; }
-        if mode.contains(TermMode::BRACKETED_PASTE) { flags |= TerminalMode::BRACKETED_PASTE; }
-        if mode.contains(TermMode::FOCUS_IN_OUT) { flags |= TerminalMode::FOCUS_IN_OUT; }
-        if mode.contains(TermMode::ALT_SCREEN) { flags |= TerminalMode::ALT_SCREEN; }
-        if mode.contains(TermMode::LINE_WRAP) { flags |= TerminalMode::LINE_WRAP; }
+        if mode.contains(TermMode::SHOW_CURSOR) {
+            flags |= TerminalMode::SHOW_CURSOR;
+        }
+        if mode.contains(TermMode::APP_CURSOR) {
+            flags |= TerminalMode::APP_CURSOR;
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            flags |= TerminalMode::APP_KEYPAD;
+        }
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            flags |= TerminalMode::MOUSE_REPORT_CLICK;
+        }
+        if mode.contains(TermMode::MOUSE_MOTION) {
+            flags |= TerminalMode::MOUSE_MOTION;
+        }
+        if mode.contains(TermMode::MOUSE_DRAG) {
+            flags |= TerminalMode::MOUSE_DRAG;
+        }
+        if mode.contains(TermMode::SGR_MOUSE) {
+            flags |= TerminalMode::MOUSE_SGR;
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            flags |= TerminalMode::BRACKETED_PASTE;
+        }
+        if mode.contains(TermMode::FOCUS_IN_OUT) {
+            flags |= TerminalMode::FOCUS_IN_OUT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            flags |= TerminalMode::ALT_SCREEN;
+        }
+        if mode.contains(TermMode::LINE_WRAP) {
+            flags |= TerminalMode::LINE_WRAP;
+        }
         flags
     }
 
@@ -638,7 +777,6 @@ impl TerminalBackend {
     pub fn search_clear(&mut self) {
         self.search.clear();
     }
-
 }
 
 impl Drop for TerminalBackend {
@@ -650,18 +788,44 @@ impl Drop for TerminalBackend {
 /// Convert alacritty cell flags to our CellFlags.
 fn convert_flags(flags: AlacFlags) -> CellFlags {
     let mut result = CellFlags::empty();
-    if flags.contains(AlacFlags::BOLD) { result |= CellFlags::BOLD; }
-    if flags.contains(AlacFlags::ITALIC) { result |= CellFlags::ITALIC; }
-    if flags.contains(AlacFlags::UNDERLINE) { result |= CellFlags::UNDERLINE; }
-    if flags.contains(AlacFlags::STRIKEOUT) { result |= CellFlags::STRIKETHROUGH; }
-    if flags.contains(AlacFlags::DIM) { result |= CellFlags::DIM; }
-    if flags.contains(AlacFlags::INVERSE) { result |= CellFlags::INVERSE; }
-    if flags.contains(AlacFlags::HIDDEN) { result |= CellFlags::HIDDEN; }
-    if flags.contains(AlacFlags::WIDE_CHAR) { result |= CellFlags::WIDE_CHAR; }
-    if flags.contains(AlacFlags::WIDE_CHAR_SPACER) { result |= CellFlags::WIDE_CHAR_SPACER; }
-    if flags.contains(AlacFlags::DOUBLE_UNDERLINE) { result |= CellFlags::DOUBLE_UNDERLINE; }
-    if flags.contains(AlacFlags::UNDERCURL) { result |= CellFlags::UNDERCURL; }
-    if flags.contains(AlacFlags::DOTTED_UNDERLINE) { result |= CellFlags::DOTTED_UNDERLINE; }
-    if flags.contains(AlacFlags::DASHED_UNDERLINE) { result |= CellFlags::DASHED_UNDERLINE; }
+    if flags.contains(AlacFlags::BOLD) {
+        result |= CellFlags::BOLD;
+    }
+    if flags.contains(AlacFlags::ITALIC) {
+        result |= CellFlags::ITALIC;
+    }
+    if flags.contains(AlacFlags::UNDERLINE) {
+        result |= CellFlags::UNDERLINE;
+    }
+    if flags.contains(AlacFlags::STRIKEOUT) {
+        result |= CellFlags::STRIKETHROUGH;
+    }
+    if flags.contains(AlacFlags::DIM) {
+        result |= CellFlags::DIM;
+    }
+    if flags.contains(AlacFlags::INVERSE) {
+        result |= CellFlags::INVERSE;
+    }
+    if flags.contains(AlacFlags::HIDDEN) {
+        result |= CellFlags::HIDDEN;
+    }
+    if flags.contains(AlacFlags::WIDE_CHAR) {
+        result |= CellFlags::WIDE_CHAR;
+    }
+    if flags.contains(AlacFlags::WIDE_CHAR_SPACER) {
+        result |= CellFlags::WIDE_CHAR_SPACER;
+    }
+    if flags.contains(AlacFlags::DOUBLE_UNDERLINE) {
+        result |= CellFlags::DOUBLE_UNDERLINE;
+    }
+    if flags.contains(AlacFlags::UNDERCURL) {
+        result |= CellFlags::UNDERCURL;
+    }
+    if flags.contains(AlacFlags::DOTTED_UNDERLINE) {
+        result |= CellFlags::DOTTED_UNDERLINE;
+    }
+    if flags.contains(AlacFlags::DASHED_UNDERLINE) {
+        result |= CellFlags::DASHED_UNDERLINE;
+    }
     result
 }

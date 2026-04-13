@@ -92,7 +92,10 @@ impl qobject::SearchModel {
         }
 
         // Cancel any ongoing search
-        self.as_ref().rust().cancel_flag.store(true, Ordering::Relaxed);
+        self.as_ref()
+            .rust()
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         self.as_mut().rust_mut().cancel_flag = cancel.clone();
 
@@ -121,8 +124,7 @@ impl qobject::SearchModel {
         match result {
             Ok(results) => {
                 let count = results.len() as i32;
-                let json =
-                    serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+                let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
                 self.as_mut().set_results_json(QString::from(json.as_str()));
                 self.as_mut().set_result_count(count);
             }
@@ -150,7 +152,10 @@ impl qobject::SearchModel {
 
     pub fn clear(mut self: Pin<&mut Self>) {
         // Cancel any ongoing search
-        self.as_ref().rust().cancel_flag.store(true, Ordering::Relaxed);
+        self.as_ref()
+            .rust()
+            .cancel_flag
+            .store(true, Ordering::Relaxed);
 
         self.as_mut().set_query(QString::default());
         self.as_mut().set_results_json(QString::from("[]"));

@@ -61,12 +61,14 @@ Item {
         var ext = path.split(".").pop().toLowerCase()
         var imageExts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
         if (imageExts.indexOf(ext) >= 0) {
-            windowModel.create_tab("image")
+            windowModel.create_image_tab(path)
+            pendingFilePath = ""
+            pendingLine = 0
         } else {
             windowModel.create_editor_tab(path)
+            pendingFilePath = path
+            pendingLine = line || 0
         }
-        pendingFilePath = path
-        pendingLine = line || 0
     }
 
     property string pendingFilePath: ""
@@ -98,6 +100,15 @@ Item {
         }
     }
 
+    function resetEditorStatus() {
+        windowModel.cursor_line = 0
+        windowModel.cursor_column = 0
+        windowModel.language = ""
+        windowModel.encoding = ""
+        windowModel.indent_info = ""
+        windowModel.blame_info = ""
+    }
+
     // Respond to tab switches
     Connections {
         target: windowModel
@@ -114,6 +125,7 @@ Item {
         var info = tabs[idx]
         if (!info) return
         var tabId = info.id
+        var tabType = info.tabType || "terminal"
 
         // Hide all content views
         for (var key in contentItems) {
@@ -124,7 +136,6 @@ Item {
 
         // Create if not existing
         if (!contentItems[tabId]) {
-            var tabType = info.tabType || "terminal"
             var component = contentComponents[tabType]
 
             if (tabType === "image") {
@@ -135,7 +146,11 @@ Item {
                     contentItems[tabId] = imgItem
                 }
             } else if (component && component.status === Component.Ready) {
-                var item = component.createObject(contentContainer, {})
+                var initialProps = {}
+                if (tabType === "terminal") {
+                    initialProps.tabId = tabId
+                }
+                var item = component.createObject(contentContainer, initialProps)
                 if (item) {
                     contentItems[tabId] = item
                     if (pendingFilePath.length > 0 && tabType === "editor" && item.openFile) {
@@ -156,6 +171,10 @@ Item {
         if (contentItems[tabId]) {
             contentItems[tabId].visible = true
             contentItems[tabId].anchors.fill = contentContainer
+        }
+
+        if (tabType !== "editor") {
+            resetEditorStatus()
         }
     }
 

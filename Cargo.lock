@@ -989,6 +989,7 @@ dependencies = [
  "env_logger",
  "impulse-core",
  "impulse-editor",
+ "impulse-terminal",
  "log",
  "lsp-types",
  "notify",

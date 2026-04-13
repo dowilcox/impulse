@@ -217,11 +217,7 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> Hsl {
         (r - g) / d + 4.0
     };
 
-    Hsl {
-        h: h * 60.0,
-        s,
-        l,
-    }
+    Hsl { h: h * 60.0, s, l }
 }
 
 fn hsl_to_rgb(hsl: &Hsl) -> (u8, u8, u8) {
@@ -370,26 +366,14 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
     let cursor = tf.ui.cursor.clone().unwrap_or_else(|| p.accent.clone());
 
     // Git indicators
-    let git_added = tf
-        .ui
-        .git_added
-        .clone()
-        .unwrap_or_else(|| p.green.clone());
+    let git_added = tf.ui.git_added.clone().unwrap_or_else(|| p.green.clone());
     let git_modified = tf
         .ui
         .git_modified
         .clone()
         .unwrap_or_else(|| p.yellow.clone());
-    let git_deleted = tf
-        .ui
-        .git_deleted
-        .clone()
-        .unwrap_or_else(|| p.red.clone());
-    let git_renamed = tf
-        .ui
-        .git_renamed
-        .clone()
-        .unwrap_or_else(|| p.blue.clone());
+    let git_deleted = tf.ui.git_deleted.clone().unwrap_or_else(|| p.red.clone());
+    let git_renamed = tf.ui.git_renamed.clone().unwrap_or_else(|| p.blue.clone());
     let git_conflict = tf
         .ui
         .git_conflict
@@ -407,26 +391,10 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
         .keyword
         .clone()
         .unwrap_or_else(|| p.magenta.clone());
-    let syntax_function = tf
-        .syntax
-        .function
-        .clone()
-        .unwrap_or_else(|| p.blue.clone());
-    let syntax_type = tf
-        .syntax
-        .r#type
-        .clone()
-        .unwrap_or_else(|| p.yellow.clone());
-    let syntax_string = tf
-        .syntax
-        .string
-        .clone()
-        .unwrap_or_else(|| p.green.clone());
-    let syntax_number = tf
-        .syntax
-        .number
-        .clone()
-        .unwrap_or_else(|| p.orange.clone());
+    let syntax_function = tf.syntax.function.clone().unwrap_or_else(|| p.blue.clone());
+    let syntax_type = tf.syntax.r#type.clone().unwrap_or_else(|| p.yellow.clone());
+    let syntax_string = tf.syntax.string.clone().unwrap_or_else(|| p.green.clone());
+    let syntax_number = tf.syntax.number.clone().unwrap_or_else(|| p.orange.clone());
     let syntax_constant = tf
         .syntax
         .constant
@@ -437,42 +405,22 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
         .comment
         .clone()
         .unwrap_or_else(|| fg_comment.clone());
-    let syntax_operator = tf
-        .syntax
-        .operator
-        .clone()
-        .unwrap_or_else(|| p.cyan.clone());
+    let syntax_operator = tf.syntax.operator.clone().unwrap_or_else(|| p.cyan.clone());
     let syntax_tag = tf.syntax.tag.clone().unwrap_or_else(|| p.red.clone());
     let syntax_attribute = tf
         .syntax
         .attribute
         .clone()
         .unwrap_or_else(|| p.yellow.clone());
-    let syntax_variable = tf
-        .syntax
-        .variable
-        .clone()
-        .unwrap_or_else(|| p.fg.clone());
+    let syntax_variable = tf.syntax.variable.clone().unwrap_or_else(|| p.fg.clone());
     let syntax_delimiter = tf
         .syntax
         .delimiter
         .clone()
         .unwrap_or_else(|| fg_muted.clone());
-    let syntax_escape = tf
-        .syntax
-        .escape
-        .clone()
-        .unwrap_or_else(|| p.orange.clone());
-    let syntax_regexp = tf
-        .syntax
-        .regexp
-        .clone()
-        .unwrap_or_else(|| p.red.clone());
-    let syntax_link = tf
-        .syntax
-        .link
-        .clone()
-        .unwrap_or_else(|| p.blue.clone());
+    let syntax_escape = tf.syntax.escape.clone().unwrap_or_else(|| p.orange.clone());
+    let syntax_regexp = tf.syntax.regexp.clone().unwrap_or_else(|| p.red.clone());
+    let syntax_link = tf.syntax.link.clone().unwrap_or_else(|| p.blue.clone());
 
     // Terminal palette
     let (terminal_fg, terminal_bg, terminal_palette) = if let Some(ref tp) = tf.terminal {
@@ -901,7 +849,9 @@ mod tests {
     #[test]
     fn hsl_roundtrip() {
         // Test that hex -> HSL -> hex roundtrip is stable
-        let colors = ["#ff0000", "#00ff00", "#0000ff", "#1a1a23", "#ffffff", "#000000"];
+        let colors = [
+            "#ff0000", "#00ff00", "#0000ff", "#1a1a23", "#ffffff", "#000000",
+        ];
         for hex in colors {
             let (r, g, b) = hex_to_rgb(hex);
             let hsl = rgb_to_hsl(r, g, b);

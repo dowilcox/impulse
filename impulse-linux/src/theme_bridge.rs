@@ -154,8 +154,7 @@ impl ThemeBridgeRust {
 
         // Monaco theme definition
         let monaco_def = impulse_editor::protocol::theme_to_monaco(&theme);
-        let monaco_json =
-            serde_json::to_string(&monaco_def).unwrap_or_else(|_| "{}".to_string());
+        let monaco_json = serde_json::to_string(&monaco_def).unwrap_or_else(|_| "{}".to_string());
         self.monaco_theme_json = QString::from(monaco_json.as_str());
 
         self.resolved_theme = Some(theme);
@@ -230,7 +229,8 @@ impl qobject::ThemeBridge {
         self.as_mut().set_magenta(magenta);
         self.as_mut().set_selection(selection);
         self.as_mut().set_cursor_color(cursor_color);
-        self.as_mut().set_terminal_palette_json(terminal_palette_json);
+        self.as_mut()
+            .set_terminal_palette_json(terminal_palette_json);
         self.as_mut().set_is_light(is_light);
         self.as_mut().set_theme_id(theme_id);
         self.as_mut().set_theme_name(theme_name);

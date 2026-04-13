@@ -185,11 +185,7 @@ impl qobject::EditorBridge {
         }
     }
 
-    pub fn make_command_json(
-        &self,
-        command_type: &QString,
-        params_json: &QString,
-    ) -> QString {
+    pub fn make_command_json(&self, command_type: &QString, params_json: &QString) -> QString {
         let cmd_type = command_type.to_string();
         let params = params_json.to_string();
 
@@ -207,11 +203,9 @@ impl qobject::EditorBridge {
                 match serde_json::from_value::<impulse_editor::protocol::MonacoThemeDefinition>(
                     params_value,
                 ) {
-                    Ok(theme_def) => {
-                        impulse_editor::protocol::EditorCommand::SetTheme {
-                            theme: Box::new(theme_def),
-                        }
-                    }
+                    Ok(theme_def) => impulse_editor::protocol::EditorCommand::SetTheme {
+                        theme: Box::new(theme_def),
+                    },
                     Err(e) => {
                         log::warn!("Failed to parse SetTheme params: {}", e);
                         return QString::from("{}");
@@ -222,11 +216,9 @@ impl qobject::EditorBridge {
                 match serde_json::from_value::<impulse_editor::protocol::EditorOptions>(
                     params_value,
                 ) {
-                    Ok(options) => {
-                        impulse_editor::protocol::EditorCommand::UpdateSettings {
-                            options: Box::new(options),
-                        }
-                    }
+                    Ok(options) => impulse_editor::protocol::EditorCommand::UpdateSettings {
+                        options: Box::new(options),
+                    },
                     Err(e) => {
                         log::warn!("Failed to parse UpdateSettings params: {}", e);
                         return QString::from("{}");
@@ -282,19 +274,13 @@ impl qobject::EditorBridge {
             }
             // For commands that are full JSON already (completions, hover, etc.),
             // try to deserialize the whole params as the command.
-            _ => {
-                match serde_json::from_str::<impulse_editor::protocol::EditorCommand>(&params) {
-                    Ok(cmd) => cmd,
-                    Err(e) => {
-                        log::warn!(
-                            "Unknown or unparseable command type '{}': {}",
-                            cmd_type,
-                            e
-                        );
-                        return QString::from("{}");
-                    }
+            _ => match serde_json::from_str::<impulse_editor::protocol::EditorCommand>(&params) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    log::warn!("Unknown or unparseable command type '{}': {}", cmd_type, e);
+                    return QString::from("{}");
                 }
-            }
+            },
         };
 
         let json = serde_json::to_string(&cmd).unwrap_or_else(|_| "{}".to_string());
@@ -317,16 +303,12 @@ impl qobject::EditorBridge {
 
         match event {
             impulse_editor::protocol::EditorEvent::Ready => {
-                self.as_mut().editor_event(
-                    QString::from("Ready"),
-                    QString::from("{}"),
-                );
+                self.as_mut()
+                    .editor_event(QString::from("Ready"), QString::from("{}"));
             }
             impulse_editor::protocol::EditorEvent::FileOpened => {
-                self.as_mut().editor_event(
-                    QString::from("FileOpened"),
-                    QString::from("{}"),
-                );
+                self.as_mut()
+                    .editor_event(QString::from("FileOpened"), QString::from("{}"));
             }
             impulse_editor::protocol::EditorEvent::ContentChanged { content, version } => {
                 self.as_mut().set_is_modified(true);
@@ -335,8 +317,7 @@ impl qobject::EditorBridge {
 
                 let current = self.as_ref().current_file().clone();
                 let content_qs = QString::from(content.as_str());
-                self.as_mut()
-                    .content_changed(current, content_qs);
+                self.as_mut().content_changed(current, content_qs);
             }
             impulse_editor::protocol::EditorEvent::CursorMoved { line, column } => {
                 let payload = serde_json::json!({
@@ -349,10 +330,8 @@ impl qobject::EditorBridge {
                 );
             }
             impulse_editor::protocol::EditorEvent::SaveRequested => {
-                self.as_mut().editor_event(
-                    QString::from("SaveRequested"),
-                    QString::from("{}"),
-                );
+                self.as_mut()
+                    .editor_event(QString::from("SaveRequested"), QString::from("{}"));
             }
             impulse_editor::protocol::EditorEvent::FocusChanged { focused } => {
                 let payload = serde_json::json!({ "focused": focused });
@@ -407,7 +386,11 @@ impl qobject::EditorBridge {
                     QString::from(payload.to_string().as_str()),
                 );
             }
-            impulse_editor::protocol::EditorEvent::OpenFileRequested { uri, line, character } => {
+            impulse_editor::protocol::EditorEvent::OpenFileRequested {
+                uri,
+                line,
+                character,
+            } => {
                 let payload = serde_json::json!({
                     "uri": uri,
                     "line": line,
@@ -519,11 +502,7 @@ impl qobject::EditorBridge {
         }
     }
 
-    pub fn render_markdown_preview(
-        &self,
-        source: &QString,
-        theme_json: &QString,
-    ) -> QString {
+    pub fn render_markdown_preview(&self, source: &QString, theme_json: &QString) -> QString {
         let source_str = source.to_string();
         let theme_str = theme_json.to_string();
 
@@ -552,11 +531,7 @@ impl qobject::EditorBridge {
         }
     }
 
-    pub fn render_svg_preview(
-        &self,
-        source: &QString,
-        bg_color: &QString,
-    ) -> QString {
+    pub fn render_svg_preview(&self, source: &QString, bg_color: &QString) -> QString {
         let source_str = source.to_string();
         let bg = bg_color.to_string();
 
