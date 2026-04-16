@@ -11,7 +11,7 @@ import os.log
 ///      WebView. If one is available, the tab can skip `loadEditor()` entirely.
 ///   3. After a WebView is claimed, the pool automatically starts warming the
 ///      next one.
-final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
+final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
     static let shared = EditorWebViewPool()
 
@@ -28,6 +28,28 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
 
     /// JSON decoder for checking the Ready event.
     private let jsonDecoder = JSONDecoder()
+
+    // MARK: - WKNavigationDelegate (warm-up)
+
+    /// While the WebView is warming up (before `claim(...)`), restrict it to
+    /// `file://` and `about:` navigations so a Monaco bug or compromised asset
+    /// can't navigate to an arbitrary URL.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if url.scheme == "file" || url.scheme == "about" {
+            decisionHandler(.allow)
+        } else {
+            os_log(.info, log: Self.log, "Pool WebView blocked navigation to: %{public}@", url.absoluteString)
+            decisionHandler(.cancel)
+        }
+    }
 
     // MARK: - Pre-warming
 
@@ -60,6 +82,7 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler {
         let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
         wv.allowsMagnification = false
         wv.underPageBackgroundColor = .clear
+        wv.navigationDelegate = self
 
         warmWebView = wv
         isReady = false

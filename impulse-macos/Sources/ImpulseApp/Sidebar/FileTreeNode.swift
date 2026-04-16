@@ -121,6 +121,9 @@ final class FileTreeNode: Identifiable {
     /// Apply pre-fetched batch git statuses to nodes. Use this when the caller
     /// already has the batch statuses (e.g. from a poll that computed a hash)
     /// to avoid a redundant FFI call.
+    ///
+    /// Only nodes whose status actually changed are written on the main thread,
+    /// so `@Observable` doesn't fire re-renders for every node every refresh.
     static func applyGitStatuses(
         nodes: [FileTreeNode],
         dirPath: String,
@@ -131,9 +134,14 @@ final class FileTreeNode: Identifiable {
             dirPath: dirPath,
             batchStatuses: batchStatuses
         )
+        guard !updates.isEmpty else { return }
         DispatchQueue.main.async {
             for (node, status) in updates {
-                node.gitStatus = status
+                // Re-check here: status may have changed again between collect
+                // and apply, and we still want to skip no-op writes.
+                if node.gitStatus != status {
+                    node.gitStatus = status
+                }
             }
         }
     }
@@ -141,8 +149,9 @@ final class FileTreeNode: Identifiable {
     // MARK: Private Helpers
 
     /// Collect (node, status) pairs using the pre-computed batch status map.
-    /// Recurses into all directories with loaded children — this is cheap since
-    /// it only does dictionary lookups, no I/O.
+    /// Only returns pairs where the status would actually change, so the
+    /// main-thread apply step skips no-op writes that would otherwise trigger
+    /// `@Observable` diffing.
     private static func collectStatusUpdates(
         nodes: [FileTreeNode],
         dirPath: String,
@@ -153,7 +162,9 @@ final class FileTreeNode: Identifiable {
 
         for node in nodes {
             let status = statusFromCode(dirStatuses[node.name])
-            updates.append((node, status))
+            if node.gitStatus != status {
+                updates.append((node, status))
+            }
         }
 
         // Recurse into all directories with loaded children.

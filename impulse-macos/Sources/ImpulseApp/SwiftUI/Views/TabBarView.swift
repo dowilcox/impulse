@@ -138,6 +138,7 @@ struct TabBarView: View {
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 14, height: 14)
+                    .accessibilityHidden(true)
             }
 
             Text(tab.title)
@@ -156,6 +157,7 @@ struct TabBarView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close \(tab.isTerminal ? "Terminal" : "Editor") Tab \(tab.title)")
             }
         }
         .padding(.horizontal, 12)
@@ -187,6 +189,9 @@ struct TabBarView: View {
         .onHover { hovering in
             hoveredIndex = hovering ? tab.id : nil
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(tab.isTerminal ? "Terminal" : "Editor"): \(tab.title)")
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : [.isButton])
     }
 }
 

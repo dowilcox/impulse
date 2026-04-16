@@ -8,7 +8,7 @@ import AppKit
 /// and results.
 struct SearchPanelView: View {
     var model: WindowModel
-    @State private var searchTask: Task<Void, Never>?
+    @State private var debounceWork: DispatchWorkItem?
     @State private var activeSearchTask: Task<Void, Never>?
     @State private var isSearching = false
     @State private var searchGeneration: UInt = 0
@@ -81,8 +81,15 @@ struct SearchPanelView: View {
         .onChange(of: model.searchQuery) { _, _ in
             debounceSearch()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .impulseFileTreeChanged)) { _ in
+            // Re-run the current search when the project tree changes so
+            // results don't go stale after file creates/deletes/renames.
+            if !model.searchQuery.isEmpty {
+                debounceSearch()
+            }
+        }
         .onDisappear {
-            searchTask?.cancel()
+            debounceWork?.cancel()
             activeSearchTask?.cancel()
         }
     }
@@ -90,17 +97,18 @@ struct SearchPanelView: View {
     // MARK: - Search Logic
 
     private func triggerSearch() {
-        searchTask?.cancel()
+        debounceWork?.cancel()
         performSearch()
     }
 
+    /// Debounces search: cancels any pending work item and schedules a new
+    /// one 300ms in the future. Reuses DispatchWorkItem across keystrokes
+    /// rather than allocating a Task per character.
     private func debounceSearch() {
-        searchTask?.cancel()
-        searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            performSearch()
-        }
+        debounceWork?.cancel()
+        let work = DispatchWorkItem { performSearch() }
+        debounceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     private func performSearch() {
@@ -119,14 +127,9 @@ struct SearchPanelView: View {
 
         isSearching = true
         activeSearchTask = Task.detached {
-            let fileResults = ImpulseCore.searchFiles(root: root, query: query)
-            let contentResults = ImpulseCore.searchContent(
+            let combined = ImpulseCore.searchAll(
                 root: root, query: query, caseSensitive: caseSensitive
             )
-
-            let contentPaths = Set(contentResults.map(\.path))
-            let dedupedFiles = fileResults.filter { !contentPaths.contains($0.path) }
-            let combined = dedupedFiles + contentResults
 
             await MainActor.run {
                 // Only apply results if this is still the latest search.

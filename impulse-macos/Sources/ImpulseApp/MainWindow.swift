@@ -1266,6 +1266,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                     } else {
                         self.switchFileTreeRoot(dir)
                     }
+                    // Push the new CWD/branch into the status bar right away
+                    // if this terminal is the selected one; otherwise the
+                    // status bar would lag until the next explicit refresh.
+                    if let selected = self.tabManager.selectedTerminal?.activeTerminal,
+                       selected === terminal {
+                        self.updateStatusBar()
+                    }
                 }
             }
         )
@@ -1829,12 +1836,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// Runs an external command asynchronously. Calls `completion` on the main
     /// thread when the process finishes.
+    ///
+    /// The command name is validated to be either an absolute path or a plain
+    /// executable name (letters, digits, `-`, `_`, `.` only). Arguments and
+    /// `cwd` must not contain null bytes. Failures are logged and `completion`
+    /// is still invoked so the caller's control flow continues.
     private func runExternalCommand(command: String, args: [String], cwd: String,
                                      completion: (() -> Void)?) {
+        guard Self.isSafeExternalCommand(command) else {
+            NSLog("Refusing to run command with unsafe name: %@", command)
+            if let completion = completion { DispatchQueue.main.async { completion() } }
+            return
+        }
+        guard !cwd.contains("\0"), args.allSatisfy({ !$0.contains("\0") }) else {
+            NSLog("Refusing to run command with null byte in args/cwd")
+            if let completion = completion { DispatchQueue.main.async { completion() } }
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [command] + args
+            if command.hasPrefix("/") {
+                // Absolute path: invoke directly, skip PATH lookup via env.
+                process.executableURL = URL(fileURLWithPath: command)
+                process.arguments = args
+            } else {
+                // Bare name: use env to honor PATH. Name has been validated.
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [command] + args
+            }
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
@@ -1850,6 +1880,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 DispatchQueue.main.async { completion() }
             }
         }
+    }
+
+    /// Validates a command name for `runExternalCommand`. Absolute paths are
+    /// permitted (but must not contain `..`); bare names must be a plain
+    /// identifier — no slashes, shell metacharacters, or leading dashes.
+    private static func isSafeExternalCommand(_ command: String) -> Bool {
+        if command.isEmpty || command.contains("\0") { return false }
+        if command.hasPrefix("/") {
+            return !command.contains("..")
+        }
+        if command == "." || command == ".." { return false }
+        let allowed = CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+        return command.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     // MARK: - Custom Command Execution

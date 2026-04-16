@@ -167,6 +167,49 @@ final class ImpulseCore {
         return (try? JSONDecoder().decode([SearchResult].self, from: data)) ?? []
     }
 
+    /// Runs filename and content searches concurrently under `root` and returns
+    /// a merged, deduplicated result list. Filename hits that are also present
+    /// as content hits are dropped (content hits carry line info, so they're
+    /// more useful).
+    ///
+    /// Call off the main thread — both FFI calls block until the ripgrep/walk
+    /// completes.
+    static func searchAll(root: String, query: String, caseSensitive: Bool) -> [SearchResult] {
+        // Kick off both searches in parallel using background queues.
+        let group = DispatchGroup()
+        let queue = DispatchQueue.global(qos: .userInitiated)
+
+        var fileResults: [SearchResult] = []
+        var contentResults: [SearchResult] = []
+
+        group.enter()
+        queue.async {
+            fileResults = searchFiles(root: root, query: query)
+            group.leave()
+        }
+        group.enter()
+        queue.async {
+            contentResults = searchContent(root: root, query: query, caseSensitive: caseSensitive)
+            group.leave()
+        }
+        group.wait()
+
+        if contentResults.isEmpty { return fileResults }
+        if fileResults.isEmpty { return contentResults }
+
+        var seen = Set<String>()
+        seen.reserveCapacity(contentResults.count)
+        for r in contentResults { seen.insert(r.path) }
+
+        var combined: [SearchResult] = []
+        combined.reserveCapacity(fileResults.count + contentResults.count)
+        for r in fileResults where !seen.contains(r.path) {
+            combined.append(r)
+        }
+        combined.append(contentsOf: contentResults)
+        return combined
+    }
+
     // MARK: - Markdown Preview
 
     /// Render markdown source into a full HTML document with themed CSS and

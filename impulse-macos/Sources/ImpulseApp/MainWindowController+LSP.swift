@@ -1,12 +1,33 @@
 import AppKit
+import Foundation
 import os.log
+
+/// Serializes a JSON-compatible value (dictionaries/arrays of `String`, numbers,
+/// `Bool`) to a compact string for LSP params. Uses `JSONSerialization` so all
+/// strings are escaped correctly — no hand-rolled escaping.
+///
+/// Returns an empty object on failure so the LSP call still produces valid JSON.
+fileprivate func encodeLspJSON(_ value: Any) -> String {
+    guard JSONSerialization.isValidJSONObject(value),
+          let data = try? JSONSerialization.data(withJSONObject: value, options: []),
+          let string = String(data: data, encoding: .utf8) else {
+        NSLog("encodeLspJSON: failed to serialize value")
+        return "{}"
+    }
+    return string
+}
 
 // MARK: - LSP Integration
 
 extension MainWindowController {
 
     func startLspPolling() {
-        lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        // 25 ms floor: fast enough that typing → diagnostics/completions feels
+        // instant, but still ~16× cheaper than the editor's own repaint budget.
+        // The poll itself is cheap: a single FFI call that returns nil when
+        // nothing is queued. Further reductions require a blocking event-wait
+        // primitive in impulse-core (cross-platform).
+        lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { [weak self] _ in
             self?.pollLspEventsInBackground()
         }
     }
@@ -91,9 +112,14 @@ extension MainWindowController {
         lspQueue.async { [weak self] in
             guard let self else { return }
             self.core.lspEnsureServers(languageId: language, fileUri: uri)
-            let params = """
-            {"textDocument":{"uri":"\(self.jsonEscape(uri))","languageId":"\(self.jsonEscape(language))","version":1,"text":"\(self.jsonEscape(content))"}}
-            """
+            let params = encodeLspJSON([
+                "textDocument": [
+                    "uri": uri,
+                    "languageId": language,
+                    "version": 1,
+                    "text": content,
+                ],
+            ])
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didOpen", paramsJson: params)
         }
     }
@@ -112,9 +138,10 @@ extension MainWindowController {
 
         lspQueue.async { [weak self] in
             guard let self else { return }
-            let params = """
-            {"textDocument":{"uri":"\(self.jsonEscape(uri))","version":\(version)},"contentChanges":[{"text":"\(self.jsonEscape(content))"}]}
-            """
+            let params = encodeLspJSON([
+                "textDocument": ["uri": uri, "version": version] as [String: Any],
+                "contentChanges": [["text": content]],
+            ])
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didChange", paramsJson: params)
         }
     }
@@ -130,9 +157,7 @@ extension MainWindowController {
         let language = editor.lspLanguage
         lspQueue.async { [weak self] in
             guard let self else { return }
-            let params = """
-            {"textDocument":{"uri":"\(self.jsonEscape(uri))"}}
-            """
+            let params = encodeLspJSON(["textDocument": ["uri": uri]])
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didClose", paramsJson: params)
         }
     }
@@ -146,9 +171,7 @@ extension MainWindowController {
         let language = editor.lspLanguage
         lspQueue.async { [weak self] in
             guard let self else { return }
-            let params = """
-            {"textDocument":{"uri":"\(self.jsonEscape(uri))"}}
-            """
+            let params = encodeLspJSON(["textDocument": ["uri": uri]])
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didSave", paramsJson: params)
         }
     }
@@ -165,9 +188,7 @@ extension MainWindowController {
         latestCompletionReq[uri] = requestId
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
-        """
+        let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -198,9 +219,7 @@ extension MainWindowController {
         hoverWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
-        """
+        let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -233,9 +252,7 @@ extension MainWindowController {
         }
         let uri = filePathToUri(path)
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
-        """
+        let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
         lspQueue.async { [weak self] in
             guard let self else { return }
@@ -271,9 +288,10 @@ extension MainWindowController {
         formattingWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"options":{"tabSize":\(tabSize),"insertSpaces":\(insertSpaces)}}
-        """
+        let params = encodeLspJSON([
+            "textDocument": ["uri": uri],
+            "options": ["tabSize": tabSize, "insertSpaces": insertSpaces] as [String: Any],
+        ])
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -302,9 +320,7 @@ extension MainWindowController {
         signatureHelpWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
-        """
+        let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -333,9 +349,11 @@ extension MainWindowController {
         referencesWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"context":{"includeDeclaration":true}}
-        """
+        let params = encodeLspJSON([
+            "textDocument": ["uri": uri] as [String: Any],
+            "position": ["line": line, "character": character],
+            "context": ["includeDeclaration": true],
+        ])
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -365,9 +383,9 @@ extension MainWindowController {
 
         let language = editor.lspLanguage
 
-        // Build diagnostics JSON array from the Monaco diagnostics passed through.
+        // Build diagnostics array from the Monaco diagnostics passed through.
         // Values are already 0-based (JS converts from Monaco 1-based before sending).
-        var diagJsonParts: [String] = []
+        var diagObjects: [[String: Any]] = []
         for d in diagnostics {
             guard let startL = (d["startLine"] as? NSNumber)?.uint32Value,
                   let startC = (d["startColumn"] as? NSNumber)?.uint32Value,
@@ -384,21 +402,28 @@ extension MainWindowController {
             case 1: lspSeverity = 4  // Hint
             default: lspSeverity = 1
             }
-            let source = d["source"] as? String
-            var diagJson = """
-            {"range":{"start":{"line":\(startL),"character":\(startC)},"end":{"line":\(endL),"character":\(endC)}},"severity":\(lspSeverity),"message":"\(jsonEscape(message))"
-            """
-            if let src = source {
-                diagJson += ",\"source\":\"\(jsonEscape(src))\""
+            var diag: [String: Any] = [
+                "range": [
+                    "start": ["line": startL, "character": startC],
+                    "end": ["line": endL, "character": endC],
+                ],
+                "severity": lspSeverity,
+                "message": message,
+            ]
+            if let src = d["source"] as? String {
+                diag["source"] = src
             }
-            diagJson += "}"
-            diagJsonParts.append(diagJson)
+            diagObjects.append(diag)
         }
-        let diagArray = "[\(diagJsonParts.joined(separator: ","))]"
 
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"range":{"start":{"line":\(startLine),"character":\(startColumn)},"end":{"line":\(endLine),"character":\(endColumn)}},"context":{"diagnostics":\(diagArray)}}
-        """
+        let params = encodeLspJSON([
+            "textDocument": ["uri": uri] as [String: Any],
+            "range": [
+                "start": ["line": startLine, "character": startColumn],
+                "end": ["line": endLine, "character": endColumn],
+            ],
+            "context": ["diagnostics": diagObjects],
+        ])
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -427,9 +452,11 @@ extension MainWindowController {
         renameWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)},"newName":"\(jsonEscape(newName))"}
-        """
+        let params = encodeLspJSON([
+            "textDocument": ["uri": uri] as [String: Any],
+            "position": ["line": line, "character": character],
+            "newName": newName,
+        ])
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -457,9 +484,7 @@ extension MainWindowController {
         prepareRenameWorkItems[uri]?.cancel()
 
         let language = editor.lspLanguage
-        let params = """
-        {"textDocument":{"uri":"\(jsonEscape(uri))"},"position":{"line":\(line),"character":\(character)}}
-        """
+        let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -900,29 +925,12 @@ extension MainWindowController {
         return uri
     }
 
-    /// Escapes a string for safe embedding in a JSON string literal.
-    /// Uses a single-pass scanner instead of chained replacingOccurrences calls.
-    private func jsonEscape(_ s: String) -> String {
-        var result = ""
-        result.reserveCapacity(s.count)
-        for char in s {
-            switch char {
-            case "\\": result += "\\\\"
-            case "\"": result += "\\\""
-            case "\n": result += "\\n"
-            case "\r": result += "\\r"
-            case "\t": result += "\\t"
-            case "\u{2028}": result += "\\u2028" // LINE SEPARATOR
-            case "\u{2029}": result += "\\u2029" // PARAGRAPH SEPARATOR
-            default:
-                if let ascii = char.asciiValue, ascii < 32 {
-                    result += String(format: "\\u%04x", ascii)
-                } else {
-                    result.append(char)
-                }
-            }
-        }
-        return result
+    /// Convenience builder for `{textDocument, position}` request params.
+    fileprivate func positionParams(uri: String, line: UInt32, character: UInt32) -> [String: Any] {
+        return [
+            "textDocument": ["uri": uri] as [String: Any],
+            "position": ["line": line, "character": character],
+        ]
     }
 
     /// Finds the editor tab that has the given file path open.

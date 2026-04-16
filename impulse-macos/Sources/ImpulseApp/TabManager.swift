@@ -733,7 +733,19 @@ final class TabManager: NSObject {
 
     /// Push current tab state to the SwiftUI-observable WindowModel.
     func syncToWindowModel() {
+        assert(Thread.isMainThread, "syncToWindowModel must run on the main thread")
         guard let ws = windowModel else { return }
+
+        // Internal consistency: selectedIndex must always point at a real tab,
+        // or be -1 when there are no tabs. Catches races where two paths both
+        // mutate `tabs` / `selectedIndex` without coordinating.
+        assert(
+            tabs.isEmpty
+                ? selectedIndex == -1
+                : (selectedIndex >= 0 && selectedIndex < tabs.count),
+            "TabManager state inconsistent: selectedIndex=\(selectedIndex), tabs.count=\(tabs.count)"
+        )
+
         let infos = tabs.enumerated().map { (i, tab) in
             TabDisplayInfo(
                 id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,

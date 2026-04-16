@@ -463,6 +463,7 @@ final class FileTreeView: NSView {
                 self.rebuildNodeIndex()
                 self.watchExpandedSubdirectories(self.rootNodes)
                 self.onTreeRefreshed?(self.rootNodes)
+                NotificationCenter.default.post(name: .impulseFileTreeChanged, object: nil)
                 // Restore scroll after AppKit finishes its layout pass.
                 self.pendingScrollRestore = savedOrigin
                 DispatchQueue.main.async { [weak self] in

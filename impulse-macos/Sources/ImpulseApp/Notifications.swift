@@ -133,6 +133,10 @@ extension Notification.Name {
     /// Posted when the user selects a file in the file tree. The `userInfo`
     /// dictionary contains `"path"` (String) and optionally `"line"` (Int).
     static let impulseOpenFile = Notification.Name("dev.impulse.openFile")
+    /// Posted when the file tree contents change (refresh, create, delete,
+    /// rename). Observers like the search panel can re-run queries so results
+    /// don't go stale.
+    static let impulseFileTreeChanged = Notification.Name("impulse.fileTreeChanged")
 
     // MARK: Command Palette Actions
 
