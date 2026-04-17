@@ -83,6 +83,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // TODO: warn about terminal tabs with running child processes (match
+        // Terminal.app's "Closing this window will terminate the following
+        // processes" dialog). Editor save-on-quit is the priority.
+        let dirty = collectDirtyEditors()
+        if dirty.isEmpty { return .terminateNow }
+
+        let alert = NSAlert()
+        let count = dirty.count
+        alert.messageText = count == 1
+            ? "You have unsaved changes in 1 document. Do you want to review this change before quitting?"
+            : "You have unsaved changes in \(count) documents. Do you want to review these changes before quitting?"
+        alert.informativeText = "If you don't review your documents, all your changes will be lost."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Review Changes\u{2026}")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard Changes")
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            reviewDirtyEditors(dirty)
+            return .terminateLater
+        case .alertThirdButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
+    }
+
+    /// One dirty editor scheduled for review during quit.
+    private struct DirtyEditorRef {
+        let controller: MainWindowController
+        let editor: EditorTab
+    }
+
+    private func collectDirtyEditors() -> [DirtyEditorRef] {
+        var result: [DirtyEditorRef] = []
+        for window in NSApp.windows {
+            guard let controller = window.windowController as? MainWindowController else { continue }
+            for tab in controller.tabManager.tabs {
+                if case .editor(let editor) = tab, editor.isModified {
+                    result.append(DirtyEditorRef(controller: controller, editor: editor))
+                }
+            }
+        }
+        return result
+    }
+
+    /// Walks `dirty` sequentially, activating each editor's window+tab and
+    /// presenting the per-doc save sheet. Replies to the pending
+    /// `.terminateLater` once every editor has been resolved (or cancelled).
+    private func reviewDirtyEditors(_ dirty: [DirtyEditorRef]) {
+        var remaining = dirty
+        func next() {
+            guard !remaining.isEmpty else {
+                NSApp.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            let ref = remaining.removeFirst()
+            // The editor may have been closed while we were processing earlier
+            // tabs in the same window; skip stale entries.
+            guard let tabIndex = ref.controller.tabManager.tabs.firstIndex(where: {
+                if case .editor(let e) = $0 { return e === ref.editor }
+                return false
+            }) else {
+                next()
+                return
+            }
+            ref.controller.window?.makeKeyAndOrderFront(nil)
+            ref.controller.tabManager.selectTab(index: tabIndex)
+            ref.controller.reviewAndSave(editor: ref.editor) { proceed in
+                if proceed {
+                    DispatchQueue.main.async { next() }
+                } else {
+                    NSApp.reply(toApplicationShouldTerminate: false)
+                }
+            }
+        }
+        next()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Persist window geometry from the frontmost window.
         if let front = windowControllers.first(where: { $0.window?.isKeyWindow == true })

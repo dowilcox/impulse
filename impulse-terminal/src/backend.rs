@@ -1,7 +1,7 @@
 //! Terminal backend — owns the alacritty_terminal::Term and PTY event loop.
 
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, OnResize, WindowSize};
@@ -42,7 +42,9 @@ impl EventListener for EventProxy {
                 let _ = self.event_tx.send(TerminalEvent::Wakeup);
             }
             AlacEvent::Title(title) => {
-                let _ = self.event_tx.send(TerminalEvent::TitleChanged(title));
+                let _ = self
+                    .event_tx
+                    .send(TerminalEvent::TitleChanged(sanitize_title(&title)));
             }
             AlacEvent::ResetTitle => {
                 let _ = self.event_tx.send(TerminalEvent::ResetTitle);
@@ -227,12 +229,12 @@ pub struct TerminalBackend {
     term: Arc<FairMutex<Term<EventProxy>>>,
     cmd_tx: Sender<BackendMsg>,
     event_rx: Receiver<TerminalEvent>,
-    _read_thread: Option<JoinHandle<()>>,
+    read_thread: Mutex<Option<JoinHandle<()>>>,
     cols: u16,
     rows: u16,
     colors: ConfiguredColors,
     child_pid: u32,
-    search: TerminalSearch,
+    search: Mutex<TerminalSearch>,
 }
 
 impl TerminalBackend {
@@ -271,11 +273,20 @@ impl TerminalBackend {
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
 
+        // Clone the PTY fd up front so the reader thread can own its own handle
+        // while the writer side keeps using the original. Doing it here lets us
+        // surface clone failures as a Result instead of panicking on the
+        // background thread.
+        let reader_file = pty
+            .file()
+            .try_clone()
+            .map_err(|e| format!("Failed to clone PTY fd: {e}"))?;
+
         let term_clone = Arc::clone(&term);
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
-                Self::read_loop(pty, term_clone, event_tx, cmd_rx);
+                Self::read_loop(pty, reader_file, term_clone, event_tx, cmd_rx);
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
 
@@ -283,12 +294,12 @@ impl TerminalBackend {
             term,
             cmd_tx,
             event_rx,
-            _read_thread: Some(read_thread),
+            read_thread: Mutex::new(Some(read_thread)),
             cols,
             rows,
             colors,
             child_pid,
-            search: TerminalSearch::new(),
+            search: Mutex::new(TerminalSearch::new()),
         })
     }
 
@@ -299,6 +310,7 @@ impl TerminalBackend {
     /// main thread (input, resize, shutdown).
     fn read_loop(
         pty: tty::Pty,
+        reader_file: std::fs::File,
         term: Arc<FairMutex<Term<EventProxy>>>,
         event_tx: Sender<TerminalEvent>,
         cmd_rx: Receiver<BackendMsg>,
@@ -307,9 +319,6 @@ impl TerminalBackend {
         let mut processor: Processor = Processor::new();
         let mut scanner = crate::osc_scanner::OscScanner::new();
 
-        // Clone the PTY file descriptor for reading.
-        // The original fd is used for writing (via BackendMsg::Input).
-        let reader_file = pty.file().try_clone().expect("Failed to clone PTY fd");
         let mut reader = std::io::BufReader::new(reader_file);
 
         // We need mutable access to the Pty for on_resize and writing.
@@ -463,7 +472,7 @@ impl TerminalBackend {
 
     /// Write the visible grid into a pre-allocated binary buffer.
     /// Returns the number of bytes written.
-    pub fn write_grid_to_buffer(&mut self, buf: &mut [u8]) -> usize {
+    pub fn write_grid_to_buffer(&self, buf: &mut [u8]) -> usize {
         let term = self.term.lock();
         let content = term.renderable_content();
         let term_colors = content.colors;
@@ -549,7 +558,11 @@ impl TerminalBackend {
             }
         }
 
-        let search_ranges = self.search.visible_matches(&term);
+        let search_ranges = self
+            .search
+            .lock()
+            .map(|mut s| s.visible_matches(&term))
+            .unwrap_or_default();
 
         let required = buffer::buffer_size(
             num_cols as u16,
@@ -746,36 +759,65 @@ impl TerminalBackend {
     }
 
     /// Notify the terminal about focus change.
+    ///
+    /// When the PTY has DECSET 1004 (FOCUS_IN_OUT) enabled, emit the
+    /// corresponding `\x1b[I` / `\x1b[O` sequence so TUIs like neovim and tmux
+    /// can react to the application gaining or losing focus.
     pub fn set_focus(&self, focused: bool) {
-        self.term.lock().is_focused = focused;
+        let emit = {
+            let mut term = self.term.lock();
+            term.is_focused = focused;
+            term.mode().contains(TermMode::FOCUS_IN_OUT)
+        };
+        if emit {
+            let seq: &[u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
+            let _ = self.cmd_tx.send(BackendMsg::Input(seq.to_vec()));
+        }
     }
 
-    /// Shut down the terminal.
+    /// Shut down the terminal and wait for the reader thread to exit so the
+    /// `Arc<FairMutex<Term>>` has no outstanding borrows when this backend is
+    /// dropped.
     pub fn shutdown(&self) {
         let _ = self.cmd_tx.send(BackendMsg::Shutdown);
+        let handle = self.read_thread.lock().ok().and_then(|mut h| h.take());
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
     }
 
     /// Search for a regex pattern in the terminal. Returns the first match.
-    pub fn search(&mut self, pattern: &str) -> SearchResult {
+    pub fn search(&self, pattern: &str) -> SearchResult {
         let term = self.term.lock();
-        self.search.search(&term, pattern)
+        let Ok(mut search) = self.search.lock() else {
+            return SearchResult::no_match();
+        };
+        search.search(&term, pattern)
     }
 
     /// Find the next search match after the current one.
-    pub fn search_next(&mut self) -> SearchResult {
+    pub fn search_next(&self) -> SearchResult {
         let term = self.term.lock();
-        self.search.search_next(&term)
+        let Ok(mut search) = self.search.lock() else {
+            return SearchResult::no_match();
+        };
+        search.search_next(&term)
     }
 
     /// Find the previous search match before the current one.
-    pub fn search_prev(&mut self) -> SearchResult {
+    pub fn search_prev(&self) -> SearchResult {
         let term = self.term.lock();
-        self.search.search_prev(&term)
+        let Ok(mut search) = self.search.lock() else {
+            return SearchResult::no_match();
+        };
+        search.search_prev(&term)
     }
 
     /// Clear the current search state.
-    pub fn search_clear(&mut self) {
-        self.search.clear();
+    pub fn search_clear(&self) {
+        if let Ok(mut search) = self.search.lock() {
+            search.clear();
+        }
     }
 }
 
@@ -783,6 +825,15 @@ impl Drop for TerminalBackend {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// Strip ASCII control characters (except tab and newline) from a shell-set
+/// title so embedded NULs don't silently truncate strings on the Swift side.
+fn sanitize_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| *c == '\t' || *c == '\n' || (*c >= ' ' && *c != '\x7f'))
+        .collect()
 }
 
 /// Convert alacritty cell flags to our CellFlags.

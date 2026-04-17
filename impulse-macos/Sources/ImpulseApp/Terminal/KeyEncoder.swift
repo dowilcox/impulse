@@ -3,86 +3,143 @@ import AppKit
 /// Translates NSEvent key events into terminal escape byte sequences.
 struct KeyEncoder {
 
-    /// Encode a key event into terminal bytes, respecting the terminal's current mode.
+    /// Encode a key event triggered by an NSTextInputClient `doCommand(by:)` selector.
+    /// Handles special keys (arrows, Home/End, PageUp/Down, F-keys, Tab/Return/etc.)
+    /// and meta-prefix encoding for Option+ASCII combinations that reach doCommand.
     /// Returns an empty array for events that should be handled by the menu system (Cmd+).
-    static func encode(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
+    static func encodeForDoCommand(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
         let flags = event.modifierFlags
         let hasCmd = flags.contains(.command)
         let hasCtrl = flags.contains(.control)
         let hasShift = flags.contains(.shift)
         let hasOption = flags.contains(.option)
 
-        // Cmd+ combinations are menu shortcuts — don't send to terminal.
         if hasCmd { return [] }
 
         let keyCode = event.keyCode
+        let modParam = modifierParam(shift: hasShift, alt: hasOption, ctrl: hasCtrl)
+        let anyMod = modParam > 1
 
-        // Shift+Enter → CSI u sequence for multi-line input (Claude Code etc.)
         if (keyCode == 36 || keyCode == 76) && hasShift && !hasCtrl {
-            return [0x1B, 0x5B, 0x31, 0x33, 0x3B, 0x32, 0x75] // \e[13;2u
+            return csiBytes("13;2u")
         }
 
-        // Special keys.
         switch keyCode {
-        case 36, 76: return [0x0D] // Return / Enter
-        case 51: return [0x7F]     // Backspace
-        case 48: return [0x09]     // Tab
-        case 53: return [0x1B]     // Escape
+        case 36, 76: return [0x0D]
+        case 51: return [0x7F]
+        case 48:
+            return hasShift ? csiBytes("Z") : [0x09]
+        case 53: return [0x1B]
 
-        // Arrow keys — respect application cursor mode.
-        case 126: return appCursor ? [0x1B, 0x4F, 0x41] : [0x1B, 0x5B, 0x41] // Up
-        case 125: return appCursor ? [0x1B, 0x4F, 0x42] : [0x1B, 0x5B, 0x42] // Down
-        case 124: return appCursor ? [0x1B, 0x4F, 0x43] : [0x1B, 0x5B, 0x43] // Right
-        case 123: return appCursor ? [0x1B, 0x4F, 0x44] : [0x1B, 0x5B, 0x44] // Left
+        case 126: return arrowBytes(letter: "A", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
+        case 125: return arrowBytes(letter: "B", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
+        case 124: return arrowBytes(letter: "C", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
+        case 123: return arrowBytes(letter: "D", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
 
-        // Navigation keys.
-        case 115: return [0x1B, 0x5B, 0x48]             // Home
-        case 119: return [0x1B, 0x5B, 0x46]             // End
-        case 116: return [0x1B, 0x5B, 0x35, 0x7E]       // Page Up
-        case 121: return [0x1B, 0x5B, 0x36, 0x7E]       // Page Down
-        case 117: return [0x1B, 0x5B, 0x33, 0x7E]       // Delete (forward)
+        case 115: return navBytes(letter: "H", modParam: modParam, anyMod: anyMod)
+        case 119: return navBytes(letter: "F", modParam: modParam, anyMod: anyMod)
+        case 116: return tildeBytes(number: 5, modParam: modParam, anyMod: anyMod)
+        case 121: return tildeBytes(number: 6, modParam: modParam, anyMod: anyMod)
+        case 117: return tildeBytes(number: 3, modParam: modParam, anyMod: anyMod)
 
-        // Function keys F1-F12.
-        case 122: return [0x1B, 0x4F, 0x50]                         // F1
-        case 120: return [0x1B, 0x4F, 0x51]                         // F2
-        case 99:  return [0x1B, 0x4F, 0x52]                         // F3
-        case 118: return [0x1B, 0x4F, 0x53]                         // F4
-        case 96:  return [0x1B, 0x5B, 0x31, 0x35, 0x7E]             // F5
-        case 97:  return [0x1B, 0x5B, 0x31, 0x37, 0x7E]             // F6
-        case 98:  return [0x1B, 0x5B, 0x31, 0x38, 0x7E]             // F7
-        case 100: return [0x1B, 0x5B, 0x31, 0x39, 0x7E]             // F8
-        case 101: return [0x1B, 0x5B, 0x32, 0x30, 0x7E]             // F9
-        case 109: return [0x1B, 0x5B, 0x32, 0x31, 0x7E]             // F10
-        case 103: return [0x1B, 0x5B, 0x32, 0x33, 0x7E]             // F11
-        case 111: return [0x1B, 0x5B, 0x32, 0x34, 0x7E]             // F12
+        case 122: return fkeySS3Bytes(letter: "P", modParam: modParam, anyMod: anyMod)
+        case 120: return fkeySS3Bytes(letter: "Q", modParam: modParam, anyMod: anyMod)
+        case 99:  return fkeySS3Bytes(letter: "R", modParam: modParam, anyMod: anyMod)
+        case 118: return fkeySS3Bytes(letter: "S", modParam: modParam, anyMod: anyMod)
+        case 96:  return tildeBytes(number: 15, modParam: modParam, anyMod: anyMod)
+        case 97:  return tildeBytes(number: 17, modParam: modParam, anyMod: anyMod)
+        case 98:  return tildeBytes(number: 18, modParam: modParam, anyMod: anyMod)
+        case 100: return tildeBytes(number: 19, modParam: modParam, anyMod: anyMod)
+        case 101: return tildeBytes(number: 20, modParam: modParam, anyMod: anyMod)
+        case 109: return tildeBytes(number: 21, modParam: modParam, anyMod: anyMod)
+        case 103: return tildeBytes(number: 23, modParam: modParam, anyMod: anyMod)
+        case 111: return tildeBytes(number: 24, modParam: modParam, anyMod: anyMod)
 
         default: break
         }
 
-        // Ctrl+letter → control codes (0x01-0x1A).
         if hasCtrl, let chars = event.charactersIgnoringModifiers?.lowercased(), chars.count == 1 {
             let c = chars.unicodeScalars.first!.value
-            if c >= 0x61 && c <= 0x7A { // a-z
+            if c >= 0x61 && c <= 0x7A {
                 return [UInt8(c - 0x60)]
             }
             switch c {
-            case 0x5B: return [0x1B] // Ctrl+[ → ESC
-            case 0x5D: return [0x1D] // Ctrl+] → GS
-            case 0x5C: return [0x1C] // Ctrl+\ → FS
+            case 0x5B: return [0x1B]
+            case 0x5D: return [0x1D]
+            case 0x5C: return [0x1C]
             default: break
             }
         }
 
-        // Option+key → ESC prefix (meta encoding).
-        if hasOption, let chars = event.charactersIgnoringModifiers, chars.count == 1 {
+        if hasOption,
+           let chars = event.charactersIgnoringModifiers,
+           chars.count == 1,
+           let scalar = chars.unicodeScalars.first,
+           scalar.value < 0x80 {
             return [0x1B] + Array(chars.utf8)
         }
 
-        // Regular character input.
         if let chars = event.characters, !chars.isEmpty {
             return Array(chars.utf8)
         }
 
         return []
+    }
+
+    /// Encode committed text arriving via NSTextInputClient `insertText(_:replacementRange:)`
+    /// when a meta-prefix should be applied. Returns nil to signal the caller should write
+    /// the text directly (composed dead keys, IME output, multi-character strings).
+    ///
+    /// Returns `\e` + ASCII byte only when Option was held AND the text is a single plain
+    /// ASCII character — the shape readline/emacs expect for Meta-f, Meta-b, etc.
+    static func encodeMetaForInsertText(text: String, event: NSEvent?) -> Data? {
+        guard let event, event.modifierFlags.contains(.option) else { return nil }
+        guard text.count == 1, let scalar = text.unicodeScalars.first, scalar.value < 0x80 else {
+            return nil
+        }
+        var data = Data([0x1B])
+        data.append(contentsOf: Array(text.utf8))
+        return data
+    }
+
+    static func encode(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
+        encodeForDoCommand(event: event, appCursor: appCursor, appKeypad: appKeypad)
+    }
+
+    private static func modifierParam(shift: Bool, alt: Bool, ctrl: Bool) -> Int {
+        1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0)
+    }
+
+    private static func csiBytes(_ tail: String) -> [UInt8] {
+        [0x1B, 0x5B] + Array(tail.utf8)
+    }
+
+    private static func arrowBytes(letter: Character, appCursor: Bool, modParam: Int, anyMod: Bool) -> [UInt8] {
+        if anyMod {
+            return csiBytes("1;\(modParam)\(letter)")
+        }
+        let intro: UInt8 = appCursor ? 0x4F : 0x5B
+        return [0x1B, intro, UInt8(letter.asciiValue!)]
+    }
+
+    private static func navBytes(letter: Character, modParam: Int, anyMod: Bool) -> [UInt8] {
+        if anyMod {
+            return csiBytes("1;\(modParam)\(letter)")
+        }
+        return [0x1B, 0x5B, UInt8(letter.asciiValue!)]
+    }
+
+    private static func tildeBytes(number: Int, modParam: Int, anyMod: Bool) -> [UInt8] {
+        if anyMod {
+            return csiBytes("\(number);\(modParam)~")
+        }
+        return csiBytes("\(number)~")
+    }
+
+    private static func fkeySS3Bytes(letter: Character, modParam: Int, anyMod: Bool) -> [UInt8] {
+        if anyMod {
+            return csiBytes("1;\(modParam)\(letter)")
+        }
+        return [0x1B, 0x4F, UInt8(letter.asciiValue!)]
     }
 }

@@ -119,10 +119,13 @@ class TerminalTab: NSView {
                 userInfo: ["exitCode": code]
             )
         case .clipboardStore(let text):
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            if currentSettings?.terminalAllowOsc52Write ?? true {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
         case .clipboardLoad:
-            if let text = NSPasteboard.general.string(forType: .string) {
+            if currentSettings?.terminalAllowOsc52Read ?? false,
+               let text = NSPasteboard.general.string(forType: .string) {
                 backend?.write(text)
             }
         case .cursorBlinkingChange:
@@ -290,11 +293,16 @@ class TerminalTab: NSView {
 
             // Wrap in bracketed paste if the running program supports it.
             if let mode = backend.mode(), mode.bracketedPaste {
+                // Drop any embedded paste-mode markers so a poisoned clipboard
+                // can't break out of bracketed paste and inject commands into
+                // the shell (iTerm2/WezTerm use the same mitigation).
+                text = text.replacingOccurrences(of: "\u{1b}[201~", with: "")
+                text = text.replacingOccurrences(of: "\u{1b}[200~", with: "")
                 backend.write("\u{1b}[200~")
-            }
-            backend.write(text)
-            if let mode = backend.mode(), mode.bracketedPaste {
+                backend.write(text)
                 backend.write("\u{1b}[201~")
+            } else {
+                backend.write(text)
             }
             return
         }
@@ -633,6 +641,8 @@ struct TerminalSettings {
     var terminalScrollOnOutput: Bool = true
     var terminalAllowHyperlink: Bool = true
     var terminalBoldIsBright: Bool = true
+    var terminalAllowOsc52Write: Bool = true
+    var terminalAllowOsc52Read: Bool = false
 }
 
 /// Convert a hex color string (e.g. "#DCD7BA") to a CGColor.

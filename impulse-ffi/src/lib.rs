@@ -1464,12 +1464,13 @@ pub extern "C" fn impulse_terminal_grid_snapshot(
                 return 0;
             }
             let h = unsafe { &mut *handle };
-            let written = h.backend.write_grid_to_buffer(&mut h.snapshot_buf);
+            let (backend, snapshot_buf) = (&h.backend, &mut h.snapshot_buf);
+            let written = backend.write_grid_to_buffer(snapshot_buf);
             if written == 0 || written > buf_len {
                 return 0;
             }
             unsafe {
-                std::ptr::copy_nonoverlapping(h.snapshot_buf.as_ptr(), out_buf, written);
+                std::ptr::copy_nonoverlapping(snapshot_buf.as_ptr(), out_buf, written);
             }
             written
         }),
@@ -1707,7 +1708,7 @@ pub extern "C" fn impulse_terminal_search(
             if handle.is_null() {
                 return to_c_string("{}");
             }
-            let h = unsafe { &mut *handle };
+            let h = unsafe { &*handle };
             let pat = to_rust_str(pattern).unwrap_or_default();
             let result = h.backend.search(&pat);
             match serde_json::to_string(&result) {
@@ -1726,7 +1727,7 @@ pub extern "C" fn impulse_terminal_search_next(handle: *mut TerminalHandle) -> *
             if handle.is_null() {
                 return to_c_string("{}");
             }
-            let h = unsafe { &mut *handle };
+            let h = unsafe { &*handle };
             let result = h.backend.search_next();
             match serde_json::to_string(&result) {
                 Ok(json) => to_c_string(&json),
@@ -1744,7 +1745,7 @@ pub extern "C" fn impulse_terminal_search_prev(handle: *mut TerminalHandle) -> *
             if handle.is_null() {
                 return to_c_string("{}");
             }
-            let h = unsafe { &mut *handle };
+            let h = unsafe { &*handle };
             let result = h.backend.search_prev();
             match serde_json::to_string(&result) {
                 Ok(json) => to_c_string(&json),
@@ -1762,7 +1763,7 @@ pub extern "C" fn impulse_terminal_search_clear(handle: *mut TerminalHandle) {
             if handle.is_null() {
                 return;
             }
-            let h = unsafe { &mut *handle };
+            let h = unsafe { &*handle };
             h.backend.search_clear();
         }),
     )

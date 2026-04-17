@@ -37,7 +37,7 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
-        let prefsItem = NSMenuItem(title: "Preferences...",
+        let prefsItem = NSMenuItem(title: "Settings...",
                                    action: #selector(AppDelegate.showPreferences(_:)),
                                    keyEquivalent: ",")
         prefsItem.keyEquivalentModifierMask = [.command]

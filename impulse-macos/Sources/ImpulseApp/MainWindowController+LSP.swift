@@ -67,6 +67,10 @@ extension MainWindowController {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 for (uri, diagnosticsArray) in events {
+                    // A server's trailing `diagnostics: []` can arrive after
+                    // lspDidClose; applying it to a freshly-reopened or
+                    // still-closing tab clobbers valid state.
+                    guard self.lspOpenFiles.contains(uri) else { continue }
                     let filePath = self.uriToFilePath(uri)
                     guard let editorTab = self.findEditorTab(forPath: filePath) else { continue }
 
@@ -153,6 +157,7 @@ extension MainWindowController {
         guard lspOpenFiles.contains(uri) else { return }
         lspOpenFiles.remove(uri)
         lspDocVersions.removeValue(forKey: uri)
+        clearPendingLSPRequests(for: uri)
 
         let language = editor.lspLanguage
         lspQueue.async { [weak self] in
@@ -160,6 +165,36 @@ extension MainWindowController {
             let params = encodeLspJSON(["textDocument": ["uri": uri]])
             self.core.lspNotify(languageId: language, fileUri: uri, method: "textDocument/didClose", paramsJson: params)
         }
+    }
+
+    /// Cancels any in-flight per-URI LSP work items and drops latest-request
+    /// IDs so responses that arrive after close are ignored. Without this, the
+    /// per-URI dictionaries grow unbounded over a session.
+    private func clearPendingLSPRequests(for uri: String) {
+        completionWorkItems[uri]?.cancel()
+        completionWorkItems.removeValue(forKey: uri)
+        hoverWorkItems[uri]?.cancel()
+        hoverWorkItems.removeValue(forKey: uri)
+        formattingWorkItems[uri]?.cancel()
+        formattingWorkItems.removeValue(forKey: uri)
+        signatureHelpWorkItems[uri]?.cancel()
+        signatureHelpWorkItems.removeValue(forKey: uri)
+        referencesWorkItems[uri]?.cancel()
+        referencesWorkItems.removeValue(forKey: uri)
+        codeActionWorkItems[uri]?.cancel()
+        codeActionWorkItems.removeValue(forKey: uri)
+        renameWorkItems[uri]?.cancel()
+        renameWorkItems.removeValue(forKey: uri)
+        prepareRenameWorkItems[uri]?.cancel()
+        prepareRenameWorkItems.removeValue(forKey: uri)
+
+        latestCompletionReq.removeValue(forKey: uri)
+        latestHoverReq.removeValue(forKey: uri)
+        latestFormattingReq.removeValue(forKey: uri)
+        latestSignatureHelpReq.removeValue(forKey: uri)
+        latestReferencesReq.removeValue(forKey: uri)
+        latestCodeActionReq.removeValue(forKey: uri)
+        latestRenameReq.removeValue(forKey: uri)
     }
 
     /// Sends LSP didSave after a file is saved.

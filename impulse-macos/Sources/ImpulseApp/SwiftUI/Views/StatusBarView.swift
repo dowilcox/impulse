@@ -25,7 +25,7 @@ struct StatusBarView: View {
     private var leftGroup: some View {
         // Shell name
         if !model.shellName.isEmpty {
-            label(model.shellName, color: Color(NSColor(hex: model.theme.cyan)))
+            label(model.shellName, color: model.theme.colorCyan)
         }
 
         // Git branch
@@ -34,20 +34,20 @@ struct StatusBarView: View {
             HStack(spacing: 3) {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 9))
-                label(branch, color: Color(NSColor(hex: model.theme.magenta)))
+                label(branch, color: model.theme.colorMagenta)
             }
         }
 
         // CWD
         if !model.currentCwd.isEmpty {
             separator
-            label(shortenHome(model.currentCwd), color: Color(NSColor(hex: model.theme.fg)))
+            label(shortenHome(model.currentCwd), color: model.theme.colorFg)
         }
 
         // Blame
         if let blame = model.blameInfo {
             separator
-            label(blame, color: Color(NSColor(hex: model.theme.fgMuted)))
+            label(blame, color: model.theme.colorFgMuted)
         }
     }
 
@@ -57,25 +57,25 @@ struct StatusBarView: View {
     private var rightGroup: some View {
         // Encoding
         if model.cursorLine != nil {
-            label(model.currentEncoding, color: Color(NSColor(hex: model.theme.fgMuted)))
+            label(model.currentEncoding, color: model.theme.colorFgMuted)
             separator
         }
 
         // Indent info
         if let indent = model.currentIndent {
-            label(indent, color: Color(NSColor(hex: model.theme.fgMuted)))
+            label(indent, color: model.theme.colorFgMuted)
             separator
         }
 
         // Language
         if let lang = model.currentLanguage {
-            label(lang, color: Color(NSColor(hex: model.theme.blue)))
+            label(lang, color: model.theme.colorBlue)
             separator
         }
 
         // Cursor position
         if let line = model.cursorLine, let col = model.cursorCol {
-            label("Ln \(line + 1), Col \(col + 1)", color: Color(NSColor(hex: model.theme.fgMuted)))
+            label("Ln \(line + 1), Col \(col + 1)", color: model.theme.colorFgMuted)
         }
 
         // Preview toggle
@@ -84,13 +84,13 @@ struct StatusBarView: View {
             Button { model.onPreviewToggle?() } label: {
                 Text("Preview")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(model.isPreviewing ? Color(NSColor(hex: model.theme.bgSurface)) : Color(NSColor(hex: model.theme.green)))
+                    .foregroundStyle(model.isPreviewing ? model.theme.colorBgSurface : model.theme.colorGreen)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(model.isPreviewing ? Color(NSColor(hex: model.theme.green)) : .clear)
-                            .strokeBorder(Color(NSColor(hex: model.theme.green)), lineWidth: 1)
+                            .fill(model.isPreviewing ? model.theme.colorGreen : .clear)
+                            .strokeBorder(model.theme.colorGreen, lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
@@ -109,7 +109,7 @@ struct StatusBarView: View {
 
     private var separator: some View {
         Rectangle()
-            .fill(Color(NSColor(hex: model.theme.border)).opacity(0.3))
+            .fill(model.theme.colorBorder.opacity(0.3))
             .frame(width: 1, height: 14)
             .padding(.horizontal, 8)
     }

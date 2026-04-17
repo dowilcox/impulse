@@ -464,36 +464,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return
         }
 
-        // Single-pass escaper for JS single-quoted string literals.
-        // Avoids 7+ intermediate String allocations from chained replacingOccurrences.
-        var escaped = ""
-        escaped.reserveCapacity(jsonString.count)
-        for scalar in jsonString.unicodeScalars {
-            switch scalar {
-            case "\\": escaped += "\\\\"
-            case "'":  escaped += "\\'"
-            case "\n": escaped += "\\n"
-            case "\r": escaped += "\\r"
-            case "\t": escaped += "\\t"
-            case "\0": escaped += "\\0"
-            case "\u{2028}": escaped += "\\u2028"
-            case "\u{2029}": escaped += "\\u2029"
-            default:
-                if scalar.value < 0x20 {
-                    escaped += String(format: "\\u%04x", scalar.value)
-                } else {
-                    escaped += String(scalar)
+        guard let webView else { return }
+        webView.callAsyncJavaScript(
+            "window.impulseReceiveCommand(msg);",
+            arguments: ["msg": jsonString],
+            in: nil,
+            in: .page,
+            completionHandler: { result in
+                if case .failure(let error) = result {
+                    os_log(.error, log: Self.log, "callAsyncJavaScript failed: %{public}@", error.localizedDescription)
                 }
             }
-        }
-
-        let script = "impulseReceiveCommand('\(escaped)')"
-        guard let webView else { return }
-        webView.evaluateJavaScript(script) { _, error in
-            if let error = error {
-                os_log(.error, log: Self.log, "evaluateJavaScript failed: %{public}@", error.localizedDescription)
-            }
-        }
+        )
     }
 
     // MARK: Public API

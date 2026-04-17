@@ -126,6 +126,8 @@ struct Settings: Codable {
     var terminalScrollOnOutput: Bool
     var terminalAllowHyperlink: Bool
     var terminalBoldIsBright: Bool
+    var terminalAllowOsc52Write: Bool
+    var terminalAllowOsc52Read: Bool
 
     // -- Editor (additional) --
     var editorLineHeight: Int
@@ -194,6 +196,8 @@ struct Settings: Codable {
         case terminalScrollOnOutput = "terminal_scroll_on_output"
         case terminalAllowHyperlink = "terminal_allow_hyperlink"
         case terminalBoldIsBright = "terminal_bold_is_bright"
+        case terminalAllowOsc52Write = "terminal_allow_osc52_write"
+        case terminalAllowOsc52Read = "terminal_allow_osc52_read"
         case editorLineHeight = "editor_line_height"
         case editorAutoClosingBrackets = "editor_auto_closing_brackets"
         case editorCursorSurroundingLines = "editor_cursor_surrounding_lines"
@@ -250,6 +254,8 @@ struct Settings: Codable {
             terminalScrollOnOutput: true,
             terminalAllowHyperlink: true,
             terminalBoldIsBright: true,
+            terminalAllowOsc52Write: true,
+            terminalAllowOsc52Read: false,
             editorLineHeight: 0,
             editorAutoClosingBrackets: "languageDefined",
             editorCursorSurroundingLines: 3,
@@ -310,6 +316,8 @@ struct Settings: Codable {
         terminalScrollOnOutput = (try? c.decode(Bool.self, forKey: .terminalScrollOnOutput)) ?? d.terminalScrollOnOutput
         terminalAllowHyperlink = (try? c.decode(Bool.self, forKey: .terminalAllowHyperlink)) ?? d.terminalAllowHyperlink
         terminalBoldIsBright = (try? c.decode(Bool.self, forKey: .terminalBoldIsBright)) ?? d.terminalBoldIsBright
+        terminalAllowOsc52Write = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Write)) ?? d.terminalAllowOsc52Write
+        terminalAllowOsc52Read = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Read)) ?? d.terminalAllowOsc52Read
         editorLineHeight = (try? c.decode(Int.self, forKey: .editorLineHeight)) ?? d.editorLineHeight
         editorAutoClosingBrackets = (try? c.decode(String.self, forKey: .editorAutoClosingBrackets)) ?? d.editorAutoClosingBrackets
         editorCursorSurroundingLines = (try? c.decode(Int.self, forKey: .editorCursorSurroundingLines)) ?? d.editorCursorSurroundingLines
@@ -338,6 +346,7 @@ struct Settings: Codable {
          terminalBell: Bool, terminalFontFamily: String, terminalFontSize: Int,
          terminalCopyOnSelect: Bool, terminalScrollOnOutput: Bool,
          terminalAllowHyperlink: Bool, terminalBoldIsBright: Bool,
+         terminalAllowOsc52Write: Bool, terminalAllowOsc52Read: Bool,
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
          editorOccurrencesHighlight: Bool, editorWordBasedSuggestions: String,
@@ -382,6 +391,8 @@ struct Settings: Codable {
         self.terminalScrollOnOutput = terminalScrollOnOutput
         self.terminalAllowHyperlink = terminalAllowHyperlink
         self.terminalBoldIsBright = terminalBoldIsBright
+        self.terminalAllowOsc52Write = terminalAllowOsc52Write
+        self.terminalAllowOsc52Read = terminalAllowOsc52Read
         self.editorLineHeight = editorLineHeight
         self.editorAutoClosingBrackets = editorAutoClosingBrackets
         self.editorCursorSurroundingLines = editorCursorSurroundingLines
@@ -553,7 +564,9 @@ extension Settings {
             terminalBell: terminalBell,
             terminalScrollOnOutput: terminalScrollOnOutput,
             terminalAllowHyperlink: terminalAllowHyperlink,
-            terminalBoldIsBright: terminalBoldIsBright
+            terminalBoldIsBright: terminalBoldIsBright,
+            terminalAllowOsc52Write: terminalAllowOsc52Write,
+            terminalAllowOsc52Read: terminalAllowOsc52Read
         )
     }
 }

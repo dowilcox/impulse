@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 // MARK: - App Font Helper
 
@@ -115,6 +116,51 @@ struct Theme: Codable {
     let terminalBg: String
     let terminalPalette: [String]
 
+    // Pre-resolved SwiftUI.Color values. Computed once at decode time so hot
+    // SwiftUI bodies (e.g. the status bar) don't re-parse hex strings on every
+    // re-render. Not part of Codable — absent from CodingKeys below.
+    let colorBg: Color
+    let colorBgDark: Color
+    let colorBgHighlight: Color
+    let colorBgSurface: Color
+    let colorBorder: Color
+    let colorFg: Color
+    let colorFgMuted: Color
+    let colorFgComment: Color
+    let colorAccent: Color
+    let colorSelection: Color
+    let colorCursor: Color
+    let colorRed: Color
+    let colorOrange: Color
+    let colorYellow: Color
+    let colorGreen: Color
+    let colorCyan: Color
+    let colorBlue: Color
+    let colorMagenta: Color
+    let colorGitAdded: Color
+    let colorGitModified: Color
+    let colorGitDeleted: Color
+    let colorGitRenamed: Color
+    let colorGitConflict: Color
+    let colorGitIgnored: Color
+    let colorSyntaxKeyword: Color
+    let colorSyntaxFunction: Color
+    let colorSyntaxType: Color
+    let colorSyntaxString: Color
+    let colorSyntaxNumber: Color
+    let colorSyntaxConstant: Color
+    let colorSyntaxComment: Color
+    let colorSyntaxOperator: Color
+    let colorSyntaxTag: Color
+    let colorSyntaxAttribute: Color
+    let colorSyntaxVariable: Color
+    let colorSyntaxDelimiter: Color
+    let colorSyntaxEscape: Color
+    let colorSyntaxRegexp: Color
+    let colorSyntaxLink: Color
+    let colorTerminalFg: Color
+    let colorTerminalBg: Color
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -155,6 +201,97 @@ struct Theme: Codable {
         case terminalFg = "terminal_fg"
         case terminalBg = "terminal_bg"
         case terminalPalette = "terminal_palette"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.isLight = try c.decode(Bool.self, forKey: .isLight)
+        self.bg = try c.decode(String.self, forKey: .bg)
+        self.bgDark = try c.decode(String.self, forKey: .bgDark)
+        self.bgHighlight = try c.decode(String.self, forKey: .bgHighlight)
+        self.bgSurface = try c.decode(String.self, forKey: .bgSurface)
+        self.border = try c.decode(String.self, forKey: .border)
+        self.fg = try c.decode(String.self, forKey: .fg)
+        self.fgMuted = try c.decode(String.self, forKey: .fgMuted)
+        self.fgComment = try c.decode(String.self, forKey: .fgComment)
+        self.accent = try c.decode(String.self, forKey: .accent)
+        self.selection = try c.decode(String.self, forKey: .selection)
+        self.cursor = try c.decode(String.self, forKey: .cursor)
+        self.red = try c.decode(String.self, forKey: .red)
+        self.orange = try c.decode(String.self, forKey: .orange)
+        self.yellow = try c.decode(String.self, forKey: .yellow)
+        self.green = try c.decode(String.self, forKey: .green)
+        self.cyan = try c.decode(String.self, forKey: .cyan)
+        self.blue = try c.decode(String.self, forKey: .blue)
+        self.magenta = try c.decode(String.self, forKey: .magenta)
+        self.gitAdded = try c.decode(String.self, forKey: .gitAdded)
+        self.gitModified = try c.decode(String.self, forKey: .gitModified)
+        self.gitDeleted = try c.decode(String.self, forKey: .gitDeleted)
+        self.gitRenamed = try c.decode(String.self, forKey: .gitRenamed)
+        self.gitConflict = try c.decode(String.self, forKey: .gitConflict)
+        self.gitIgnored = try c.decode(String.self, forKey: .gitIgnored)
+        self.syntaxKeyword = try c.decode(String.self, forKey: .syntaxKeyword)
+        self.syntaxFunction = try c.decode(String.self, forKey: .syntaxFunction)
+        self.syntaxType = try c.decode(String.self, forKey: .syntaxType)
+        self.syntaxString = try c.decode(String.self, forKey: .syntaxString)
+        self.syntaxNumber = try c.decode(String.self, forKey: .syntaxNumber)
+        self.syntaxConstant = try c.decode(String.self, forKey: .syntaxConstant)
+        self.syntaxComment = try c.decode(String.self, forKey: .syntaxComment)
+        self.syntaxOperator = try c.decode(String.self, forKey: .syntaxOperator)
+        self.syntaxTag = try c.decode(String.self, forKey: .syntaxTag)
+        self.syntaxAttribute = try c.decode(String.self, forKey: .syntaxAttribute)
+        self.syntaxVariable = try c.decode(String.self, forKey: .syntaxVariable)
+        self.syntaxDelimiter = try c.decode(String.self, forKey: .syntaxDelimiter)
+        self.syntaxEscape = try c.decode(String.self, forKey: .syntaxEscape)
+        self.syntaxRegexp = try c.decode(String.self, forKey: .syntaxRegexp)
+        self.syntaxLink = try c.decode(String.self, forKey: .syntaxLink)
+        self.terminalFg = try c.decode(String.self, forKey: .terminalFg)
+        self.terminalBg = try c.decode(String.self, forKey: .terminalBg)
+        self.terminalPalette = try c.decode([String].self, forKey: .terminalPalette)
+
+        self.colorBg = Color(NSColor(hex: self.bg))
+        self.colorBgDark = Color(NSColor(hex: self.bgDark))
+        self.colorBgHighlight = Color(NSColor(hex: self.bgHighlight))
+        self.colorBgSurface = Color(NSColor(hex: self.bgSurface))
+        self.colorBorder = Color(NSColor(hex: self.border))
+        self.colorFg = Color(NSColor(hex: self.fg))
+        self.colorFgMuted = Color(NSColor(hex: self.fgMuted))
+        self.colorFgComment = Color(NSColor(hex: self.fgComment))
+        self.colorAccent = Color(NSColor(hex: self.accent))
+        self.colorSelection = Color(NSColor(hex: self.selection))
+        self.colorCursor = Color(NSColor(hex: self.cursor))
+        self.colorRed = Color(NSColor(hex: self.red))
+        self.colorOrange = Color(NSColor(hex: self.orange))
+        self.colorYellow = Color(NSColor(hex: self.yellow))
+        self.colorGreen = Color(NSColor(hex: self.green))
+        self.colorCyan = Color(NSColor(hex: self.cyan))
+        self.colorBlue = Color(NSColor(hex: self.blue))
+        self.colorMagenta = Color(NSColor(hex: self.magenta))
+        self.colorGitAdded = Color(NSColor(hex: self.gitAdded))
+        self.colorGitModified = Color(NSColor(hex: self.gitModified))
+        self.colorGitDeleted = Color(NSColor(hex: self.gitDeleted))
+        self.colorGitRenamed = Color(NSColor(hex: self.gitRenamed))
+        self.colorGitConflict = Color(NSColor(hex: self.gitConflict))
+        self.colorGitIgnored = Color(NSColor(hex: self.gitIgnored))
+        self.colorSyntaxKeyword = Color(NSColor(hex: self.syntaxKeyword))
+        self.colorSyntaxFunction = Color(NSColor(hex: self.syntaxFunction))
+        self.colorSyntaxType = Color(NSColor(hex: self.syntaxType))
+        self.colorSyntaxString = Color(NSColor(hex: self.syntaxString))
+        self.colorSyntaxNumber = Color(NSColor(hex: self.syntaxNumber))
+        self.colorSyntaxConstant = Color(NSColor(hex: self.syntaxConstant))
+        self.colorSyntaxComment = Color(NSColor(hex: self.syntaxComment))
+        self.colorSyntaxOperator = Color(NSColor(hex: self.syntaxOperator))
+        self.colorSyntaxTag = Color(NSColor(hex: self.syntaxTag))
+        self.colorSyntaxAttribute = Color(NSColor(hex: self.syntaxAttribute))
+        self.colorSyntaxVariable = Color(NSColor(hex: self.syntaxVariable))
+        self.colorSyntaxDelimiter = Color(NSColor(hex: self.syntaxDelimiter))
+        self.colorSyntaxEscape = Color(NSColor(hex: self.syntaxEscape))
+        self.colorSyntaxRegexp = Color(NSColor(hex: self.syntaxRegexp))
+        self.colorSyntaxLink = Color(NSColor(hex: self.syntaxLink))
+        self.colorTerminalFg = Color(NSColor(hex: self.terminalFg))
+        self.colorTerminalBg = Color(NSColor(hex: self.terminalBg))
     }
 
     // MARK: - Computed NSColor Properties

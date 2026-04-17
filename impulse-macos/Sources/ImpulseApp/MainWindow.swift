@@ -443,6 +443,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
+        setupTerminalSearchBar()
     }
 
     // MARK: - NSToolbarDelegate
@@ -764,107 +765,158 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - Terminal Search Bar
 
     private func setupTerminalSearchBar() {
+        let host = tabManager.contentView
+
         termSearchBar.translatesAutoresizingMaskIntoConstraints = false
         termSearchBar.wantsLayer = true
+        termSearchBar.layer?.backgroundColor = theme.bgSurfaceColor.cgColor
         termSearchBar.isHidden = true
 
+        let separator = NSBox()
+        separator.boxType = .custom
+        separator.borderWidth = 0
+        separator.fillColor = theme.borderColor
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
         termSearchField.translatesAutoresizingMaskIntoConstraints = false
-        termSearchField.placeholderString = "Find in terminal..."
+        termSearchField.placeholderString = "Find in terminal"
         termSearchField.sendsSearchStringImmediately = true
-        termSearchField.target = self
-        termSearchField.action = #selector(termSearchFieldChanged(_:))
+        termSearchField.sendsWholeSearchString = false
+        termSearchField.controlSize = .regular
+        termSearchField.delegate = self
         termSearchField.font = NSFont.appFont(ofSize: 13)
 
-        let prevButton = NSButton(title: "\u{25C0}", target: self, action: #selector(termSearchPrev(_:)))
+        let prevButton = NSButton()
         prevButton.translatesAutoresizingMaskIntoConstraints = false
-        prevButton.bezelStyle = .texturedRounded
+        prevButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Previous Match")
+        prevButton.bezelStyle = .rounded
+        prevButton.isBordered = true
         prevButton.toolTip = "Previous Match"
+        prevButton.target = self
+        prevButton.action = #selector(termSearchPrev(_:))
         prevButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        let nextButton = NSButton(title: "\u{25B6}", target: self, action: #selector(termSearchNext(_:)))
+        let nextButton = NSButton()
         nextButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.bezelStyle = .texturedRounded
+        nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next Match")
+        nextButton.bezelStyle = .rounded
+        nextButton.isBordered = true
         nextButton.toolTip = "Next Match"
+        nextButton.target = self
+        nextButton.action = #selector(termSearchNext(_:))
         nextButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        let closeButton = NSButton(title: "\u{2715}", target: self, action: #selector(termSearchClose(_:)))
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.bezelStyle = .texturedRounded
-        closeButton.toolTip = "Close"
-        closeButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let doneButton = NSButton(title: "Done", target: self, action: #selector(termSearchClose(_:)))
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.bezelStyle = .rounded
+        doneButton.keyEquivalent = "\u{1b}"
+        doneButton.toolTip = "Close Find Bar"
+        doneButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
+        termSearchBar.addSubview(separator)
         termSearchBar.addSubview(termSearchField)
         termSearchBar.addSubview(prevButton)
         termSearchBar.addSubview(nextButton)
-        termSearchBar.addSubview(closeButton)
+        termSearchBar.addSubview(doneButton)
+
+        host.addSubview(termSearchBar)
+
+        let heightConstraint = termSearchBar.heightAnchor.constraint(equalToConstant: 0)
+        termSearchHeightConstraint = heightConstraint
 
         NSLayoutConstraint.activate([
-            termSearchField.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor, constant: 8),
+            termSearchBar.topAnchor.constraint(equalTo: host.topAnchor),
+            termSearchBar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            termSearchBar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            heightConstraint,
+
+            separator.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: termSearchBar.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: termSearchBar.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+
+            termSearchField.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor, constant: 10),
             termSearchField.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+            termSearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
 
-            prevButton.leadingAnchor.constraint(equalTo: termSearchField.trailingAnchor, constant: 4),
+            prevButton.leadingAnchor.constraint(equalTo: termSearchField.trailingAnchor, constant: 8),
             prevButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+            prevButton.widthAnchor.constraint(equalToConstant: 28),
 
-            nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 2),
+            nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 4),
             nextButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+            nextButton.widthAnchor.constraint(equalToConstant: 28),
 
-            closeButton.leadingAnchor.constraint(equalTo: nextButton.trailingAnchor, constant: 8),
-            closeButton.trailingAnchor.constraint(lessThanOrEqualTo: termSearchBar.trailingAnchor, constant: -8),
-            closeButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+            doneButton.leadingAnchor.constraint(greaterThanOrEqualTo: nextButton.trailingAnchor, constant: 12),
+            doneButton.trailingAnchor.constraint(equalTo: termSearchBar.trailingAnchor, constant: -10),
+            doneButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
         ])
     }
 
     /// Toggles the terminal search bar visibility.
     func toggleTerminalSearch() {
-        // Only allow terminal search on terminal tabs.
-        guard tabManager.selectedTerminal != nil else { return }
+        guard tabManager.selectedTerminal != nil else {
+            NSSound.beep()
+            return
+        }
 
-        termSearchBarVisible.toggle()
         if termSearchBarVisible {
-            termSearchBar.isHidden = false
-            termSearchHeightConstraint?.constant = 32
-            window?.makeFirstResponder(termSearchField)
-        } else {
             hideTerminalSearch()
-        }
-    }
-
-    /// Hides the terminal search bar and clears the search state.
-    private func hideTerminalSearch() {
-        termSearchBarVisible = false
-        termSearchBar.isHidden = true
-        termSearchHeightConstraint?.constant = 0
-        termSearchField.stringValue = ""
-
-        // Clear search state and return focus to the active terminal.
-        if let container = tabManager.selectedTerminal,
-           let terminal = container.activeTerminal {
-            terminal.searchClear()
-            terminal.focus()
-        }
-    }
-
-    @objc private func termSearchFieldChanged(_ sender: NSSearchField) {
-        guard let container = tabManager.selectedTerminal,
-              let terminal = container.activeTerminal else { return }
-        let query = sender.stringValue
-        if query.isEmpty {
-            terminal.searchClear()
         } else {
+            showTerminalSearch()
+        }
+    }
+
+    private func showTerminalSearch() {
+        termSearchBarVisible = true
+        termSearchBar.isHidden = false
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.allowsImplicitAnimation = true
+            termSearchHeightConstraint?.constant = 32
+            tabManager.contentView.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.termSearchField)
+            let editor = self.termSearchField.currentEditor() as? NSTextView
+            editor?.selectAll(nil)
+        })
+
+        let query = termSearchField.stringValue
+        if !query.isEmpty,
+           let terminal = tabManager.selectedTerminal?.activeTerminal {
             terminal.search(query)
         }
     }
 
+    /// Hides the terminal search bar, clears search state, and returns focus
+    /// to the active terminal.
+    private func hideTerminalSearch() {
+        termSearchBarVisible = false
+        if let terminal = tabManager.selectedTerminal?.activeTerminal {
+            terminal.searchClear()
+        }
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.allowsImplicitAnimation = true
+            termSearchHeightConstraint?.constant = 0
+            tabManager.contentView.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            self.termSearchBar.isHidden = true
+            if let terminal = self.tabManager.selectedTerminal?.activeTerminal {
+                terminal.focus()
+            }
+        })
+    }
+
     @objc private func termSearchNext(_ sender: Any?) {
-        guard let container = tabManager.selectedTerminal,
-              let terminal = container.activeTerminal else { return }
-        terminal.searchNext()
+        tabManager.selectedTerminal?.activeTerminal?.searchNext()
     }
 
     @objc private func termSearchPrev(_ sender: Any?) {
-        guard let container = tabManager.selectedTerminal,
-              let terminal = container.activeTerminal else { return }
-        terminal.searchPrev()
+        tabManager.selectedTerminal?.activeTerminal?.searchPrev()
     }
 
     @objc private func termSearchClose(_ sender: Any?) {
@@ -1074,6 +1126,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 lspDidClose(editor: editor)
             }
             tabManager.closeTab(index: index)
+        }
+    }
+
+    /// Presents the standard per-document "Do you want to save the changes
+    /// made to X?" sheet for a dirty editor and invokes `completion` with
+    /// `true` if the user chose Save or Don't Save, `false` if they cancelled.
+    /// Used by the quit flow to walk dirty tabs one at a time.
+    func reviewAndSave(editor: EditorTab, completion: @escaping (Bool) -> Void) {
+        let filename = editor.filePath.map { ($0 as NSString).lastPathComponent } ?? "Untitled"
+
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save the changes made to \(filename)?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don't Save")
+
+        guard let window = self.window else { completion(false); return }
+        alert.beginSheetModal(for: window) { [weak self, weak editor] response in
+            guard let self, let editor else { completion(false); return }
+            switch response {
+            case .alertFirstButtonReturn:
+                if editor.filePath != nil {
+                    editor.fetchContentAndSave { success in completion(success) }
+                } else {
+                    self.showSaveAsDialog(for: editor) { success in completion(success) }
+                }
+            case .alertThirdButtonReturn:
+                completion(true)
+            default:
+                completion(false)
+            }
         }
     }
 
@@ -1780,8 +1865,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     /// Shows a save-as dialog for an untitled editor tab, then transitions it
-    /// to a file-backed editor on successful save.
-    private func showSaveAsDialog(for editor: EditorTab) {
+    /// to a file-backed editor on successful save. The optional completion is
+    /// called with `true` if the user saved, `false` if the panel was cancelled
+    /// or the save failed.
+    private func showSaveAsDialog(for editor: EditorTab, completion: ((Bool) -> Void)? = nil) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Untitled"
         panel.canCreateDirectories = true
@@ -1790,9 +1877,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             panel.directoryURL = URL(fileURLWithPath: cwd)
         }
 
-        guard let window = self.window else { return }
+        guard let window = self.window else { completion?(false); return }
         panel.beginSheetModal(for: window) { [weak self, weak editor] response in
-            guard let self, let editor, response == .OK, let url = panel.url else { return }
+            guard let self, let editor, response == .OK, let url = panel.url else {
+                completion?(false)
+                return
+            }
 
             let chosenPath = url.path
 
@@ -1800,7 +1890,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             editor.filePath = chosenPath
 
             editor.fetchContentAndSave { [weak self, weak editor] success in
-                guard let self, let editor, success else { return }
+                guard let self, let editor, success else {
+                    completion?(false)
+                    return
+                }
 
                 // Transition to file-backed editor: re-open in Monaco with correct URI and language
                 let language = self.tabManager.detectLanguage(forPath: chosenPath)
@@ -1817,6 +1910,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 // Track the editor tab
                 self.trackEditorTab(editor, forPath: chosenPath)
                 self.lspDidOpenIfNeeded(path: chosenPath)
+
+                completion?(true)
             }
         }
     }
@@ -2258,5 +2353,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         (NSApp.delegate as? AppDelegate)?.windowControllerDidClose(self)
+    }
+}
+
+// MARK: - Terminal Search Field Delegate
+
+extension MainWindowController: NSSearchFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSSearchField, field === termSearchField else { return }
+        let query = field.stringValue
+        guard let terminal = tabManager.selectedTerminal?.activeTerminal else { return }
+        if query.isEmpty {
+            terminal.searchClear()
+        } else {
+            terminal.search(query)
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === termSearchField else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.cancelOperation(_:)):
+            hideTerminalSearch()
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            tabManager.selectedTerminal?.activeTerminal?.searchNext()
+            return true
+        case #selector(NSResponder.insertBacktab(_:)):
+            tabManager.selectedTerminal?.activeTerminal?.searchPrev()
+            return true
+        default:
+            return false
+        }
     }
 }
