@@ -400,7 +400,11 @@ class TerminalRenderer: NSView {
                 let isBold = flags & GridBufferReader.flagBold != 0
                 let isItalic = flags & GridBufferReader.flagItalic != 0
                 let isDim = flags & GridBufferReader.flagDim != 0
-                let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x259F
+                // Keep custom rendering limited to line/box glyphs. Block and
+                // shade glyphs (0x2580...) are common in TUIs for fills and
+                // scroll indicators; the font renderer handles those more
+                // reliably than our snapped-rect path.
+                let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x257F
                 let isWideChar = flags & GridBufferReader.flagWideChar != 0
 
                 // Bold-is-bright: if bold and the foreground matches one of
@@ -708,149 +712,116 @@ class TerminalRenderer: NSView {
             alpha: alpha
         )
 
-        let midX = x + width / 2
-        let midY = y + height / 2
+        // Codex/Claude TUIs use box-drawing heavily. Snap all geometry to the
+        // backing pixel grid and disable antialiasing so separators do not
+        // smear color into adjacent rows/columns on macOS.
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        func snap(_ value: CGFloat) -> CGFloat {
+            (value * scale).rounded() / scale
+        }
+        func snappedRect(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> CGRect {
+            let minX = snap(x)
+            let minY = snap(y)
+            let maxX = snap(x + width)
+            let maxY = snap(y + height)
+            return CGRect(x: minX, y: minY, width: max(0, maxX - minX), height: max(0, maxY - minY))
+        }
+
+        let midX = snap(x + width / 2)
+        let midY = snap(y + height / 2)
         let thinWidth: CGFloat = 1.0
         let thickWidth: CGFloat = 2.0
+
+        // Fills below are pixel-snapped, so disabling antialiasing keeps
+        // straight separators from bleeding into adjacent rows/columns. Arc
+        // cases re-enable it locally so rounded corners stay smooth.
+        context.saveGState()
+        context.setShouldAntialias(false)
+        defer { context.restoreGState() }
 
         switch codepoint {
         // Horizontal lines.
         case 0x2500: // ─ light horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: width, height: thinWidth))
 
         case 0x2501: // ━ heavy horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thickWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - thickWidth / 2, width: width, height: thickWidth))
 
         // Vertical lines.
         case 0x2502: // │ light vertical
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: height))
 
         case 0x2503: // ┃ heavy vertical
-            context.setStrokeColor(color)
-            context.setLineWidth(thickWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thickWidth / 2, y: y, width: thickWidth, height: height))
 
         // Light corners.
         case 0x250C: // ┌ down and right
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: midY, width: thinWidth, height: height - (midY - y)))
+            context.fill(snappedRect(x: midX, y: midY - thinWidth / 2, width: width - (midX - x), height: thinWidth))
 
         case 0x2510: // ┐ down and left
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: midY, width: thinWidth, height: height - (midY - y)))
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: midX - x, height: thinWidth))
 
         case 0x2514: // └ up and right
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: midY - y))
+            context.fill(snappedRect(x: midX, y: midY - thinWidth / 2, width: width - (midX - x), height: thinWidth))
 
         case 0x2518: // ┘ up and left
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: midY - y))
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: midX - x, height: thinWidth))
 
         // T-junctions.
         case 0x251C: // ├ vertical and right
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: height))
+            context.fill(snappedRect(x: midX, y: midY - thinWidth / 2, width: width - (midX - x), height: thinWidth))
 
         case 0x2524: // ┤ vertical and left
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: height))
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: midX - x, height: thinWidth))
 
         case 0x252C: // ┬ down and horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.move(to: CGPoint(x: midX, y: midY))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: width, height: thinWidth))
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: midY, width: thinWidth, height: height - (midY - y)))
 
         case 0x2534: // ┴ up and horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: midY))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: width, height: thinWidth))
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: midY - y))
 
         // Cross.
         case 0x253C: // ┼ vertical and horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
-            context.move(to: CGPoint(x: x, y: midY))
-            context.addLine(to: CGPoint(x: x + width, y: midY))
-            context.move(to: CGPoint(x: midX, y: y))
-            context.addLine(to: CGPoint(x: midX, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - thinWidth / 2, width: width, height: thinWidth))
+            context.fill(snappedRect(x: midX - thinWidth / 2, y: y, width: thinWidth, height: height))
 
         // Double lines.
         case 0x2550: // ═ double horizontal
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
             let gap: CGFloat = 2
-            context.move(to: CGPoint(x: x, y: midY - gap))
-            context.addLine(to: CGPoint(x: x + width, y: midY - gap))
-            context.move(to: CGPoint(x: x, y: midY + gap))
-            context.addLine(to: CGPoint(x: x + width, y: midY + gap))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: x, y: midY - gap - thinWidth / 2, width: width, height: thinWidth))
+            context.fill(snappedRect(x: x, y: midY + gap - thinWidth / 2, width: width, height: thinWidth))
 
         case 0x2551: // ║ double vertical
-            context.setStrokeColor(color)
-            context.setLineWidth(thinWidth)
             let gap: CGFloat = 2
-            context.move(to: CGPoint(x: midX - gap, y: y))
-            context.addLine(to: CGPoint(x: midX - gap, y: y + height))
-            context.move(to: CGPoint(x: midX + gap, y: y))
-            context.addLine(to: CGPoint(x: midX + gap, y: y + height))
-            context.strokePath()
+            context.setFillColor(color)
+            context.fill(snappedRect(x: midX - gap - thinWidth / 2, y: y, width: thinWidth, height: height))
+            context.fill(snappedRect(x: midX + gap - thinWidth / 2, y: y, width: thinWidth, height: height))
 
-        // Rounded corners.
+        // Rounded corners. Arcs need antialiasing to stay smooth.
         case 0x256D: // ╭ arc down and right
+            context.setShouldAntialias(true)
             context.setStrokeColor(color)
             context.setLineWidth(thinWidth)
             let radius = min(width, height) / 2
@@ -862,6 +833,7 @@ class TerminalRenderer: NSView {
             context.strokePath()
 
         case 0x256E: // ╮ arc down and left
+            context.setShouldAntialias(true)
             context.setStrokeColor(color)
             context.setLineWidth(thinWidth)
             let radius = min(width, height) / 2
@@ -873,6 +845,7 @@ class TerminalRenderer: NSView {
             context.strokePath()
 
         case 0x256F: // ╯ arc up and left
+            context.setShouldAntialias(true)
             context.setStrokeColor(color)
             context.setLineWidth(thinWidth)
             let radius = min(width, height) / 2
@@ -884,6 +857,7 @@ class TerminalRenderer: NSView {
             context.strokePath()
 
         case 0x2570: // ╰ arc up and right
+            context.setShouldAntialias(true)
             context.setStrokeColor(color)
             context.setLineWidth(thinWidth)
             let radius = min(width, height) / 2
@@ -893,92 +867,6 @@ class TerminalRenderer: NSView {
                           radius: radius, startAngle: .pi * 0.5, endAngle: .pi, clockwise: false)
             context.addLine(to: CGPoint(x: midX, y: y))
             context.strokePath()
-
-        // Block elements.
-        case 0x2580: // ▀ upper half block
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
-
-        case 0x2584: // ▄ lower half block
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
-
-        case 0x2588: // █ full block
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height))
-
-        case 0x258C: // ▌ left half block
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width / 2, height: height))
-
-        case 0x2590: // ▐ right half block
-            context.setFillColor(color)
-            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height))
-
-        // Eighth blocks (lower). 0x2581=1/8, 0x2582=2/8, ..., 0x2587=7/8, 0x2588=full.
-        case 0x2581, 0x2582, 0x2583, 0x2585, 0x2586, 0x2587:
-            let fraction = CGFloat(codepoint - 0x2580) / 8.0
-            let h = height * fraction
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y + height - h, width: width, height: h))
-
-        // Eighth blocks (left). 0x2589=7/8, ..., 0x258F=1/8.
-        case 0x2589, 0x258A, 0x258B, 0x258D, 0x258E, 0x258F:
-            let fraction = CGFloat(0x2590 - codepoint) / 8.0
-            let w = width * fraction
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: w, height: height))
-
-        // Shade blocks.
-        case 0x2591: // ░ light shade (25%)
-            context.setFillColor(color.copy(alpha: alpha * 0.25) ?? color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height))
-
-        case 0x2592: // ▒ medium shade (50%)
-            context.setFillColor(color.copy(alpha: alpha * 0.5) ?? color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height))
-
-        case 0x2593: // ▓ dark shade (75%)
-            context.setFillColor(color.copy(alpha: alpha * 0.75) ?? color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height))
-
-        // Quadrants.
-        case 0x2596: // ▖ lower left
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x2597: // ▗ lower right
-            context.setFillColor(color)
-            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x2598: // ▘ upper left
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
-        case 0x259D: // ▝ upper right
-            context.setFillColor(color)
-            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
-        case 0x2599: // ▙ upper left + lower half
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
-            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
-        case 0x259A: // ▚ upper left + lower right
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width / 2, height: height / 2))
-            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x259B: // ▛ upper half + lower left
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
-            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x259C: // ▜ upper half + lower right
-            context.setFillColor(color)
-            context.fill(CGRect(x: x, y: y, width: width, height: height / 2))
-            context.fill(CGRect(x: x + width / 2, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x259E: // ▞ upper right + lower left
-            context.setFillColor(color)
-            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
-            context.fill(CGRect(x: x, y: y + height / 2, width: width / 2, height: height / 2))
-        case 0x259F: // ▟ upper right + lower half
-            context.setFillColor(color)
-            context.fill(CGRect(x: x + width / 2, y: y, width: width / 2, height: height / 2))
-            context.fill(CGRect(x: x, y: y + height / 2, width: width, height: height / 2))
 
         default:
             // Fall back to font glyph for unrecognized box-drawing characters.
