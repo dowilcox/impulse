@@ -673,6 +673,28 @@ impl TerminalBackend {
         self.term.lock().selection = None;
     }
 
+    /// Select the entire terminal buffer, including scrollback.
+    pub fn select_all(&self) {
+        let mut term = self.term.lock();
+        let grid = term.grid();
+        if grid.columns() == 0 || grid.total_lines() == 0 {
+            return;
+        }
+
+        let start = alacritty_terminal::index::Point::new(
+            grid.topmost_line(),
+            alacritty_terminal::index::Column(0),
+        );
+        let end = alacritty_terminal::index::Point::new(grid.bottommost_line(), grid.last_column());
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            start,
+            alacritty_terminal::index::Side::Left,
+        );
+        selection.update(end, alacritty_terminal::index::Side::Right);
+        term.selection = Some(selection);
+    }
+
     /// Get the selected text.
     pub fn selected_text(&self) -> Option<String> {
         self.term.lock().selection_to_string()

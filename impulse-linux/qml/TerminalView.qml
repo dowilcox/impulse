@@ -304,6 +304,25 @@ FocusScope {
         onTriggered: terminalBridge.poll()
     }
 
+    property bool cursorBlinkOn: true
+    readonly property bool cursorShouldBlink: settings.terminal_cursor_blink && termViewRoot.activeFocus
+
+    Timer {
+        id: cursorBlinkTimer
+        interval: 530
+        running: cursorShouldBlink
+        repeat: true
+        onTriggered: {
+            cursorBlinkOn = !cursorBlinkOn
+            terminalCanvas.requestPaint()
+        }
+    }
+
+    onCursorShouldBlinkChanged: {
+        cursorBlinkOn = true
+        terminalCanvas.requestPaint()
+    }
+
     Canvas {
         id: terminalCanvas
         anchors.fill: parent
@@ -370,7 +389,8 @@ FocusScope {
                 ctx.globalAlpha = 1
             }
 
-            if (termViewRoot.activeFocus && snapshot.cursorVisible) {
+            var cursorDraw = snapshot.cursorVisible && (!cursorShouldBlink || cursorBlinkOn)
+            if (termViewRoot.activeFocus && cursorDraw) {
                 var cursorX = padding + snapshot.cursorCol * cellWidth
                 var cursorY = padding + snapshot.cursorRow * cellHeight
                 ctx.fillStyle = theme.cursor_color
@@ -392,35 +412,109 @@ FocusScope {
     }
 
     MouseArea {
+        id: terminalMouseArea
         anchors.fill: parent
-        acceptedButtons: Qt.LeftButton
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
-        cursorShape: Qt.IBeamCursor
+        cursorShape: hoveredHyperlink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+
+        property string hoveredHyperlink: ""
+        property int lastPressTime: 0
+        property int lastPressCol: -1
+        property int lastPressRow: -1
+        property int pressStreak: 0
+        property bool suppressCopyOnRelease: false
 
         onPressed: function(mouse) {
             termViewRoot.forceActiveFocus()
+            suppressCopyOnRelease = false
+            if (mouse.button === Qt.RightButton) {
+                terminalContextMenu.popup()
+                return
+            }
+
             var point = pointToCell(mouse.x, mouse.y)
+            if (settings.terminal_allow_hyperlink && (mouse.modifiers & Qt.ControlModifier) !== 0) {
+                var uri = terminalBridge.hyperlink_at(point.col, point.row)
+                if (uri && uri.length > 0) {
+                    suppressCopyOnRelease = true
+                    Qt.openUrlExternally(uri)
+                    mouse.accepted = true
+                    return
+                }
+            }
+
+            var now = Date.now()
+            var sameCell = point.col === lastPressCol && point.row === lastPressRow
+            if (sameCell && (now - lastPressTime) < 400) {
+                pressStreak = Math.min(pressStreak + 1, 3)
+            } else {
+                pressStreak = 1
+            }
+            lastPressTime = now
+            lastPressCol = point.col
+            lastPressRow = point.row
+
             terminalBridge.clear_selection()
-            terminalBridge.start_selection(point.col, point.row)
+            var kind = pressStreak === 2 ? 2 : (pressStreak === 3 ? 3 : 0)
+            terminalBridge.start_selection(point.col, point.row, kind)
+            if (kind !== 0) {
+                terminalBridge.update_selection(point.col, point.row)
+            }
         }
 
         onPositionChanged: function(mouse) {
-            if ((mouse.buttons & Qt.LeftButton) === 0)
-                return
             var point = pointToCell(mouse.x, mouse.y)
-            terminalBridge.update_selection(point.col, point.row)
+            if ((mouse.buttons & Qt.LeftButton) !== 0) {
+                terminalBridge.update_selection(point.col, point.row)
+                return
+            }
+            if (settings.terminal_allow_hyperlink && (mouse.modifiers & Qt.ControlModifier) !== 0) {
+                hoveredHyperlink = terminalBridge.hyperlink_at(point.col, point.row)
+            } else if (hoveredHyperlink.length > 0) {
+                hoveredHyperlink = ""
+            }
         }
 
+        onExited: hoveredHyperlink = ""
+
         onReleased: function(mouse) {
-            if (settings.terminal_copy_on_select) {
+            if (mouse.button === Qt.LeftButton && !suppressCopyOnRelease && settings.terminal_copy_on_select) {
                 copySelectionToClipboard()
             }
+            suppressCopyOnRelease = false
         }
 
         onWheel: function(wheel) {
             var delta = wheel.angleDelta.y > 0 ? 3 : -3
             terminalBridge.scroll(delta)
             wheel.accepted = true
+        }
+    }
+
+    readonly property bool hasSelection: snapshot.selectionRanges && snapshot.selectionRanges.length > 0
+
+    Menu {
+        id: terminalContextMenu
+
+        MenuItem {
+            text: "Copy"
+            enabled: termViewRoot.hasSelection
+            onTriggered: copySelectionToClipboard()
+        }
+        MenuItem {
+            text: "Paste"
+            onTriggered: pasteFromClipboard()
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Select All"
+            onTriggered: terminalBridge.select_all()
+        }
+        MenuItem {
+            text: "Clear Selection"
+            enabled: termViewRoot.hasSelection
+            onTriggered: terminalBridge.clear_selection()
         }
     }
 
