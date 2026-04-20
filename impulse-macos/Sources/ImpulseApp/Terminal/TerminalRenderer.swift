@@ -1256,33 +1256,62 @@ class TerminalRenderer: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard let backend else { return }
+        let mode = backend.mode()
 
-        // Check if mouse reporting is enabled.
-        if let mode = backend.mode(), mode.mouseReportClick || mode.mouseMotion || mode.mouseDrag {
-            if mode.mouseSgr {
-                let (col, row) = gridPoint(from: event)
-                let button = event.deltaY > 0 ? 64 : 65 // scroll up / scroll down
-                let seq = "\u{1B}[<\(button);\(col + 1);\(row + 1)M"
-                backend.write(seq)
-            }
-            return
-        }
+        // Direction from precise delta when available; fall back to the
+        // coarse delta for legacy mouse wheels that only populate deltaY.
+        let direction: CGFloat = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY
+            : event.deltaY
+        let scrollingUp = direction > 0
 
-        // Normal scrolling.
         let rawDelta: CGFloat
         if event.hasPreciseScrollingDeltas {
             rawDelta = event.scrollingDeltaY / fontMetrics.cellHeight
         } else {
             rawDelta = event.deltaY * 3
         }
-        scrollAccumulator += rawDelta
-        let lines = Int32(scrollAccumulator)
-        if lines != 0 {
+
+        // Mouse reporting: TUIs that opt in get wheel events as SGR mouse
+        // codes. Emit one mouse-button event per line of scroll so fast
+        // swipes feel proportional.
+        if let mode, mode.mouseReportClick || mode.mouseMotion || mode.mouseDrag {
+            guard mode.mouseSgr else { return }
+            scrollAccumulator += rawDelta
+            let lines = Int(scrollAccumulator)
+            guard lines != 0 else { return }
             scrollAccumulator -= CGFloat(lines)
-            backend.scroll(delta: lines)
-            isScrolledBack = true
-            needsDisplay = true
+            let (col, row) = gridPoint(from: event)
+            let button = scrollingUp ? 64 : 65
+            let oneEvent = "\u{1B}[<\(button);\(col + 1);\(row + 1)M"
+            let count = min(abs(lines), 20)
+            backend.write(String(repeating: oneEvent, count: count))
+            return
         }
+
+        scrollAccumulator += rawDelta
+
+        // Alt-screen TUIs without mouse reporting: translate to PageUp/
+        // PageDown. Arrow keys get treated as input-history navigation by
+        // apps like Claude Code, so they hide the transcript instead of
+        // scrolling. One page key per ~4 lines of scroll.
+        if let mode, mode.altScreen {
+            let pageUnit: CGFloat = 4
+            let pages = Int(scrollAccumulator / pageUnit)
+            guard pages != 0 else { return }
+            scrollAccumulator -= CGFloat(pages) * pageUnit
+            let seq = pages > 0 ? "\u{1B}[5~" : "\u{1B}[6~"
+            let count = min(abs(pages), 10)
+            backend.write(String(repeating: seq, count: count))
+            return
+        }
+
+        let lines = Int(scrollAccumulator)
+        guard lines != 0 else { return }
+        scrollAccumulator -= CGFloat(lines)
+        backend.scroll(delta: Int32(lines))
+        isScrolledBack = true
+        needsDisplay = true
     }
 
     private func gridPoint(from event: NSEvent) -> (col: UInt16, row: UInt16) {

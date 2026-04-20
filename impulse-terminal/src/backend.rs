@@ -480,6 +480,10 @@ impl TerminalBackend {
         let cursor = content.cursor;
         let num_cols = term.columns();
         let num_lines = term.screen_lines();
+        // When the viewport is scrolled into history, `display_iter` emits
+        // points with negative line numbers. Shift by `display_offset` so
+        // each cell maps to a 0-based viewport row.
+        let display_offset = term.grid().display_offset() as i32;
 
         // Build mode flags.
         let mut mode_flags = TerminalMode::empty();
@@ -601,9 +605,10 @@ impl TerminalBackend {
 
         // Fill from display iterator.
         for indexed in content.display_iter {
-            let row = indexed.point.line.0 as usize;
+            let row_i32 = indexed.point.line.0 + display_offset;
             let col = indexed.point.column.0;
-            if row < num_lines && col < num_cols {
+            if row_i32 >= 0 && (row_i32 as usize) < num_lines && col < num_cols {
+                let row = row_i32 as usize;
                 let offset = cell_offset + (row * num_cols + col) * buffer::CELL_STRIDE;
                 let fg = self.colors.resolve(indexed.cell.fg, term_colors);
                 let bg = self.colors.resolve(indexed.cell.bg, term_colors);
