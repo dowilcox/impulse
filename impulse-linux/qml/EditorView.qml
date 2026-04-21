@@ -9,6 +9,7 @@ import dev.impulse.app
 Item {
     id: editorViewRoot
 
+    property int tabId: -1
     property string filePath: ""
     property bool isModified: false
     property bool previewVisible: false
@@ -19,9 +20,16 @@ Item {
     property bool monacoReady: false
 
     // ── Public API ────────────────────────────────────────────────────────────
+    function syncModifiedState() {
+        if (tabId >= 0) {
+            windowModel.set_tab_modified_by_id(tabId, isModified)
+        }
+    }
+
     function openFile(path) {
         filePath = path
         isModified = false
+        syncModifiedState()
         isPreviewable = editorBridge.is_previewable_file(path)
         // open_file reads the file and returns an OpenFile command JSON
         var cmdJson = editorBridge.open_file(path)
@@ -130,6 +138,7 @@ Item {
                 monacoReady = true
                 applyTheme()
                 applySettings()
+                syncModifiedState()
                 if (filePath.length > 0) {
                     var cmdJson = editorBridge.open_file(filePath)
                     if (cmdJson.length > 0 && cmdJson.indexOf("error") < 0) {
@@ -145,6 +154,7 @@ Item {
 
             case "ContentChanged":
                 isModified = true
+                syncModifiedState()
                 cachedContent = evt.content || ""
                 if (previewVisible) {
                     refreshPreviewFromContent(cachedContent)
@@ -171,6 +181,7 @@ Item {
         function onFile_saved(path) {
             if (path === editorViewRoot.filePath) {
                 editorViewRoot.isModified = false
+                editorViewRoot.syncModifiedState()
             }
         }
     }

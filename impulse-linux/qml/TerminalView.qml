@@ -494,24 +494,24 @@ FocusScope {
 
     readonly property bool hasSelection: snapshot.selectionRanges && snapshot.selectionRanges.length > 0
 
-    Menu {
+    ChromeMenu {
         id: terminalContextMenu
 
-        MenuItem {
+        ChromeMenuItem {
             text: "Copy"
             enabled: termViewRoot.hasSelection
             onTriggered: copySelectionToClipboard()
         }
-        MenuItem {
+        ChromeMenuItem {
             text: "Paste"
             onTriggered: pasteFromClipboard()
         }
-        MenuSeparator {}
-        MenuItem {
+        ChromeMenuSeparator {}
+        ChromeMenuItem {
             text: "Select All"
             onTriggered: terminalBridge.select_all()
         }
-        MenuItem {
+        ChromeMenuItem {
             text: "Clear Selection"
             enabled: termViewRoot.hasSelection
             onTriggered: terminalBridge.clear_selection()

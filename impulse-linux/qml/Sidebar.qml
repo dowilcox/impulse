@@ -9,6 +9,12 @@ Pane {
     id: sidebarRoot
     padding: 0
 
+    background: Rectangle {
+        color: theme.bg_surface
+        border.color: theme.border
+        border.width: 1
+    }
+
     // Whether we are showing the search panel instead of the file tree
     property bool searchMode: false
 
@@ -20,14 +26,27 @@ Pane {
         ToolBar {
             Layout.fillWidth: true
             position: ToolBar.Header
+            padding: 0
+
+            background: Rectangle {
+                color: theme.bg_dark
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: theme.border
+                }
+            }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 4
-                spacing: 2
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                spacing: 6
 
-                ToolButton {
+                ChromeToolButton {
                     text: "Files"
                     font.bold: !sidebarRoot.searchMode
                     checked: !sidebarRoot.searchMode
@@ -37,7 +56,7 @@ Pane {
                     ToolTip.delay: 600
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     text: "Search"
                     font.bold: sidebarRoot.searchMode
                     checked: sidebarRoot.searchMode
@@ -49,7 +68,7 @@ Pane {
 
                 Item { Layout.fillWidth: true }
 
-                ToolButton {
+                ChromeToolButton {
                     icon.name: "document-new"
                     visible: !sidebarRoot.searchMode
                     onClicked: newFileDialog.open()
@@ -58,7 +77,7 @@ Pane {
                     ToolTip.delay: 600
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     icon.name: "folder-new"
                     visible: !sidebarRoot.searchMode
                     onClicked: newFolderDialog.open()
@@ -67,7 +86,7 @@ Pane {
                     ToolTip.delay: 600
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     icon.name: fileTreeModel.show_hidden ? "view-visible" : "view-hidden"
                     visible: !sidebarRoot.searchMode
                     checked: fileTreeModel.show_hidden
@@ -80,7 +99,7 @@ Pane {
                     ToolTip.delay: 600
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     icon.name: "view-refresh"
                     visible: !sidebarRoot.searchMode
                     onClicked: fileTreeModel.refresh()
@@ -111,17 +130,16 @@ Pane {
     }
 
     // ── New-file dialog ───────────────────────────────────────────────────────
-    Dialog {
+    ChromeDialog {
         id: newFileDialog
         title: "New File"
         anchors.centerIn: Overlay.overlay
-        modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         ColumnLayout {
             spacing: 8
-            Label { text: "File name:" }
-            TextField {
+            Label { text: "File name:"; color: theme.fg_muted }
+            ChromeTextField {
                 id: newFileInput
                 Layout.preferredWidth: 280
                 placeholderText: "filename.ext"
@@ -141,17 +159,16 @@ Pane {
     }
 
     // ── New-folder dialog ─────────────────────────────────────────────────────
-    Dialog {
+    ChromeDialog {
         id: newFolderDialog
         title: "New Folder"
         anchors.centerIn: Overlay.overlay
-        modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         ColumnLayout {
             spacing: 8
-            Label { text: "Folder name:" }
-            TextField {
+            Label { text: "Folder name:"; color: theme.fg_muted }
+            ChromeTextField {
                 id: newFolderInput
                 Layout.preferredWidth: 280
                 placeholderText: "folder-name"

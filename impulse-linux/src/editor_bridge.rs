@@ -63,6 +63,9 @@ pub mod qobject {
         #[qinvokable]
         fn language_from_path(self: &EditorBridge, path: &QString) -> QString;
 
+        #[qinvokable]
+        fn path_is_file(self: &EditorBridge, path: &QString) -> bool;
+
         #[qsignal]
         fn editor_event(self: Pin<&mut EditorBridge>, event_type: QString, payload_json: QString);
 
@@ -564,5 +567,9 @@ impl qobject::EditorBridge {
         };
         let lang = impulse_core::util::language_from_uri(&file_uri);
         QString::from(lang.as_str())
+    }
+
+    pub fn path_is_file(&self, path: &QString) -> bool {
+        std::path::Path::new(path.to_string().as_str()).is_file()
     }
 }

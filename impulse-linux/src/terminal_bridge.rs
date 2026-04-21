@@ -78,34 +78,6 @@ pub mod qobject {
         fn hyperlink_at(self: &TerminalBridge, col: i32, row: i32) -> QString;
 
         #[qinvokable]
-        fn send_mouse_button(
-            self: Pin<&mut TerminalBridge>,
-            col: i32,
-            row: i32,
-            button: i32,
-            pressed: bool,
-            modifiers: i32,
-        );
-
-        #[qinvokable]
-        fn send_mouse_move(
-            self: Pin<&mut TerminalBridge>,
-            col: i32,
-            row: i32,
-            button: i32,
-            modifiers: i32,
-        );
-
-        #[qinvokable]
-        fn send_mouse_wheel(
-            self: Pin<&mut TerminalBridge>,
-            col: i32,
-            row: i32,
-            delta_y: i32,
-            modifiers: i32,
-        );
-
-        #[qinvokable]
         fn clipboard_image_path(self: Pin<&mut TerminalBridge>) -> QString;
 
         #[qinvokable]
@@ -659,59 +631,6 @@ impl qobject::TerminalBridge {
             .and_then(|backend| backend.hyperlink_at(col as usize, row as usize))
             .map(|uri| QString::from(uri.as_str()))
             .unwrap_or_default()
-    }
-
-    pub fn send_mouse_button(
-        self: Pin<&mut Self>,
-        col: i32,
-        row: i32,
-        button: i32,
-        pressed: bool,
-        modifiers: i32,
-    ) {
-        if let Some(backend) = self.rust().backend.as_ref() {
-            backend.send_mouse_button(
-                col.max(0) as usize,
-                row.max(0) as usize,
-                button.max(0) as u8,
-                pressed,
-                modifiers.max(0) as u8,
-            );
-        }
-    }
-
-    pub fn send_mouse_move(
-        self: Pin<&mut Self>,
-        col: i32,
-        row: i32,
-        button: i32,
-        modifiers: i32,
-    ) {
-        if let Some(backend) = self.rust().backend.as_ref() {
-            backend.send_mouse_move(
-                col.max(0) as usize,
-                row.max(0) as usize,
-                button.max(0) as u8,
-                modifiers.max(0) as u8,
-            );
-        }
-    }
-
-    pub fn send_mouse_wheel(
-        self: Pin<&mut Self>,
-        col: i32,
-        row: i32,
-        delta_y: i32,
-        modifiers: i32,
-    ) {
-        if let Some(backend) = self.rust().backend.as_ref() {
-            backend.send_mouse_wheel(
-                col.max(0) as usize,
-                row.max(0) as usize,
-                delta_y,
-                modifiers.max(0) as u8,
-            );
-        }
     }
 
     pub fn update_selection(mut self: Pin<&mut Self>, col: i32, row: i32) {

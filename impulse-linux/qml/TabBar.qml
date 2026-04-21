@@ -13,6 +13,19 @@ ToolBar {
     height: windowModel.tab_count <= 1 ? 0 : 36
     visible: windowModel.tab_count > 1
     position: ToolBar.Header
+    padding: 0
+
+    background: Rectangle {
+        color: theme.bg_dark
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: theme.border
+        }
+    }
 
     Behavior on height { NumberAnimation { duration: 120 } }
 
@@ -26,9 +39,9 @@ ToolBar {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 4
-        anchors.rightMargin: 4
-        spacing: 2
+        anchors.leftMargin: 8
+        anchors.rightMargin: 8
+        spacing: 6
 
         // ── Tab list ──────────────────────────────────────────────────────
         Flickable {
@@ -49,6 +62,7 @@ ToolBar {
                     ToolButton {
                         id: tabDelegate
                         height: tabBarRoot.height
+                        padding: 0
 
                         readonly property var tabInfo: tabBarRoot.tabs[index] || {}
                         readonly property bool isActive: index === windowModel.active_tab_index
@@ -59,8 +73,21 @@ ToolBar {
                         checked: isActive
                         flat: !isActive
 
+                        background: Rectangle {
+                            radius: 10
+                            color: {
+                                if (tabDelegate.checked)
+                                    return theme.bg_surface
+                                if (tabDelegate.hovered)
+                                    return theme.bg_highlight
+                                return "transparent"
+                            }
+                            border.width: 1
+                            border.color: tabDelegate.checked ? theme.border : "transparent"
+                        }
+
                         contentItem: RowLayout {
-                            spacing: 4
+                            spacing: 6
 
                             // Tab type icon
                             Label {
@@ -74,6 +101,7 @@ ToolBar {
                                 }
                                 font.pixelSize: tabType === "terminal" ? 13 : 10
                                 font.bold: tabType === "terminal"
+                                color: isActive ? theme.fg : theme.fg_muted
                             }
 
                             // Tab title
@@ -82,16 +110,21 @@ ToolBar {
                                 font.pixelSize: 12
                                 elide: Text.ElideRight
                                 Layout.maximumWidth: 160
+                                color: isActive ? theme.fg : theme.fg_muted
                             }
 
                             // Close button
-                            ToolButton {
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
+                            ChromeToolButton {
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
                                 visible: isActive || tabDelegate.hovered
                                 icon.name: "window-close"
                                 icon.width: 12
                                 icon.height: 12
+                                leftPadding: 5
+                                rightPadding: 5
+                                topPadding: 5
+                                bottomPadding: 5
                                 onClicked: windowModel.close_tab(index)
 
                                 ToolTip.visible: hovered
@@ -145,7 +178,7 @@ ToolBar {
         }
 
         // ── New tab button ────────────────────────────────────────────────
-        ToolButton {
+        ChromeToolButton {
             icon.name: "list-add"
             onClicked: windowModel.create_tab("terminal")
             ToolTip.visible: hovered
@@ -155,16 +188,16 @@ ToolBar {
     }
 
     // ── Tab context menu ──────────────────────────────────────────────────────
-    Menu {
+    ChromeMenu {
         id: tabContextMenu
         property int tabIndex: -1
 
-        MenuItem {
+        ChromeMenuItem {
             text: "Close"
             icon.name: "window-close"
             onTriggered: windowModel.close_tab(tabContextMenu.tabIndex)
         }
-        MenuItem {
+        ChromeMenuItem {
             text: "Close Others"
             enabled: windowModel.tab_count > 1
             onTriggered: {
@@ -174,7 +207,7 @@ ToolBar {
                 }
             }
         }
-        MenuItem {
+        ChromeMenuItem {
             text: "Close All"
             onTriggered: {
                 for (var i = windowModel.tab_count - 1; i >= 0; i--) {

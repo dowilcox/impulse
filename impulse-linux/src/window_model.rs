@@ -60,6 +60,13 @@ pub mod qobject {
         fn set_tab_title_by_id(self: Pin<&mut WindowModel>, tab_id: i32, title: &QString);
 
         #[qinvokable]
+        fn set_tab_modified_by_id(
+            self: Pin<&mut WindowModel>,
+            tab_id: i32,
+            is_modified: bool,
+        );
+
+        #[qinvokable]
         fn get_initial_directory(self: &WindowModel) -> QString;
 
         #[qinvokable]
@@ -360,6 +367,22 @@ impl qobject::WindowModel {
         {
             tab.title = title.to_string();
             self.as_mut().rebuild_tabs_json();
+        }
+    }
+
+    pub fn set_tab_modified_by_id(mut self: Pin<&mut Self>, tab_id: i32, is_modified: bool) {
+        let target_id = tab_id as u64;
+        if let Some(tab) = self
+            .as_mut()
+            .rust_mut()
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == target_id)
+        {
+            if tab.is_modified != is_modified {
+                tab.is_modified = is_modified;
+                self.as_mut().rebuild_tabs_json();
+            }
         }
     }
 

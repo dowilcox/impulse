@@ -7,7 +7,11 @@ import dev.impulse.app
 
 Pane {
     id: searchPanelRoot
-    padding: 8
+    padding: 10
+
+    background: Rectangle {
+        color: "transparent"
+    }
 
     property var results: {
         try {
@@ -22,7 +26,7 @@ Pane {
         spacing: 8
 
         // ── Search input ──────────────────────────────────────────────────
-        TextField {
+        ChromeTextField {
             id: searchInput
             Layout.fillWidth: true
             placeholderText: searchModel.search_mode === "files" ? "Search files..." : "Search in files..."
@@ -67,7 +71,7 @@ Pane {
             Layout.fillWidth: true
             spacing: 6
 
-            ToolButton {
+            ChromeToolButton {
                 text: "Files"
                 checked: searchModel.search_mode === "files"
                 onClicked: {
@@ -76,7 +80,7 @@ Pane {
                 }
             }
 
-            ToolButton {
+            ChromeToolButton {
                 text: "Content"
                 checked: searchModel.search_mode === "content"
                 onClicked: {
@@ -87,7 +91,7 @@ Pane {
 
             Item { Layout.fillWidth: true }
 
-            ToolButton {
+            ChromeToolButton {
                 text: "Aa"
                 checked: searchModel.case_sensitive
                 font.bold: true
@@ -110,6 +114,7 @@ Pane {
                 return searchModel.result_count + " result" + (searchModel.result_count !== 1 ? "s" : "")
             }
             font.pixelSize: 11
+            color: theme.fg_muted
         }
 
         // ── Results list ──────────────────────────────────────────────────
@@ -126,7 +131,20 @@ Pane {
             }
 
             delegate: ItemDelegate {
+                id: resultDelegate
                 width: resultsList.width
+                hoverEnabled: true
+                leftPadding: 10
+                rightPadding: 10
+                topPadding: 8
+                bottomPadding: 8
+
+                background: Rectangle {
+                    radius: 9
+                    color: resultDelegate.hovered ? theme.bg_dark : "transparent"
+                    border.width: resultDelegate.hovered ? 1 : 0
+                    border.color: theme.border
+                }
 
                 readonly property var resultData: results[index] || {}
 
@@ -147,7 +165,7 @@ Pane {
                             return path
                         }
                         font.pixelSize: 12
-                        color: palette.highlight
+                        color: theme.accent
                         elide: Text.ElideMiddle
                     }
 
@@ -159,6 +177,7 @@ Pane {
                         visible: (resultData.preview || "").length > 0
                         maximumLineCount: 2
                         wrapMode: Text.NoWrap
+                        color: theme.fg_muted
                     }
                 }
 

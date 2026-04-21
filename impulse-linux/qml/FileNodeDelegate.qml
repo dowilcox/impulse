@@ -20,20 +20,37 @@ Rectangle {
     readonly property bool isDir: !!nodeData.isDir
     readonly property bool isExpanded: !!nodeData.isExpanded
     readonly property string gitStatus: nodeData.gitStatus || ""
+    readonly property int childCount: Math.max(0, nodeData.childCount || 0)
     readonly property bool isActive: nodePath.length > 0 && nodePath === fileTreeModel.active_file_path
 
     // Icons directory resolved from project root
     readonly property string iconsPath: "file://" + windowModel.project_root + "assets/icons/"
 
-    height: 28
+    height: 30
     color: {
-        if (isActive) return palette.highlight
-        if (mouseArea.containsMouse) return palette.mid
+        if (isActive) return theme.bg_highlight
+        if (mouseArea.containsMouse) return theme.bg_dark
         return "transparent"
+    }
+    radius: 9
+    border.width: isActive || mouseArea.containsMouse ? 1 : 0
+    border.color: isActive ? theme.accent : theme.border
+
+    Rectangle {
+        width: 3
+        radius: 2
+        color: theme.accent
+        visible: isActive
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 4
+        anchors.topMargin: 6
+        anchors.bottomMargin: 6
     }
 
     function lookupIcon(name, isDirectory, expanded) {
-        if (isDirectory) return expanded ? "folder-open" : "folder"
+        if (isDirectory) return lookupDirectoryIcon(name, expanded)
         var ext = name.split(".").pop().toLowerCase()
         switch (ext) {
             case "rs": return "rust"
@@ -87,6 +104,21 @@ Rectangle {
         }
     }
 
+    function lookupDirectoryIcon(name, expanded) {
+        var lower = name.toLowerCase()
+        switch (lower) {
+            case ".git": case ".github": case ".gitlab": return "git"
+            case ".vscode": case ".idea": case "config": case ".config": return "settings"
+            case "assets": case "images": case "img": return "image"
+            case "docs": case "doc": return "markdown"
+            case "scripts": case "bin": return "console"
+            case "docker": return "docker"
+            case "db": case "data": case "database": return "database"
+            case "dist": case "build": case "out": case "target": return "archive"
+            default: return expanded ? "folder-open" : "folder"
+        }
+    }
+
     function lookupByFilename(name) {
         var lower = name.toLowerCase()
         switch (lower) {
@@ -103,9 +135,9 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 4 + depth * 16
-        anchors.rightMargin: 4
-        spacing: 4
+        anchors.leftMargin: 8 + depth * 14
+        anchors.rightMargin: 8
+        spacing: 6
 
         // ── Expand chevron (directories only) ─────────────────────────────
         Label {
@@ -113,7 +145,8 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             text: isDir ? "\u25B6" : ""
             font.pixelSize: 8
-            opacity: 0.6
+            color: isActive ? theme.fg : theme.fg_muted
+            opacity: isDir ? 0.75 : 0
             rotation: isExpanded ? 90 : 0
             Behavior on rotation { NumberAnimation { duration: 120 } }
         }
@@ -126,6 +159,7 @@ Rectangle {
             sourceSize: Qt.size(16, 16)
             fillMode: Image.PreserveAspectFit
             smooth: true
+            opacity: isActive ? 1 : 0.95
         }
 
         // ── File name ─────────────────────────────────────────────────────
@@ -134,29 +168,63 @@ Rectangle {
             text: nodeName
             elide: Text.ElideRight
             font.pixelSize: 13
+            font.bold: isDir
             color: {
                 switch (gitStatus) {
                     case "M": return theme.yellow
                     case "A": return theme.green
                     case "D": return theme.red
-                    case "?": return palette.placeholderText
-                    default:  return isActive ? palette.highlightedText : palette.windowText
+                    case "?": return theme.fg_muted
+                    default:  return isActive ? theme.fg : theme.fg
                 }
             }
         }
 
-        // ── Git status badge ──────────────────────────────────────────────
         Label {
-            visible: gitStatus.length > 0
-            text: gitStatus
+            visible: isDir && childCount > 0
+            text: childCount
             font.pixelSize: 10
-            font.bold: true
+            color: isActive ? theme.fg_muted : theme.fg_muted
+            opacity: 0.8
+        }
+
+        // ── Git status badge ──────────────────────────────────────────────
+        Rectangle {
+            visible: gitStatus.length > 0
+            radius: 8
+            implicitWidth: gitBadgeLabel.implicitWidth + 8
+            implicitHeight: gitBadgeLabel.implicitHeight + 4
             color: {
+                switch (gitStatus) {
+                    case "M": return "#33" + theme.yellow.substring(1)
+                    case "A": return "#33" + theme.green.substring(1)
+                    case "D": return "#33" + theme.red.substring(1)
+                    default:  return theme.bg_dark
+                }
+            }
+            border.width: 1
+            border.color: {
                 switch (gitStatus) {
                     case "M": return theme.yellow
                     case "A": return theme.green
                     case "D": return theme.red
-                    default:  return palette.placeholderText
+                    default:  return theme.border
+                }
+            }
+
+            Label {
+                id: gitBadgeLabel
+                anchors.centerIn: parent
+                text: gitStatus
+                font.pixelSize: 10
+                font.bold: true
+                color: {
+                    switch (gitStatus) {
+                        case "M": return theme.yellow
+                        case "A": return theme.green
+                        case "D": return theme.red
+                        default:  return theme.fg_muted
+                    }
                 }
             }
         }
@@ -184,33 +252,32 @@ Rectangle {
     }
 
     // ── Context menu ──────────────────────────────────────────────────────────
-    Menu {
+    ChromeMenu {
         id: contextMenu
 
-        MenuItem { text: "New File"; icon.name: "document-new"; onTriggered: newItemDialog.openForFile() }
-        MenuItem { text: "New Folder"; icon.name: "folder-new"; onTriggered: newItemDialog.openForFolder() }
-        MenuSeparator {}
-        MenuItem { text: "Rename"; icon.name: "edit-rename"; onTriggered: renameDialog.openForNode() }
-        MenuItem { text: "Delete"; icon.name: "edit-delete"; onTriggered: deleteConfirmDialog.open() }
-        MenuSeparator {}
-        MenuItem { text: "Copy Path"; onTriggered: { var cb = Qt.application.clipboard; if (cb) cb.text = nodePath } }
-        MenuItem { text: "Open in File Manager"; icon.name: "system-file-manager"; onTriggered: Qt.openUrlExternally("file://" + (isDir ? nodePath : nodePath.substring(0, nodePath.lastIndexOf("/")))) }
+        ChromeMenuItem { text: "New File"; icon.name: "document-new"; onTriggered: newItemDialog.openForFile() }
+        ChromeMenuItem { text: "New Folder"; icon.name: "folder-new"; onTriggered: newItemDialog.openForFolder() }
+        ChromeMenuSeparator {}
+        ChromeMenuItem { text: "Rename"; icon.name: "edit-rename"; onTriggered: renameDialog.openForNode() }
+        ChromeMenuItem { text: "Delete"; icon.name: "edit-delete"; onTriggered: deleteConfirmDialog.open() }
+        ChromeMenuSeparator {}
+        ChromeMenuItem { text: "Copy Path"; onTriggered: { var cb = Qt.application.clipboard; if (cb) cb.text = nodePath } }
+        ChromeMenuItem { text: "Open in File Manager"; icon.name: "system-file-manager"; onTriggered: Qt.openUrlExternally("file://" + (isDir ? nodePath : nodePath.substring(0, nodePath.lastIndexOf("/")))) }
     }
 
     // ── Inline dialogs ────────────────────────────────────────────────────────
-    Dialog {
+    ChromeDialog {
         id: newItemDialog
         property bool isFolder: false
         function openForFile() { isFolder = false; newItemInput.text = ""; open(); newItemInput.forceActiveFocus() }
         function openForFolder() { isFolder = true; newItemInput.text = ""; open(); newItemInput.forceActiveFocus() }
         title: isFolder ? "New Folder" : "New File"
         anchors.centerIn: Overlay.overlay
-        modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         ColumnLayout {
             spacing: 8
-            Label { text: "Name:" }
-            TextField { id: newItemInput; Layout.preferredWidth: 260; onAccepted: newItemDialog.accept() }
+            Label { text: "Name:"; color: theme.fg_muted }
+            ChromeTextField { id: newItemInput; Layout.preferredWidth: 260; onAccepted: newItemDialog.accept() }
         }
         onAccepted: {
             if (newItemInput.text.length === 0) return
@@ -220,17 +287,16 @@ Rectangle {
         }
     }
 
-    Dialog {
+    ChromeDialog {
         id: renameDialog
         function openForNode() { renameInput.text = nodeName; open(); renameInput.forceActiveFocus(); renameInput.selectAll() }
         title: "Rename"
         anchors.centerIn: Overlay.overlay
-        modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         ColumnLayout {
             spacing: 8
-            Label { text: "New name:" }
-            TextField { id: renameInput; Layout.preferredWidth: 260; onAccepted: renameDialog.accept() }
+            Label { text: "New name:"; color: theme.fg_muted }
+            ChromeTextField { id: renameInput; Layout.preferredWidth: 260; onAccepted: renameDialog.accept() }
         }
         onAccepted: {
             if (renameInput.text.length > 0 && renameInput.text !== nodeName)
@@ -238,13 +304,16 @@ Rectangle {
         }
     }
 
-    Dialog {
+    ChromeDialog {
         id: deleteConfirmDialog
         title: "Delete"
         anchors.centerIn: Overlay.overlay
-        modal: true
         standardButtons: Dialog.Yes | Dialog.No
-        Label { text: "Delete \"" + nodeName + "\"?"; wrapMode: Text.WordWrap }
+        Label {
+            text: "Delete \"" + nodeName + "\"?"
+            wrapMode: Text.WordWrap
+            color: theme.fg
+        }
         onAccepted: fileTreeModel.delete_item(nodePath)
     }
 }

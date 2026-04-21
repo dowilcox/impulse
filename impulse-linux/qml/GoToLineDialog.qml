@@ -5,9 +5,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import dev.impulse.app
 
-Dialog {
+ChromeDialog {
     id: goToLineRoot
-    modal: true
     title: "Go to Line"
     standardButtons: Dialog.Ok | Dialog.Cancel
     width: 320
@@ -32,9 +31,12 @@ Dialog {
         anchors.fill: parent
         spacing: 8
 
-        Label { text: "Line number:" }
+        Label {
+            text: "Line number:"
+            color: theme.fg_muted
+        }
 
-        TextField {
+        ChromeTextField {
             id: lineInput
             Layout.fillWidth: true
             placeholderText: "Line number"

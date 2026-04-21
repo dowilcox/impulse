@@ -23,6 +23,17 @@ ApplicationWindow {
     width: 1280
     height: 800
     visible: true
+    color: theme.bg
+
+    background: Rectangle {
+        color: theme.bg
+
+        Rectangle {
+            anchors.fill: parent
+            color: theme.bg_dark
+            opacity: 0.18
+        }
+    }
 
     // ── Models ───────────────────────────────────────────────────────────────
     WindowModel { id: windowModel }
@@ -38,6 +49,63 @@ ApplicationWindow {
         interval: 300
         repeat: false
         onTriggered: settings.save()
+    }
+
+    function persistedOpenFiles() {
+        var files = []
+        var seen = {}
+        var tabs = []
+        try {
+            tabs = JSON.parse(windowModel.tab_display_infos_json)
+        } catch (e) {
+            tabs = []
+        }
+
+        for (var i = 0; i < tabs.length; i++) {
+            var info = tabs[i] || {}
+            var path = info.filePath || ""
+            if (path.length === 0)
+                continue
+            if (info.tabType !== "editor" && info.tabType !== "image")
+                continue
+            if (seen[path])
+                continue
+            seen[path] = true
+            files.push(path)
+        }
+
+        return files
+    }
+
+    function persistOpenFilesSetting() {
+        settings.set_setting("open_files_json", JSON.stringify(persistedOpenFiles()))
+    }
+
+    function restoreOpenFiles() {
+        if (windowModel.has_startup_path())
+            return 0
+
+        var files = []
+        try {
+            files = JSON.parse(settings.open_files_json)
+        } catch (e) {
+            files = []
+        }
+
+        var restored = 0
+        var seen = {}
+        for (var i = 0; i < files.length; i++) {
+            var path = files[i] || ""
+            if (path.length === 0 || seen[path])
+                continue
+            seen[path] = true
+            if (!editorBridge.path_is_file(path))
+                continue
+            contentArea.openFile(path)
+            restored++
+        }
+
+        return restored
     }
 
     // ── Startup ──────────────────────────────────────────────────────────────
@@ -73,8 +141,11 @@ ApplicationWindow {
             windowModel.sidebar_visible = settings.sidebar_visible
             sidebar.SplitView.preferredWidth = settings.sidebar_width > 0 ? settings.sidebar_width : 260
 
-            // Open a terminal tab on launch
-            windowModel.create_tab("terminal")
+            // Restore file-backed tabs if possible, otherwise fall back to a terminal.
+            var restoredOpenFiles = restoreOpenFiles()
+            if (restoredOpenFiles === 0) {
+                windowModel.create_tab("terminal")
+            }
             startupComplete = true
         }
     }
@@ -86,6 +157,7 @@ ApplicationWindow {
         settings.set_setting("sidebar_width", Math.round(sidebar.width).toString())
         settings.set_setting("last_directory", windowModel.current_directory)
         settings.set_setting("sidebar_show_hidden", fileTreeModel.show_hidden ? "true" : "false")
+        persistOpenFilesSetting()
         settings.save()
     }
 
@@ -180,6 +252,12 @@ ApplicationWindow {
                 return
             searchModel.root_path = windowModel.current_directory
             settings.set_setting("last_directory", windowModel.current_directory)
+            uiStateSaveDebounce.restart()
+        }
+        function onTab_display_infos_json_changed() {
+            if (!root.startupComplete)
+                return
+            persistOpenFilesSetting()
             uiStateSaveDebounce.restart()
         }
     }

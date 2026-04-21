@@ -9,6 +9,19 @@ import dev.impulse.app
 ToolBar {
     id: statusBarRoot
     position: ToolBar.Footer
+    padding: 0
+
+    background: Rectangle {
+        color: theme.bg_dark
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: theme.border
+        }
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -23,6 +36,7 @@ ToolBar {
             text: windowModel.shell_name
             font.pixelSize: 12
             visible: windowModel.shell_name.length > 0
+            color: theme.fg_muted
         }
 
         ToolSeparator {
@@ -38,12 +52,12 @@ ToolBar {
             Label {
                 text: "\u2387"  // branch symbol
                 font.pixelSize: 12
-                color: palette.highlight
+                color: theme.accent
             }
             Label {
                 text: windowModel.git_branch
                 font.pixelSize: 12
-                color: palette.highlight
+                color: theme.accent
                 elide: Text.ElideRight
                 Layout.maximumWidth: 160
             }
@@ -70,6 +84,7 @@ ToolBar {
             font.pixelSize: 12
             elide: Text.ElideMiddle
             Layout.maximumWidth: 300
+            color: theme.fg
         }
 
         // ── Spacer ────────────────────────────────────────────────────────
@@ -85,6 +100,7 @@ ToolBar {
             visible: windowModel.blame_info.length > 0
             elide: Text.ElideRight
             Layout.maximumWidth: 240
+            color: theme.fg_muted
         }
 
         ToolSeparator {
@@ -93,7 +109,7 @@ ToolBar {
         }
 
         // Preview toggle (for markdown/SVG editors)
-        ToolButton {
+        ChromeToolButton {
             id: previewToggle
             visible: {
                 var ca = contentArea
@@ -125,6 +141,7 @@ ToolBar {
             text: "Ln " + windowModel.cursor_line + ", Col " + windowModel.cursor_column
             font.pixelSize: 12
             visible: windowModel.cursor_line > 0
+            color: theme.fg_muted
         }
 
         ToolSeparator {
@@ -137,6 +154,7 @@ ToolBar {
             text: windowModel.language
             font.pixelSize: 12
             visible: windowModel.language.length > 0
+            color: theme.fg_muted
         }
 
         ToolSeparator {
@@ -149,6 +167,7 @@ ToolBar {
             text: windowModel.encoding
             font.pixelSize: 12
             visible: windowModel.encoding.length > 0
+            color: theme.fg_muted
         }
 
         ToolSeparator {
@@ -161,6 +180,7 @@ ToolBar {
             text: windowModel.indent_info
             font.pixelSize: 12
             visible: windowModel.indent_info.length > 0
+            color: theme.fg_muted
         }
     }
 }

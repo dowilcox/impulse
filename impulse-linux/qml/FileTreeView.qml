@@ -8,6 +8,10 @@ Pane {
     id: fileTreeRoot
     padding: 0
 
+    background: Rectangle {
+        color: "transparent"
+    }
+
     // Parsed flat tree data from JSON provided by the Rust backend.
     // Each node has: name, path, isDir, isExpanded, depth, gitStatus, childCount
     property var flatList: []
@@ -49,7 +53,8 @@ Pane {
     Label {
         anchors.centerIn: parent
         text: "No files"
-        opacity: 0.5
+        color: theme.fg_muted
+        opacity: 0.7
         visible: flatList.length === 0
     }
 }

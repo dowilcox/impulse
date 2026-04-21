@@ -5,11 +5,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import dev.impulse.app
 
-Dialog {
+ChromeDialog {
     id: commandPaletteRoot
-    modal: true
     title: "Command Palette"
-    standardButtons: Dialog.Close
+    standardButtons: Dialog.NoButton
     width: Math.min(520, parent ? parent.width * 0.55 : 520)
     height: Math.min(400, parent ? parent.height * 0.55 : 400)
     anchors.centerIn: Overlay.overlay
@@ -72,7 +71,7 @@ Dialog {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 8
+        spacing: 10
 
         // ── Search input ──────────────────────────────────────────────────
         RowLayout {
@@ -83,10 +82,10 @@ Dialog {
                 text: ">"
                 font.pixelSize: 14
                 font.bold: true
-                color: palette.highlight
+                color: theme.accent
             }
 
-            TextField {
+            ChromeTextField {
                 id: cmdInput
                 Layout.fillWidth: true
                 placeholderText: "Type a command..."
@@ -128,8 +127,27 @@ Dialog {
             }
 
             delegate: ItemDelegate {
+                id: commandDelegate
                 width: cmdList.width
                 highlighted: index === selectedIndex
+                hoverEnabled: true
+                leftPadding: 12
+                rightPadding: 12
+                topPadding: 10
+                bottomPadding: 10
+
+                background: Rectangle {
+                    radius: 10
+                    color: {
+                        if (commandDelegate.highlighted)
+                            return theme.bg_highlight
+                        if (commandDelegate.hovered)
+                            return theme.bg_dark
+                        return "transparent"
+                    }
+                    border.width: commandDelegate.highlighted || commandDelegate.hovered ? 1 : 0
+                    border.color: commandDelegate.highlighted ? theme.accent : theme.border
+                }
 
                 readonly property var cmdData: filteredCommands[index] || {}
 
@@ -141,13 +159,14 @@ Dialog {
                         font.pixelSize: 13
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        color: theme.fg
                     }
 
                     Label {
                         visible: (cmdData.shortcut || "").length > 0
                         text: cmdData.shortcut || ""
                         font.pixelSize: 11
-                        opacity: 0.6
+                        color: theme.fg_muted
                     }
                 }
 
@@ -163,7 +182,7 @@ Dialog {
             Layout.fillWidth: true
             text: filteredCommands.length + " command" + (filteredCommands.length !== 1 ? "s" : "") + "   \u2191\u2193 Navigate  \u23CE Execute  Esc Close"
             font.pixelSize: 11
-            opacity: 0.6
+            color: theme.fg_muted
         }
     }
 }

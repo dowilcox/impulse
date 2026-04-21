@@ -147,7 +147,7 @@ Item {
                 }
             } else if (component && component.status === Component.Ready) {
                 var initialProps = {}
-                if (tabType === "terminal") {
+                if (tabType === "terminal" || tabType === "editor") {
                     initialProps.tabId = tabId
                 }
                 var item = component.createObject(contentContainer, initialProps)
