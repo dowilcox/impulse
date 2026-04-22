@@ -104,8 +104,10 @@ enum TabEntry {
         switch self {
         case .terminal(let container):
             let termTheme = TerminalTheme(
-                bg: theme.bg,
-                fg: theme.fg,
+                bg: theme.terminalBg,
+                fg: theme.terminalFg,
+                selection: theme.selection,
+                cursor: theme.cursor,
                 terminalPalette: theme.terminalPalette
             )
             container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
@@ -212,8 +214,10 @@ final class TabManager: NSObject {
         let dir = directory ?? NSHomeDirectory()
         let termSettings = settings.terminalSettings(directory: dir)
         let termTheme = TerminalTheme(
-            bg: theme.bg,
-            fg: theme.fg,
+            bg: theme.terminalBg,
+            fg: theme.terminalFg,
+            selection: theme.selection,
+            cursor: theme.cursor,
             terminalPalette: theme.terminalPalette
         )
         let container = TerminalContainer(
@@ -972,4 +976,3 @@ final class TabManager: NSObject {
         return data.contains(0)
     }
 }
-

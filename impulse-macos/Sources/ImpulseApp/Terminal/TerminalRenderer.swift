@@ -86,8 +86,15 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Cursor color, typically derived from the theme's foreground color.
+    /// Cursor color from the active theme.
     var cursorColor: CGColor = CGColor(srgbRed: 0.86, green: 0.84, blue: 0.73, alpha: 1.0)
+
+    /// Default terminal background from the active theme/config.
+    var defaultBackgroundColor: CGColor = CGColor(srgbRed: 0.12, green: 0.12, blue: 0.16, alpha: 1.0)
+    var defaultBackgroundRgb: (UInt8, UInt8, UInt8) = (31, 31, 40)
+
+    /// Theme-aware selection overlay color.
+    var selectionColor: CGColor = CGColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.35)
 
     /// Whether bold text should use bright palette colors (0-7 → 8-15).
     var boldIsBright: Bool = true
@@ -263,13 +270,13 @@ class TerminalRenderer: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         guard let backend, !backend.isShutdown else {
             // Draw default background when no backend is available.
-            context.setFillColor(NSColor.black.cgColor)
+            context.setFillColor(defaultBackgroundColor)
             context.fill(bounds)
             return
         }
 
         guard let grid = backend.gridSnapshot() else {
-            context.setFillColor(NSColor.black.cgColor)
+            context.setFillColor(defaultBackgroundColor)
             context.fill(bounds)
             return
         }
@@ -279,22 +286,11 @@ class TerminalRenderer: NSView {
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
 
-        // 1. Fill background with the default terminal background color.
-        // Read bg color from cell (0,0) as the default — the backend fills empty
-        // cells with the configured background color.
-        let defaultBg: CGColor
-        if cols > 0 && lines > 0 {
-            let c0 = grid.cell(row: 0, col: 0)
-            defaultBg = CGColor(
-                srgbRed: CGFloat(c0.bgR) / 255.0,
-                green: CGFloat(c0.bgG) / 255.0,
-                blue: CGFloat(c0.bgB) / 255.0,
-                alpha: 1.0
-            )
-        } else {
-            defaultBg = CGColor(srgbRed: 0.12, green: 0.12, blue: 0.16, alpha: 1.0)
-        }
-        context.setFillColor(defaultBg)
+        // 1. Fill background with the configured terminal background color.
+        // Do not infer it from the top-left cell: TUIs like Codex/Claude can
+        // place a colored block in the first visible cell, which would make
+        // the entire viewport inherit that accent color.
+        context.setFillColor(defaultBackgroundColor)
         context.fill(bounds)
 
         // 2. Draw non-default cell backgrounds.
@@ -318,8 +314,9 @@ class TerminalRenderer: NSView {
                 }
 
                 // Only draw if background differs from the default.
-                let c0 = grid.cell(row: 0, col: 0)
-                if bgR != c0.bgR || bgG != c0.bgG || bgB != c0.bgB {
+                if bgR != defaultBackgroundRgb.0
+                    || bgG != defaultBackgroundRgb.1
+                    || bgB != defaultBackgroundRgb.2 {
                     let cellWidth = (flags & GridBufferReader.flagWideChar != 0) ? cw * 2 : cw
                     let rect = CGRect(x: padding + CGFloat(col) * cw, y: rowY, width: cellWidth, height: ch)
                     context.setFillColor(CGColor(
@@ -333,8 +330,7 @@ class TerminalRenderer: NSView {
             }
         }
 
-        // 3. Draw selection highlights (blue semi-transparent).
-        let selectionColor = CGColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.35)
+        // 3. Draw selection highlights using the active theme color.
         for i in 0..<grid.selectionRangeCount {
             let range = grid.selectionRange(at: i)
             let rowY = padding + CGFloat(range.row) * ch
@@ -1101,9 +1097,21 @@ class TerminalRenderer: NSView {
             return
         }
         let (col, row) = gridPoint(from: event)
+        let kind: UInt8
+        switch event.clickCount {
+        case 3...:
+            kind = 3
+        case 2:
+            kind = 2
+        default:
+            kind = 0
+        }
         backend?.clearSelection()
         isSelecting = true
-        backend?.startSelection(col: col, row: row, kind: 0)
+        backend?.startSelection(col: col, row: row, kind: kind)
+        if kind != 0 {
+            backend?.updateSelection(col: col, row: row)
+        }
         needsDisplay = true
     }
 
@@ -1316,8 +1324,12 @@ class TerminalRenderer: NSView {
 
     private func gridPoint(from event: NSEvent) -> (col: UInt16, row: UInt16) {
         let point = convert(event.locationInWindow, from: nil)
-        let col = max(0, Int((point.x - padding) / fontMetrics.cellWidth))
-        let row = max(0, Int((point.y - padding) / fontMetrics.cellHeight))
+        var col = max(0, Int((point.x - padding) / fontMetrics.cellWidth))
+        var row = max(0, Int((point.y - padding) / fontMetrics.cellHeight))
+        if let grid = backend?.gridSnapshot() {
+            col = min(col, max(0, grid.cols - 1))
+            row = min(row, max(0, grid.lines - 1))
+        }
         return (UInt16(col), UInt16(row))
     }
 

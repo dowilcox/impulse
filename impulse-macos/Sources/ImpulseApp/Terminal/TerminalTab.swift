@@ -412,8 +412,10 @@ class TerminalTab: NSView {
         // Cursor blink
         renderer.cursorBlinkEnabled = settings.terminalCursorBlink
 
-        // Cursor color — derived from theme foreground.
-        renderer.cursorColor = cgColorFromHex(theme.fg)
+        renderer.defaultBackgroundColor = cgColorFromHex(theme.bg)
+        renderer.defaultBackgroundRgb = hexToRgbBytes(theme.bg)
+        renderer.selectionColor = cgColorFromHex(theme.selection)
+        renderer.cursorColor = cgColorFromHex(theme.cursor)
 
         // Palette (used for bold-is-bright substitution)
         renderer.paletteRgb = theme.terminalPalette.map { hex in
@@ -445,7 +447,10 @@ class TerminalTab: NSView {
             workingDirectory: nil
         )
         backend?.setColors(config: config)
-        renderer.cursorColor = cgColorFromHex(theme.fg)
+        renderer.defaultBackgroundColor = cgColorFromHex(theme.bg)
+        renderer.defaultBackgroundRgb = hexToRgbBytes(theme.bg)
+        renderer.selectionColor = cgColorFromHex(theme.selection)
+        renderer.cursorColor = cgColorFromHex(theme.cursor)
         renderer.needsDisplay = true
     }
 
@@ -645,16 +650,10 @@ struct TerminalSettings {
     var terminalAllowOsc52Read: Bool = false
 }
 
-/// Convert a hex color string (e.g. "#DCD7BA") to a CGColor.
-/// Falls back to white on parse failure.
+/// Convert a hex color string (e.g. "#DCD7BA" or "#7AA2F740") to a CGColor.
+/// Falls back to black on parse failure.
 private func cgColorFromHex(_ hex: String) -> CGColor {
-    let (r, g, b) = hexToRgbBytes(hex)
-    return CGColor(
-        srgbRed: CGFloat(r) / 255.0,
-        green: CGFloat(g) / 255.0,
-        blue: CGFloat(b) / 255.0,
-        alpha: 1
-    )
+    NSColor(hex: hex).cgColor
 }
 
 /// Parse a hex color string into an (r, g, b) byte tuple.
@@ -662,7 +661,8 @@ private func cgColorFromHex(_ hex: String) -> CGColor {
 func hexToRgbBytes(_ hex: String) -> (UInt8, UInt8, UInt8) {
     let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         .replacingOccurrences(of: "#", with: "")
-    guard cleaned.count == 6, let value = UInt32(cleaned, radix: 16) else {
+    guard (cleaned.count == 6 || cleaned.count == 8),
+          let value = UInt32(cleaned.prefix(6), radix: 16) else {
         return (255, 255, 255)
     }
     return (
@@ -676,6 +676,8 @@ func hexToRgbBytes(_ hex: String) -> (UInt8, UInt8, UInt8) {
 struct TerminalTheme {
     var bg: String = "#1F1F28"
     var fg: String = "#DCD7BA"
+    var selection: String = "#7AA2F740"
+    var cursor: String = "#DCD7BA"
     /// 16-color ANSI palette as hex strings. Order: black, red, green, yellow,
     /// blue, magenta, cyan, white, then bright variants.
     var terminalPalette: [String] = [
