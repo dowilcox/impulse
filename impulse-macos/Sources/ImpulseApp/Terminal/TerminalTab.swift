@@ -23,9 +23,6 @@ class TerminalTab: NSView {
 
     private var backend: TerminalBackend?
 
-    /// Local event monitor for copy-on-select behaviour.
-    private var mouseUpMonitor: Any?
-
     /// Whether copy-on-select is currently active.
     private var copyOnSelectEnabled: Bool = false
 
@@ -67,9 +64,6 @@ class TerminalTab: NSView {
 
     deinit {
         cwdPollTimer?.invalidate()
-        if let monitor = mouseUpMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
         for path in shellIntegrationTempPaths {
             try? FileManager.default.removeItem(at: path)
         }
@@ -87,6 +81,10 @@ class TerminalTab: NSView {
         }
         renderer.onCopy = { [weak self] in
             self?.copySelection()
+        }
+        renderer.onSelectionFinished = { [weak self] in
+            guard let self, self.copyOnSelectEnabled else { return }
+            self.copySelection()
         }
     }
 
@@ -246,29 +244,7 @@ class TerminalTab: NSView {
 
     /// Enables or disables the copy-on-select behaviour at runtime.
     func setCopyOnSelect(enabled: Bool) {
-        guard enabled != copyOnSelectEnabled else { return }
         copyOnSelectEnabled = enabled
-
-        if enabled {
-            mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
-                guard let self else { return event }
-                let pt = self.renderer.convert(event.locationInWindow, from: nil)
-                guard self.renderer.bounds.contains(pt) else { return event }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self,
-                          let text = self.backend?.selectedText(),
-                          !text.isEmpty else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                }
-                return event
-            }
-        } else {
-            if let monitor = mouseUpMonitor {
-                NSEvent.removeMonitor(monitor)
-                mouseUpMonitor = nil
-            }
-        }
     }
 
     // MARK: Clipboard

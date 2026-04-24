@@ -70,6 +70,9 @@ class TerminalRenderer: NSView {
     /// Called when the user presses Cmd+C in the terminal.
     var onCopy: (() -> Void)?
 
+    /// Called when a mouse selection gesture finishes with a real selection.
+    var onSelectionFinished: (() -> Void)?
+
     /// Override cursor shape from user settings (0=Block, 1=Beam, 2=Underline).
     /// Applied instead of the shape reported by the backend grid buffer.
     var cursorShapeOverride: UInt8 = 0
@@ -112,6 +115,8 @@ class TerminalRenderer: NSView {
     private var scrollAccumulator: CGFloat = 0
     private var isScrolledBack: Bool = false
     private var isSelecting = false
+    private var pendingSelectionAnchor: (col: UInt16, row: UInt16)?
+    private var shouldCopySelectionOnMouseUp = false
     private var needsRedraw = false
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
@@ -1107,9 +1112,16 @@ class TerminalRenderer: NSView {
             kind = 0
         }
         backend?.clearSelection()
-        isSelecting = true
-        backend?.startSelection(col: col, row: row, kind: kind)
-        if kind != 0 {
+        pendingSelectionAnchor = nil
+        shouldCopySelectionOnMouseUp = false
+
+        if kind == 0 {
+            isSelecting = false
+            pendingSelectionAnchor = (col, row)
+        } else {
+            isSelecting = true
+            shouldCopySelectionOnMouseUp = true
+            backend?.startSelection(col: col, row: row, kind: kind)
             backend?.updateSelection(col: col, row: row)
         }
         needsDisplay = true
@@ -1119,8 +1131,17 @@ class TerminalRenderer: NSView {
         if reportMouseEvent(event, button: 0, motion: true, release: false) {
             return
         }
-        guard isSelecting else { return }
         let (col, row) = gridPoint(from: event)
+
+        if !isSelecting {
+            guard let anchor = pendingSelectionAnchor else { return }
+            guard anchor.col != col || anchor.row != row else { return }
+            isSelecting = true
+            pendingSelectionAnchor = nil
+            shouldCopySelectionOnMouseUp = true
+            backend?.startSelection(col: anchor.col, row: anchor.row, kind: 0)
+        }
+
         backend?.updateSelection(col: col, row: row)
         needsDisplay = true
     }
@@ -1129,7 +1150,13 @@ class TerminalRenderer: NSView {
         if reportMouseEvent(event, button: 0, motion: false, release: true) {
             return
         }
+        let shouldCopy = shouldCopySelectionOnMouseUp
         isSelecting = false
+        pendingSelectionAnchor = nil
+        shouldCopySelectionOnMouseUp = false
+        if shouldCopy {
+            onSelectionFinished?()
+        }
     }
 
     override func otherMouseDown(with event: NSEvent) {
