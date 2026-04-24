@@ -1,6 +1,6 @@
 [package]
 name = "impulse-linux"
-version = "0.21.0"
+version = "0.21.1"
 edition = "2021"
 description = "Impulse terminal IDE - Linux Qt frontend"
 license = "GPL-3.0-only"
