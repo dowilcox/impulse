@@ -267,19 +267,7 @@ class TerminalTab: NSView {
             guard !text.isEmpty else { return }
             guard let backend else { return }
 
-            // Wrap in bracketed paste if the running program supports it.
-            if let mode = backend.mode(), mode.bracketedPaste {
-                // Drop any embedded paste-mode markers so a poisoned clipboard
-                // can't break out of bracketed paste and inject commands into
-                // the shell (iTerm2/WezTerm use the same mitigation).
-                text = text.replacingOccurrences(of: "\u{1b}[201~", with: "")
-                text = text.replacingOccurrences(of: "\u{1b}[200~", with: "")
-                backend.write("\u{1b}[200~")
-                backend.write(text)
-                backend.write("\u{1b}[201~")
-            } else {
-                backend.write(text)
-            }
+            writePastePayload(text, to: backend)
             return
         }
 
@@ -300,17 +288,25 @@ class TerminalTab: NSView {
                     [.posixPermissions: 0o600], ofItemAtPath: tmpPath
                 )
                 guard let backend else { return }
-                if let mode = backend.mode(), mode.bracketedPaste {
-                    backend.write("\u{1b}[200~")
-                }
-                backend.write(tmpPath)
-                if let mode = backend.mode(), mode.bracketedPaste {
-                    backend.write("\u{1b}[201~")
-                }
+                writePastePayload(tmpPath, to: backend)
             } catch {
                 os_log(.error, "Failed to save clipboard image: %{public}@", error.localizedDescription)
             }
         }
+    }
+
+    private func writePastePayload(_ payload: String, to backend: TerminalBackend) {
+        guard backend.mode()?.bracketedPaste ?? false else {
+            backend.write(payload)
+            return
+        }
+
+        // Drop embedded paste-mode markers so a poisoned clipboard cannot break
+        // out of bracketed paste and inject commands into the shell.
+        let sanitized = payload
+            .replacingOccurrences(of: "\u{1b}[201~", with: "")
+            .replacingOccurrences(of: "\u{1b}[200~", with: "")
+        backend.write("\u{1b}[200~\(sanitized)\u{1b}[201~")
     }
 
     /// Copy the current selection to the system clipboard.
@@ -343,14 +339,7 @@ class TerminalTab: NSView {
         let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
         guard !paths.isEmpty, let backend else { return false }
 
-        // Wrap in bracketed paste if the running program supports it.
-        if let mode = backend.mode(), mode.bracketedPaste {
-            backend.write("\u{1b}[200~")
-        }
-        backend.write(paths)
-        if let mode = backend.mode(), mode.bracketedPaste {
-            backend.write("\u{1b}[201~")
-        }
+        writePastePayload(paths, to: backend)
         return true
     }
 

@@ -889,8 +889,8 @@ class TerminalRenderer: NSView {
         // Cmd shortcuts.
         if event.modifierFlags.contains(.command) {
             let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-            if key == "v" { onPaste?(); return }
-            if key == "c" { onCopy?(); return }
+            if key == "v" { paste(event); return }
+            if key == "c" { copy(event); return }
             super.keyDown(with: event)
             return
         }
@@ -929,9 +929,40 @@ class TerminalRenderer: NSView {
     // Prevent the system beep for unhandled key events.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) {
+            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            if key == "v" {
+                paste(event)
+                return true
+            }
+            if key == "c" {
+                copy(event)
+                return true
+            }
             return super.performKeyEquivalent(with: event)
         }
         return false
+    }
+
+    @objc func paste(_ sender: Any?) {
+        window?.makeFirstResponder(self)
+        onPaste?()
+    }
+
+    @objc func copy(_ sender: Any?) {
+        onCopy?()
+    }
+
+    override func selectAll(_ sender: Any?) {
+        selectVisibleGrid()
+        needsDisplay = true
+    }
+
+    private func selectVisibleGrid() {
+        guard let grid = backend?.gridSnapshot() else { return }
+        let lastCol = max(0, grid.cols - 1)
+        let lastRow = max(0, grid.lines - 1)
+        backend?.startSelection(col: 0, row: 0, kind: 1)
+        backend?.updateSelection(col: UInt16(lastCol), row: UInt16(lastRow))
     }
 
     // MARK: Mouse Tracking (hover + hyperlinks)
@@ -1243,7 +1274,9 @@ class TerminalRenderer: NSView {
             keyEquivalent: ""
         )
         pasteItem.target = self
-        pasteItem.isEnabled = NSPasteboard.general.string(forType: .string) != nil
+        let pasteboard = NSPasteboard.general
+        pasteItem.isEnabled = pasteboard.string(forType: .string) != nil
+            || pasteboard.canReadObject(forClasses: [NSImage.self], options: nil)
         menu.addItem(pasteItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -1276,12 +1309,7 @@ class TerminalRenderer: NSView {
     }
 
     @objc private func contextSelectAll(_ sender: Any?) {
-        guard let grid = backend?.gridSnapshot() else { return }
-        let lastCol = max(0, grid.cols - 1)
-        let lastRow = max(0, grid.lines - 1)
-        backend?.startSelection(col: 0, row: 0, kind: 1)
-        backend?.updateSelection(col: UInt16(lastCol), row: UInt16(lastRow))
-        needsDisplay = true
+        selectAll(sender)
     }
 
     @objc private func contextClear(_ sender: Any?) {

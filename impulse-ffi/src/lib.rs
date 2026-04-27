@@ -1616,7 +1616,8 @@ pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> *mut c_c
             }
             let h = unsafe { &*handle };
             let mode = h.backend.mode();
-            match serde_json::to_string(&mode) {
+            let json_mode = serde_json::json!({ "bits": mode.bits() });
+            match serde_json::to_string(&json_mode) {
                 Ok(json) => to_c_string(&json),
                 Err(_) => to_c_string("{}"),
             }

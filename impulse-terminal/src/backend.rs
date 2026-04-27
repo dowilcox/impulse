@@ -1,6 +1,7 @@
 //! Terminal backend — owns the alacritty_terminal::Term and PTY event loop.
 
-use std::io::Read;
+use std::collections::VecDeque;
+use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -220,6 +221,32 @@ enum BackendMsg {
     Shutdown,
 }
 
+fn flush_pending_input<W: Write>(writer: &mut W, pending: &mut VecDeque<u8>) -> io::Result<()> {
+    while !pending.is_empty() {
+        let (front, _) = pending.as_slices();
+        if front.is_empty() {
+            break;
+        }
+
+        match writer.write(front) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write PTY input",
+                ));
+            }
+            Ok(written) => {
+                pending.drain(..written);
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // TerminalBackend
 // ---------------------------------------------------------------------------
@@ -325,15 +352,13 @@ impl TerminalBackend {
         // Since we own it, we can use an Arc<Mutex> for the rare write/resize path.
         let pty = Arc::new(std::sync::Mutex::new(pty));
         let pty_for_loop = Arc::clone(&pty);
+        let mut pending_input: VecDeque<u8> = VecDeque::new();
 
         // Helper closure: process a single BackendMsg. Returns false on Shutdown.
-        let handle_cmd = |msg: BackendMsg| -> bool {
+        let handle_cmd = |msg: BackendMsg, pending_input: &mut VecDeque<u8>| -> bool {
             match msg {
                 BackendMsg::Input(data) => {
-                    if let Ok(p) = pty_for_loop.lock() {
-                        use std::io::Write;
-                        let _ = p.file().write_all(&data);
-                    }
+                    pending_input.extend(data);
                     true
                 }
                 BackendMsg::Resize {
@@ -365,8 +390,18 @@ impl TerminalBackend {
         loop {
             // Drain all pending commands first (non-blocking).
             while let Ok(msg) = cmd_rx.try_recv() {
-                if !handle_cmd(msg) {
+                if !handle_cmd(msg, &mut pending_input) {
                     return;
+                }
+            }
+
+            if !pending_input.is_empty() {
+                if let Ok(p) = pty_for_loop.lock() {
+                    let mut file = p.file();
+                    if let Err(err) = flush_pending_input(&mut file, &mut pending_input) {
+                        log::warn!("failed to write PTY input: {err}");
+                        pending_input.clear();
+                    }
                 }
             }
 
@@ -413,7 +448,7 @@ impl TerminalBackend {
                     crossbeam_channel::select! {
                         recv(cmd_rx) -> msg => {
                             match msg {
-                                Ok(msg) => { if !handle_cmd(msg) { return; } }
+                                Ok(msg) => { if !handle_cmd(msg, &mut pending_input) { return; } }
                                 Err(_) => return, // Channel closed
                             }
                         }
@@ -906,4 +941,83 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
         result |= CellFlags::DASHED_UNDERLINE;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flush_pending_input;
+    use std::collections::VecDeque;
+    use std::io::{self, Write};
+
+    struct FlakyWriter {
+        output: Vec<u8>,
+        calls: usize,
+    }
+
+    impl FlakyWriter {
+        fn new() -> Self {
+            Self {
+                output: Vec::new(),
+                calls: 0,
+            }
+        }
+    }
+
+    impl Write for FlakyWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            match self.calls {
+                1 => {
+                    let count = buf.len().min(3);
+                    self.output.extend_from_slice(&buf[..count]);
+                    Ok(count)
+                }
+                2 => Err(io::Error::from(io::ErrorKind::WouldBlock)),
+                3 => Err(io::Error::from(io::ErrorKind::Interrupted)),
+                _ => {
+                    let count = buf.len().min(4);
+                    self.output.extend_from_slice(&buf[..count]);
+                    Ok(count)
+                }
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct ZeroWriter;
+
+    impl Write for ZeroWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn flush_pending_input_preserves_bytes_across_would_block() {
+        let mut writer = FlakyWriter::new();
+        let mut pending = VecDeque::from(Vec::from(&b"large paste payload"[..]));
+
+        flush_pending_input(&mut writer, &mut pending).unwrap();
+        assert_eq!(writer.output, b"lar");
+        assert_eq!(pending.len(), b"ge paste payload".len());
+
+        flush_pending_input(&mut writer, &mut pending).unwrap();
+        assert_eq!(writer.output, b"large paste payload");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn flush_pending_input_reports_write_zero() {
+        let mut writer = ZeroWriter;
+        let mut pending = VecDeque::from(Vec::from(&b"payload"[..]));
+        let err = flush_pending_input(&mut writer, &mut pending).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+    }
 }

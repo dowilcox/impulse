@@ -43,6 +43,16 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::TerminalMode;
+
+    #[test]
+    fn bracketed_paste_bit_matches_swift_bridge() {
+        assert_eq!(TerminalMode::BRACKETED_PASTE.bits(), 1 << 7);
+    }
+}
+
 /// Cursor shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
