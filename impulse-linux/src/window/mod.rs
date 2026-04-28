@@ -10,7 +10,6 @@ use gtk4::gio;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -879,7 +878,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     {
         let sidebar_state = sidebar_state.clone();
         let status_bar = status_bar.clone();
-        let action = gio::SimpleAction::new("open-file", Some(&*gtk4::glib::VariantTy::STRING));
+        let action = gio::SimpleAction::new("open-file", Some(gtk4::glib::VariantTy::STRING));
         action.connect_activate(move |_, param| {
             if let Some(path) = param.and_then(|v| v.get::<String>()) {
                 if std::path::Path::new(&path).exists() {
@@ -1298,15 +1297,11 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 let text = entry.text().to_string();
                 if let Some(page) = tab_view_ref.selected_page() {
                     let child = page.child();
-                    if let Some(term) = find_vte_terminal(&child) {
+                    if let Some(term) = terminal_container::get_active_terminal(&child) {
                         if text.is_empty() {
-                            term.search_set_regex(None::<&vte4::Regex>, 0);
+                            terminal::search_clear(&term);
                         } else {
-                            let escaped = regex_escape(&text);
-                            if let Ok(regex) = vte4::Regex::for_search(&escaped, 0) {
-                                term.search_set_regex(Some(&regex), 0);
-                                term.search_find_next();
-                            }
+                            terminal::search(&term, &text);
                         }
                     }
                 }
@@ -1319,8 +1314,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let tab_view_ref = tab_view.clone();
         find_next_btn.connect_clicked(move |_| {
             if let Some(page) = tab_view_ref.selected_page() {
-                if let Some(term) = find_vte_terminal(&page.child()) {
-                    term.search_find_next();
+                if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                    terminal::search_next(&term);
                 }
             }
         });
@@ -1331,8 +1326,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let tab_view_ref = tab_view.clone();
         find_prev_btn.connect_clicked(move |_| {
             if let Some(page) = tab_view_ref.selected_page() {
-                if let Some(term) = find_vte_terminal(&page.child()) {
-                    term.search_find_previous();
+                if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                    terminal::search_previous(&term);
                 }
             }
         });
@@ -1345,8 +1340,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         find_close_btn.connect_clicked(move |_| {
             search_revealer_ref.set_reveal_child(false);
             if let Some(page) = tab_view_ref.selected_page() {
-                if let Some(term) = find_vte_terminal(&page.child()) {
-                    term.search_set_regex(None::<&vte4::Regex>, 0);
+                if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                    terminal::search_clear(&term);
                     term.grab_focus();
                 }
             }
@@ -1362,8 +1357,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
             if key == gtk4::gdk::Key::Escape {
                 search_revealer_ref.set_reveal_child(false);
                 if let Some(page) = tab_view_ref.selected_page() {
-                    if let Some(term) = find_vte_terminal(&page.child()) {
-                        term.search_set_regex(None::<&vte4::Regex>, 0);
+                    if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
+                        terminal::search_clear(&term);
                         term.grab_focus();
                     }
                 }
@@ -1477,7 +1472,7 @@ pub fn open_files_in_active_window(app: &adw::Application, files: &[String]) {
 
 pub(super) fn make_split_terminal(
     tab_view: &adw::TabView,
-    setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
+    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
     settings: &Rc<RefCell<crate::settings::Settings>>,
     copy_on_select_flag: &Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
@@ -1516,9 +1511,7 @@ fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_fam
     for i in 0..n {
         let page = tab_view.nth_page(i);
         for term in terminal_container::collect_terminals(&page.child()) {
-            let mut font_desc = gtk4::pango::FontDescription::from_string(family);
-            font_desc.set_size(size * 1024);
-            term.set_font_desc(Some(&font_desc));
+            terminal::set_font(&term, family, size);
         }
     }
 }
@@ -1660,34 +1653,6 @@ fn add_shortcut(controller: &gtk4::ShortcutController, accel: &str, callback: im
     }
 }
 
-fn find_vte_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
-    if let Some(term) = widget.downcast_ref::<vte4::Terminal>() {
-        return Some(term.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        if let Some(term) = find_vte_terminal(&c) {
-            return Some(term);
-        }
-        child = c.next_sibling();
-    }
-    None
-}
-
-fn regex_escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len() * 2);
-    for c in text.chars() {
-        match c {
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' => {
-                escaped.push('\\');
-                escaped.push(c);
-            }
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
-
 pub(crate) fn run_guarded_ui<F: FnOnce()>(label: &str, f: F) {
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         let msg = if let Some(s) = payload.downcast_ref::<&str>() {
@@ -1763,8 +1728,7 @@ fn get_active_cwd(tab_view: &adw::TabView) -> Option<String> {
 
     // Try terminal CWD first
     if let Some(term) = terminal_container::get_active_terminal(&child) {
-        if let Some(uri) = term.current_directory_uri() {
-            let path = uri_to_file_path(uri.as_ref());
+        if let Some(path) = terminal::current_directory(&term) {
             if !path.is_empty() {
                 return Some(path);
             }

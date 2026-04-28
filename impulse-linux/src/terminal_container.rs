@@ -2,11 +2,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
-use vte4::prelude::*;
 
 use crate::terminal;
 
-/// A container that wraps a VTE terminal and supports splitting.
+/// A container that wraps an Impulse terminal and supports splitting.
 /// The container is a `gtk4::Box` that holds either a single terminal
 /// or a `gtk4::Paned` with two child containers for split layouts.
 pub struct TerminalContainer {
@@ -14,7 +13,7 @@ pub struct TerminalContainer {
 }
 
 impl TerminalContainer {
-    pub fn new(term: &vte4::Terminal) -> Self {
+    pub fn new(term: &terminal::Terminal) -> Self {
         let widget = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         widget.set_hexpand(true);
         widget.set_vexpand(true);
@@ -33,12 +32,12 @@ impl TerminalContainer {
 pub fn split_terminal(
     container: &gtk4::Widget,
     orientation: gtk4::Orientation,
-    setup_terminal: &dyn Fn(&vte4::Terminal),
+    setup_terminal: &dyn Fn(&terminal::Terminal),
     settings: &crate::settings::Settings,
     theme: &crate::theme::ThemeColors,
     copy_on_select_flag: Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
-) -> Option<vte4::Terminal> {
+) -> Option<terminal::Terminal> {
     // Find the focused terminal; fall back to the first terminal in the tree.
     let focused = find_focused_terminal(container).or_else(|| find_first_terminal(container))?;
 
@@ -48,9 +47,7 @@ pub fn split_terminal(
     let parent_box = parent_widget.downcast_ref::<gtk4::Box>()?;
 
     // Capture the focused terminal's CWD so the new split inherits it.
-    let cwd = focused
-        .current_directory_uri()
-        .map(|uri| impulse_core::util::uri_to_file_path(&uri.to_string()));
+    let cwd = terminal::current_directory(&focused);
 
     // Create a new terminal and let the caller set up its signals.
     let new_term = terminal::create_terminal(settings, theme, copy_on_select_flag);
@@ -87,12 +84,12 @@ pub fn split_terminal(
     Some(new_term)
 }
 
-/// Find the VTE terminal that currently has keyboard focus within the widget
+/// Find the Impulse terminal that currently has keyboard focus within the widget
 /// tree rooted at `widget`.  Returns `None` if no focused terminal is found.
-pub fn find_focused_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
-    if let Some(term) = widget.downcast_ref::<vte4::Terminal>() {
+pub fn find_focused_terminal(widget: &gtk4::Widget) -> Option<terminal::Terminal> {
+    if let Some(term) = terminal::from_widget(widget) {
         if term.has_focus() {
-            return Some(term.clone());
+            return Some(term);
         }
     }
 
@@ -109,14 +106,14 @@ pub fn find_focused_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
 
 /// Get the active terminal within the widget tree. Prefers the focused terminal;
 /// falls back to the first terminal found via depth-first search.
-pub fn get_active_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
+pub fn get_active_terminal(widget: &gtk4::Widget) -> Option<terminal::Terminal> {
     find_focused_terminal(widget).or_else(|| find_first_terminal(widget))
 }
 
-/// Find the first VTE terminal in the widget tree (depth-first order).
-pub fn find_first_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
-    if let Some(term) = widget.downcast_ref::<vte4::Terminal>() {
-        return Some(term.clone());
+/// Find the first Impulse terminal in the widget tree (depth-first order).
+pub fn find_first_terminal(widget: &gtk4::Widget) -> Option<terminal::Terminal> {
+    if let Some(term) = terminal::from_widget(widget) {
+        return Some(term);
     }
 
     let mut child = widget.first_child();
@@ -130,16 +127,16 @@ pub fn find_first_terminal(widget: &gtk4::Widget) -> Option<vte4::Terminal> {
     None
 }
 
-/// Collect all VTE terminals in the widget tree (depth-first order).
-pub fn collect_terminals(widget: &gtk4::Widget) -> Vec<vte4::Terminal> {
+/// Collect all Impulse terminals in the widget tree (depth-first order).
+pub fn collect_terminals(widget: &gtk4::Widget) -> Vec<terminal::Terminal> {
     let mut terminals = Vec::new();
     collect_terminals_recursive(widget, &mut terminals);
     terminals
 }
 
-fn collect_terminals_recursive(widget: &gtk4::Widget, terminals: &mut Vec<vte4::Terminal>) {
-    if let Some(term) = widget.downcast_ref::<vte4::Terminal>() {
-        terminals.push(term.clone());
+fn collect_terminals_recursive(widget: &gtk4::Widget, terminals: &mut Vec<terminal::Terminal>) {
+    if let Some(term) = terminal::from_widget(widget) {
+        terminals.push(term);
         return;
     }
     let mut child = widget.first_child();
@@ -168,7 +165,7 @@ pub fn focus_next_terminal(container: &gtk4::Widget) {
 /// Remove a single terminal from a split layout.  If the terminal is inside a
 /// `Paned`, the sibling pane is promoted into the `Paned`'s parent, effectively
 /// collapsing one level of splitting.  Returns `true` if the pane was removed.
-pub fn remove_terminal(container: &gtk4::Widget, terminal: &vte4::Terminal) -> bool {
+pub fn remove_terminal(container: &gtk4::Widget, terminal: &terminal::Terminal) -> bool {
     // Terminal → wrapper Box → Paned.
     let wrapper = match terminal.parent() {
         Some(p) => p,

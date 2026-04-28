@@ -1,5 +1,3 @@
-use gtk4::gdk;
-
 /// A color theme definition for the entire application.
 pub struct ThemeColors {
     pub bg: &'static str,
@@ -20,24 +18,6 @@ pub struct ThemeColors {
     /// Editor selection background — a hex color with alpha (e.g. `"#7E9CD850"`).
     pub selection: &'static str,
     pub terminal_palette: [&'static str; 16],
-}
-
-impl ThemeColors {
-    /// Parse the 16-color terminal palette into VTE-compatible RGBA values.
-    pub fn terminal_palette_rgba(&self) -> Vec<gdk::RGBA> {
-        self.terminal_palette
-            .iter()
-            .map(|hex| parse_color(hex))
-            .collect()
-    }
-
-    pub fn fg_rgba(&self) -> gdk::RGBA {
-        parse_color(self.fg)
-    }
-
-    pub fn bg_rgba(&self) -> gdk::RGBA {
-        parse_color(self.bg)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -541,13 +521,6 @@ pub fn get_available_themes() -> Vec<&'static str> {
 // CSS loading
 // ---------------------------------------------------------------------------
 
-fn parse_color(hex: &str) -> gdk::RGBA {
-    gdk::RGBA::parse(hex).unwrap_or_else(|_| {
-        log::warn!("Invalid color value: '{}', using fallback", hex);
-        gdk::RGBA::new(1.0, 0.0, 1.0, 1.0) // Magenta fallback makes errors visible
-    })
-}
-
 /// Generate and apply the application-wide CSS for the given theme.
 ///
 /// Returns the `CssProvider` so callers can hold onto it and later replace it
@@ -751,7 +724,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background: none;
             border: 1px solid {green};
             box-shadow: none;
-            cursor: pointer;
         }}
         .status-bar .status-bar-preview-btn label {{
             font-size: 11px;
@@ -778,7 +750,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border: none;
             background: none;
             box-shadow: none;
-            cursor: pointer;
         }}
         .status-bar .status-bar-update-btn label {{
             font-size: 11px;
@@ -788,8 +759,8 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background: alpha({yellow}, 0.1);
         }}
         /* --- Terminal --- */
-        vte-terminal {{
-            padding: 8px 12px;
+        .terminal-view {{
+            background-color: {bg};
         }}
         /* --- Header bar --- */
         headerbar {{
@@ -820,7 +791,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: {bg_dark};
             color: {fg_dark};
             border-radius: 6px 6px 0 0;
-            cursor: pointer;
         }}
         tabbar tab:selected {{
             background-color: {bg};

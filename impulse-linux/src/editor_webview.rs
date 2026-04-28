@@ -211,7 +211,9 @@ impl MonacoEditorHandle {
 
     pub fn apply_settings(&self, settings: &Settings) {
         let options = settings_to_editor_options(settings);
-        self.send_command(&EditorCommand::UpdateSettings { options });
+        self.send_command(&EditorCommand::UpdateSettings {
+            options: Box::new(options),
+        });
     }
 
     pub fn set_theme(&self, theme: &ThemeColors) {
@@ -755,7 +757,9 @@ where
         let mut options = settings_to_editor_options(settings);
         options.tab_size = Some(indent_width);
         options.insert_spaces = Some(use_spaces);
-        handle.send_command(&EditorCommand::UpdateSettings { options });
+        handle.send_command(&EditorCommand::UpdateSettings {
+            options: Box::new(options),
+        });
 
         handle.send_command(&EditorCommand::OpenFile {
             file_path: file_path.to_string(),
@@ -891,7 +895,9 @@ where
                 let mut options = settings_to_editor_options(&initial_settings);
                 options.tab_size = Some(initial_indent_width);
                 options.insert_spaces = Some(initial_use_spaces);
-                handle_for_signal.send_command(&EditorCommand::UpdateSettings { options });
+                handle_for_signal.send_command(&EditorCommand::UpdateSettings {
+                    options: Box::new(options),
+                });
 
                 // Open the file
                 handle_for_signal.send_command(&EditorCommand::OpenFile {
@@ -1040,6 +1046,10 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
             None
         },
         auto_closing_brackets: Some(settings.editor_auto_closing_brackets.clone()),
+        cursor_surrounding_lines: None,
+        selection_highlight: None,
+        occurrences_highlight: None,
+        word_based_suggestions: None,
     }
 }
 
@@ -1339,6 +1349,7 @@ fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
             minimap_background: format!("#{}", strip(theme.bg_dark)),
             scrollbar_slider_background: format!("#{}40", strip(theme.comment)),
             scrollbar_slider_hover_background: format!("#{}80", strip(theme.comment)),
+            scrollbar_slider_active_background: format!("#{}a0", strip(theme.comment)),
             diff_added_color: format!("#{}", strip(theme.green)),
             diff_modified_color: format!("#{}", strip(theme.yellow)),
             diff_deleted_color: format!("#{}", strip(theme.red)),

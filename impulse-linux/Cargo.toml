@@ -12,9 +12,9 @@ path = "src/main.rs"
 [dependencies]
 impulse-core = { path = "../impulse-core" }
 impulse-editor = { path = "../impulse-editor" }
+impulse-terminal = { path = "../impulse-terminal" }
 gtk4 = { version = "0.10", features = ["v4_16"] }
 libadwaita = { version = "0.8", features = ["v1_5"] }
-vte4 = { version = "0.9", features = ["v0_78"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -34,7 +34,7 @@ open = "5"
 maintainer = "Impulse Contributors"
 section = "devel"
 priority = "optional"
-depends = "libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5), libvte-2.91-gtk4-0, libgtksourceview-5-0, libwebkitgtk-6.0-4"
+depends = "libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5), libgtksourceview-5-0, libwebkitgtk-6.0-4"
 assets = [
     ["target/release/impulse", "usr/bin/", "755"],
     ["../assets/dev.impulse.Impulse.desktop", "usr/share/applications/", "644"],
@@ -51,6 +51,5 @@ assets = [
 [package.metadata.generate-rpm.requires]
 gtk4 = ">= 4.14"
 libadwaita = ">= 1.5"
-vte4 = "*"
 gtksourceview5 = "*"
 "webkitgtk6.0" = "*"

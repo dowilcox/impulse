@@ -2,7 +2,6 @@ use gtk4::gio;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use vte4::prelude::*;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -19,7 +18,7 @@ use super::{ensure_file_uri, run_guarded_ui, uri_to_file_path, ClosedTab, MAX_CL
 /// Find the TabPage containing `terminal`, using a self-populating cache.
 /// First lookup for a terminal is O(n); subsequent lookups are O(1).
 fn find_terminal_page(
-    terminal: &vte4::Terminal,
+    terminal: &terminal::Terminal,
     tab_view: &adw::TabView,
     cache: &RefCell<HashMap<usize, adw::TabPage>>,
 ) -> Option<adw::TabPage> {
@@ -52,7 +51,7 @@ pub(super) fn make_setup_terminal_signals(
     tab_view: &adw::TabView,
     status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
     sidebar_state: &Rc<sidebar::SidebarState>,
-) -> Rc<dyn Fn(&vte4::Terminal)> {
+) -> Rc<dyn Fn(&terminal::Terminal)> {
     let tab_view = tab_view.clone();
     let status_bar = status_bar.clone();
     let sidebar_state = sidebar_state.clone();
@@ -60,7 +59,7 @@ pub(super) fn make_setup_terminal_signals(
     // Self-populating cache: first lookup per terminal is O(n), subsequent are O(1).
     let page_cache: Rc<RefCell<HashMap<usize, adw::TabPage>>> =
         Rc::new(RefCell::new(HashMap::new()));
-    Rc::new(move |term: &vte4::Terminal| {
+    Rc::new(move |term: &terminal::Terminal| {
         // Connect CWD change signal (OSC 7)
         {
             let status_bar = status_bar.clone();
@@ -68,12 +67,9 @@ pub(super) fn make_setup_terminal_signals(
             let sidebar_state = sidebar_state.clone();
             let tab_view = tab_view.clone();
             let page_cache = page_cache.clone();
-            term.connect_current_directory_uri_notify(move |terminal| {
+            terminal::connect_current_directory_changed(term, move |terminal| {
                 run_guarded_ui("terminal-cwd-notify", || {
-                    if let Some(uri) = terminal.current_directory_uri() {
-                        let uri_str = uri.to_string();
-                        let path = uri_to_file_path(&uri_str);
-
+                    if let Some(path) = terminal::current_directory(terminal) {
                         // Only update sidebar/status bar if this terminal is in the active tab
                         let is_active = tab_view
                             .selected_page()
@@ -100,6 +96,18 @@ pub(super) fn make_setup_terminal_signals(
             });
         }
 
+        {
+            let tab_view = tab_view.clone();
+            let page_cache = page_cache.clone();
+            terminal::connect_title_changed(term, move |terminal| {
+                run_guarded_ui("terminal-title-changed", || {
+                    if let Some(page) = find_terminal_page(terminal, &tab_view, &page_cache) {
+                        page.set_title(&terminal::title(terminal));
+                    }
+                });
+            });
+        }
+
         // Connect child-exited to close the tab or remove the split pane
         {
             let tab_view = tab_view.clone();
@@ -108,7 +116,7 @@ pub(super) fn make_setup_terminal_signals(
             let sidebar_state = sidebar_state.clone();
             let project_search_root = project_search_root.clone();
             let page_cache = page_cache.clone();
-            term.connect_child_exited(move |_terminal, _status| {
+            terminal::connect_child_exited(term, move |_terminal| {
                 run_guarded_ui("terminal-child-exited", || {
                     if let Some(page) = find_terminal_page(&term_clone, &tab_view, &page_cache) {
                         let container = page.child();
@@ -128,8 +136,7 @@ pub(super) fn make_setup_terminal_signals(
                             if let Some(active) =
                                 crate::terminal_container::get_active_terminal(&container)
                             {
-                                if let Some(uri) = active.current_directory_uri() {
-                                    let path = uri_to_file_path(&uri.to_string());
+                                if let Some(path) = terminal::current_directory(&active) {
                                     status_bar.borrow().update_cwd(&path);
                                     sidebar_state.load_directory(&path);
                                     *project_search_root.borrow_mut() = path.to_string();
@@ -168,7 +175,7 @@ pub(super) fn insert_after_selected(
 /// Create the closure that spawns a new terminal tab.
 pub(super) fn make_create_tab(
     tab_view: &adw::TabView,
-    setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
+    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
     settings: &Rc<RefCell<crate::settings::Settings>>,
     copy_on_select_flag: &Rc<Cell<bool>>,
     shell_cache: &Rc<terminal::ShellSpawnCache>,
@@ -619,9 +626,7 @@ pub(super) fn setup_tab_switch_handler(
                     term.grab_focus();
                     status_bar.borrow().hide_editor_info();
                     // Restore saved tree state or load directory for this tab
-                    if let Some(uri) = term.current_directory_uri() {
-                        let uri_str = uri.to_string();
-                        let path = uri_to_file_path(&uri_str);
+                    if let Some(path) = terminal::current_directory(&term) {
                         status_bar.borrow().update_cwd(&path);
                         sidebar_state.switch_to_tab(&child, &path);
                     } else {

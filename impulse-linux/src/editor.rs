@@ -265,10 +265,7 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
 
     let html = if is_svg_file(&file_path) {
         // SVG preview — embed raw SVG in themed HTML
-        match impulse_editor::svg::render_svg_preview(&content, theme.bg) {
-            Some(h) => h,
-            None => return None,
-        }
+        impulse_editor::svg::render_svg_preview(&content, theme.bg)?
     } else {
         // Markdown preview
         let md_colors = theme_to_markdown_colors(theme);
@@ -279,10 +276,7 @@ pub fn toggle_preview(widget: &gtk4::Widget, theme: &ThemeColors) -> Option<bool
                 String::new()
             }
         };
-        match markdown::render_markdown_preview(&content, &md_colors, &hljs_path) {
-            Some(h) => h,
-            None => return None,
-        }
+        markdown::render_markdown_preview(&content, &md_colors, &hljs_path)?
     };
 
     // Create or reuse the preview WebView

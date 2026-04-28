@@ -1,7 +1,6 @@
 use super::tab_management;
 use gtk4::prelude::*;
 use libadwaita as adw;
-use vte4::prelude::*;
 
 use crate::editor;
 use crate::lsp_completion::LspRequest;
@@ -418,7 +417,7 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
             if let Some(page) = tab_view.selected_page() {
                 if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
                     let cmd = format!("cd '{}'\n", path.replace('\'', "'\\''"));
-                    term.feed_child(cmd.as_bytes());
+                    crate::terminal::write_text(&term, &cmd);
                 }
             }
         }));

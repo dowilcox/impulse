@@ -1,7 +1,6 @@
 use super::tab_management;
 use gtk4::prelude::*;
 use libadwaita as adw;
-use vte4::prelude::*;
 
 use std::rc::Rc;
 
@@ -21,7 +20,7 @@ use super::sidebar_signals::dispatch_lsp_request;
 
 /// Install the capture-phase EventControllerKey on the window.
 ///
-/// This handles keybindings that VTE/WebView would otherwise consume
+/// This handles keybindings that terminal/WebView would otherwise consume
 /// before the bubble-phase ShortcutController can see them: custom
 /// keybindings, Ctrl+Shift+B (toggle sidebar), split-terminal shortcuts,
 /// Ctrl+Shift+V (paste), Ctrl+W (close tab), Ctrl+T (new tab), and
@@ -30,7 +29,7 @@ pub(super) fn setup_capture_phase_keys(
     ctx: &super::context::WindowContext,
     term_ctx: &super::context::TerminalContext,
     sidebar_btn: &gtk4::ToggleButton,
-    setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
+    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
 ) {
@@ -43,7 +42,7 @@ pub(super) fn setup_capture_phase_keys(
     let reopen_tab_capture = reopen_tab.clone();
 
     // Build parsed accels + callbacks for custom keybindings so they work
-    // even when VTE or WebView has focus (those widgets consume key events
+    // even when terminal or WebView has focus (those widgets consume key events
     // before the bubble-phase ShortcutController sees them).
     struct CustomKbAction {
         parsed: keybindings::ParsedAccel,
@@ -95,7 +94,7 @@ pub(super) fn setup_capture_phase_keys(
         }
     }
 
-    // Parse split-terminal accels for capture-phase matching (VTE eats
+    // Parse split-terminal accels for capture-phase matching (the terminal consumes
     // these before the Global ShortcutController can see them).
     let capture_kb_overrides = settings.borrow().keybinding_overrides.clone();
     let split_h_accel = keybindings::parse_accel(&keybindings::get_accel(
@@ -149,7 +148,7 @@ pub(super) fn setup_capture_phase_keys(
             }
         }
 
-        // Ctrl+Shift+B: toggle sidebar (VTE/WebView eat this before
+        // Ctrl+Shift+B: toggle sidebar (terminal/WebView eat this before
         // the Global ShortcutController can see it)
         if ctrl && shift && (key == gtk4::gdk::Key::b || key == gtk4::gdk::Key::B) {
             sidebar_btn_capture.set_active(!sidebar_btn_capture.is_active());
@@ -177,7 +176,7 @@ pub(super) fn setup_capture_phase_keys(
             }
         }
 
-        // Split terminal keybindings (VTE eats Ctrl+Shift+E/O)
+        // Split terminal keybindings (the terminal consumes Ctrl+Shift+E/O)
         if let Some(page) = tab_view.selected_page() {
             let child = page.child();
             if terminal_container::get_active_terminal(&child).is_some() {
@@ -219,7 +218,7 @@ pub(super) fn setup_capture_phase_keys(
                 }
             }
 
-            // Ctrl+W: close tab (VTE eats this as "delete word backward")
+            // Ctrl+W: close tab (the terminal consumes this as "delete word backward")
             if ctrl
                 && !shift
                 && (key == gtk4::gdk::Key::w || key == gtk4::gdk::Key::W)
@@ -229,10 +228,10 @@ pub(super) fn setup_capture_phase_keys(
                 return gtk4::glib::Propagation::Stop;
             }
 
-            // Ctrl+N: new file (VTE eats this as "cursor down")
+            // Ctrl+N: new file (the terminal consumes this as "cursor down")
             if let Some(ref accel) = new_file_accel {
                 if keybindings::matches_key(accel, key, modifiers) {
-                    let _ = gtk4::prelude::ActionGroupExt::activate_action(
+                    gtk4::prelude::ActionGroupExt::activate_action(
                         &new_file_window,
                         "new-file",
                         None,
@@ -241,7 +240,7 @@ pub(super) fn setup_capture_phase_keys(
                 }
             }
 
-            // Ctrl+T: new tab (VTE eats this as "transpose chars")
+            // Ctrl+T: new tab (the terminal consumes this as "transpose chars")
             if ctrl
                 && !shift
                 && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T)
@@ -251,13 +250,13 @@ pub(super) fn setup_capture_phase_keys(
                 return gtk4::glib::Propagation::Stop;
             }
 
-            // Ctrl+Shift+T: reopen last closed tab (VTE/WebView eat this)
+            // Ctrl+Shift+T: reopen last closed tab (terminal/WebView eat this)
             if ctrl && shift && (key == gtk4::gdk::Key::t || key == gtk4::gdk::Key::T) {
                 reopen_tab_capture();
                 return gtk4::glib::Propagation::Stop;
             }
 
-            // Ctrl+1-9: switch tab by number (VTE swallows these)
+            // Ctrl+1-9: switch tab by number (the terminal consumes these)
             if ctrl && !shift && is_terminal {
                 let digit = match key {
                     gtk4::gdk::Key::_1 => Some(0),
@@ -291,7 +290,7 @@ pub(super) fn setup_shortcut_controller(
     term_ctx: &super::context::TerminalContext,
     app: &adw::Application,
     sidebar_btn: &gtk4::ToggleButton,
-    setup_terminal_signals: &Rc<dyn Fn(&vte4::Terminal)>,
+    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
     open_settings: &Rc<dyn Fn()>,
     search_revealer: &gtk4::Revealer,
     find_entry: &gtk4::SearchEntry,
@@ -605,7 +604,7 @@ pub(super) fn setup_shortcut_controller(
             &shortcut_controller,
             &keybindings::get_accel("new_file", &kb_overrides),
             move || {
-                let _ = gtk4::prelude::ActionGroupExt::activate_action(
+                gtk4::prelude::ActionGroupExt::activate_action(
                     &window_for_shortcut,
                     "new-file",
                     None,
@@ -735,7 +734,7 @@ pub(super) fn setup_shortcut_controller(
             move || {
                 if let Some(page) = tab_view.selected_page() {
                     if let Some(term) = terminal_container::get_active_terminal(&page.child()) {
-                        term.copy_clipboard_format(vte4::Format::Text);
+                        terminal::copy_selection(&term);
                     }
                 }
             },
@@ -743,7 +742,7 @@ pub(super) fn setup_shortcut_controller(
     }
 
     // Ctrl+Shift+V paste is handled by the capture-phase EventControllerKey
-    // on the window (see setup_capture_phase_keys), which runs before VTE's
+    // on the window (see setup_capture_phase_keys), which runs before terminal's
     // internal handler.
 
     // Ctrl+Equal / Ctrl+plus: Increase font size

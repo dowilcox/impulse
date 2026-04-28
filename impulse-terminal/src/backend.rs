@@ -144,8 +144,11 @@ impl ConfiguredColors {
         palette[NamedColor::DimBlack as usize] = RgbColor::new(0, 0, 0);
         for i in 1..8usize {
             let base = config.colors.palette[i];
-            palette[NamedColor::DimBlack as usize + i] =
-                RgbColor::new(base.r * 3 / 4, base.g * 3 / 4, base.b * 3 / 4);
+            palette[NamedColor::DimBlack as usize + i] = RgbColor::new(
+                ((base.r as u16) * 3 / 4) as u8,
+                ((base.g as u16) * 3 / 4) as u8,
+                ((base.b as u16) * 3 / 4) as u8,
+            );
         }
 
         Self {
@@ -945,7 +948,9 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::flush_pending_input;
+    use super::{flush_pending_input, ConfiguredColors};
+    use crate::config::{TerminalColors, TerminalConfig};
+    use crate::grid::RgbColor;
     use std::collections::VecDeque;
     use std::io::{self, Write};
 
@@ -1019,5 +1024,22 @@ mod tests {
         let mut pending = VecDeque::from(Vec::from(&b"payload"[..]));
         let err = flush_pending_input(&mut writer, &mut pending).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+    }
+
+    #[test]
+    fn configured_colors_dims_bright_palette_without_overflow() {
+        let mut config = TerminalConfig::default();
+        config.colors = TerminalColors {
+            foreground: RgbColor::new(255, 255, 255),
+            background: RgbColor::new(0, 0, 0),
+            palette: [RgbColor::new(255, 240, 224); 16],
+        };
+
+        let colors = ConfiguredColors::from_config(&config);
+
+        let dim_red = alacritty_terminal::vte::ansi::NamedColor::DimBlack as usize + 1;
+        assert_eq!(colors.palette[dim_red].r, 191);
+        assert_eq!(colors.palette[dim_red].g, 180);
+        assert_eq!(colors.palette[dim_red].b, 168);
     }
 }
