@@ -21,80 +21,32 @@ fileprivate func encodeLspJSON(_ value: Any) -> String {
 
 extension MainWindowController {
 
-    func startLspPolling() {
-        // 25 ms floor: fast enough that typing → diagnostics/completions feels
-        // instant, but still ~16× cheaper than the editor's own repaint budget.
-        // The poll itself is cheap: a single FFI call that returns nil when
-        // nothing is queued. Further reductions require a blocking event-wait
-        // primitive in impulse-core (cross-platform).
-        lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { [weak self] _ in
-            self?.pollLspEventsInBackground()
+    func applyLspDiagnostics(uri: String, diagnosticsArray: [[String: Any]]) {
+        // A server's trailing `diagnostics: []` can arrive after lspDidClose;
+        // applying it to a freshly-reopened or still-closing tab clobbers valid
+        // state.
+        guard lspOpenFiles.contains(uri) else { return }
+        let filePath = uriToFilePath(uri)
+        guard let editorTab = findEditorTab(forPath: filePath) else { return }
+
+        let markers: [MonacoDiagnostic] = diagnosticsArray.compactMap { d in
+            guard let severity = (d["severity"] as? NSNumber)?.uint8Value,
+                  let startLine = (d["startLine"] as? NSNumber)?.uint32Value,
+                  let startColumn = (d["startColumn"] as? NSNumber)?.uint32Value,
+                  let endLine = (d["endLine"] as? NSNumber)?.uint32Value,
+                  let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
+                  let message = d["message"] as? String else { return nil }
+            return MonacoDiagnostic(
+                severity: diagnosticSeverityToMonaco(severity),
+                startLine: startLine + 1,   // LSP 0-based -> Monaco 1-based
+                startColumn: startColumn + 1,
+                endLine: endLine + 1,
+                endColumn: endColumn + 1,
+                message: message,
+                source: d["source"] as? String
+            )
         }
-    }
-
-    func stopLspPolling() {
-        lspPollTimer?.invalidate()
-        lspPollTimer = nil
-    }
-
-    /// Polls for LSP events on a background queue and dispatches parsed results
-    /// back to the main thread for UI updates. Limits events per tick to avoid
-    /// unbounded processing.
-    private func pollLspEventsInBackground() {
-        lspQueue.async { [weak self] in
-            guard let self else { return }
-            var events: [(String, [[String: Any]])] = []
-            var count = 0
-            let maxEventsPerTick = 50
-            while count < maxEventsPerTick, let json = self.core.lspPollEvent() {
-                count += 1
-                guard let data = json.data(using: .utf8),
-                      let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let type = event["type"] as? String else { continue }
-
-                switch type {
-                case "diagnostics":
-                    guard let uri = event["uri"] as? String,
-                          let diagnosticsArray = event["diagnostics"] as? [[String: Any]] else { continue }
-                    events.append((uri, diagnosticsArray))
-                default:
-                    break
-                }
-            }
-
-            guard !events.isEmpty else { return }
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                for (uri, diagnosticsArray) in events {
-                    // A server's trailing `diagnostics: []` can arrive after
-                    // lspDidClose; applying it to a freshly-reopened or
-                    // still-closing tab clobbers valid state.
-                    guard self.lspOpenFiles.contains(uri) else { continue }
-                    let filePath = self.uriToFilePath(uri)
-                    guard let editorTab = self.findEditorTab(forPath: filePath) else { continue }
-
-                    let markers: [MonacoDiagnostic] = diagnosticsArray.compactMap { d in
-                        guard let severity = (d["severity"] as? NSNumber)?.uint8Value,
-                              let startLine = (d["startLine"] as? NSNumber)?.uint32Value,
-                              let startColumn = (d["startColumn"] as? NSNumber)?.uint32Value,
-                              let endLine = (d["endLine"] as? NSNumber)?.uint32Value,
-                              let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
-                              let message = d["message"] as? String else { return nil }
-                        return MonacoDiagnostic(
-                            severity: diagnosticSeverityToMonaco(severity),
-                            startLine: startLine + 1,   // LSP 0-based -> Monaco 1-based
-                            startColumn: startColumn + 1,
-                            endLine: endLine + 1,
-                            endColumn: endColumn + 1,
-                            message: message,
-                            source: d["source"] as? String
-                        )
-                    }
-                    editorTab.applyDiagnostics(uri: uri, markers: markers)
-                }
-            }
-        }
+        editorTab.applyDiagnostics(uri: uri, markers: markers)
     }
 
     /// Sends LSP didOpen for a file if not already tracked.

@@ -3,6 +3,11 @@ import AppKit
 // MARK: - AppDelegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private struct LspDiagnosticsEvent {
+        let uri: String
+        let diagnostics: [[String: Any]]
+    }
+
     /// The current application settings. Mutated at runtime by the settings
     /// window and saved on quit.
     var settings: Settings = .default
@@ -12,6 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The FFI bridge to impulse-core/impulse-editor Rust code.
     let core = ImpulseCore()
+
+    /// Shared serial queue for all LSP FFI calls. The LSP backend is owned by
+    /// `core`, so all windows must use one queue rather than issuing requests
+    /// concurrently from per-window queues.
+    let lspQueue = DispatchQueue(label: "dev.impulse.lsp", qos: .userInitiated)
+
+    /// Single app-level LSP event poller. Diagnostics are fanned out to the
+    /// window that still owns the target document.
+    private var lspPollTimer: Timer?
+    private var isPollingLspEvents = false
+    private var settingsObserver: NSObjectProtocol?
 
     /// File paths to open once the first window is ready (from Finder or CLI).
     var pendingFiles: [String] = []
@@ -23,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = Settings.load()
         theme = ThemeManager.theme(forName: settings.colorScheme)
+        rebuildMainMenu()
+        observeSettingsChanges()
 
         // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
         EditorWebViewPool.shared.warmUp()
@@ -37,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let rootUri = URL(fileURLWithPath: rootDir).absoluteString
         core.initializeLsp(rootUri: rootUri)
+        startLspPolling()
 
         openNewWindow(skipInitialTerminal: !pendingFiles.isEmpty)
 
@@ -175,6 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         settings.save()
+        if let settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+            self.settingsObserver = nil
+        }
+        stopLspPolling()
         core.shutdownLsp()
     }
 
@@ -194,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             theme: theme,
             core: core,
+            lspQueue: lspQueue,
             skipInitialTerminal: skipInitialTerminal
         )
         windowControllers.append(controller)
@@ -226,5 +251,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newWindow(_ sender: Any?) {
         openNewWindow()
+    }
+
+    private func startLspPolling() {
+        guard lspPollTimer == nil else { return }
+        // 25 ms floor: fast enough that typing -> diagnostics/completions feels
+        // instant, but still much cheaper than the editor repaint budget.
+        lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { [weak self] _ in
+            self?.pollLspEventsInBackground()
+        }
+    }
+
+    private func stopLspPolling() {
+        lspPollTimer?.invalidate()
+        lspPollTimer = nil
+    }
+
+    private func pollLspEventsInBackground() {
+        guard !isPollingLspEvents else { return }
+        isPollingLspEvents = true
+
+        lspQueue.async { [weak self] in
+            guard let self else { return }
+
+            var events: [LspDiagnosticsEvent] = []
+            var count = 0
+            let maxEventsPerTick = 50
+
+            while count < maxEventsPerTick, let json = self.core.lspPollEvent() {
+                count += 1
+                guard let data = json.data(using: .utf8),
+                      let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = event["type"] as? String else { continue }
+
+                switch type {
+                case "diagnostics":
+                    guard let uri = event["uri"] as? String,
+                          let diagnostics = event["diagnostics"] as? [[String: Any]] else { continue }
+                    events.append(LspDiagnosticsEvent(uri: uri, diagnostics: diagnostics))
+                default:
+                    break
+                }
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isPollingLspEvents = false
+                guard !events.isEmpty else { return }
+
+                for event in events {
+                    for controller in self.windowControllers {
+                        controller.applyLspDiagnostics(
+                            uri: event.uri,
+                            diagnosticsArray: event.diagnostics
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func observeSettingsChanges() {
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: .impulseSettingsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self, let settings = notification.object as? Settings else { return }
+            self.settings = settings
+            self.rebuildMainMenu()
+        }
+    }
+
+    private func rebuildMainMenu() {
+        NSApp.mainMenu = MenuBuilder.buildMainMenu(overrides: settings.keybindingOverrides)
     }
 }

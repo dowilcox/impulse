@@ -153,7 +153,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
     /// Registers all built-in commands from the Keybindings registry and any
     /// custom keybindings from the current settings.
-    func registerBuiltinCommands() {
+    func registerBuiltinCommands(overrides: [String: String] = [:]) {
         var result: [PaletteCommand] = []
 
         // Map built-in keybinding IDs to Notification-based actions.
@@ -172,7 +172,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
         ]
 
         for binding in Keybindings.builtins {
-            let shortcut = Keybindings.shortcutDisplay(forId: binding.id)
+            let shortcut = Keybindings.shortcutDisplay(forId: binding.id, overrides: overrides)
             let notificationName = actionMap[binding.id]
 
             let action: () -> Void
@@ -499,4 +499,3 @@ private final class PaletteRowView: NSTableRowView {
         path.fill()
     }
 }
-

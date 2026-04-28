@@ -393,6 +393,7 @@ class TerminalTab: NSView {
 
         // Auto-scroll on output
         renderer.scrollOnOutput = settings.terminalScrollOnOutput
+        renderer.keybindingOverrides = settings.keybindingOverrides
 
         // Copy on select
         setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
@@ -613,6 +614,7 @@ struct TerminalSettings {
     var terminalBoldIsBright: Bool = true
     var terminalAllowOsc52Write: Bool = true
     var terminalAllowOsc52Read: Bool = false
+    var keybindingOverrides: [String: String] = [:]
 }
 
 /// Convert a hex color string (e.g. "#DCD7BA" or "#7AA2F740") to a CGColor.

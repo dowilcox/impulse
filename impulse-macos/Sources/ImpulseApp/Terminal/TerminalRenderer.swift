@@ -105,6 +105,9 @@ class TerminalRenderer: NSView {
     /// Whether to auto-scroll to the bottom when the terminal produces output.
     var scrollOnOutput: Bool = true
 
+    /// Runtime keybinding overrides from settings.
+    var keybindingOverrides: [String: String] = [:]
+
     /// 16-color ANSI palette (RGB triplets). Set from the theme.
     /// Used to substitute bold text colors when `boldIsBright` is true.
     var paletteRgb: [(UInt8, UInt8, UInt8)] = []
@@ -885,12 +888,24 @@ class TerminalRenderer: NSView {
 
     // MARK: Keyboard Input
 
+    private func eventMatchesKeybinding(_ event: NSEvent, id: String) -> Bool {
+        guard let binding = Keybindings.getKeybinding(id: id, overrides: keybindingOverrides) else {
+            return false
+        }
+        return Keybindings.eventMatches(event, keybinding: binding)
+    }
+
     override func keyDown(with event: NSEvent) {
-        // Cmd shortcuts.
+        if eventMatchesKeybinding(event, id: "paste") {
+            paste(event)
+            return
+        }
+        if eventMatchesKeybinding(event, id: "copy") {
+            copy(event)
+            return
+        }
+
         if event.modifierFlags.contains(.command) {
-            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-            if key == "v" { paste(event); return }
-            if key == "c" { copy(event); return }
             super.keyDown(with: event)
             return
         }
@@ -928,16 +943,16 @@ class TerminalRenderer: NSView {
 
     // Prevent the system beep for unhandled key events.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if eventMatchesKeybinding(event, id: "paste") {
+            paste(event)
+            return true
+        }
+        if eventMatchesKeybinding(event, id: "copy") {
+            copy(event)
+            return true
+        }
+
         if event.modifierFlags.contains(.command) {
-            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-            if key == "v" {
-                paste(event)
-                return true
-            }
-            if key == "c" {
-                copy(event)
-                return true
-            }
             return super.performKeyEquivalent(with: event)
         }
         return false
@@ -1435,7 +1450,11 @@ extension TerminalRenderer: NSTextInputClient {
             isScrolledBack = false
             backend.scrollToBottom()
         }
-        backend.write(text)
+        if let metaData = KeyEncoder.encodeMetaForInsertText(text: text, event: currentKeyEvent) {
+            backend.write(metaData)
+        } else {
+            backend.write(text)
+        }
         // Clear any composition state.
         markedText = ""
         markedSelection = NSRange(location: 0, length: 0)

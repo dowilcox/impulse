@@ -10,23 +10,34 @@ import AppKit
 enum MenuBuilder {
 
     /// Builds and returns the complete main menu bar.
-    static func buildMainMenu() -> NSMenu {
+    static func buildMainMenu(overrides: [String: String] = [:]) -> NSMenu {
         let mainMenu = NSMenu()
 
-        mainMenu.addItem(buildAppMenu())
-        mainMenu.addItem(buildFileMenu())
-        mainMenu.addItem(buildEditMenu())
-        mainMenu.addItem(buildViewMenu())
-        mainMenu.addItem(buildTerminalMenu())
-        mainMenu.addItem(buildWindowMenu())
+        mainMenu.addItem(buildAppMenu(overrides: overrides))
+        mainMenu.addItem(buildFileMenu(overrides: overrides))
+        mainMenu.addItem(buildEditMenu(overrides: overrides))
+        mainMenu.addItem(buildViewMenu(overrides: overrides))
+        mainMenu.addItem(buildTerminalMenu(overrides: overrides))
+        mainMenu.addItem(buildWindowMenu(overrides: overrides))
         mainMenu.addItem(buildHelpMenu())
 
         return mainMenu
     }
 
+    private static func applyKeybinding(
+        _ id: String,
+        overrides: [String: String],
+        to item: NSMenuItem
+    ) {
+        guard let keybinding = Keybindings.getKeybinding(id: id, overrides: overrides),
+              !keybinding.keyEquivalent.isEmpty else { return }
+        item.keyEquivalent = keybinding.keyEquivalent
+        item.keyEquivalentModifierMask = keybinding.modifierFlags
+    }
+
     // MARK: - Impulse (App) Menu
 
-    private static func buildAppMenu() -> NSMenuItem {
+    private static func buildAppMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "Impulse")
         let item = NSMenuItem()
         item.submenu = menu
@@ -40,7 +51,7 @@ enum MenuBuilder {
         let prefsItem = NSMenuItem(title: "Settings...",
                                    action: #selector(AppDelegate.showPreferences(_:)),
                                    keyEquivalent: ",")
-        prefsItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("open_settings", overrides: overrides, to: prefsItem)
         menu.addItem(prefsItem)
 
         menu.addItem(.separator())
@@ -78,7 +89,7 @@ enum MenuBuilder {
 
     // MARK: - File Menu
 
-    private static func buildFileMenu() -> NSMenuItem {
+    private static func buildFileMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "File")
         let item = NSMenuItem()
         item.submenu = menu
@@ -87,20 +98,20 @@ enum MenuBuilder {
                                     action: #selector(MenuActions.menuNewTab(_:)),
                                     keyEquivalent: "t")
         newTabItem.target = MenuActions.shared
-        newTabItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("new_tab", overrides: overrides, to: newTabItem)
         menu.addItem(newTabItem)
 
         let newFileItem = NSMenuItem(title: "New File",
                                       action: #selector(MenuActions.menuNewFile(_:)),
                                       keyEquivalent: "n")
         newFileItem.target = MenuActions.shared
-        newFileItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("new_file", overrides: overrides, to: newFileItem)
         menu.addItem(newFileItem)
 
         let newWindowItem = NSMenuItem(title: "New Window",
                                        action: #selector(AppDelegate.newWindow(_:)),
                                        keyEquivalent: "N")
-        newWindowItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("new_window", overrides: overrides, to: newWindowItem)
         menu.addItem(newWindowItem)
 
         menu.addItem(.separator())
@@ -118,14 +129,14 @@ enum MenuBuilder {
                                       action: #selector(MenuActions.menuCloseTab(_:)),
                                       keyEquivalent: "w")
         closeTabItem.target = MenuActions.shared
-        closeTabItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("close_tab", overrides: overrides, to: closeTabItem)
         menu.addItem(closeTabItem)
 
         let reopenTabItem = NSMenuItem(title: "Reopen Closed Tab",
                                        action: #selector(MenuActions.menuReopenTab(_:)),
                                        keyEquivalent: "T")
         reopenTabItem.target = MenuActions.shared
-        reopenTabItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("reopen_tab", overrides: overrides, to: reopenTabItem)
         menu.addItem(reopenTabItem)
 
         let closeWindowItem = NSMenuItem(title: "Close Window",
@@ -140,7 +151,7 @@ enum MenuBuilder {
                                   action: #selector(MenuActions.menuSaveFile(_:)),
                                   keyEquivalent: "s")
         saveItem.target = MenuActions.shared
-        saveItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("save", overrides: overrides, to: saveItem)
         menu.addItem(saveItem)
 
         return item
@@ -148,7 +159,7 @@ enum MenuBuilder {
 
     // MARK: - Edit Menu
 
-    private static func buildEditMenu() -> NSMenuItem {
+    private static func buildEditMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "Edit")
         let item = NSMenuItem()
         item.submenu = menu
@@ -169,13 +180,17 @@ enum MenuBuilder {
                      action: #selector(NSText.cut(_:)),
                      keyEquivalent: "x")
 
-        menu.addItem(withTitle: "Copy",
-                     action: #selector(NSText.copy(_:)),
-                     keyEquivalent: "c")
+        let copyItem = NSMenuItem(title: "Copy",
+                                  action: #selector(NSText.copy(_:)),
+                                  keyEquivalent: "c")
+        applyKeybinding("copy", overrides: overrides, to: copyItem)
+        menu.addItem(copyItem)
 
-        menu.addItem(withTitle: "Paste",
-                     action: #selector(NSText.paste(_:)),
-                     keyEquivalent: "v")
+        let pasteItem = NSMenuItem(title: "Paste",
+                                   action: #selector(NSText.paste(_:)),
+                                   keyEquivalent: "v")
+        applyKeybinding("paste", overrides: overrides, to: pasteItem)
+        menu.addItem(pasteItem)
 
         let pasteAndMatchItem = NSMenuItem(title: "Paste and Match Style",
                                            action: #selector(NSTextView.pasteAsPlainText(_:)),
@@ -193,14 +208,14 @@ enum MenuBuilder {
                                   action: #selector(MenuActions.menuFind(_:)),
                                   keyEquivalent: "f")
         findItem.target = MenuActions.shared
-        findItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("find", overrides: overrides, to: findItem)
         menu.addItem(findItem)
 
         let goToLineItem = NSMenuItem(title: "Go to Line...",
                                       action: #selector(MenuActions.menuGoToLine(_:)),
                                       keyEquivalent: "g")
         goToLineItem.target = MenuActions.shared
-        goToLineItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("go_to_line", overrides: overrides, to: goToLineItem)
         menu.addItem(goToLineItem)
 
         return item
@@ -208,7 +223,7 @@ enum MenuBuilder {
 
     // MARK: - View Menu
 
-    private static func buildViewMenu() -> NSMenuItem {
+    private static func buildViewMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "View")
         let item = NSMenuItem()
         item.submenu = menu
@@ -217,7 +232,7 @@ enum MenuBuilder {
                                      action: #selector(MenuActions.menuToggleSidebar(_:)),
                                      keyEquivalent: "B")
         sidebarItem.target = MenuActions.shared
-        sidebarItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("toggle_sidebar", overrides: overrides, to: sidebarItem)
         menu.addItem(sidebarItem)
 
         menu.addItem(.separator())
@@ -226,21 +241,21 @@ enum MenuBuilder {
                                             action: #selector(MenuActions.menuShowCommandPalette(_:)),
                                             keyEquivalent: "P")
         commandPaletteItem.target = MenuActions.shared
-        commandPaletteItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("command_palette", overrides: overrides, to: commandPaletteItem)
         menu.addItem(commandPaletteItem)
 
         let findInProjectItem = NSMenuItem(title: "Find in Project",
                                            action: #selector(MenuActions.menuFindInProject(_:)),
                                            keyEquivalent: "F")
         findInProjectItem.target = MenuActions.shared
-        findInProjectItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("project_search", overrides: overrides, to: findInProjectItem)
         menu.addItem(findInProjectItem)
 
         let markdownPreviewItem = NSMenuItem(title: "Toggle Markdown Preview",
                                              action: #selector(MenuActions.menuToggleMarkdownPreview(_:)),
                                              keyEquivalent: "M")
         markdownPreviewItem.target = MenuActions.shared
-        markdownPreviewItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("toggle_markdown_preview", overrides: overrides, to: markdownPreviewItem)
         menu.addItem(markdownPreviewItem)
 
         menu.addItem(.separator())
@@ -249,21 +264,21 @@ enum MenuBuilder {
                                           action: #selector(MenuActions.menuFontIncrease(_:)),
                                           keyEquivalent: "=")
         fontIncreaseItem.target = MenuActions.shared
-        fontIncreaseItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("font_increase", overrides: overrides, to: fontIncreaseItem)
         menu.addItem(fontIncreaseItem)
 
         let fontDecreaseItem = NSMenuItem(title: "Decrease Font Size",
                                           action: #selector(MenuActions.menuFontDecrease(_:)),
                                           keyEquivalent: "-")
         fontDecreaseItem.target = MenuActions.shared
-        fontDecreaseItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("font_decrease", overrides: overrides, to: fontDecreaseItem)
         menu.addItem(fontDecreaseItem)
 
         let fontResetItem = NSMenuItem(title: "Reset Font Size",
                                        action: #selector(MenuActions.menuFontReset(_:)),
                                        keyEquivalent: "0")
         fontResetItem.target = MenuActions.shared
-        fontResetItem.keyEquivalentModifierMask = [.command]
+        applyKeybinding("font_reset", overrides: overrides, to: fontResetItem)
         menu.addItem(fontResetItem)
 
         menu.addItem(.separator())
@@ -271,7 +286,7 @@ enum MenuBuilder {
         let fullscreenItem = NSMenuItem(title: "Toggle Full Screen",
                                         action: #selector(NSWindow.toggleFullScreen(_:)),
                                         keyEquivalent: "f")
-        fullscreenItem.keyEquivalentModifierMask = [.control, .command]
+        applyKeybinding("fullscreen", overrides: overrides, to: fullscreenItem)
         menu.addItem(fullscreenItem)
 
         return item
@@ -279,7 +294,7 @@ enum MenuBuilder {
 
     // MARK: - Terminal Menu
 
-    private static func buildTerminalMenu() -> NSMenuItem {
+    private static func buildTerminalMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "Terminal")
         let item = NSMenuItem()
         item.submenu = menu
@@ -288,14 +303,14 @@ enum MenuBuilder {
                                     action: #selector(MenuActions.menuSplitHorizontal(_:)),
                                     keyEquivalent: "E")
         splitHItem.target = MenuActions.shared
-        splitHItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("split_horizontal", overrides: overrides, to: splitHItem)
         menu.addItem(splitHItem)
 
         let splitVItem = NSMenuItem(title: "Split Vertical",
                                     action: #selector(MenuActions.menuSplitVertical(_:)),
                                     keyEquivalent: "O")
         splitVItem.target = MenuActions.shared
-        splitVItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("split_vertical", overrides: overrides, to: splitVItem)
         menu.addItem(splitVItem)
 
         menu.addItem(.separator())
@@ -304,14 +319,14 @@ enum MenuBuilder {
                                        action: #selector(MenuActions.menuFocusPrevSplit(_:)),
                                        keyEquivalent: String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)))
         focusPrevItem.target = MenuActions.shared
-        focusPrevItem.keyEquivalentModifierMask = [.option]
+        applyKeybinding("focus_prev_split", overrides: overrides, to: focusPrevItem)
         menu.addItem(focusPrevItem)
 
         let focusNextItem = NSMenuItem(title: "Focus Next Split",
                                        action: #selector(MenuActions.menuFocusNextSplit(_:)),
                                        keyEquivalent: String(Character(UnicodeScalar(NSRightArrowFunctionKey)!)))
         focusNextItem.target = MenuActions.shared
-        focusNextItem.keyEquivalentModifierMask = [.option]
+        applyKeybinding("focus_next_split", overrides: overrides, to: focusNextItem)
         menu.addItem(focusNextItem)
 
         return item
@@ -319,7 +334,7 @@ enum MenuBuilder {
 
     // MARK: - Window Menu
 
-    private static func buildWindowMenu() -> NSMenuItem {
+    private static func buildWindowMenu(overrides: [String: String]) -> NSMenuItem {
         let menu = NSMenu(title: "Window")
         let item = NSMenuItem()
         item.submenu = menu
@@ -344,14 +359,14 @@ enum MenuBuilder {
                                      action: #selector(MenuActions.menuNextTab(_:)),
                                      keyEquivalent: "\t")
         nextTabItem.target = MenuActions.shared
-        nextTabItem.keyEquivalentModifierMask = [.control]
+        applyKeybinding("next_tab", overrides: overrides, to: nextTabItem)
         menu.addItem(nextTabItem)
 
         let prevTabItem = NSMenuItem(title: "Show Previous Tab",
                                      action: #selector(MenuActions.menuPrevTab(_:)),
                                      keyEquivalent: "\u{0019}") // backtab
         prevTabItem.target = MenuActions.shared
-        prevTabItem.keyEquivalentModifierMask = [.control, .shift]
+        applyKeybinding("prev_tab", overrides: overrides, to: prevTabItem)
         menu.addItem(prevTabItem)
 
         menu.addItem(.separator())

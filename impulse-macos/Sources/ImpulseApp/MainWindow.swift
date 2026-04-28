@@ -93,13 +93,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var termSearchHeightConstraint: NSLayoutConstraint?
 
     /// The command palette, lazily created on first use.
-    private lazy var commandPalette: CommandPaletteWindow = {
-        let palette = CommandPaletteWindow()
-        if let delegate = NSApp.delegate as? AppDelegate {
-            palette.registerCustomCommands(delegate.settings.customKeybindings)
+    private var commandPaletteWindow: CommandPaletteWindow?
+    private var commandPalette: CommandPaletteWindow {
+        if let commandPaletteWindow {
+            return commandPaletteWindow
         }
+        let palette = CommandPaletteWindow()
+        configureCommandPalette(palette, settings: settings)
+        commandPaletteWindow = palette
         return palette
-    }()
+    }
 
     /// Whether the sidebar is currently visible.
     private var sidebarVisible: Bool
@@ -191,21 +194,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// In-flight prepare rename work items per URI, cancelled when a newer request arrives.
     var prepareRenameWorkItems: [String: DispatchWorkItem] = [:]
 
-    /// Timer for polling LSP events (diagnostics, lifecycle).
-    var lspPollTimer: Timer?
-
     /// Serial queue for dispatching blocking LSP FFI calls off the main thread.
-    let lspQueue = DispatchQueue(label: "dev.impulse.lsp", qos: .userInitiated)
+    let lspQueue: DispatchQueue
 
     /// Set of file URIs for which didOpen has been sent.
     var lspOpenFiles: Set<String> = []
 
     // MARK: - Initialization
 
-    init(settings: Settings, theme: Theme, core: ImpulseCore, skipInitialTerminal: Bool = false) {
+    init(
+        settings: Settings,
+        theme: Theme,
+        core: ImpulseCore,
+        lspQueue: DispatchQueue,
+        skipInitialTerminal: Bool = false
+    ) {
         self.settings = settings
         self.theme = theme
         self.core = core
+        self.lspQueue = lspQueue
         self.sidebarVisible = settings.sidebarVisible
         self.sidebarTargetWidth = CGFloat(settings.sidebarWidth)
         self.tabManager = TabManager(settings: settings, theme: theme, core: core)
@@ -287,8 +294,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             tabManager.addTerminalTab()
         }
 
-        // Start polling for asynchronous LSP events (diagnostics, etc.).
-        startLspPolling()
     }
 
     @available(*, unavailable)
@@ -297,7 +302,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     deinit {
-        lspPollTimer?.invalidate()
         teardownCustomKeybindingMonitor()
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
@@ -1164,6 +1168,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - Notification Observers
 
+    private func ownedEditor(from notification: Notification) -> EditorTab? {
+        guard let editor = notification.object as? EditorTab,
+              tabManager.ownsEditor(editor) else {
+            return nil
+        }
+        return editor
+    }
+
+    private func configureCommandPalette(_ palette: CommandPaletteWindow, settings: Settings) {
+        palette.registerBuiltinCommands(overrides: settings.keybindingOverrides)
+        palette.registerCustomCommands(settings.customKeybindings)
+    }
+
     private func setupNotificationObservers() {
         let nc = NotificationCenter.default
 
@@ -1414,7 +1431,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 // If the notification came from an EditorTab (Monaco Cmd+S path),
                 // save that specific editor directly — no key-window check needed
                 // because the editor itself initiated the save.
-                if let sourceEditor = notification.object as? EditorTab {
+                if notification.object is EditorTab {
+                    guard let sourceEditor = self.ownedEditor(from: notification) else { return }
                     self.saveEditorTab(sourceEditor)
                     return
                 }
@@ -1453,8 +1471,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 guard let line = notification.userInfo?["line"] as? UInt32,
                       let col = notification.userInfo?["column"] as? UInt32 else { return }
                 // Only update if the notification came from the active editor tab
-                guard let editor = self.tabManager.selectedEditor,
-                      editor === notification.object as? EditorTab else { return }
+                guard let editor = self.ownedEditor(from: notification),
+                      editor === self.tabManager.selectedEditor else { return }
                 let filePath = editor.filePath ?? ""
                 let cwd = editor.projectDirectory
                     ?? (filePath as NSString).deletingLastPathComponent
@@ -1525,8 +1543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) { [weak self] notification in
                 guard let self else { return }
-                guard let editor = notification.object as? EditorTab,
-                      self.tabManager.ownsEditor(editor) else { return }
+                guard let editor = self.ownedEditor(from: notification) else { return }
                 self.tabManager.refreshSegmentLabels()
                 self.lspDidChange(editor: editor)
             }
@@ -1536,8 +1553,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorFocusChanged, object: nil, queue: .main) { [weak self] notification in
                 guard let self, self.settings.autoSave else { return }
-                guard let editor = notification.object as? EditorTab,
-                      self.tabManager.ownsEditor(editor) else { return }
+                guard let editor = self.ownedEditor(from: notification) else { return }
                 guard let focused = notification.userInfo?["focused"] as? Bool, !focused else { return }
                 guard editor.isModified else { return }
                 self.saveEditorTab(editor)
@@ -1559,7 +1575,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorCompletionRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1571,7 +1587,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorHoverRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1653,6 +1669,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 self.applyAllSettings()
                 // Rebuild custom keybinding monitor so new/changed bindings take effect.
                 self.setupCustomKeybindingMonitor()
+                if let palette = self.commandPaletteWindow {
+                    self.configureCommandPalette(palette, settings: newSettings)
+                }
             }
         )
 
@@ -1660,7 +1679,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorDefinitionRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1672,6 +1691,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorOpenFileRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
+                      self.ownedEditor(from: notification) != nil,
                       let uri = notification.userInfo?["uri"] as? String,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1683,7 +1703,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorFormattingRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let tabSize = notification.userInfo?["tabSize"] as? UInt32,
                       let insertSpaces = notification.userInfo?["insertSpaces"] as? Bool else { return }
@@ -1695,7 +1715,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorSignatureHelpRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1707,7 +1727,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorReferencesRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -1719,7 +1739,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorCodeActionRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let startLine = notification.userInfo?["startLine"] as? UInt32,
                       let startColumn = notification.userInfo?["startColumn"] as? UInt32,
@@ -1734,7 +1754,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorRenameRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32,
@@ -1747,7 +1767,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         notificationObservers.append(
             nc.addObserver(forName: .editorPrepareRenameRequested, object: nil, queue: .main) { [weak self] notification in
                 guard let self,
-                      let editor = notification.object as? EditorTab,
+                      let editor = self.ownedEditor(from: notification),
                       let requestId = notification.userInfo?["requestId"] as? UInt64,
                       let line = notification.userInfo?["line"] as? UInt32,
                       let character = notification.userInfo?["character"] as? UInt32 else { return }
@@ -2332,7 +2352,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowWillClose(_ notification: Notification) {
-        stopLspPolling()
         teardownCustomKeybindingMonitor()
 
         // Remove all notification observers.

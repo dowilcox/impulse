@@ -566,7 +566,8 @@ extension Settings {
             terminalAllowHyperlink: terminalAllowHyperlink,
             terminalBoldIsBright: terminalBoldIsBright,
             terminalAllowOsc52Write: terminalAllowOsc52Write,
-            terminalAllowOsc52Read: terminalAllowOsc52Read
+            terminalAllowOsc52Read: terminalAllowOsc52Read,
+            keybindingOverrides: keybindingOverrides
         )
     }
 }

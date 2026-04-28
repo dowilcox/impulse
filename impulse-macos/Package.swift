@@ -39,5 +39,15 @@ let package = Package(
                 .linkedFramework("Security"),
             ]
         ),
+        .testTarget(
+            name: "ImpulseAppTests",
+            dependencies: [
+                "ImpulseApp",
+            ],
+            path: "Tests/ImpulseAppTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
     ]
 )
