@@ -1,6 +1,6 @@
 [package]
 name = "impulse-core"
-version = "0.21.2"
+version = "0.21.3"
 edition = "2021"
 description = "Core library for Impulse terminal IDE"
 license = "GPL-3.0-only"
