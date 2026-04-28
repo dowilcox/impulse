@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Impulse?
 
-Impulse is a terminal-first development environment built with Rust. It combines a terminal emulator with a Monaco-powered code editor in a tabbed interface, with native frontends for Linux (Qt Quick Controls 2 via CXX-Qt) and macOS (AppKit/SwiftUI).
+Impulse is a terminal-first development environment built with Rust. It combines a terminal emulator with a Monaco-powered code editor in a tabbed interface, with native frontends for Linux (GTK4/libadwaita) and macOS (AppKit/SwiftUI).
 
 ## Cross-Platform Development Rule
 
@@ -12,11 +12,11 @@ Impulse is a terminal-first development environment built with Rust. It combines
 
 ## Build & Development Commands
 
-**Note:** `cargo build` (all workspace members) only works on Linux where Qt6 libraries are available. On macOS, build specific crates or use the macOS build script.
+**Note:** `cargo build` (all workspace members) only works on Linux where GTK4, libadwaita, VTE, and WebKitGTK libraries are available. On macOS, build specific crates or use the macOS build script.
 
 ```bash
 # Rust workspace (impulse-core, impulse-editor, impulse-linux, impulse-ffi)
-cargo build                        # Build all workspace members (Linux only — needs Qt6)
+cargo build                        # Build all workspace members (Linux only — needs GTK4 stack)
 cargo build -p impulse-core        # Build only the core library (cross-platform)
 cargo build -p impulse-editor      # Build only the editor crate (cross-platform)
 cargo build -p impulse-linux       # Build only the Linux frontend (Linux only)
@@ -41,7 +41,7 @@ cargo test -p impulse-core         # Test only the core crate
 
 When verifying builds, use the right commands for the current platform:
 
-- **On macOS:** Build cross-platform crates with `cargo build -p impulse-core -p impulse-editor -p impulse-ffi`, run tests with `cargo test -p impulse-core -p impulse-editor -p impulse-ffi`, and build the macOS app with `./impulse-macos/build.sh`. Do NOT attempt `cargo build -p impulse-linux` or `cargo check -p impulse-linux` — it will fail due to missing Qt6 system libraries.
+- **On macOS:** Build cross-platform crates with `cargo build -p impulse-core -p impulse-editor -p impulse-ffi`, run tests with `cargo test -p impulse-core -p impulse-editor -p impulse-ffi`, and build the macOS app with `./impulse-macos/build.sh`. Do NOT attempt `cargo build -p impulse-linux` or `cargo check -p impulse-linux` — it will fail due to missing GTK4 system libraries.
 - **On Linux:** `cargo build` works for all Cargo workspace members. The macOS frontend (`impulse-macos`) cannot be built on Linux.
 
 ## Architecture
@@ -71,23 +71,25 @@ Bundles the vendored Monaco editor and defines the WebView communication protoco
 - **markdown.rs** — Markdown preview renderer using `pulldown_cmark` with themed HTML output and highlight.js syntax highlighting.
 - **svg.rs** — SVG preview renderer embedding SVG sources in themed HTML documents with centered layout.
 
-### impulse-linux (binary, Qt Quick Controls 2 + CXX-Qt frontend)
+### impulse-linux (binary, GTK4/libadwaita frontend)
 
-Uses CXX-Qt 0.8 to bridge Rust and Qt/QML. The UI is defined in QML files under `qml/`, with Rust `#[cxx_qt::bridge]` modules exposing QObject models to QML. A C++ helpers layer in `cpp/` provides any Qt functionality not yet covered by CXX-Qt bindings. The build is entirely cargo-driven via `cxx-qt-build` in `build.rs`.
+Uses GTK4/libadwaita for application chrome, VTE4 for terminal tabs, and WebKitGTK for the Monaco editor WebView. Keep Linux UI work in Rust GTK modules under `impulse-linux/src`; do not reintroduce QML/CXX-Qt for this frontend.
 
-- **build.rs** — CXX-Qt build script using `CxxQtBuilder::new_qml_module()`. Registers QML files, Rust bridge source files, links Qt modules (QuickControls2, WebEngineQuick), and compiles C++ helpers.
-- **main.rs** — Qt application setup with `QGuiApplication`, QML engine initialization, CLI flags (`--install-lsp-servers`, `--check-lsp-servers`).
-- **window_model.rs** — `#[cxx_qt::bridge]` module exposing `WindowModel` QObject with properties and invokables for tab management, sidebar state, and application-level actions.
-- **theme_bridge.rs** — `#[cxx_qt::bridge]` module exposing theme colors and palette data to QML.
-- **file_tree_model.rs** — `#[cxx_qt::bridge]` module providing a tree model for the sidebar file browser with lazy-loading and git status enrichment.
-- **editor_bridge.rs** — `#[cxx_qt::bridge]` module bridging the Monaco WebView editor (via Qt WebEngine) with Rust-side editor logic.
-- **lsp_bridge.rs** — `#[cxx_qt::bridge]` module exposing LSP client operations (completions, hover, diagnostics) to QML.
-- **search_model.rs** — `#[cxx_qt::bridge]` module for project-wide file and content search.
-- **settings_model.rs** — `#[cxx_qt::bridge]` module exposing `Settings` struct to the QML settings UI.
+- **main.rs** — `adw::Application` setup with app ID `dev.impulse.Impulse`, CLI flags (`--install-lsp-servers`, `--check-lsp-servers`).
+- **window/** — Main window module split into context structs, tab management, keybinding setup, sidebar signals, and dialogs.
 - **keybindings.rs** — Built-in keybinding registry, accel parsing, and override resolution.
-- **helpers.rs** — Rust-side utility functions.
-- **qml/** — QML UI files: `Main.qml` (root window), `Sidebar.qml`, `FileTreeView.qml`, `FileNodeDelegate.qml`, `TabBar.qml`, `ContentArea.qml`, `TerminalView.qml`, `EditorView.qml`, `StatusBar.qml`, `SearchPanel.qml`, `QuickOpenDialog.qml`, `CommandPalette.qml`, `GoToLineDialog.qml`, `SettingsWindow.qml`.
-- **cpp/** — C++ helper code (`helpers.cpp`/`helpers.h`) for Qt functionality not exposed through CXX-Qt bindings.
+- **terminal.rs** — Creates configured VTE terminals with shell integration and drag-and-drop support.
+- **terminal_container.rs** — Wraps VTE terminals and handles horizontal/vertical splitting via `gtk4::Paned`.
+- **editor.rs** — GtkSourceView editor fallback with auto-detected language and indentation.
+- **editor_webview.rs** — Monaco editor via WebKitGTK WebView. Handles bidirectional JSON messaging with the embedded Monaco instance.
+- **sidebar.rs** — File tree with lazy-loaded directory expansion plus a search panel.
+- **file_icons.rs** — Maps file extensions to bundled SVG icons.
+- **project_search.rs** — Project-wide file and content search UI.
+- **lsp_completion.rs** / **lsp_hover.rs** — LSP autocomplete and hover info integration.
+- **status_bar.rs** — Status bar labels for CWD, git branch, shell name, cursor position, language, encoding, and indentation.
+- **settings.rs** — Settings serialized to `~/.config/impulse/settings.json`.
+- **settings_page.rs** — `adw::PreferencesWindow` for Editor, Terminal, Appearance, Automation, and Keybindings.
+- **theme.rs** — Color theme constants and CSS generation.
 
 ### impulse-ffi (static library, C-compatible FFI)
 
@@ -154,8 +156,8 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **mac
 
 ### Key patterns
 
-- **CXX-Qt bridge pattern (Linux):** Each Rust `#[cxx_qt::bridge]` module defines a QObject with properties, signals, and invokables that QML binds to. Rust owns the business logic; QML owns the presentation. State flows from Rust QObjects to QML via property bindings and signals.
-- **QML styling (Linux):** Visual styling is driven by theme properties exposed from `theme_bridge.rs` as QObject properties. QML files reference these properties for colors, fonts, and spacing. No external CSS files.
+- **GTK UI pattern (Linux):** Rust owns the GTK widget tree directly. Keep shared state in `Rc<RefCell<T>>` context structs, wire GTK/libadwaita signals close to the widgets they affect, and push cross-platform behavior down into `impulse-core` or `impulse-editor`.
+- **GTK styling (Linux):** Visual styling is generated from `theme.rs` as CSS applied through `gtk4::CssProvider`; Monaco receives matching theme definitions through the WebKit editor bridge.
 - **SwiftUI/AppKit bridge (macOS):** `@Observable WindowModel` is the single source of truth for UI state. AppKit code (MainWindowController, TabManager) mutates it; SwiftUI views observe it for automatic re-rendering. Communication from SwiftUI back to AppKit uses callback closures on WindowModel (e.g., `onTabSelected`, `onOpenFile`, `onRefreshTree`). The NSToolbar uses `NSToolbarDelegate` with `.sidebarTrackingSeparator` to place items in the correct column. SwiftUI's `.toolbar {}` and `.searchable()` modifiers do NOT work inside `NSHostingView` — all toolbar items must be native `NSToolbarItem`.
 - **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with recursive `FileNodeView`, NOT `List` + `DisclosureGroup` (which has known click-handling conflicts with NSOutlineView). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. The old AppKit `FileTreeView` is kept alive (hidden) for its `showNameInputAlert()` dialog and data-loading methods but will be fully removed once those are migrated to SwiftUI.
 - **Error handling:** Public APIs in `impulse-core` return `Result<T, String>`. Non-fatal errors use `log::warn!`.
@@ -265,12 +267,12 @@ git pull origin main
 
 ## System Dependencies
 
-### Linux (Qt6 stack)
+### Linux (GTK4 stack)
 
-Building `impulse-linux` requires Qt6 base, declarative (QML), WebEngine, and Quick Controls 2 libraries. CXX-Qt handles the Qt build integration via `build.rs`. On Arch/CachyOS:
+Building `impulse-linux` requires GTK4, libadwaita, VTE4, GtkSourceView5, and WebKitGTK development libraries. On Arch/CachyOS:
 
 ```bash
-sudo pacman -S qt6-base qt6-declarative qt6-webengine qt6-quickcontrols2 cmake
+sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkitgtk-6.0
 ```
 
 ### macOS

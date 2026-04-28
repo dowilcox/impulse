@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Impulse is a Rust-first workspace with platform frontends. Shared backend code lives in `impulse-core/src`, editor protocol and bundled web assets live in `impulse-editor/`, terminal emulation code lives in `impulse-terminal/`, and the C FFI layer for macOS lives in `impulse-ffi/src`. The Linux app is in `impulse-linux/src`, with QML in `impulse-linux/qml` and Qt helper code in `impulse-linux/cpp`. The macOS app is a separate Swift package under `impulse-macos/Sources`. Static assets, screenshots, and icons are under `assets/`; release and maintenance scripts are under `scripts/`.
+Impulse is a Rust-first workspace with platform frontends. Shared backend code lives in `impulse-core/src`, editor protocol and bundled web assets live in `impulse-editor/`, terminal emulation code lives in `impulse-terminal/`, and the C FFI layer for macOS lives in `impulse-ffi/src`. The Linux app is a GTK4/libadwaita frontend in `impulse-linux/src`, including VTE terminal, WebKitGTK editor, sidebar, settings, and window modules. The macOS app is a separate Swift package under `impulse-macos/Sources`. Static assets, screenshots, and icons are under `assets/`; release and maintenance scripts are under `scripts/`.
 
 ## Build, Test, and Development Commands
 
@@ -19,7 +19,7 @@ Use the existing scripts and Cargo targets instead of ad hoc build steps.
 
 ## Coding Style & Naming Conventions
 
-Follow `cargo fmt` defaults for Rust and keep modules focused by feature (`git.rs`, `search.rs`, `theme.rs`). Use `snake_case` for Rust files, functions, and modules; `CamelCase` for Swift types and QML components. Prefer putting cross-platform behavior in `impulse-core` or `impulse-editor`; keep frontend-specific UI wiring in `impulse-linux` or `impulse-macos`. Do not hand-edit vendored Monaco assets in `impulse-editor/vendor`; use `scripts/vendor-monaco.sh` when updating them.
+Follow `cargo fmt` defaults for Rust and keep modules focused by feature (`git.rs`, `search.rs`, `theme.rs`). Use `snake_case` for Rust files, functions, and modules; `CamelCase` for Swift types. Prefer putting cross-platform behavior in `impulse-core` or `impulse-editor`; keep frontend-specific UI wiring in `impulse-linux` or `impulse-macos`. Do not hand-edit vendored Monaco assets in `impulse-editor/vendor`; use `scripts/vendor-monaco.sh` when updating them.
 
 ## Testing Guidelines
 
@@ -27,4 +27,4 @@ Most tests are inline `#[cfg(test)]` module tests within the Rust crates rather 
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short, imperative, sentence-case commits such as `Add OSC 8 hyperlink support`; release commits use `Release vX.Y.Z`. Keep commits narrowly scoped. PRs should explain the user-visible change, list the commands you ran, link related issues, and include screenshots for Linux QML or macOS UI changes. If a feature touches both frontends, update both, or document the gap explicitly.
+Recent history uses short, imperative, sentence-case commits such as `Add OSC 8 hyperlink support`; release commits use `Release vX.Y.Z`. Keep commits narrowly scoped. PRs should explain the user-visible change, list the commands you ran, link related issues, and include screenshots for Linux GTK or macOS UI changes. If a feature touches both frontends, update both, or document the gap explicitly.

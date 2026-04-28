@@ -161,7 +161,7 @@ open dist/Impulse.app
 <summary><strong>Linux (Arch / CachyOS)</strong></summary>
 
 ```bash
-sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkit2gtk-4.1
+sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkitgtk-6.0
 ```
 
 ```bash
