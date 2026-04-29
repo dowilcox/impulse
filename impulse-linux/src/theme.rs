@@ -533,14 +533,41 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-family: 'Inter', sans-serif;
         }}
 
+        window.background {{
+            background-color: {bg_dark};
+        }}
+        .impulse-root {{
+            background-color: {bg_dark};
+        }}
+        .workspace-paned {{
+            background-color: {bg_dark};
+        }}
+        .workspace-content {{
+            margin: 0;
+            background-color: {bg};
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
+        }}
+        .impulse-tab-view {{
+            background-color: {bg};
+            border-radius: 0;
+        }}
+
         /* --- Sidebar --- */
         .sidebar {{
+            margin: 0;
             background-color: {bg_dark};
-            border-right: 1px solid {bg_highlight};
+            border-right: 1px solid alpha({fg}, 0.10);
+            border-radius: 0;
+            box-shadow: none;
         }}
         .sidebar-switcher {{
+            margin: 0;
             padding: 6px 8px;
             background-color: {bg_dark};
+            border: none;
+            border-radius: 0;
         }}
         .sidebar-tab {{
             border-radius: 6px;
@@ -555,37 +582,45 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         .sidebar-tab:hover {{
             color: {fg};
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.06);
         }}
         .sidebar-tab-active {{
-            color: {cyan};
-            background-color: {bg_highlight};
+            color: {fg};
+            background-color: alpha({fg}, 0.10);
+            box-shadow: inset 0 0 0 1px alpha({fg}, 0.06);
         }}
         .sidebar-project-header {{
             padding: 4px 8px;
-        }}
-        .sidebar-project-name {{
-            font-size: 11px;
-            font-weight: bold;
-            letter-spacing: 1px;
-            color: {fg_dark};
+            border-bottom: none;
         }}
         .sidebar-toolbar-btn {{
             min-width: 24px;
             min-height: 24px;
             padding: 2px;
+            border-radius: 6px;
+            color: {fg_dark};
+        }}
+        .sidebar-toolbar-btn:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.08);
+        }}
+        .sidebar-toolbar-btn:checked {{
+            color: {cyan};
+            background-color: alpha({cyan}, 0.14);
         }}
         .file-tree {{
             background-color: transparent;
         }}
         .file-tree row {{
             padding: 0;
+            margin: 0;
+            border-radius: 0;
         }}
         .file-tree row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.06);
         }}
         .file-tree row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.10);
         }}
         .sidebar-indent-guide {{
             color: alpha({comment}, 0.25);
@@ -671,16 +706,20 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Split pane dividers --- */
         paned > separator {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.10);
             min-width: 1px;
             min-height: 1px;
+        }}
+        .workspace-paned > separator {{
+            margin: 0;
+            background-color: alpha({fg}, 0.08);
         }}
         /* --- Status bar --- */
         .status-bar {{
             background-color: {bg_dark};
-            padding: 2px 12px;
-            min-height: 24px;
-            border-top: 1px solid {bg_highlight};
+            padding: 3px 12px;
+            min-height: 26px;
+            border-top: 1px solid alpha({fg}, 0.08);
         }}
         .status-bar label {{
             font-size: 12px;
@@ -765,15 +804,39 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         /* --- Header bar --- */
         headerbar {{
             background-color: {bg_dark};
+            border-bottom: 1px solid alpha({fg}, 0.08);
             box-shadow: none;
             min-height: 38px;
+            padding: 0;
+        }}
+        headerbar.impulse-header {{
+            background-color: {bg_dark};
         }}
         headerbar button {{
             color: {fg_dark};
         }}
         headerbar button:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.08);
+        }}
+        button.impulse-header-button {{
+            min-width: 30px;
+            min-height: 30px;
+            padding: 3px;
+            border-radius: 999px;
+            background-color: transparent;
+            border: 1px solid transparent;
+            box-shadow: none;
+        }}
+        button.impulse-header-button:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.08);
+            border-color: alpha({fg}, 0.08);
+        }}
+        button.impulse-header-button:checked {{
             color: {cyan};
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.10);
+            border-color: alpha({fg}, 0.10);
         }}
         tabbar {{
             background-color: {bg_dark};
@@ -788,16 +851,19 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         tabbar tab {{
             min-height: 32px;
             padding: 0 8px;
+            margin: 0;
             background-color: {bg_dark};
             color: {fg_dark};
             border-radius: 6px 6px 0 0;
+            border: 1px solid transparent;
         }}
         tabbar tab:selected {{
             background-color: {bg};
             color: {cyan};
+            border-color: transparent;
         }}
         tabbar tab:hover:not(:selected) {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.06);
             color: {fg};
         }}
         tabbar tab image {{
@@ -807,24 +873,22 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 13px;
             font-weight: 500;
         }}
-        window.background {{
-            background-color: {bg};
-        }}
         /* --- Quick open --- */
         .quick-open {{
-            background-color: {bg};
-            border-radius: 8px;
-            border: 1px solid {bg_highlight};
+            background-color: {bg_dark};
+            border-radius: 10px;
+            border: 1px solid alpha({fg}, 0.10);
+            box-shadow: 0 8px 24px alpha(#000000, 0.35);
         }}
         .quick-open entry {{
             margin: 8px;
             font-size: 14px;
         }}
         .quick-open list row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.08);
         }}
         .quick-open list row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.12);
         }}
         .quick-open list row label {{
             padding: 6px 12px;
@@ -832,9 +896,9 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Terminal search bar --- */
         .terminal-search-bar {{
-            background-color: {bg_dark};
-            padding: 4px 8px;
-            border-bottom: 1px solid {bg_highlight};
+            background-color: alpha({bg_dark}, 0.98);
+            padding: 6px 8px;
+            border-bottom: 1px solid alpha({fg}, 0.08);
         }}
         .terminal-search-bar entry {{
             min-height: 28px;
@@ -861,11 +925,11 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         /* --- Project search panel --- */
         .project-search-panel {{
-            background-color: {bg_dark};
-            border-top: 1px solid {bg_highlight};
+            background-color: transparent;
+            border-top: 1px solid alpha({fg}, 0.07);
         }}
         .project-search-row {{
-            padding: 4px 8px;
+            padding: 8px;
         }}
         .project-search-row entry,
         .project-search-row search {{
@@ -886,14 +950,14 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: transparent;
         }}
         .project-search-results row:hover {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.06);
         }}
         .project-search-results row:selected {{
-            background-color: {bg_highlight};
+            background-color: alpha({fg}, 0.10);
         }}
         .project-search-file-header {{
             padding: 4px 8px;
-            background-color: {bg_dark};
+            background-color: transparent;
         }}
         .project-search-filename {{
             color: {cyan};

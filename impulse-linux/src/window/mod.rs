@@ -54,6 +54,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         .default_width(settings.borrow().window_width)
         .default_height(settings.borrow().window_height)
         .build();
+    window.add_css_class("impulse-window");
 
     // Shared font size state (user-facing size in points, e.g. 11)
     let font_size: Rc<Cell<i32>> = Rc::new(Cell::new(settings.borrow().font_size));
@@ -659,11 +660,15 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Main vertical layout
     let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    main_box.add_css_class("impulse-root");
 
     // Header bar with tab bar
     let header = adw::HeaderBar::new();
+    header.add_css_class("impulse-header");
     let tab_bar = adw::TabBar::new();
+    tab_bar.add_css_class("impulse-tab-bar");
     let tab_view = adw::TabView::new();
+    tab_view.add_css_class("impulse-tab-view");
     tab_bar.set_view(Some(&tab_view));
     tab_bar.set_autohide(false);
     tab_bar.set_cursor_from_name(Some("pointer"));
@@ -683,24 +688,28 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         .active(settings.borrow().sidebar_visible)
         .build();
     sidebar_btn.set_cursor_from_name(Some("pointer"));
+    sidebar_btn.add_css_class("impulse-header-button");
     header.pack_start(&sidebar_btn);
 
     // New tab button
     let new_tab_btn = gtk4::Button::new();
     new_tab_btn.set_tooltip_text(Some("New Tab (Ctrl+T)"));
     new_tab_btn.set_cursor_from_name(Some("pointer"));
+    new_tab_btn.add_css_class("impulse-header-button");
     header.pack_end(&new_tab_btn);
 
     // Settings button (right side of header, click handler wired below after tab_view setup)
     let settings_btn = gtk4::Button::new();
     settings_btn.set_tooltip_text(Some("Settings"));
     settings_btn.set_cursor_from_name(Some("pointer"));
+    settings_btn.add_css_class("impulse-header-button");
     header.pack_start(&settings_btn);
 
     main_box.append(&header);
 
     // Horizontal pane: sidebar + tab view
     let paned = gtk4::Paned::new(gtk4::Orientation::Horizontal);
+    paned.add_css_class("workspace-paned");
     paned.set_vexpand(true);
     paned.set_position(settings.borrow().sidebar_width);
     paned.set_shrink_start_child(false);
@@ -728,6 +737,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Terminal search bar (hidden by default)
     let search_revealer = gtk4::Revealer::new();
+    search_revealer.add_css_class("terminal-search-revealer");
     search_revealer.set_reveal_child(false);
     search_revealer.set_transition_type(gtk4::RevealerTransitionType::SlideDown);
 
@@ -755,6 +765,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     // Tab view in the end pane, wrapped with terminal search bar above
     let right_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    right_box.add_css_class("workspace-content");
     right_box.append(&search_revealer);
     right_box.append(&tab_view);
     tab_view.set_vexpand(true);
