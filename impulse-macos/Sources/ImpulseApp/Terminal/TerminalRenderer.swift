@@ -351,7 +351,7 @@ class TerminalRenderer: NSView {
             let range = grid.selectionRange(at: i)
             let rowY = padding + CGFloat(range.row) * ch
             let startX = padding + CGFloat(range.startCol) * cw
-            let endX = padding + CGFloat(range.endCol) * cw
+            let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
             let rect = CGRect(x: startX, y: rowY, width: endX - startX, height: ch)
             context.setFillColor(selectionColor)
             context.fill(rect)
@@ -363,7 +363,7 @@ class TerminalRenderer: NSView {
             let range = grid.searchMatchRange(at: i)
             let rowY = padding + CGFloat(range.row) * ch
             let startX = padding + CGFloat(range.startCol) * cw
-            let endX = padding + CGFloat(range.endCol) * cw
+            let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
             let rect = CGRect(x: startX, y: rowY, width: endX - startX, height: ch)
             context.setFillColor(searchColor)
             context.fill(rect)

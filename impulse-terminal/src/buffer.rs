@@ -11,7 +11,8 @@
 //!     [10..12) mode flags (u16 LE)
 //!     [12..14) selection range count N (u16 LE)
 //!     [14..16) search match range count M (u16 LE)
-//!     [16 .. 16+N*6)  selection ranges (row u16 + start_col u16 + end_col u16 each)
+//!     [16 .. 16+N*6)  selection ranges:
+//!       row(u16) | start_col(u16) | end_col(u16), inclusive
 //!     [16+N*6 .. 16+N*6+M*6)  search match ranges (same format)
 //!   Cell data (row-major, 12 bytes per cell):
 //!     [0..4)   character (u32 LE, UTF-32 codepoint)
@@ -29,10 +30,10 @@ pub const CELL_STRIDE: usize = 12;
 /// Fixed header size (before variable-length selection/search ranges).
 pub const FIXED_HEADER_SIZE: usize = 16;
 
-/// Bytes per range entry (row u16 + start_col u16 + end_col u16).
+/// Bytes per range entry (row u16 + start_col u16 + inclusive end_col u16).
 pub const RANGE_ENTRY_SIZE: usize = 6;
 
-/// A range highlight (selection or search match).
+/// A range highlight (selection or search match). `end_col` is inclusive.
 #[derive(Clone, Copy, Debug)]
 pub struct HighlightRange {
     pub row: u16,

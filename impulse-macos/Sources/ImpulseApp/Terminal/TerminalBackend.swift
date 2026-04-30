@@ -93,9 +93,9 @@ enum TerminalBackendEvent {
 ///       cursor_shape(u8) | cursor_visible(u8) | mode_flags(u16)
 ///       selection_range_count(u16) | search_match_range_count(u16)
 ///     [Selection ranges: N * 6 bytes each]
-///       row(u16) | start_col(u16) | end_col(u16)
+///       row(u16) | start_col(u16) | end_col(u16), inclusive
 ///     [Search match ranges: M * 6 bytes each]
-///       row(u16) | start_col(u16) | end_col(u16)
+///       row(u16) | start_col(u16) | end_col(u16), inclusive
 ///     [Cell data: cols * lines * 12 bytes each]
 ///       codepoint(u32) | fg_r(u8) | fg_g(u8) | fg_b(u8)
 ///       bg_r(u8) | bg_g(u8) | bg_b(u8) | flags(u16)
@@ -134,13 +134,13 @@ struct GridBufferReader {
         Self.fixedHeaderSize + (selectionRangeCount + searchMatchRangeCount) * Self.rangeEntrySize
     }
 
-    /// Read a selection range at the given index.
+    /// Read a selection range at the given index. `endCol` is inclusive.
     func selectionRange(at index: Int) -> (row: Int, startCol: Int, endCol: Int) {
         let base = Self.fixedHeaderSize + index * Self.rangeEntrySize
         return (Int(readU16(at: base)), Int(readU16(at: base + 2)), Int(readU16(at: base + 4)))
     }
 
-    /// Read a search match range at the given index.
+    /// Read a search match range at the given index. `endCol` is inclusive.
     func searchMatchRange(at index: Int) -> (row: Int, startCol: Int, endCol: Int) {
         let base = Self.fixedHeaderSize + selectionRangeCount * Self.rangeEntrySize + index * Self.rangeEntrySize
         return (Int(readU16(at: base)), Int(readU16(at: base + 2)), Int(readU16(at: base + 4)))
