@@ -18,6 +18,7 @@ struct TabDisplayInfo: Identifiable {
     let icon: NSImage?
     let isPinned: Bool
     let isTerminal: Bool
+    let needsAttention: Bool
 }
 
 // MARK: - Window Model

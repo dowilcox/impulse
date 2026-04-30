@@ -87,11 +87,15 @@ pub struct Settings {
     pub terminal_cursor_shape: String,
     pub terminal_cursor_blink: bool,
     pub terminal_bell: bool,
+    pub terminal_attention_on_bell: bool,
     pub terminal_font_family: String,
     pub terminal_font_size: i32,
     pub terminal_copy_on_select: bool,
     pub terminal_scroll_on_output: bool,
     pub terminal_allow_hyperlink: bool,
+    pub terminal_allow_notifications: bool,
+    pub terminal_attention_on_long_command: bool,
+    pub terminal_long_command_seconds: i32,
     pub terminal_bold_is_bright: bool,
 
     // ── Editor (additional) ──────────────────────────────────────────────
@@ -161,12 +165,16 @@ impl Default for Settings {
             terminal_scrollback: 10000,
             terminal_cursor_shape: String::from("block"),
             terminal_cursor_blink: true,
-            terminal_bell: false,
+            terminal_bell: true,
+            terminal_attention_on_bell: true,
             terminal_font_family: String::from("JetBrains Mono"),
             terminal_font_size: 14,
             terminal_copy_on_select: true,
             terminal_scroll_on_output: false,
             terminal_allow_hyperlink: true,
+            terminal_allow_notifications: true,
+            terminal_attention_on_long_command: true,
+            terminal_long_command_seconds: 30,
             terminal_bold_is_bright: false,
 
             // Editor (additional)
@@ -224,6 +232,7 @@ impl Settings {
     pub fn validate(&mut self) {
         self.font_size = self.font_size.clamp(6, 72);
         self.terminal_font_size = self.terminal_font_size.clamp(6, 72);
+        self.terminal_long_command_seconds = self.terminal_long_command_seconds.clamp(1, 86_400);
         if self.terminal_scrollback > 1_000_000 {
             self.terminal_scrollback = 1_000_000;
         }

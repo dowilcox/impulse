@@ -1,8 +1,8 @@
-//! Minimal OSC 7/133 byte-stream scanner.
+//! Minimal OSC byte-stream scanner.
 //!
 //! Watches a byte stream for OSC escape sequences and emits events.
 //! Does NOT modify or buffer the byte stream — all bytes pass through
-//! unchanged. alacritty_terminal ignores OSC 7/133 harmlessly.
+//! unchanged. alacritty_terminal ignores unsupported OSCs harmlessly.
 
 /// Events emitted by the OSC scanner.
 #[derive(Clone, Debug, PartialEq)]
@@ -15,6 +15,10 @@ pub enum OscEvent {
     CommandStart,
     /// OSC 133;D;{code}: command execution ended with exit code.
     CommandEnd(i32),
+    /// iTerm2 OSC 1337;RequestAttention={yes|once|no}.
+    AttentionRequest(String),
+    /// OSC 9 / OSC 777 notification request.
+    Notification { title: String, body: String },
 }
 
 /// Scanner state machine.
@@ -28,7 +32,7 @@ enum State {
 /// Maximum OSC payload size before we reset (prevents unbounded growth).
 const MAX_OSC_LEN: usize = 4096;
 
-/// Scans a byte stream for OSC 7 and OSC 133 sequences.
+/// Scans a byte stream for OSC sequences used by Impulse.
 pub struct OscScanner {
     state: State,
     buf: Vec<u8>,
@@ -119,9 +123,50 @@ impl OscScanner {
                 }
                 _ => {}
             }
+        } else if self.buf.starts_with(b"1337;") {
+            if let Some(value) = Self::parse_iterm2_attention(&self.buf[5..]) {
+                self.events.push(OscEvent::AttentionRequest(value));
+            }
+        } else if self.buf.starts_with(b"9;") {
+            if let Ok(body) = std::str::from_utf8(&self.buf[2..]) {
+                self.events.push(OscEvent::Notification {
+                    title: "Terminal".to_string(),
+                    body: Self::sanitize_text(body),
+                });
+            }
+        } else if self.buf.starts_with(b"777;") {
+            if let Some((title, body)) = Self::parse_rxvt_notify(&self.buf[4..]) {
+                self.events.push(OscEvent::Notification { title, body });
+            }
         }
 
         self.buf.clear();
+    }
+
+    /// Parse iTerm2 attention payload after "1337;".
+    fn parse_iterm2_attention(payload: &[u8]) -> Option<String> {
+        let s = std::str::from_utf8(payload).ok()?;
+        let value = s.strip_prefix("RequestAttention=")?;
+        match value {
+            "yes" | "once" | "no" => Some(value.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Parse rxvt/WezTerm notification payload after "777;".
+    fn parse_rxvt_notify(payload: &[u8]) -> Option<(String, String)> {
+        let s = std::str::from_utf8(payload).ok()?;
+        let mut parts = s.splitn(3, ';');
+        if parts.next()? != "notify" {
+            return None;
+        }
+        let title = Self::sanitize_text(parts.next().unwrap_or("Terminal"));
+        let body = Self::sanitize_text(parts.next().unwrap_or(""));
+        Some((title, body))
+    }
+
+    fn sanitize_text(input: &str) -> String {
+        input.chars().filter(|&c| c != '\0').collect()
     }
 
     /// Parse OSC 7 payload: "file://hostname/path" → URL-decoded path.
@@ -270,6 +315,49 @@ mod tests {
         scanner.scan(b";B\x07");
         let events = scanner.drain_events();
         assert_eq!(events, vec![OscEvent::CommandStart]);
+    }
+
+    #[test]
+    fn test_iterm2_attention_once() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]1337;RequestAttention=once\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::AttentionRequest("once".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_iterm2_attention_ignores_unknown_value() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]1337;RequestAttention=fireworks\x07");
+        assert!(scanner.drain_events().is_empty());
+    }
+
+    #[test]
+    fn test_osc9_notification() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]9;hello there\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::Notification {
+                title: "Terminal".to_string(),
+                body: "hello there".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_osc777_notification_preserves_body_semicolons() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]777;notify;Build;done;with warnings\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::Notification {
+                title: "Build".to_string(),
+                body: "done;with warnings".to_string(),
+            }]
+        );
     }
 
     #[test]

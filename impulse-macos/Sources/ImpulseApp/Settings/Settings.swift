@@ -120,11 +120,15 @@ struct Settings: Codable {
     var terminalCursorShape: String
     var terminalCursorBlink: Bool
     var terminalBell: Bool
+    var terminalAttentionOnBell: Bool
     var terminalFontFamily: String
     var terminalFontSize: Int
     var terminalCopyOnSelect: Bool
     var terminalScrollOnOutput: Bool
     var terminalAllowHyperlink: Bool
+    var terminalAllowNotifications: Bool
+    var terminalAttentionOnLongCommand: Bool
+    var terminalLongCommandSeconds: Int
     var terminalBoldIsBright: Bool
     var terminalAllowOsc52Write: Bool
     var terminalAllowOsc52Read: Bool
@@ -190,11 +194,15 @@ struct Settings: Codable {
         case terminalCursorShape = "terminal_cursor_shape"
         case terminalCursorBlink = "terminal_cursor_blink"
         case terminalBell = "terminal_bell"
+        case terminalAttentionOnBell = "terminal_attention_on_bell"
         case terminalFontFamily = "terminal_font_family"
         case terminalFontSize = "terminal_font_size"
         case terminalCopyOnSelect = "terminal_copy_on_select"
         case terminalScrollOnOutput = "terminal_scroll_on_output"
         case terminalAllowHyperlink = "terminal_allow_hyperlink"
+        case terminalAllowNotifications = "terminal_allow_notifications"
+        case terminalAttentionOnLongCommand = "terminal_attention_on_long_command"
+        case terminalLongCommandSeconds = "terminal_long_command_seconds"
         case terminalBoldIsBright = "terminal_bold_is_bright"
         case terminalAllowOsc52Write = "terminal_allow_osc52_write"
         case terminalAllowOsc52Read = "terminal_allow_osc52_read"
@@ -247,12 +255,16 @@ struct Settings: Codable {
             terminalScrollback: 10000,
             terminalCursorShape: "block",
             terminalCursorBlink: true,
-            terminalBell: false,
+            terminalBell: true,
+            terminalAttentionOnBell: true,
             terminalFontFamily: "JetBrains Mono",
             terminalFontSize: 14,
             terminalCopyOnSelect: true,
             terminalScrollOnOutput: true,
             terminalAllowHyperlink: true,
+            terminalAllowNotifications: true,
+            terminalAttentionOnLongCommand: true,
+            terminalLongCommandSeconds: 30,
             terminalBoldIsBright: true,
             terminalAllowOsc52Write: true,
             terminalAllowOsc52Read: false,
@@ -310,11 +322,15 @@ struct Settings: Codable {
         terminalCursorShape = (try? c.decode(String.self, forKey: .terminalCursorShape)) ?? d.terminalCursorShape
         terminalCursorBlink = (try? c.decode(Bool.self, forKey: .terminalCursorBlink)) ?? d.terminalCursorBlink
         terminalBell = (try? c.decode(Bool.self, forKey: .terminalBell)) ?? d.terminalBell
+        terminalAttentionOnBell = (try? c.decode(Bool.self, forKey: .terminalAttentionOnBell)) ?? d.terminalAttentionOnBell
         terminalFontFamily = (try? c.decode(String.self, forKey: .terminalFontFamily)) ?? d.terminalFontFamily
         terminalFontSize = (try? c.decode(Int.self, forKey: .terminalFontSize)) ?? d.terminalFontSize
         terminalCopyOnSelect = (try? c.decode(Bool.self, forKey: .terminalCopyOnSelect)) ?? d.terminalCopyOnSelect
         terminalScrollOnOutput = (try? c.decode(Bool.self, forKey: .terminalScrollOnOutput)) ?? d.terminalScrollOnOutput
         terminalAllowHyperlink = (try? c.decode(Bool.self, forKey: .terminalAllowHyperlink)) ?? d.terminalAllowHyperlink
+        terminalAllowNotifications = (try? c.decode(Bool.self, forKey: .terminalAllowNotifications)) ?? d.terminalAllowNotifications
+        terminalAttentionOnLongCommand = (try? c.decode(Bool.self, forKey: .terminalAttentionOnLongCommand)) ?? d.terminalAttentionOnLongCommand
+        terminalLongCommandSeconds = (try? c.decode(Int.self, forKey: .terminalLongCommandSeconds)) ?? d.terminalLongCommandSeconds
         terminalBoldIsBright = (try? c.decode(Bool.self, forKey: .terminalBoldIsBright)) ?? d.terminalBoldIsBright
         terminalAllowOsc52Write = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Write)) ?? d.terminalAllowOsc52Write
         terminalAllowOsc52Read = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Read)) ?? d.terminalAllowOsc52Read
@@ -343,9 +359,12 @@ struct Settings: Codable {
          fontLigatures: Bool, folding: Bool, scrollBeyondLastLine: Bool,
          smoothScrolling: Bool, editorCursorStyle: String, editorCursorBlinking: String,
          terminalScrollback: Int, terminalCursorShape: String, terminalCursorBlink: Bool,
-         terminalBell: Bool, terminalFontFamily: String, terminalFontSize: Int,
+         terminalBell: Bool, terminalAttentionOnBell: Bool,
+         terminalFontFamily: String, terminalFontSize: Int,
          terminalCopyOnSelect: Bool, terminalScrollOnOutput: Bool,
-         terminalAllowHyperlink: Bool, terminalBoldIsBright: Bool,
+         terminalAllowHyperlink: Bool, terminalAllowNotifications: Bool,
+         terminalAttentionOnLongCommand: Bool, terminalLongCommandSeconds: Int,
+         terminalBoldIsBright: Bool,
          terminalAllowOsc52Write: Bool, terminalAllowOsc52Read: Bool,
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
@@ -385,11 +404,15 @@ struct Settings: Codable {
         self.terminalCursorShape = terminalCursorShape
         self.terminalCursorBlink = terminalCursorBlink
         self.terminalBell = terminalBell
+        self.terminalAttentionOnBell = terminalAttentionOnBell
         self.terminalFontFamily = terminalFontFamily
         self.terminalFontSize = terminalFontSize
         self.terminalCopyOnSelect = terminalCopyOnSelect
         self.terminalScrollOnOutput = terminalScrollOnOutput
         self.terminalAllowHyperlink = terminalAllowHyperlink
+        self.terminalAllowNotifications = terminalAllowNotifications
+        self.terminalAttentionOnLongCommand = terminalAttentionOnLongCommand
+        self.terminalLongCommandSeconds = terminalLongCommandSeconds
         self.terminalBoldIsBright = terminalBoldIsBright
         self.terminalAllowOsc52Write = terminalAllowOsc52Write
         self.terminalAllowOsc52Read = terminalAllowOsc52Read
@@ -442,6 +465,7 @@ extension Settings {
         tabWidth = max(1, min(16, tabWidth))
         terminalFontSize = max(6, min(72, terminalFontSize))
         terminalScrollback = max(100, min(1_000_000, terminalScrollback))
+        terminalLongCommandSeconds = max(1, min(86_400, terminalLongCommandSeconds))
         sidebarWidth = max(100, min(1000, sidebarWidth))
         rightMarginPosition = max(1, min(500, rightMarginPosition))
         editorLineHeight = max(0, min(100, editorLineHeight))
@@ -562,8 +586,12 @@ extension Settings {
             lastDirectory: directory ?? lastDirectory,
             terminalCopyOnSelect: terminalCopyOnSelect,
             terminalBell: terminalBell,
+            terminalAttentionOnBell: terminalAttentionOnBell,
             terminalScrollOnOutput: terminalScrollOnOutput,
             terminalAllowHyperlink: terminalAllowHyperlink,
+            terminalAllowNotifications: terminalAllowNotifications,
+            terminalAttentionOnLongCommand: terminalAttentionOnLongCommand,
+            terminalLongCommandSeconds: terminalLongCommandSeconds,
             terminalBoldIsBright: terminalBoldIsBright,
             terminalAllowOsc52Write: terminalAllowOsc52Write,
             terminalAllowOsc52Read: terminalAllowOsc52Read,

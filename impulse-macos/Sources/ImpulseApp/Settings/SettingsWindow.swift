@@ -369,6 +369,10 @@ final class SettingsWindowController: NSWindowController {
                                   target: self, action: #selector(termBellChanged(_:)))
         bellCheck.state = settings.terminalBell ? .on : .off
 
+        let attentionBellCheck = NSButton(checkboxWithTitle: "Request attention on bell",
+                                          target: self, action: #selector(termAttentionOnBellChanged(_:)))
+        attentionBellCheck.state = settings.terminalAttentionOnBell ? .on : .off
+
         let scrollOutputCheck = NSButton(checkboxWithTitle: "Scroll on output",
                                           target: self, action: #selector(termScrollOnOutputChanged(_:)))
         scrollOutputCheck.state = settings.terminalScrollOnOutput ? .on : .off
@@ -377,6 +381,18 @@ final class SettingsWindowController: NSWindowController {
                                        target: self, action: #selector(termHyperlinkChanged(_:)))
         hyperlinkCheck.state = settings.terminalAllowHyperlink ? .on : .off
 
+        let notificationsCheck = NSButton(checkboxWithTitle: "Allow terminal notifications",
+                                          target: self, action: #selector(termNotificationsChanged(_:)))
+        notificationsCheck.state = settings.terminalAllowNotifications ? .on : .off
+
+        let longCommandCheck = NSButton(checkboxWithTitle: "Request attention after long commands",
+                                        target: self, action: #selector(termLongCommandAttentionChanged(_:)))
+        longCommandCheck.state = settings.terminalAttentionOnLongCommand ? .on : .off
+
+        let longCommandThresholdField = NSTextField(string: "\(settings.terminalLongCommandSeconds)")
+        longCommandThresholdField.target = self
+        longCommandThresholdField.action = #selector(termLongCommandSecondsChanged(_:))
+
         let boldBrightCheck = NSButton(checkboxWithTitle: "Bold is bright",
                                         target: self, action: #selector(termBoldIsBrightChanged(_:)))
         boldBrightCheck.state = settings.terminalBoldIsBright ? .on : .off
@@ -384,8 +400,12 @@ final class SettingsWindowController: NSWindowController {
         addSection(to: stack, title: "Behavior", rows: [
             copyOnSelectCheck,
             bellCheck,
+            attentionBellCheck,
             scrollOutputCheck,
             hyperlinkCheck,
+            notificationsCheck,
+            longCommandCheck,
+            makeRow(label: "Long Command Seconds:", control: longCommandThresholdField),
             boldBrightCheck,
         ])
 
@@ -1202,6 +1222,11 @@ final class SettingsWindowController: NSWindowController {
         persistSettings()
     }
 
+    @objc private func termAttentionOnBellChanged(_ sender: NSButton) {
+        settings.terminalAttentionOnBell = sender.state == .on
+        persistSettings()
+    }
+
     @objc private func termScrollOnOutputChanged(_ sender: NSButton) {
         settings.terminalScrollOnOutput = sender.state == .on
         persistSettings()
@@ -1209,6 +1234,22 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func termHyperlinkChanged(_ sender: NSButton) {
         settings.terminalAllowHyperlink = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func termNotificationsChanged(_ sender: NSButton) {
+        settings.terminalAllowNotifications = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func termLongCommandAttentionChanged(_ sender: NSButton) {
+        settings.terminalAttentionOnLongCommand = sender.state == .on
+        persistSettings()
+    }
+
+    @objc private func termLongCommandSecondsChanged(_ sender: NSTextField) {
+        settings.terminalLongCommandSeconds = max(1, sender.integerValue)
+        sender.stringValue = "\(settings.terminalLongCommandSeconds)"
         persistSettings()
     }
 

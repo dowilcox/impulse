@@ -702,6 +702,8 @@ fn poll_events(terminal: &Terminal) {
             | TerminalEvent::PromptStart
             | TerminalEvent::CommandStart
             | TerminalEvent::CommandEnd(_)
+            | TerminalEvent::AttentionRequest(_)
+            | TerminalEvent::Notification { .. }
             | TerminalEvent::PtyWrite(_) => {}
         }
     }

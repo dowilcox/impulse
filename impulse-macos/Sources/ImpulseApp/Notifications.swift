@@ -105,6 +105,8 @@ extension Notification.Name {
     static let terminalCwdChanged = Notification.Name("impulse.terminalCwdChanged")
     /// Posted when a terminal process terminates.
     static let terminalProcessTerminated = Notification.Name("impulse.terminalProcessTerminated")
+    /// Posted when a terminal tab's attention state changes.
+    static let terminalAttentionChanged = Notification.Name("impulse.terminalAttentionChanged")
 
     // MARK: Terminal Commands
 

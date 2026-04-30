@@ -431,6 +431,12 @@ impl TerminalBackend {
                             crate::osc_scanner::OscEvent::CommandEnd(code) => {
                                 let _ = event_tx.send(TerminalEvent::CommandEnd(code));
                             }
+                            crate::osc_scanner::OscEvent::AttentionRequest(value) => {
+                                let _ = event_tx.send(TerminalEvent::AttentionRequest(value));
+                            }
+                            crate::osc_scanner::OscEvent::Notification { title, body } => {
+                                let _ = event_tx.send(TerminalEvent::Notification { title, body });
+                            }
                         }
                     }
 

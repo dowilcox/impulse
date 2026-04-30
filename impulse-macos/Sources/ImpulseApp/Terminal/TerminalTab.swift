@@ -16,8 +16,14 @@ class TerminalTab: NSView {
     /// Current working directory reported by the shell via CWD polling.
     private(set) var currentWorkingDirectory: String
 
+    /// Whether this terminal has produced output that needs user attention.
+    private(set) var needsAttention: Bool = false
+
     /// The renderer view that draws the terminal grid.
     let renderer: TerminalRenderer
+
+    /// Called when the terminal becomes the focused split pane.
+    var onFocused: ((TerminalTab) -> Void)?
 
     // MARK: Private Properties
 
@@ -36,6 +42,11 @@ class TerminalTab: NSView {
     /// Timer for polling the child process CWD.
     private var cwdPollTimer: Timer?
 
+    /// Tracks command duration from OSC 133 shell integration.
+    private var commandStartDate: Date?
+
+    /// Outstanding continuous macOS attention request, if any.
+    private var attentionRequestId: Int?
 
     // MARK: Initializer
 
@@ -63,6 +74,7 @@ class TerminalTab: NSView {
     }
 
     deinit {
+        cancelAttentionRequest()
         cwdPollTimer?.invalidate()
         for path in shellIntegrationTempPaths {
             try? FileManager.default.removeItem(at: path)
@@ -85,6 +97,11 @@ class TerminalTab: NSView {
         renderer.onSelectionFinished = { [weak self] in
             guard let self, self.copyOnSelectEnabled else { return }
             self.copySelection()
+        }
+        renderer.onFocusChanged = { [weak self] focused in
+            guard let self, focused else { return }
+            self.clearAttention()
+            self.onFocused?(self)
         }
     }
 
@@ -109,6 +126,9 @@ class TerminalTab: NSView {
         case .bell:
             if currentSettings?.terminalBell ?? true {
                 NSSound.beep()
+            }
+            if currentSettings?.terminalAttentionOnBell ?? true {
+                requestAttention(.informationalRequest)
             }
         case .childExited(let code):
             NotificationCenter.default.post(
@@ -146,12 +166,88 @@ class TerminalTab: NSView {
             // tracking exposed through FFI so prompt positions survive scrollback.
             break
         case .commandStart:
-            // TODO: command timing — record start time per command.
-            break
-        case .commandEnd(_):
-            // TODO: surface exit code in the status bar or tab title.
+            commandStartDate = Date()
+        case .commandEnd(let code):
+            handleCommandEnd(exitCode: code)
+        case .attentionRequest(let value):
+            handleAttentionRequest(value)
+        case .notification(let title, let body):
+            if currentSettings?.terminalAllowNotifications ?? true {
+                requestAttention(.informationalRequest)
+                if !title.isEmpty || !body.isEmpty {
+                    os_log(.info, "Terminal notification: %{public}@ %{public}@", title, body)
+                }
+            }
+        }
+    }
+
+    private func handleCommandEnd(exitCode: Int32) {
+        guard let started = commandStartDate else { return }
+        commandStartDate = nil
+
+        guard currentSettings?.terminalAttentionOnLongCommand ?? true else { return }
+        let threshold = currentSettings?.terminalLongCommandSeconds ?? 30
+        guard threshold > 0, Date().timeIntervalSince(started) >= TimeInterval(threshold) else { return }
+
+        requestAttention(.informationalRequest)
+        if exitCode != 0 {
+            os_log(.info, "Long terminal command exited with status %{public}d", exitCode)
+        }
+    }
+
+    private func handleAttentionRequest(_ value: String) {
+        switch value {
+        case "once":
+            requestAttention(.informationalRequest)
+        case "yes":
+            requestAttention(.criticalRequest, continuous: true)
+        case "no":
+            cancelAttentionRequest()
+            setNeedsAttention(false)
+        default:
             break
         }
+    }
+
+    private func requestAttention(
+        _ requestType: NSApplication.RequestUserAttentionType,
+        continuous: Bool = false
+    ) {
+        if shouldSurfaceAttention {
+            setNeedsAttention(true)
+        }
+
+        guard !NSApp.isActive else { return }
+
+        if continuous {
+            cancelAttentionRequest()
+            attentionRequestId = NSApp.requestUserAttention(requestType)
+        } else {
+            _ = NSApp.requestUserAttention(requestType)
+        }
+    }
+
+    private var shouldSurfaceAttention: Bool {
+        guard let window = renderer.window else { return true }
+        return !NSApp.isActive || !window.isKeyWindow || window.firstResponder !== renderer
+    }
+
+    private func setNeedsAttention(_ value: Bool) {
+        guard needsAttention != value else { return }
+        needsAttention = value
+        NotificationCenter.default.post(name: .terminalAttentionChanged, object: self)
+    }
+
+    private func cancelAttentionRequest() {
+        if let requestId = attentionRequestId {
+            NSApp.cancelUserAttentionRequest(requestId)
+            attentionRequestId = nil
+        }
+    }
+
+    func clearAttention() {
+        cancelAttentionRequest()
+        setNeedsAttention(false)
     }
 
     // MARK: Cleanup
@@ -393,6 +489,7 @@ class TerminalTab: NSView {
 
         // Auto-scroll on output
         renderer.scrollOnOutput = settings.terminalScrollOnOutput
+        renderer.allowHyperlinks = settings.terminalAllowHyperlink
         renderer.keybindingOverrides = settings.keybindingOverrides
 
         // Copy on select
@@ -608,9 +705,13 @@ struct TerminalSettings {
     var terminalScrollback: Int = 10_000
     var lastDirectory: String = ""
     var terminalCopyOnSelect: Bool = true
-    var terminalBell: Bool = false
+    var terminalBell: Bool = true
+    var terminalAttentionOnBell: Bool = true
     var terminalScrollOnOutput: Bool = true
     var terminalAllowHyperlink: Bool = true
+    var terminalAllowNotifications: Bool = true
+    var terminalAttentionOnLongCommand: Bool = true
+    var terminalLongCommandSeconds: Int = 30
     var terminalBoldIsBright: Bool = true
     var terminalAllowOsc52Write: Bool = true
     var terminalAllowOsc52Read: Bool = false

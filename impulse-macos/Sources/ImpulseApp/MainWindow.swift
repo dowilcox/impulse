@@ -1508,6 +1508,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             }
         )
 
+        // Terminal attention changed — update tab indicators
+        notificationObservers.append(
+            nc.addObserver(forName: .terminalAttentionChanged, object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                guard let terminal = notification.object as? TerminalTab,
+                      self.tabManager.ownsTerminal(terminal) else { return }
+                self.tabManager.refreshSegmentLabels()
+            }
+        )
+
         // Terminal process terminated — close the tab or remove the split pane
         notificationObservers.append(
             nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) { [weak self] notification in

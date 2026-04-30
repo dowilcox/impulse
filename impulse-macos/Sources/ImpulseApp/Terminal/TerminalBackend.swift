@@ -78,6 +78,8 @@ enum TerminalBackendEvent {
     case promptStart
     case commandStart
     case commandEnd(Int32)
+    case attentionRequest(String)
+    case notification(title: String, body: String)
 }
 
 // MARK: - Grid Buffer Reader
@@ -308,6 +310,12 @@ final class TerminalBackend {
                     events.append(.cwdChanged(path))
                 } else if let code = dict["CommandEnd"] as? Int {
                     events.append(.commandEnd(Int32(code)))
+                } else if let value = dict["AttentionRequest"] as? String {
+                    events.append(.attentionRequest(value))
+                } else if let payload = dict["Notification"] as? [String: Any] {
+                    let title = payload["title"] as? String ?? "Terminal"
+                    let body = payload["body"] as? String ?? ""
+                    events.append(.notification(title: title, body: body))
                 }
             }
         }

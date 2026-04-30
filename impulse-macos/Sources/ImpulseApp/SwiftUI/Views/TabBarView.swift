@@ -148,6 +148,13 @@ struct TabBarView: View {
 
             Spacer(minLength: 0)
 
+            if tab.needsAttention && !isSelected {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+            }
+
             if !tab.isPinned && isHovered {
                 Button(action: { windowModel.onTabClosed?(tab.index) }) {
                     Image(systemName: "xmark")

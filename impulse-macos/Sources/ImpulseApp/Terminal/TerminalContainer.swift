@@ -19,6 +19,11 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         return terminals[activeTerminalIndex]
     }
 
+    /// Whether any split pane in this terminal tab is requesting attention.
+    var needsAttention: Bool {
+        terminals.contains { $0.needsAttention }
+    }
+
     // MARK: Private Properties
 
     private var splitView: ThemedSplitView?
@@ -314,6 +319,13 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
     private func createTerminal() -> TerminalTab {
         let terminal = TerminalTab(frame: bounds)
+        terminal.onFocused = { [weak self] focusedTerminal in
+            guard let self,
+                  let index = self.terminals.firstIndex(where: { $0 === focusedTerminal }) else {
+                return
+            }
+            self.activeTerminalIndex = index
+        }
         terminal.configureTerminal(settings: currentSettings, theme: currentTheme)
         return terminal
     }

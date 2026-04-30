@@ -52,6 +52,16 @@ enum TabEntry {
         }
     }
 
+    /// Whether this tab should display an attention indicator.
+    var needsAttention: Bool {
+        switch self {
+        case .terminal(let container):
+            return container.needsAttention
+        case .editor, .imagePreview:
+            return false
+        }
+    }
+
     /// Extracts a `TabInfo` snapshot for the status bar.
     var info: TabInfo {
         switch self {
@@ -631,6 +641,9 @@ final class TabManager: NSObject {
         }
 
         selectedIndex = index
+        if case .terminal(let container) = tabs[index] {
+            container.activeTerminal?.clearAttention()
+        }
         syncToWindowModel()
 
         // Activate the new tab.
@@ -757,7 +770,8 @@ final class TabManager: NSObject {
                 title: tab.title,
                 icon: tabIcon(for: tab),
                 isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
-                isTerminal: { if case .terminal = tab { return true } else { return false } }()
+                isTerminal: { if case .terminal = tab { return true } else { return false } }(),
+                needsAttention: tab.needsAttention
             )
         }
         ws.refreshTabs(infos, selectedIndex: selectedIndex)

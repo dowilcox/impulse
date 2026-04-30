@@ -32,6 +32,10 @@ pub enum TerminalEvent {
     CommandStart,
     /// Command execution ended with exit code (OSC 133;D).
     CommandEnd(i32),
+    /// Terminal requested user attention (iTerm2 OSC 1337;RequestAttention).
+    AttentionRequest(String),
+    /// Terminal requested a user notification (OSC 9 or OSC 777 notify).
+    Notification { title: String, body: String },
     /// Internal: Term sends PtyWrite for device query responses (e.g., DA1).
     /// Filtered out in poll_events() and forwarded back to the PTY as input.
     PtyWrite(String),

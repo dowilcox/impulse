@@ -73,6 +73,9 @@ class TerminalRenderer: NSView {
     /// Called when a mouse selection gesture finishes with a real selection.
     var onSelectionFinished: (() -> Void)?
 
+    /// Called when the renderer gains or loses first responder focus.
+    var onFocusChanged: ((Bool) -> Void)?
+
     /// Override cursor shape from user settings (0=Block, 1=Beam, 2=Underline).
     /// Applied instead of the shape reported by the backend grid buffer.
     var cursorShapeOverride: UInt8 = 0
@@ -104,6 +107,9 @@ class TerminalRenderer: NSView {
 
     /// Whether to auto-scroll to the bottom when the terminal produces output.
     var scrollOnOutput: Bool = true
+
+    /// Whether OSC 8 and auto-detected URLs should be interactive.
+    var allowHyperlinks: Bool = true
 
     /// Runtime keybinding overrides from settings.
     var keybindingOverrides: [String: String] = [:]
@@ -182,11 +188,13 @@ class TerminalRenderer: NSView {
 
     override func becomeFirstResponder() -> Bool {
         backend?.setFocus(true)
+        onFocusChanged?(true)
         return true
     }
 
     override func resignFirstResponder() -> Bool {
         backend?.setFocus(false)
+        onFocusChanged?(false)
         return true
     }
 
@@ -998,6 +1006,11 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard allowHyperlinks else {
+            clearHoverLink()
+            return
+        }
+
         let (col, row) = gridPoint(from: event)
         let colI = Int(col)
         let rowI = Int(row)
@@ -1051,6 +1064,10 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        clearHoverLink()
+    }
+
+    private func clearHoverLink() {
         if hoverIsLink {
             hoverIsLink = false
             hoverLinkUri = nil
@@ -1059,6 +1076,8 @@ class TerminalRenderer: NSView {
         }
         hoverCol = -1
         hoverRow = -1
+        hoverLinkStartCol = 0
+        hoverLinkEndCol = 0
     }
 
     /// Scan the row's text for a URL pattern and return the match that
@@ -1129,7 +1148,7 @@ class TerminalRenderer: NSView {
 
         // Cmd+Click on a hyperlink opens the URL. We first try the OSC 8
         // link at the cell, then fall back to an auto-detected URL in the row.
-        if event.modifierFlags.contains(.command) {
+        if allowHyperlinks && event.modifierFlags.contains(.command) {
             let (col, row) = gridPoint(from: event)
             let colI = Int(col)
             let rowI = Int(row)
