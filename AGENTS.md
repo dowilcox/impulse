@@ -16,6 +16,7 @@ Use the existing scripts and Cargo targets instead of ad hoc build steps.
 - `./impulse-macos/build.sh --dev` — build the macOS app bundle.
 - `./scripts/install-lsp-servers.sh` — install managed LSP servers.
 - `./scripts/release.sh <version>` — the only supported release path.
+- When asked to tag/build a new release version, run `./scripts/release.sh <version> --push` so the release commit, tag, and GitHub release assets are published as part of the same workflow.
 
 ## Coding Style & Naming Conventions
 
