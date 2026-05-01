@@ -112,16 +112,12 @@ private struct FlatFileRowView: View {
   private func handleDirectoryTap() {
     if node.isExpanded {
       // Collapse — always immediate.
-      withAnimation(.easeInOut(duration: 0.15)) {
-        node.isExpanded = false
-        model.rebuildFlatTree()
-      }
+      node.isExpanded = false
+      model.rebuildFlatTree()
     } else if node.isLoaded {
       // Already loaded — expand immediately.
-      withAnimation(.easeInOut(duration: 0.15)) {
-        node.isExpanded = true
-        model.rebuildFlatTree()
-      }
+      node.isExpanded = true
+      model.rebuildFlatTree()
       triggerGitStatusRefresh()
     } else {
       // Need to load children off main thread.
@@ -133,9 +129,7 @@ private struct FlatFileRowView: View {
         let children = FileTreeNode.buildChildren(path: path, showHidden: showHidden)
         DispatchQueue.main.async {
           node.children = children
-          withAnimation(.easeInOut(duration: 0.15)) {
-            model.rebuildFlatTree()
-          }
+          model.rebuildFlatTree()
           triggerGitStatusRefresh()
         }
       }

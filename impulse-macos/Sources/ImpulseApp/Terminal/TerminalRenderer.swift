@@ -129,6 +129,8 @@ class TerminalRenderer: NSView {
     private var needsRedraw = false
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
+    private var colorCache: [UInt32: CGColor] = [:]
+    private var textLineCache: [UInt64: CTLine] = [:]
 
     // IME composition state. When non-empty, an IME is composing text that
     // has not yet been committed to the PTY.
@@ -263,9 +265,7 @@ class TerminalRenderer: NSView {
             case .wakeup:
                 wakeup = true
             default:
-                DispatchQueue.main.async { [weak self] in
-                    self?.onEvent?(event)
-                }
+                onEvent?(event)
             }
         }
         if wakeup && !isScrolledBack {
@@ -274,9 +274,7 @@ class TerminalRenderer: NSView {
             if scrollOnOutput {
                 backend.scrollToBottom()
             }
-            DispatchQueue.main.async { [weak self] in
-                self?.needsDisplay = true
-            }
+            needsDisplay = true
         }
     }
 
@@ -310,41 +308,14 @@ class TerminalRenderer: NSView {
         context.fill(bounds)
 
         // 2. Draw non-default cell backgrounds.
-        for row in 0..<lines {
-            let rowY = padding + CGFloat(row) * ch
-            for col in 0..<cols {
-                let cell = grid.cell(row: row, col: col)
-                let flags = cell.flags
-
-                // Skip wide char spacer cells.
-                if flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
-
-                var bgR = cell.bgR, bgG = cell.bgG, bgB = cell.bgB
-                var fgR = cell.fgR, fgG = cell.fgG, fgB = cell.fgB
-
-                // Handle inverse attribute.
-                if flags & GridBufferReader.flagInverse != 0 {
-                    swap(&bgR, &fgR)
-                    swap(&bgG, &fgG)
-                    swap(&bgB, &fgB)
-                }
-
-                // Only draw if background differs from the default.
-                if bgR != defaultBackgroundRgb.0
-                    || bgG != defaultBackgroundRgb.1
-                    || bgB != defaultBackgroundRgb.2 {
-                    let cellWidth = (flags & GridBufferReader.flagWideChar != 0) ? cw * 2 : cw
-                    let rect = CGRect(x: padding + CGFloat(col) * cw, y: rowY, width: cellWidth, height: ch)
-                    context.setFillColor(CGColor(
-                        srgbRed: CGFloat(bgR) / 255.0,
-                        green: CGFloat(bgG) / 255.0,
-                        blue: CGFloat(bgB) / 255.0,
-                        alpha: 1.0
-                    ))
-                    context.fill(rect)
-                }
-            }
-        }
+        drawCellBackgrounds(
+            context: context,
+            grid: grid,
+            cols: cols,
+            lines: lines,
+            cellWidth: cw,
+            cellHeight: ch
+        )
 
         // 3. Draw selection highlights using the active theme color.
         for i in 0..<grid.selectionRangeCount {
@@ -518,12 +489,7 @@ class TerminalRenderer: NSView {
                 let cellWidth = (flags & GridBufferReader.flagWideChar != 0) ? cw * 2 : cw
 
                 if flags & GridBufferReader.flagUnderline != 0 {
-                    context.setStrokeColor(CGColor(
-                        srgbRed: CGFloat(fgR) / 255.0,
-                        green: CGFloat(fgG) / 255.0,
-                        blue: CGFloat(fgB) / 255.0,
-                        alpha: alpha
-                    ))
+                    context.setStrokeColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha))
                     context.setLineWidth(1)
                     let underlineY = rowY + fontMetrics.ascent + fontMetrics.descent - 1
                     context.move(to: CGPoint(x: cellX, y: underlineY))
@@ -532,12 +498,7 @@ class TerminalRenderer: NSView {
                 }
 
                 if flags & GridBufferReader.flagStrikethrough != 0 {
-                    context.setStrokeColor(CGColor(
-                        srgbRed: CGFloat(fgR) / 255.0,
-                        green: CGFloat(fgG) / 255.0,
-                        blue: CGFloat(fgB) / 255.0,
-                        alpha: alpha
-                    ))
+                    context.setStrokeColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha))
                     context.setLineWidth(1)
                     let strikeY = rowY + ch / 2
                     context.move(to: CGPoint(x: cellX, y: strikeY))
@@ -639,6 +600,137 @@ class TerminalRenderer: NSView {
         }
     }
 
+    // MARK: Color and Background Caches
+
+    private func cachedColor(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        alpha: CGFloat = 1.0
+    ) -> CGColor {
+        let alphaByte = UInt8(clamping: Int((alpha * 255).rounded()))
+        let key = colorKey(red: red, green: green, blue: blue, alphaByte: alphaByte)
+
+        if let cached = colorCache[key] {
+            return cached
+        }
+
+        if colorCache.count > 4096 {
+            colorCache.removeAll(keepingCapacity: true)
+        }
+
+        let color = CGColor(
+            srgbRed: CGFloat(red) / 255.0,
+            green: CGFloat(green) / 255.0,
+            blue: CGFloat(blue) / 255.0,
+            alpha: CGFloat(alphaByte) / 255.0
+        )
+        colorCache[key] = color
+        return color
+    }
+
+    private func colorKey(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        alphaByte: UInt8
+    ) -> UInt32 {
+        (UInt32(alphaByte) << 24)
+            | (UInt32(red) << 16)
+            | (UInt32(green) << 8)
+            | UInt32(blue)
+    }
+
+    /// Draw contiguous same-color background cells as row runs instead of one
+    /// fill per cell. This preserves the existing coordinate system and only
+    /// reduces fill calls for full-screen TUIs with large color blocks.
+    private func drawCellBackgrounds(
+        context: CGContext,
+        grid: GridBufferReader,
+        cols: Int,
+        lines: Int,
+        cellWidth: CGFloat,
+        cellHeight: CGFloat
+    ) {
+        for row in 0..<lines {
+            let rowY = padding + CGFloat(row) * cellHeight
+            var runStartCol: Int?
+            var runEndCol = 0
+            var runR: UInt8 = 0
+            var runG: UInt8 = 0
+            var runB: UInt8 = 0
+
+            func flushRun() {
+                guard let startCol = runStartCol, runEndCol > startCol else { return }
+                let rect = CGRect(
+                    x: padding + CGFloat(startCol) * cellWidth,
+                    y: rowY,
+                    width: CGFloat(runEndCol - startCol) * cellWidth,
+                    height: cellHeight
+                )
+                context.setFillColor(cachedColor(red: runR, green: runG, blue: runB))
+                context.fill(rect)
+                runStartCol = nil
+            }
+
+            var col = 0
+            while col < cols {
+                let cell = grid.cell(row: row, col: col)
+                let flags = cell.flags
+
+                if flags & GridBufferReader.flagWideCharSpacer != 0 {
+                    flushRun()
+                    col += 1
+                    continue
+                }
+
+                var bgR = cell.bgR
+                var bgG = cell.bgG
+                var bgB = cell.bgB
+                var fgR = cell.fgR
+                var fgG = cell.fgG
+                var fgB = cell.fgB
+
+                if flags & GridBufferReader.flagInverse != 0 {
+                    swap(&bgR, &fgR)
+                    swap(&bgG, &fgG)
+                    swap(&bgB, &fgB)
+                }
+
+                let span = (flags & GridBufferReader.flagWideChar != 0) ? 2 : 1
+                let endCol = min(cols, col + span)
+                let drawsBackground = bgR != defaultBackgroundRgb.0
+                    || bgG != defaultBackgroundRgb.1
+                    || bgB != defaultBackgroundRgb.2
+
+                guard drawsBackground else {
+                    flushRun()
+                    col = endCol
+                    continue
+                }
+
+                if runStartCol != nil,
+                   runEndCol == col,
+                   runR == bgR,
+                   runG == bgG,
+                   runB == bgB {
+                    runEndCol = endCol
+                } else {
+                    flushRun()
+                    runStartCol = col
+                    runEndCol = endCol
+                    runR = bgR
+                    runG = bgG
+                    runB = bgB
+                }
+
+                col = endCol
+            }
+
+            flushRun()
+        }
+    }
+
     // MARK: Text Run Drawing
 
     /// Draw a run of text at the given grid position using CoreText.
@@ -650,14 +742,12 @@ class TerminalRenderer: NSView {
         bold: Bool, italic: Bool, dim: Bool
     ) {
         let alpha: CGFloat = dim ? 0.5 : 1.0
-        let color = CGColor(
-            srgbRed: CGFloat(fgR) / 255.0,
-            green: CGFloat(fgG) / 255.0,
-            blue: CGFloat(fgB) / 255.0,
-            alpha: alpha
-        )
+        let alphaByte = UInt8(clamping: Int((alpha * 255).rounded()))
+        let colorKey = colorKey(red: fgR, green: fgG, blue: fgB, alphaByte: alphaByte)
+        let color = cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha)
 
         let font = fontForStyle(bold: bold, italic: italic)
+        let styleKey = fontStyleKey(bold: bold, italic: italic)
         let cw = fontMetrics.cellWidth
         let baseX = padding + CGFloat(col) * cw
         let textY = rowY + fontMetrics.ascent
@@ -667,22 +757,62 @@ class TerminalRenderer: NSView {
         // causing characters to misalign with the grid over long runs.
         var charCol = 0
         for ch in text.unicodeScalars {
-            let str = String(ch) as CFString
-            let attrs: [CFString: Any] = [
-                kCTFontAttributeName: font,
-                kCTForegroundColorAttributeName: color,
-            ]
-            let attrStr = CFAttributedStringCreate(nil, str, attrs as CFDictionary)!
-            let line = CTLineCreateWithAttributedString(attrStr)
+            let line = cachedTextLine(
+                scalar: ch,
+                font: font,
+                color: color,
+                styleKey: styleKey,
+                colorKey: colorKey
+            )
             context.textPosition = CGPoint(x: baseX + CGFloat(charCol) * cw, y: textY)
             CTLineDraw(line, context)
             charCol += 1
         }
     }
 
+    private func cachedTextLine(
+        scalar: UnicodeScalar,
+        font: CTFont,
+        color: CGColor,
+        styleKey: UInt64,
+        colorKey: UInt32
+    ) -> CTLine {
+        let lineKey = (UInt64(colorKey) << 32)
+            | (styleKey << 24)
+            | UInt64(scalar.value)
+
+        if let line = textLineCache[lineKey] {
+            return line
+        }
+
+        if textLineCache.count > 8192 {
+            textLineCache.removeAll(keepingCapacity: true)
+        }
+
+        let attrs: [CFString: Any] = [
+            kCTFontAttributeName: font,
+            kCTForegroundColorAttributeName: color,
+        ]
+        let attrStr = CFAttributedStringCreate(nil, String(scalar) as CFString, attrs as CFDictionary)!
+        let line = CTLineCreateWithAttributedString(attrStr)
+        textLineCache[lineKey] = line
+        return line
+    }
+
+    private func fontStyleKey(bold: Bool, italic: Bool) -> UInt64 {
+        switch (bold, italic) {
+        case (false, false): return 0
+        case (true, false): return 1
+        case (false, true): return 2
+        case (true, true): return 3
+        }
+    }
+
     // MARK: Font Variant Cache
 
     private func cacheFontVariants() {
+        textLineCache.removeAll(keepingCapacity: true)
+
         let base = fontMetrics.font
         let size = CTFontGetSize(base)
 
@@ -717,12 +847,7 @@ class TerminalRenderer: NSView {
         fgR: UInt8, fgG: UInt8, fgB: UInt8, dim: Bool
     ) {
         let alpha: CGFloat = dim ? 0.5 : 1.0
-        let color = CGColor(
-            srgbRed: CGFloat(fgR) / 255.0,
-            green: CGFloat(fgG) / 255.0,
-            blue: CGFloat(fgB) / 255.0,
-            alpha: alpha
-        )
+        let color = cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha)
 
         // Codex/Claude TUIs use box-drawing heavily. Snap all geometry to the
         // backing pixel grid and disable antialiasing so separators do not
