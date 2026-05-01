@@ -4,21 +4,21 @@ import Observation
 // MARK: - Sidebar Mode
 
 enum SidebarPanel {
-    case files
-    case search
+  case files
+  case search
 }
 
 // MARK: - Tab Display Info
 
 /// Lightweight snapshot of a tab for the SwiftUI tab bar.
 struct TabDisplayInfo: Identifiable {
-    let id: Int       // Stable unique ID (survives reorders)
-    let index: Int    // Current position in the tab array
-    let title: String
-    let icon: NSImage?
-    let isPinned: Bool
-    let isTerminal: Bool
-    let needsAttention: Bool
+  let id: Int  // Stable unique ID (survives reorders)
+  let index: Int  // Current position in the tab array
+  let title: String
+  let icon: NSImage?
+  let isPinned: Bool
+  let isTerminal: Bool
+  let needsAttention: Bool
 }
 
 // MARK: - Window Model
@@ -29,113 +29,117 @@ struct TabDisplayInfo: Identifiable {
 @Observable
 final class WindowModel {
 
-    // MARK: Tabs
+  // MARK: Tabs
 
-    var tabDisplayInfos: [TabDisplayInfo] = []
-    var selectedTabIndex: Int = -1
+  var tabDisplayInfos: [TabDisplayInfo] = []
+  var selectedTabIndex: Int = -1
 
-    // MARK: Sidebar
+  // MARK: Sidebar
 
-    var sidebarPanel: SidebarPanel = .files
-    var showHiddenFiles: Bool = false
+  var sidebarPanel: SidebarPanel = .files
+  var sidebarVisible: Bool = true {
+    didSet { onSidebarVisibilityChanged?(sidebarVisible) }
+  }
+  var sidebarWidth: CGFloat = 250
+  var showHiddenFiles: Bool = false
 
-    // MARK: File tree (populated by MainWindowController)
+  // MARK: File tree (populated by MainWindowController)
 
-    var fileTreeNodes: [FileTreeNode] = []
-    var fileTreeRootPath: String = ""
+  var fileTreeNodes: [FileTreeNode] = []
+  var fileTreeRootPath: String = ""
 
-    /// Flattened view of the file tree for LazyVStack rendering.
-    /// Rebuilt explicitly when tree structure changes (expand/collapse/rebuild),
-    /// NOT on git status changes — individual row views observe those directly
-    /// via @Bindable on each node.
-    var flatFileTree: [FlatTreeEntry] = []
+  /// Flattened view of the file tree for LazyVStack rendering.
+  /// Rebuilt explicitly when tree structure changes (expand/collapse/rebuild),
+  /// NOT on git status changes — individual row views observe those directly
+  /// via @Bindable on each node.
+  var flatFileTree: [FlatTreeEntry] = []
 
-    /// Path of the file currently open in the active editor tab.
-    /// Used to highlight the active file in the sidebar.
-    var activeFilePath: String? = nil
+  /// Path of the file currently open in the active editor tab.
+  /// Used to highlight the active file in the sidebar.
+  var activeFilePath: String? = nil
 
-    // MARK: Search
+  /// Path currently selected in the file tree. Used by titlebar file actions
+  /// so they act on the SwiftUI sidebar selection.
+  var selectedFileTreePath: String? = nil
 
-    var searchQuery: String = ""
-    var searchResults: [SearchResult] = []
-    var searchCaseSensitive: Bool = false
+  // MARK: Search
 
-    // MARK: Status bar — left group
+  var searchQuery: String = ""
+  var searchResults: [SearchResult] = []
+  var searchCaseSensitive: Bool = false
 
-    var shellName: String = ""
-    var gitBranch: String? = nil
-    var currentCwd: String = ""
-    var blameInfo: String? = nil
+  // MARK: Status bar — left group
 
-    // MARK: Status bar — right group
+  var shellName: String = ""
+  var gitBranch: String? = nil
+  var currentCwd: String = ""
+  var blameInfo: String? = nil
 
-    var cursorLine: Int? = nil
-    var cursorCol: Int? = nil
-    var currentLanguage: String? = nil
-    var currentEncoding: String = "UTF-8"
-    var currentIndent: String? = nil
-    var isPreviewable: Bool = false
-    var isPreviewing: Bool = false
+  // MARK: Status bar — right group
 
-    // MARK: Overlays
+  var cursorLine: Int? = nil
+  var cursorCol: Int? = nil
+  var currentLanguage: String? = nil
+  var currentEncoding: String = "UTF-8"
+  var currentIndent: String? = nil
+  var isPreviewable: Bool = false
+  var isPreviewing: Bool = false
 
-    var commandPaletteVisible: Bool = false
+  // MARK: Updates
 
-    // MARK: Theme
+  var updateAvailableVersion: String? = nil
+  var updateCurrentVersion: String? = nil
+  var updateURL: URL? = nil
 
-    var theme: Theme = ThemeManager.theme(forName: "nord")
+  // MARK: Overlays
 
-    // MARK: Icons
+  var commandPaletteVisible: Bool = false
 
-    /// Shared icon cache for themed file/folder icons in the sidebar.
-    var iconCache: IconCache?
+  // MARK: Theme
 
-    // MARK: Callbacks (set by MainWindowController for SwiftUI → AppKit)
+  var theme: Theme = ThemeManager.theme(forName: "nord")
 
-    var onTabSelected: ((Int) -> Void)?
-    var onTabClosed: ((Int) -> Void)?
-    var onTabMoved: ((Int, Int) -> Void)?
-    var onNewTab: (() -> Void)?
-    var onSidebarToggle: (() -> Void)?
-    var onPreviewToggle: (() -> Void)?
-    var onOpenFile: ((String, Int?) -> Void)?
-    var onNewFile: ((String) -> Void)?
-    var onNewFolder: ((String) -> Void)?
-    var onRefreshTree: (() -> Void)?
-    var onCollapseAll: (() -> Void)?
-    var onToggleHidden: (() -> Void)?
+  // MARK: Icons
 
-    // MARK: Methods
+  /// Shared icon cache for themed file/folder icons in the sidebar.
+  var iconCache: IconCache?
 
-    /// Replace the tab display info array. Called by TabManager.
-    func refreshTabs(_ infos: [TabDisplayInfo], selectedIndex: Int) {
-        self.tabDisplayInfos = infos
-        self.selectedTabIndex = selectedIndex
-    }
+  // MARK: Callbacks (set by MainWindowController for SwiftUI → AppKit)
 
-    /// Update status bar from a TabInfo snapshot.
-    func updateStatusBar(from info: TabInfo) {
-        shellName = info.shellName ?? ""
-        currentCwd = info.cwd ?? ""
-        cursorLine = info.cursorLine
-        cursorCol = info.cursorCol
-        currentLanguage = info.language
-        currentEncoding = info.encoding ?? "UTF-8"
-        currentIndent = info.indentInfo
-    }
+  var onTabSelected: ((Int) -> Void)?
+  var onTabClosed: ((Int) -> Void)?
+  var onTabMoved: ((Int, Int) -> Void)?
+  var onTabPinToggled: ((Int) -> Void)?
+  var onNewTab: (() -> Void)?
+  var onSidebarVisibilityChanged: ((Bool) -> Void)?
+  var onPreviewToggle: (() -> Void)?
+  var onOpenFile: ((String, Int?) -> Void)?
+  var onNewFile: ((String) -> Void)?
+  var onNewFolder: ((String) -> Void)?
+  var onRefreshTree: (() -> Void)?
+  var onCollapseAll: (() -> Void)?
+  var onToggleHidden: (() -> Void)?
 
-    /// Replace the file tree nodes and rebuild the flat rendering list.
-    /// Use this instead of setting `fileTreeNodes` directly.
-    func updateFileTree(_ nodes: [FileTreeNode], rootPath: String? = nil) {
-        fileTreeNodes = nodes
-        if let rootPath { fileTreeRootPath = rootPath }
-        rebuildFlatTree()
-    }
+  // MARK: Methods
 
-    /// Rebuild the flat tree from current nodes. Call after any structural
-    /// change (expand, collapse, children loaded) but NOT after git status
-    /// changes — row views observe those via @Bindable.
-    func rebuildFlatTree() {
-        flatFileTree = FileTreeNode.flatten(fileTreeNodes)
-    }
+  /// Replace the tab display info array. Called by TabManager.
+  func refreshTabs(_ infos: [TabDisplayInfo], selectedIndex: Int) {
+    self.tabDisplayInfos = infos
+    self.selectedTabIndex = selectedIndex
+  }
+
+  /// Replace the file tree nodes and rebuild the flat rendering list.
+  /// Use this instead of setting `fileTreeNodes` directly.
+  func updateFileTree(_ nodes: [FileTreeNode], rootPath: String? = nil) {
+    fileTreeNodes = nodes
+    if let rootPath { fileTreeRootPath = rootPath }
+    rebuildFlatTree()
+  }
+
+  /// Rebuild the flat tree from current nodes. Call after any structural
+  /// change (expand, collapse, children loaded) but NOT after git status
+  /// changes — row views observe those via @Bindable.
+  func rebuildFlatTree() {
+    flatFileTree = FileTreeNode.flatten(fileTreeNodes)
+  }
 }

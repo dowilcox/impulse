@@ -4,14 +4,14 @@ import AppKit
 
 /// Lightweight snapshot of the active tab's state for the status bar.
 struct TabInfo {
-    var cwd: String?
-    var gitBranch: String?
-    var shellName: String?
-    var cursorLine: Int?
-    var cursorCol: Int?
-    var language: String?
-    var encoding: String?
-    var indentInfo: String?
+  var cwd: String?
+  var gitBranch: String?
+  var shellName: String?
+  var cursorLine: Int?
+  var cursorCol: Int?
+  var language: String?
+  var encoding: String?
+  var indentInfo: String?
 }
 
 // MARK: - Tab Entry
@@ -19,114 +19,114 @@ struct TabInfo {
 /// Discriminated union representing either a terminal, editor, or image preview tab.
 /// Stores the NSView and the metadata needed for display in the tab bar.
 enum TabEntry {
-    case terminal(TerminalContainer)
-    case editor(EditorTab)
-    case imagePreview(path: String, view: NSView)
+  case terminal(TerminalContainer)
+  case editor(EditorTab)
+  case imagePreview(path: String, view: NSView)
 
-    /// The view to display in the content area.
-    var view: NSView {
-        switch self {
-        case .terminal(let container): return container
-        case .editor(let editor): return editor
-        case .imagePreview(_, let view): return view
-        }
+  /// The view to display in the content area.
+  var view: NSView {
+    switch self {
+    case .terminal(let container): return container
+    case .editor(let editor): return editor
+    case .imagePreview(_, let view): return view
     }
+  }
 
-    /// The title to show in the tab bar segment.
-    var title: String {
-        switch self {
-        case .terminal(let container):
-            if let active = container.activeTerminal {
-                let title = active.tabTitle
-                return title.isEmpty ? ImpulseCore.getUserLoginShellName() : title
-            }
-            return ImpulseCore.getUserLoginShellName()
-        case .editor(let editor):
-            if let path = editor.filePath {
-                let name = (path as NSString).lastPathComponent
-                return editor.isModified ? "\(name) *" : name
-            }
-            return editor.isModified ? "Untitled *" : "Untitled"
-        case .imagePreview(let path, _):
-            return (path as NSString).lastPathComponent
-        }
+  /// The title to show in the tab bar segment.
+  var title: String {
+    switch self {
+    case .terminal(let container):
+      if let active = container.activeTerminal {
+        let title = active.tabTitle
+        return title.isEmpty ? ImpulseCore.getUserLoginShellName() : title
+      }
+      return ImpulseCore.getUserLoginShellName()
+    case .editor(let editor):
+      if let path = editor.filePath {
+        let name = (path as NSString).lastPathComponent
+        return editor.isModified ? "\(name) *" : name
+      }
+      return editor.isModified ? "Untitled *" : "Untitled"
+    case .imagePreview(let path, _):
+      return (path as NSString).lastPathComponent
     }
+  }
 
-    /// Whether this tab should display an attention indicator.
-    var needsAttention: Bool {
-        switch self {
-        case .terminal(let container):
-            return container.needsAttention
-        case .editor, .imagePreview:
-            return false
-        }
+  /// Whether this tab should display an attention indicator.
+  var needsAttention: Bool {
+    switch self {
+    case .terminal(let container):
+      return container.needsAttention
+    case .editor, .imagePreview:
+      return false
     }
+  }
 
-    /// Extracts a `TabInfo` snapshot for the status bar.
-    var info: TabInfo {
-        switch self {
-        case .terminal(let container):
-            return TabInfo(
-                cwd: container.activeTerminal?.currentWorkingDirectory,
-                gitBranch: nil,
-                shellName: ImpulseCore.getUserLoginShellName(),
-                cursorLine: nil, cursorCol: nil,
-                language: nil, encoding: nil, indentInfo: nil
-            )
-        case .editor(let editor):
-            return TabInfo(
-                cwd: editor.projectDirectory
-                    ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent },
-                gitBranch: nil,
-                shellName: nil,
-                cursorLine: nil, cursorCol: nil,
-                language: editor.language,
-                encoding: "UTF-8",
-                indentInfo: nil
-            )
-        case .imagePreview(let path, _):
-            return TabInfo(
-                cwd: path,
-                gitBranch: nil,
-                shellName: nil,
-                cursorLine: nil, cursorCol: nil,
-                language: "Image",
-                encoding: nil,
-                indentInfo: nil
-            )
-        }
+  /// Extracts a `TabInfo` snapshot for the status bar.
+  var info: TabInfo {
+    switch self {
+    case .terminal(let container):
+      return TabInfo(
+        cwd: container.activeTerminal?.currentWorkingDirectory,
+        gitBranch: nil,
+        shellName: ImpulseCore.getUserLoginShellName(),
+        cursorLine: nil, cursorCol: nil,
+        language: nil, encoding: nil, indentInfo: nil
+      )
+    case .editor(let editor):
+      return TabInfo(
+        cwd: editor.projectDirectory
+          ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent },
+        gitBranch: nil,
+        shellName: nil,
+        cursorLine: nil, cursorCol: nil,
+        language: editor.language,
+        encoding: "UTF-8",
+        indentInfo: nil
+      )
+    case .imagePreview(let path, _):
+      return TabInfo(
+        cwd: path,
+        gitBranch: nil,
+        shellName: nil,
+        cursorLine: nil, cursorCol: nil,
+        language: "Image",
+        encoding: nil,
+        indentInfo: nil
+      )
     }
+  }
 
-    /// Focus the primary interactive view.
-    func focus() {
-        switch self {
-        case .terminal(let container):
-            container.activeTerminal?.focus()
-        case .editor(let editor):
-            editor.focus()
-        case .imagePreview:
-            break
-        }
+  /// Focus the primary interactive view.
+  func focus() {
+    switch self {
+    case .terminal(let container):
+      container.activeTerminal?.focus()
+    case .editor(let editor):
+      editor.focus()
+    case .imagePreview:
+      break
     }
+  }
 
-    /// Apply a new theme.
-    func applyTheme(_ theme: Theme) {
-        switch self {
-        case .terminal(let container):
-            let termTheme = TerminalTheme(
-                bg: theme.terminalBg,
-                fg: theme.terminalFg,
-                selection: theme.selection,
-                cursor: theme.cursor,
-                terminalPalette: theme.terminalPalette
-            )
-            container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-        case .editor(let editor):
-            editor.applyTheme(ThemeManager.monacoTheme(forName: theme.id))
-        case .imagePreview(_, let view):
-            view.layer?.backgroundColor = theme.bgColor.cgColor
-        }
+  /// Apply a new theme.
+  func applyTheme(_ theme: Theme) {
+    switch self {
+    case .terminal(let container):
+      let termTheme = TerminalTheme(
+        bg: theme.terminalBg,
+        fg: theme.terminalFg,
+        selection: theme.selection,
+        cursor: theme.cursor,
+        terminalPalette: theme.terminalPalette
+      )
+      container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+    case .editor(let editor):
+      editor.applyTheme(ThemeManager.monacoTheme(forName: theme.id))
+    case .imagePreview(_, let view):
+      view.layer?.backgroundColor = theme.bgColor.cgColor
     }
+  }
 }
 
 // MARK: - Closed Tab Info
@@ -134,14 +134,14 @@ enum TabEntry {
 /// Information about a closed tab, used for the "reopen closed tab" feature.
 /// Only editor and image preview tabs are recorded (terminals cannot be reopened).
 enum ClosedTabInfo {
-    case editor(path: String)
-    case imagePreview(path: String)
+  case editor(path: String)
+  case imagePreview(path: String)
 
-    var path: String {
-        switch self {
-        case .editor(let p), .imagePreview(let p): return p
-        }
+  var path: String {
+    switch self {
+    case .editor(let p), .imagePreview(let p): return p
     }
+  }
 }
 
 // MARK: - Tab Manager
@@ -150,843 +150,739 @@ enum ClosedTabInfo {
 /// segmented control used to switch between them. The segmented control is
 /// placed in the window's titlebar container.
 final class TabManager: NSObject {
-    /// The ordered list of open tabs.
-    private(set) var tabs: [TabEntry] = []
+  /// The ordered list of open tabs.
+  private(set) var tabs: [TabEntry] = []
 
-    /// Per-tab pinned state, indexed in parallel with `tabs`.
-    private(set) var pinnedTabs: [Bool] = []
+  /// Per-tab pinned state, indexed in parallel with `tabs`.
+  private(set) var pinnedTabs: [Bool] = []
 
-    /// Stable unique IDs for each tab, indexed in parallel with `tabs`.
-    /// Used by SwiftUI to track tab identity across reorders.
-    private var tabUniqueIds: [Int] = []
-    private var nextTabUniqueId: Int = 0
+  /// Stable unique IDs for each tab, indexed in parallel with `tabs`.
+  /// Used by SwiftUI to track tab identity across reorders.
+  private var tabUniqueIds: [Int] = []
+  private var nextTabUniqueId: Int = 0
 
-    /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
-    private var openFilePaths: Set<String> = []
+  /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
+  private var openFilePaths: Set<String> = []
 
-    /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
-    private(set) var closedTabs: [ClosedTabInfo] = []
+  /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
+  private(set) var closedTabs: [ClosedTabInfo] = []
 
-    /// Maximum number of closed tabs to remember.
-    private let maxClosedTabs = 20
+  /// Maximum number of closed tabs to remember.
+  private let maxClosedTabs = 20
 
-    /// The index of the currently selected tab, or -1 if no tabs are open.
-    private(set) var selectedIndex: Int = -1
+  /// The index of the currently selected tab, or -1 if no tabs are open.
+  private(set) var selectedIndex: Int = -1
 
-    /// The custom tab bar displayed in the titlebar for tab switching.
-    // CustomTabBar removed — SwiftUI TabBarView reads from windowModel
+  /// The custom tab bar displayed in the titlebar for tab switching.
+  // CustomTabBar removed — SwiftUI TabBarView reads from windowModel
 
-    /// Icon cache for themed file icons in tab bar.
-    private(set) var iconCache: IconCache?
+  /// Icon cache for themed file icons in tab bar.
+  private(set) var iconCache: IconCache?
 
-    /// The container view that hosts the active tab's view.
-    let contentView: NSView
+  /// The container view that hosts the active tab's view.
+  let contentView: NSView
 
-    var settings: Settings
-    private var theme: Theme
-    private let core: ImpulseCore
+  var settings: Settings
+  private var theme: Theme
+  private let core: ImpulseCore
 
-    /// Observable state for SwiftUI views. Set by MainWindowController.
-    weak var windowModel: WindowModel?
+  /// Observable state for SwiftUI views. Set by MainWindowController.
+  weak var windowModel: WindowModel?
 
-    /// Optional callback invoked instead of directly closing a tab. When set,
-    /// `closeTabFromMenu` and `closeOtherTabsFromMenu` delegate to this
-    /// handler so the caller (MainWindowController) can show a save
-    /// confirmation dialog for unsaved editor tabs.
-    var tabCloseHandler: ((Int) -> Void)?
+  /// Optional callback invoked instead of directly closing a tab. When set,
+  /// the caller (MainWindowController) can show a save confirmation dialog
+  /// for unsaved editor tabs.
+  var tabCloseHandler: ((Int) -> Void)?
 
-    /// Returns a `TabInfo` snapshot for the currently active tab, or `nil` if
-    /// no tabs are open.
-    var activeTabInfo: TabInfo? {
-        guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
-        return tabs[selectedIndex].info
+  /// Returns a `TabInfo` snapshot for the currently active tab, or `nil` if
+  /// no tabs are open.
+  var activeTabInfo: TabInfo? {
+    guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
+    return tabs[selectedIndex].info
+  }
+
+  init(settings: Settings, theme: Theme, core: ImpulseCore) {
+    self.settings = settings
+    self.theme = theme
+    self.core = core
+
+    iconCache = IconCache(theme: theme)
+
+    contentView = NSView()
+    contentView.wantsLayer = true
+    contentView.layer?.backgroundColor = theme.bgColor.cgColor
+
+    super.init()
+  }
+
+  // MARK: - Adding Tabs
+
+  /// Creates a new terminal tab (wrapped in a TerminalContainer for split
+  /// support) and makes it active.
+  func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
+    let fallbackDir: String
+    if !settings.lastDirectory.isEmpty,
+      FileManager.default.fileExists(atPath: settings.lastDirectory)
+    {
+      fallbackDir = settings.lastDirectory
+    } else {
+      fallbackDir = NSHomeDirectory()
+    }
+    let dir = directory ?? fallbackDir
+    let termSettings = settings.terminalSettings(directory: dir)
+    let termTheme = TerminalTheme(
+      bg: theme.terminalBg,
+      fg: theme.terminalFg,
+      selection: theme.selection,
+      cursor: theme.cursor,
+      terminalPalette: theme.terminalPalette
+    )
+    let container = TerminalContainer(
+      frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+      settings: termSettings,
+      theme: termTheme,
+      initialCommand: initialCommand
+    )
+    container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+    let entry = TabEntry.terminal(container)
+    insertTab(entry)
+  }
+
+  /// Creates a new editor tab for the given file path.
+  ///
+  /// If a tab for the same file is already open, it is selected instead of
+  /// creating a duplicate. Image files are opened in a preview tab. Binary
+  /// files (>10 MB or containing null bytes) are skipped with an alert.
+  func addEditorTab(
+    path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil,
+    goToColumn: UInt32? = nil
+  ) {
+    // O(1) deduplication using the openFilePaths set.
+    if openFilePaths.contains(path) {
+      if let existingIndex = tabs.firstIndex(where: {
+        switch $0 {
+        case .editor(let e): return e.filePath == path
+        case .imagePreview(let p, _): return p == path
+        default: return false
+        }
+      }) {
+        selectTab(index: existingIndex)
+        // Navigate to position in the already-open editor.
+        if let line = goToLine, let column = goToColumn,
+          case .editor(let editor) = tabs[existingIndex]
+        {
+          editor.goToPosition(line: line, column: column)
+        }
+      }
+      return
     }
 
-    init(settings: Settings, theme: Theme, core: ImpulseCore) {
-        self.settings = settings
-        self.theme = theme
-        self.core = core
-
-        iconCache = IconCache(theme: theme)
-
-        contentView = NSView()
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = theme.bgColor.cgColor
-
-        super.init()
+    // Image files get a preview tab instead of an editor.
+    if Self.isImageFile(path) {
+      addImagePreviewTab(path: path)
+      return
     }
 
-    // MARK: - Adding Tabs
-
-    /// Creates a new terminal tab (wrapped in a TerminalContainer for split
-    /// support) and makes it active.
-    func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
-        let dir = directory ?? NSHomeDirectory()
-        let termSettings = settings.terminalSettings(directory: dir)
-        let termTheme = TerminalTheme(
-            bg: theme.terminalBg,
-            fg: theme.terminalFg,
-            selection: theme.selection,
-            cursor: theme.cursor,
-            terminalPalette: theme.terminalPalette
-        )
-        let container = TerminalContainer(
-            frame: NSRect(x: 0, y: 0, width: 800, height: 600),
-            settings: termSettings,
-            theme: termTheme,
-            initialCommand: initialCommand
-        )
-        container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-        let entry = TabEntry.terminal(container)
-        insertTab(entry)
+    // Reject binary files.
+    if Self.isBinaryFile(path) {
+      let alert = NSAlert()
+      alert.messageText = "Binary File"
+      alert.informativeText =
+        "The file \"\((path as NSString).lastPathComponent)\" appears to be a binary file and cannot be opened in the editor."
+      alert.alertStyle = .informational
+      alert.addButton(withTitle: "OK")
+      alert.runModal()
+      return
     }
 
-    /// Creates a new editor tab for the given file path.
-    ///
-    /// If a tab for the same file is already open, it is selected instead of
-    /// creating a duplicate. Image files are opened in a preview tab. Binary
-    /// files (>10 MB or containing null bytes) are skipped with an alert.
-    func addEditorTab(path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil, goToColumn: UInt32? = nil) {
-        // O(1) deduplication using the openFilePaths set.
-        if openFilePaths.contains(path) {
-            if let existingIndex = tabs.firstIndex(where: {
-                switch $0 {
-                case .editor(let e): return e.filePath == path
-                case .imagePreview(let p, _): return p == path
-                default: return false
-                }
-            }) {
-                selectTab(index: existingIndex)
-                // Navigate to position in the already-open editor.
-                if let line = goToLine, let column = goToColumn,
-                   case .editor(let editor) = tabs[existingIndex] {
-                    editor.goToPosition(line: line, column: column)
-                }
-            }
-            return
-        }
+    // Read file content off the main thread, then create the editor tab on main.
+    let editorOptions = editorOptionsFromSettings()
+    let themeDef = ThemeManager.monacoTheme(forName: theme.id)
+    let language = languageIdForPath(path)
 
-        // Image files get a preview tab instead of an editor.
-        if Self.isImageFile(path) {
-            addImagePreviewTab(path: path)
-            return
-        }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+      let largeFile =
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap({ $0 })
+        ?? 0 > 5 * 1024 * 1024
 
-        // Reject binary files.
-        if Self.isBinaryFile(path) {
-            let alert = NSAlert()
-            alert.messageText = "Binary File"
-            alert.informativeText = "The file \"\((path as NSString).lastPathComponent)\" appears to be a binary file and cannot be opened in the editor."
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-            return
-        }
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
 
-        // Read file content off the main thread, then create the editor tab on main.
-        let editorOptions = editorOptionsFromSettings()
-        let themeDef = ThemeManager.monacoTheme(forName: theme.id)
-        let language = languageIdForPath(path)
+        // Re-check deduplication in case a tab was opened while reading.
+        if self.openFilePaths.contains(path) { return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            let largeFile = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap({ $0 }) ?? 0 > 5 * 1024 * 1024
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-
-                // Re-check deduplication in case a tab was opened while reading.
-                if self.openFilePaths.contains(path) { return }
-
-                let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-                editorTab.projectDirectory = projectDirectory
-                    ?? (path as NSString).deletingLastPathComponent
-                editorTab.openFile(path: path, content: fileContent, language: language)
-                editorTab.loadEditor()
-
-                // Apply editor settings (font, tab size, etc.) from the current settings.
-                editorTab.applySettings(editorOptions)
-                editorTab.applyTheme(themeDef)
-
-                // Open large files in read-only mode to avoid WebView freezes.
-                if largeFile {
-                    editorTab.setReadOnly(true)
-                }
-
-                // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
-                if let line = goToLine, let column = goToColumn {
-                    editorTab.goToPosition(line: line, column: column)
-                }
-
-                let entry = TabEntry.editor(editorTab)
-                self.insertTab(entry)
-            }
-        }
-    }
-
-    /// Creates a new untitled editor tab with no file on disk.
-    func addUntitledEditorTab(cwd: String?) {
         let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        editorTab.untitledCwd = cwd
-        editorTab.projectDirectory = cwd
-        editorTab.openBlank()
+        editorTab.projectDirectory =
+          projectDirectory
+          ?? (path as NSString).deletingLastPathComponent
+        editorTab.openFile(path: path, content: fileContent, language: language)
         editorTab.loadEditor()
 
-        let editorOptions = editorOptionsFromSettings()
+        // Apply editor settings (font, tab size, etc.) from the current settings.
         editorTab.applySettings(editorOptions)
-        let themeDef = ThemeManager.monacoTheme(forName: theme.id)
         editorTab.applyTheme(themeDef)
 
+        // Open large files in read-only mode to avoid WebView freezes.
+        if largeFile {
+          editorTab.setReadOnly(true)
+        }
+
+        // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
+        if let line = goToLine, let column = goToColumn {
+          editorTab.goToPosition(line: line, column: column)
+        }
+
         let entry = TabEntry.editor(editorTab)
-        insertTab(entry)
-        // filePath is nil, so insertTab won't add to openFilePaths — correct.
+        self.insertTab(entry)
+      }
+    }
+  }
+
+  /// Creates a new untitled editor tab with no file on disk.
+  func addUntitledEditorTab(cwd: String?) {
+    let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    editorTab.untitledCwd = cwd
+    editorTab.projectDirectory = cwd
+    editorTab.openBlank()
+    editorTab.loadEditor()
+
+    let editorOptions = editorOptionsFromSettings()
+    editorTab.applySettings(editorOptions)
+    let themeDef = ThemeManager.monacoTheme(forName: theme.id)
+    editorTab.applyTheme(themeDef)
+
+    let entry = TabEntry.editor(editorTab)
+    insertTab(entry)
+    // filePath is nil, so insertTab won't add to openFilePaths — correct.
+  }
+
+  /// Register a file path in the open-file dedup set (e.g. after save-as).
+  func registerOpenFilePath(_ path: String) {
+    openFilePaths.insert(path)
+  }
+
+  /// Detect the Monaco language ID for a file path.
+  func detectLanguage(forPath path: String) -> String {
+    languageIdForPath(path)
+  }
+
+  /// Creates an image preview tab that scales large images to fit.
+  private func addImagePreviewTab(path: String) {
+    let container = NSView()
+    container.wantsLayer = true
+
+    let imageView = NSImageView()
+    imageView.image = NSImage(contentsOfFile: path)
+    imageView.imageScaling = .scaleProportionallyDown
+    imageView.imageAlignment = .alignCenter
+    imageView.translatesAutoresizingMaskIntoConstraints = false
+    // Prevent the image's natural size from expanding the container.
+    imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
+
+    container.addSubview(imageView)
+
+    NSLayoutConstraint.activate([
+      imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+      imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+      imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+      imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+    ])
+
+    let entry = TabEntry.imagePreview(path: path, view: container)
+    insertTab(entry)
+  }
+
+  /// Inserts a new tab after the currently selected tab and selects it.
+  /// If no tab is selected, appends at the end.
+  private func insertTab(_ entry: TabEntry) {
+    var insertionIndex: Int
+    if selectedIndex >= 0 && selectedIndex < tabs.count {
+      if pinnedTabs[selectedIndex] {
+        // Selected tab is pinned — insert after the last pinned tab
+        // so new tabs never land between pinned and unpinned sections.
+        insertionIndex = pinnedTabs.lastIndex(of: true).map { $0 + 1 } ?? 0
+      } else {
+        insertionIndex = selectedIndex + 1
+      }
+    } else {
+      insertionIndex = tabs.count
+    }
+    tabs.insert(entry, at: insertionIndex)
+    pinnedTabs.insert(false, at: insertionIndex)
+    tabUniqueIds.insert(nextTabUniqueId, at: insertionIndex)
+    nextTabUniqueId += 1
+
+    // Track open file paths for O(1) deduplication.
+    switch entry {
+    case .editor(let e):
+      if let p = e.filePath { openFilePaths.insert(p) }
+    case .imagePreview(let p, _):
+      openFilePaths.insert(p)
+    default:
+      break
     }
 
-    /// Register a file path in the open-file dedup set (e.g. after save-as).
-    func registerOpenFilePath(_ path: String) {
-        openFilePaths.insert(path)
+    rebuildSegments()
+    selectTab(index: insertionIndex)
+  }
+
+  // MARK: - Removing Tabs
+
+  /// Release resources owned by a tab entry (kill processes, tear down
+  /// WebViews) so they don't linger after the tab is removed.
+  private func cleanupTab(_ entry: TabEntry) {
+    switch entry {
+    case .terminal(let container):
+      container.terminateAllProcesses()
+    case .editor(let editor):
+      editor.cleanup()
+    case .imagePreview:
+      break
     }
+  }
 
-    /// Detect the Monaco language ID for a file path.
-    func detectLanguage(forPath path: String) -> String {
-        languageIdForPath(path)
-    }
-
-    /// Creates an image preview tab that scales large images to fit.
-    private func addImagePreviewTab(path: String) {
-        let container = NSView()
-        container.wantsLayer = true
-
-        let imageView = NSImageView()
-        imageView.image = NSImage(contentsOfFile: path)
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.imageAlignment = .alignCenter
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        // Prevent the image's natural size from expanding the container.
-        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
-
-        container.addSubview(imageView)
-
-        NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
-        ])
-
-        let entry = TabEntry.imagePreview(path: path, view: container)
-        insertTab(entry)
-    }
-
-    /// Inserts a new tab after the currently selected tab and selects it.
-    /// If no tab is selected, appends at the end.
-    private func insertTab(_ entry: TabEntry) {
-        var insertionIndex: Int
-        if selectedIndex >= 0 && selectedIndex < tabs.count {
-            if pinnedTabs[selectedIndex] {
-                // Selected tab is pinned — insert after the last pinned tab
-                // so new tabs never land between pinned and unpinned sections.
-                insertionIndex = pinnedTabs.lastIndex(of: true).map { $0 + 1 } ?? 0
-            } else {
-                insertionIndex = selectedIndex + 1
-            }
-        } else {
-            insertionIndex = tabs.count
+  /// Records a tab entry in the closed tabs stack for later reopening.
+  private func recordClosedTab(_ entry: TabEntry) {
+    switch entry {
+    case .editor(let e):
+      if let p = e.filePath {
+        closedTabs.append(.editor(path: p))
+        if closedTabs.count > maxClosedTabs {
+          closedTabs.removeFirst()
         }
-        tabs.insert(entry, at: insertionIndex)
-        pinnedTabs.insert(false, at: insertionIndex)
-        tabUniqueIds.insert(nextTabUniqueId, at: insertionIndex)
-        nextTabUniqueId += 1
+      }
+    case .imagePreview(let p, _):
+      closedTabs.append(.imagePreview(path: p))
+      if closedTabs.count > maxClosedTabs {
+        closedTabs.removeFirst()
+      }
+    case .terminal:
+      break  // Terminals cannot be reopened
+    }
+  }
 
-        // Track open file paths for O(1) deduplication.
-        switch entry {
-        case .editor(let e):
-            if let p = e.filePath { openFilePaths.insert(p) }
-        case .imagePreview(let p, _):
-            openFilePaths.insert(p)
-        default:
-            break
+  /// Closes the tab at the given index. If it is the active tab, the
+  /// nearest neighbor is selected. If it was the last tab, `selectedIndex`
+  /// becomes -1.
+  func closeTab(index: Int) {
+    guard index >= 0, index < tabs.count else { return }
+
+    let entry = tabs[index]
+    recordClosedTab(entry)
+    cleanupTab(entry)
+
+    // Remove from open file paths tracking.
+    switch entry {
+    case .editor(let e):
+      if let p = e.filePath { openFilePaths.remove(p) }
+    case .imagePreview(let p, _):
+      openFilePaths.remove(p)
+    default:
+      break
+    }
+
+    // Remove the tab's view from the content area if it is currently displayed.
+    if index == selectedIndex {
+      entry.view.removeFromSuperview()
+    }
+
+    tabs.remove(at: index)
+    pinnedTabs.remove(at: index)
+    tabUniqueIds.remove(at: index)
+    rebuildSegments()
+
+    if tabs.isEmpty {
+      // Auto-create a new terminal tab so the window is never empty,
+      // matching the Linux behavior.
+      addTerminalTab()
+      return
+    }
+
+    // Select the nearest valid tab.
+    let newIndex = min(index, tabs.count - 1)
+    selectTab(index: newIndex)
+  }
+
+  /// Clean up all tabs (kill processes, tear down WebViews). Called when the
+  /// window closes to ensure nothing lingers.
+  func cleanupAllTabs() {
+    for tab in tabs {
+      cleanupTab(tab)
+    }
+  }
+
+  /// Toggles the pinned state of the tab at the given index.
+  func togglePin(index: Int) {
+    guard index >= 0, index < tabs.count else { return }
+    pinnedTabs[index].toggle()
+    refreshSegmentLabels()
+  }
+
+  /// Unpins the tab at the given index (used before closing a pinned tab).
+  func unpin(index: Int) {
+    guard index >= 0, index < tabs.count else { return }
+    pinnedTabs[index] = false
+    refreshSegmentLabels()
+  }
+
+  // MARK: - Reopening Closed Tabs
+
+  /// Reopens the most recently closed editor or image preview tab.
+  /// Returns the file path that was reopened, or `nil` if the stack was empty
+  /// or the file no longer exists on disk.
+  @discardableResult
+  func reopenLastClosedTab() -> String? {
+    guard let info = closedTabs.popLast() else { return nil }
+    let path = info.path
+    guard FileManager.default.fileExists(atPath: path) else { return nil }
+    // Use the existing addEditorTab method, which handles deduplication
+    // and image detection internally.
+    addEditorTab(path: path)
+    return path
+  }
+
+  // MARK: - Reordering
+
+  /// Moves a tab from one index to another, preserving pinned state and
+  /// updating selection to follow the moved tab.
+  func moveTab(from sourceIndex: Int, to destinationIndex: Int) {
+    guard sourceIndex != destinationIndex,
+      sourceIndex >= 0, sourceIndex < tabs.count,
+      destinationIndex >= 0, destinationIndex < tabs.count
+    else { return }
+
+    let entry = tabs.remove(at: sourceIndex)
+    let pinned = pinnedTabs.remove(at: sourceIndex)
+    let uid = tabUniqueIds.remove(at: sourceIndex)
+    tabs.insert(entry, at: destinationIndex)
+    pinnedTabs.insert(pinned, at: destinationIndex)
+    tabUniqueIds.insert(uid, at: destinationIndex)
+
+    // Track the moved tab's new position.
+    if selectedIndex == sourceIndex {
+      selectedIndex = destinationIndex
+    } else if sourceIndex < selectedIndex && destinationIndex >= selectedIndex {
+      selectedIndex -= 1
+    } else if sourceIndex > selectedIndex && destinationIndex <= selectedIndex {
+      selectedIndex += 1
+    }
+
+    rebuildSegments()
+  }
+
+  // MARK: - Selection
+
+  /// Switches the visible tab to the one at `index`.
+  func selectTab(index: Int) {
+    guard index >= 0, index < tabs.count else { return }
+
+    // Remove the previous tab's view.
+    if selectedIndex >= 0, selectedIndex < tabs.count {
+      tabs[selectedIndex].view.removeFromSuperview()
+    }
+
+    selectedIndex = index
+    if case .terminal(let container) = tabs[index] {
+      container.activeTerminal?.clearAttention()
+    }
+    syncToWindowModel()
+
+    // Activate the new tab.
+    let entry = tabs[index]
+    let view = entry.view
+    view.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(view)
+    NSLayoutConstraint.activate([
+      view.topAnchor.constraint(equalTo: contentView.topAnchor),
+      view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+    ])
+    entry.focus()
+
+    NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+  }
+
+  // MARK: - Selected Tab Helpers
+
+  /// The currently selected tab entry, or `nil` if no tabs are open.
+  var selectedTab: TabEntry? {
+    guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
+    return tabs[selectedIndex]
+  }
+
+  /// The currently selected terminal container, or `nil` if the selection is
+  /// not a terminal tab.
+  var selectedTerminal: TerminalContainer? {
+    if case .terminal(let tc) = selectedTab { return tc }
+    return nil
+  }
+
+  /// The currently selected editor tab, or `nil` if the selection is not an
+  /// editor tab.
+  var selectedEditor: EditorTab? {
+    if case .editor(let et) = selectedTab { return et }
+    return nil
+  }
+
+  // MARK: - Ownership Queries
+
+  /// Returns `true` if this TabManager owns the given terminal (i.e. it lives
+  /// in one of our terminal containers).
+  func ownsTerminal(_ terminal: TerminalTab) -> Bool {
+    for tab in tabs {
+      if case .terminal(let container) = tab {
+        if container.terminals.contains(where: { $0 === terminal }) {
+          return true
         }
+      }
+    }
+    return false
+  }
 
-        rebuildSegments()
-        selectTab(index: insertionIndex)
+  /// Returns `true` if this TabManager owns the given editor tab.
+  func ownsEditor(_ editor: EditorTab) -> Bool {
+    return tabs.contains {
+      if case .editor(let e) = $0 { return e === editor }
+      return false
+    }
+  }
+
+  // MARK: - Terminal Splitting
+
+  /// Splits the active terminal tab horizontally (top/bottom).
+  func splitTerminalHorizontally() {
+    guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
+    if case .terminal(let container) = tabs[selectedIndex] {
+      container.splitHorizontally()
+    }
+  }
+
+  /// Splits the active terminal tab vertically (left/right).
+  func splitTerminalVertically() {
+    guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
+    if case .terminal(let container) = tabs[selectedIndex] {
+      container.splitVertically()
+    }
+  }
+
+  // MARK: - Theming
+
+  func applyTheme(_ theme: Theme) {
+    self.theme = theme
+    contentView.layer?.backgroundColor = theme.bgColor.cgColor
+    if let cache = iconCache {
+      cache.rebuild(theme: theme)
+    } else {
+      iconCache = IconCache(theme: theme)
+    }
+    rebuildSegments()
+    for tab in tabs {
+      tab.applyTheme(theme)
+    }
+  }
+
+  // MARK: - Segmented Control
+
+  /// Rebuilds the tab display to match the current tab list.
+  private func rebuildSegments() {
+    syncToWindowModel()
+  }
+
+  /// Push current tab state to the SwiftUI-observable WindowModel.
+  func syncToWindowModel() {
+    assert(Thread.isMainThread, "syncToWindowModel must run on the main thread")
+    guard let ws = windowModel else { return }
+
+    // Internal consistency: selectedIndex must always point at a real tab,
+    // or be -1 when there are no tabs. Catches races where two paths both
+    // mutate `tabs` / `selectedIndex` without coordinating.
+    assert(
+      tabs.isEmpty
+        ? selectedIndex == -1
+        : (selectedIndex >= 0 && selectedIndex < tabs.count),
+      "TabManager state inconsistent: selectedIndex=\(selectedIndex), tabs.count=\(tabs.count)"
+    )
+
+    let infos = tabs.enumerated().map { (i, tab) in
+      TabDisplayInfo(
+        id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
+        index: i,
+        title: tab.title,
+        icon: tabIcon(for: tab),
+        isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
+        isTerminal: { if case .terminal = tab { return true } else { return false } }(),
+        needsAttention: tab.needsAttention
+      )
+    }
+    ws.refreshTabs(infos, selectedIndex: selectedIndex)
+
+    // Update the active file path for sidebar highlighting.
+    if let editor = selectedEditor {
+      ws.activeFilePath = editor.filePath
+    } else {
+      ws.activeFilePath = nil
+    }
+  }
+
+  /// Updates tab labels to reflect current tab titles (e.g., after a
+  /// terminal title change or editor save).
+  func refreshSegmentLabels() {
+    syncToWindowModel()
+  }
+
+  /// Returns the appropriate icon for a tab entry.
+  private func tabIcon(for tab: TabEntry) -> NSImage? {
+    switch tab {
+    case .terminal:
+      return iconCache?.toolbarIcon(name: "console")
+        ?? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+    case .editor(let editor):
+      if let path = editor.filePath {
+        let filename = (path as NSString).lastPathComponent
+        return iconCache?.icon(filename: filename, isDirectory: false, expanded: false)
+          ?? NSWorkspace.shared.icon(forFile: path)
+      }
+      return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
+    case .imagePreview:
+      return iconCache?.toolbarIcon(name: "image")
+        ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
+    }
+  }
+
+  // MARK: - Editor Options
+
+  /// Builds an `EditorOptions` value from the current `Settings` so that
+  /// newly opened editor tabs inherit the user's preferences.
+  func editorOptionsFromSettings() -> EditorOptions {
+    return EditorOptions(
+      fontSize: UInt32(settings.fontSize),
+      fontFamily: settings.fontFamily,
+      tabSize: UInt32(settings.tabWidth),
+      insertSpaces: settings.useSpaces,
+      wordWrap: settings.wordWrap ? "on" : "off",
+      minimapEnabled: settings.minimapEnabled,
+      lineNumbers: settings.showLineNumbers ? "on" : "off",
+      renderWhitespace: settings.renderWhitespace,
+      renderLineHighlight: settings.highlightCurrentLine ? "line" : "none",
+      rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
+      stickyScroll: settings.stickyScroll,
+      bracketPairColorization: settings.bracketPairColorization,
+      indentGuides: settings.indentGuides,
+      fontLigatures: settings.fontLigatures,
+      folding: settings.folding,
+      scrollBeyondLastLine: settings.scrollBeyondLastLine,
+      smoothScrolling: settings.smoothScrolling,
+      cursorStyle: settings.editorCursorStyle,
+      cursorBlinking: settings.editorCursorBlinking,
+      lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
+      autoClosingBrackets: settings.editorAutoClosingBrackets,
+      cursorSurroundingLines: UInt32(settings.editorCursorSurroundingLines),
+      selectionHighlight: settings.editorSelectionHighlight,
+      occurrencesHighlight: settings.editorOccurrencesHighlight,
+      wordBasedSuggestions: settings.editorWordBasedSuggestions
+    )
+  }
+
+  // MARK: - Language Detection
+
+  /// Maps a file path to its Monaco language identifier based on extension.
+  private func languageIdForPath(_ path: String) -> String {
+    // Check filename (without extension) for special cases.
+    let filename = (path as NSString).lastPathComponent.lowercased()
+    if filename == "dockerfile" || filename == "containerfile" || filename.hasPrefix("dockerfile.")
+      || filename.hasPrefix("containerfile.")
+    {
+      return "dockerfile"
+    }
+    switch filename {
+    case "makefile", "gnumakefile": return "plaintext"
+    case "cmakelists.txt": return "plaintext"
+    case ".gitignore", ".dockerignore": return "ini"
+    case ".env", ".env.local", ".env.example": return "ini"
+    default: break
     }
 
-    // MARK: - Removing Tabs
-
-    /// Release resources owned by a tab entry (kill processes, tear down
-    /// WebViews) so they don't linger after the tab is removed.
-    private func cleanupTab(_ entry: TabEntry) {
-        switch entry {
-        case .terminal(let container):
-            container.terminateAllProcesses()
-        case .editor(let editor):
-            editor.cleanup()
-        case .imagePreview:
-            break
-        }
+    let ext = (path as NSString).pathExtension.lowercased()
+    switch ext {
+    case "rs": return "rust"
+    case "swift": return "swift"
+    case "py", "pyi": return "python"
+    case "js", "mjs", "cjs", "jsx": return "javascript"
+    case "ts", "mts", "cts", "tsx": return "typescript"
+    case "c": return "c"
+    case "cpp", "cc", "cxx", "hxx", "hh": return "cpp"
+    case "h", "hpp": return "cpp"
+    case "go": return "go"
+    case "java": return "java"
+    case "rb": return "ruby"
+    case "sh", "bash", "zsh", "fish": return "shell"
+    case "json", "jsonc": return "json"
+    case "yaml", "yml": return "yaml"
+    case "toml": return "toml"
+    case "md", "markdown": return "markdown"
+    case "html", "htm": return "html"
+    case "css": return "css"
+    case "scss": return "scss"
+    case "less": return "less"
+    case "xml", "svg", "xsl", "xslt": return "xml"
+    case "php": return "php"
+    case "sql": return "sql"
+    case "lua": return "lua"
+    case "kt", "kts": return "kotlin"
+    case "dart": return "dart"
+    case "ex", "exs": return "elixir"
+    case "graphql", "gql": return "graphql"
+    case "cs": return "csharp"
+    case "fs", "fsx": return "fsharp"
+    case "pl", "pm": return "perl"
+    case "r": return "r"
+    case "m": return "objective-c"
+    case "scala": return "scala"
+    case "clj", "cljs", "cljc": return "clojure"
+    case "coffee": return "coffee"
+    case "pug": return "pug"
+    case "tf", "tfvars": return "hcl"
+    case "proto": return "protobuf"
+    case "ini", "cfg", "conf": return "ini"
+    case "bat", "cmd": return "bat"
+    case "ps1", "psm1": return "powershell"
+    default: return "plaintext"
     }
+  }
 
-    /// Records a tab entry in the closed tabs stack for later reopening.
-    private func recordClosedTab(_ entry: TabEntry) {
-        switch entry {
-        case .editor(let e):
-            if let p = e.filePath {
-                closedTabs.append(.editor(path: p))
-                if closedTabs.count > maxClosedTabs {
-                    closedTabs.removeFirst()
-                }
-            }
-        case .imagePreview(let p, _):
-            closedTabs.append(.imagePreview(path: p))
-            if closedTabs.count > maxClosedTabs {
-                closedTabs.removeFirst()
-            }
-        case .terminal:
-            break // Terminals cannot be reopened
-        }
+  // MARK: - File Type Detection
+
+  /// Returns `true` if the file path has an image extension.
+  static func isImageFile(_ path: String) -> Bool {
+    let ext = (path as NSString).pathExtension.lowercased()
+    switch ext {
+    case "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif":
+      return true
+    default:
+      return false
     }
-
-    /// Closes the tab at the given index. If it is the active tab, the
-    /// nearest neighbor is selected. If it was the last tab, `selectedIndex`
-    /// becomes -1.
-    func closeTab(index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-
-        let entry = tabs[index]
-        recordClosedTab(entry)
-        cleanupTab(entry)
-
-        // Remove from open file paths tracking.
-        switch entry {
-        case .editor(let e):
-            if let p = e.filePath { openFilePaths.remove(p) }
-        case .imagePreview(let p, _):
-            openFilePaths.remove(p)
-        default:
-            break
-        }
-
-        // Remove the tab's view from the content area if it is currently displayed.
-        if index == selectedIndex {
-            entry.view.removeFromSuperview()
-        }
-
-        tabs.remove(at: index)
-        pinnedTabs.remove(at: index)
-        tabUniqueIds.remove(at: index)
-        rebuildSegments()
-
-        if tabs.isEmpty {
-            // Auto-create a new terminal tab so the window is never empty,
-            // matching the Linux behavior.
-            addTerminalTab()
-            return
-        }
-
-        // Select the nearest valid tab.
-        let newIndex = min(index, tabs.count - 1)
-        selectTab(index: newIndex)
-    }
-
-    /// Clean up all tabs (kill processes, tear down WebViews). Called when the
-    /// window closes to ensure nothing lingers.
-    func cleanupAllTabs() {
-        for tab in tabs {
-            cleanupTab(tab)
-        }
-    }
-
-    /// Toggles the pinned state of the tab at the given index.
-    func togglePin(index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-        pinnedTabs[index].toggle()
-        refreshSegmentLabels()
-    }
-
-    /// Unpins the tab at the given index (used before closing a pinned tab).
-    func unpin(index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-        pinnedTabs[index] = false
-        refreshSegmentLabels()
-    }
-
-    /// Closes all tabs except the one at `keepIndex`. Pinned tabs are preserved.
-    /// If any closeable editors have unsaved changes, a single confirmation
-    /// alert is shown listing all unsaved files.
-    func closeOtherTabs(keepIndex: Int) {
-        guard keepIndex >= 0, keepIndex < tabs.count else { return }
-
-        // Collect modified editors that would be closed.
-        var unsavedNames: [String] = []
-        for (i, tab) in tabs.enumerated() {
-            if i == keepIndex || pinnedTabs[i] { continue }
-            if case .editor(let e) = tab, e.isModified {
-                let name = e.filePath.map { ($0 as NSString).lastPathComponent } ?? "Untitled"
-                unsavedNames.append(name)
-            }
-        }
-
-        if !unsavedNames.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Unsaved Changes"
-            alert.informativeText = "The following files have unsaved changes:\n\(unsavedNames.joined(separator: "\n"))\n\nDiscard changes and close?"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Discard & Close")
-            alert.addButton(withTitle: "Cancel")
-
-            let response = alert.runModal()
-            guard response == .alertFirstButtonReturn else { return }
-        }
-
-        // Remember the tab entry to keep so we can find it after removal.
-        let keepView = tabs[keepIndex].view
-
-        // Remove the currently displayed view before modifying the array.
-        if selectedIndex >= 0, selectedIndex < tabs.count, selectedIndex != keepIndex, !pinnedTabs[selectedIndex] {
-            tabs[selectedIndex].view.removeFromSuperview()
-        }
-
-        // Collect indices to close in reverse order to preserve index validity.
-        for i in stride(from: tabs.count - 1, through: 0, by: -1) {
-            if i != keepIndex && !pinnedTabs[i] {
-                let closedEntry = tabs[i]
-                recordClosedTab(closedEntry)
-                cleanupTab(closedEntry)
-
-                // Remove from open file paths tracking.
-                switch closedEntry {
-                case .editor(let e):
-                    if let p = e.filePath { openFilePaths.remove(p) }
-                case .imagePreview(let p, _):
-                    openFilePaths.remove(p)
-                default:
-                    break
-                }
-
-                tabs.remove(at: i)
-                pinnedTabs.remove(at: i)
-                tabUniqueIds.remove(at: i)
-            }
-        }
-
-        rebuildSegments()
-
-        if tabs.isEmpty {
-            selectedIndex = -1
-            NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
-        } else {
-            // Find the kept tab's new index.
-            let newIndex = tabs.firstIndex(where: { $0.view === keepView }) ?? 0
-            selectTab(index: newIndex)
-        }
-    }
-
-    // MARK: - Reopening Closed Tabs
-
-    /// Reopens the most recently closed editor or image preview tab.
-    /// Returns the file path that was reopened, or `nil` if the stack was empty
-    /// or the file no longer exists on disk.
-    @discardableResult
-    func reopenLastClosedTab() -> String? {
-        guard let info = closedTabs.popLast() else { return nil }
-        let path = info.path
-        guard FileManager.default.fileExists(atPath: path) else { return nil }
-        // Use the existing addEditorTab method, which handles deduplication
-        // and image detection internally.
-        addEditorTab(path: path)
-        return path
-    }
-
-    // MARK: - Reordering
-
-    /// Moves a tab from one index to another, preserving pinned state and
-    /// updating selection to follow the moved tab.
-    func moveTab(from sourceIndex: Int, to destinationIndex: Int) {
-        guard sourceIndex != destinationIndex,
-              sourceIndex >= 0, sourceIndex < tabs.count,
-              destinationIndex >= 0, destinationIndex < tabs.count else { return }
-
-        let entry = tabs.remove(at: sourceIndex)
-        let pinned = pinnedTabs.remove(at: sourceIndex)
-        let uid = tabUniqueIds.remove(at: sourceIndex)
-        tabs.insert(entry, at: destinationIndex)
-        pinnedTabs.insert(pinned, at: destinationIndex)
-        tabUniqueIds.insert(uid, at: destinationIndex)
-
-        // Track the moved tab's new position.
-        if selectedIndex == sourceIndex {
-            selectedIndex = destinationIndex
-        } else if sourceIndex < selectedIndex && destinationIndex >= selectedIndex {
-            selectedIndex -= 1
-        } else if sourceIndex > selectedIndex && destinationIndex <= selectedIndex {
-            selectedIndex += 1
-        }
-
-        rebuildSegments()
-    }
-
-    // MARK: - Selection
-
-    /// Switches the visible tab to the one at `index`.
-    func selectTab(index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-
-        // Remove the previous tab's view.
-        if selectedIndex >= 0, selectedIndex < tabs.count {
-            tabs[selectedIndex].view.removeFromSuperview()
-        }
-
-        selectedIndex = index
-        if case .terminal(let container) = tabs[index] {
-            container.activeTerminal?.clearAttention()
-        }
-        syncToWindowModel()
-
-        // Activate the new tab.
-        let entry = tabs[index]
-        let view = entry.view
-        view.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: contentView.topAnchor),
-            view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-        entry.focus()
-
-        NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
-    }
-
-    // MARK: - Selected Tab Helpers
-
-    /// The currently selected tab entry, or `nil` if no tabs are open.
-    var selectedTab: TabEntry? {
-        guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
-        return tabs[selectedIndex]
-    }
-
-    /// The currently selected terminal container, or `nil` if the selection is
-    /// not a terminal tab.
-    var selectedTerminal: TerminalContainer? {
-        if case .terminal(let tc) = selectedTab { return tc }
-        return nil
-    }
-
-    /// The currently selected editor tab, or `nil` if the selection is not an
-    /// editor tab.
-    var selectedEditor: EditorTab? {
-        if case .editor(let et) = selectedTab { return et }
-        return nil
-    }
-
-    // MARK: - Ownership Queries
-
-    /// Returns `true` if this TabManager owns the given terminal (i.e. it lives
-    /// in one of our terminal containers).
-    func ownsTerminal(_ terminal: TerminalTab) -> Bool {
-        for tab in tabs {
-            if case .terminal(let container) = tab {
-                if container.terminals.contains(where: { $0 === terminal }) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    /// Returns `true` if this TabManager owns the given editor tab.
-    func ownsEditor(_ editor: EditorTab) -> Bool {
-        return tabs.contains {
-            if case .editor(let e) = $0 { return e === editor }
-            return false
-        }
-    }
-
-    // MARK: - Terminal Splitting
-
-    /// Splits the active terminal tab horizontally (top/bottom).
-    func splitTerminalHorizontally() {
-        guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
-        if case .terminal(let container) = tabs[selectedIndex] {
-            container.splitHorizontally()
-        }
-    }
-
-    /// Splits the active terminal tab vertically (left/right).
-    func splitTerminalVertically() {
-        guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
-        if case .terminal(let container) = tabs[selectedIndex] {
-            container.splitVertically()
-        }
-    }
-
-    // MARK: - Theming
-
-    func applyTheme(_ theme: Theme) {
-        self.theme = theme
-        contentView.layer?.backgroundColor = theme.bgColor.cgColor
-        if let cache = iconCache {
-            cache.rebuild(theme: theme)
-        } else {
-            iconCache = IconCache(theme: theme)
-        }
-        rebuildSegments()
-        for tab in tabs {
-            tab.applyTheme(theme)
-        }
-    }
-
-    // MARK: - Segmented Control
-
-    /// Rebuilds the tab display to match the current tab list.
-    private func rebuildSegments() {
-        syncToWindowModel()
-    }
-
-    /// Push current tab state to the SwiftUI-observable WindowModel.
-    func syncToWindowModel() {
-        assert(Thread.isMainThread, "syncToWindowModel must run on the main thread")
-        guard let ws = windowModel else { return }
-
-        // Internal consistency: selectedIndex must always point at a real tab,
-        // or be -1 when there are no tabs. Catches races where two paths both
-        // mutate `tabs` / `selectedIndex` without coordinating.
-        assert(
-            tabs.isEmpty
-                ? selectedIndex == -1
-                : (selectedIndex >= 0 && selectedIndex < tabs.count),
-            "TabManager state inconsistent: selectedIndex=\(selectedIndex), tabs.count=\(tabs.count)"
-        )
-
-        let infos = tabs.enumerated().map { (i, tab) in
-            TabDisplayInfo(
-                id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
-                index: i,
-                title: tab.title,
-                icon: tabIcon(for: tab),
-                isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
-                isTerminal: { if case .terminal = tab { return true } else { return false } }(),
-                needsAttention: tab.needsAttention
-            )
-        }
-        ws.refreshTabs(infos, selectedIndex: selectedIndex)
-
-        // Update the active file path for sidebar highlighting.
-        if let editor = selectedEditor {
-            ws.activeFilePath = editor.filePath
-        } else {
-            ws.activeFilePath = nil
-        }
-    }
-
-    /// Updates tab labels to reflect current tab titles (e.g., after a
-    /// terminal title change or editor save).
-    func refreshSegmentLabels() {
-        syncToWindowModel()
-    }
-
-    /// Returns the appropriate icon for a tab entry.
-    private func tabIcon(for tab: TabEntry) -> NSImage? {
-        switch tab {
-        case .terminal:
-            return iconCache?.toolbarIcon(name: "console")
-                ?? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
-        case .editor(let editor):
-            if let path = editor.filePath {
-                let filename = (path as NSString).lastPathComponent
-                return iconCache?.icon(filename: filename, isDirectory: false, expanded: false)
-                    ?? NSWorkspace.shared.icon(forFile: path)
-            }
-            return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
-        case .imagePreview:
-            return iconCache?.toolbarIcon(name: "image")
-                ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
-        }
-    }
-
-    // MARK: - Context Menu
-
-    /// Returns a context menu for the tab at the given index.
-    func contextMenu(forTabIndex index: Int) -> NSMenu? {
-        guard index >= 0, index < tabs.count else { return nil }
-        let menu = NSMenu()
-
-        let pinTitle = pinnedTabs[index] ? "Unpin Tab" : "Pin Tab"
-        let pinItem = NSMenuItem(title: pinTitle, action: #selector(pinTabFromMenu(_:)), keyEquivalent: "")
-        pinItem.tag = index
-        pinItem.target = self
-        menu.addItem(pinItem)
-
-        let closeItem = NSMenuItem(title: "Close Tab", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
-        closeItem.tag = index
-        closeItem.target = self
-        menu.addItem(closeItem)
-
-        let closeOthersItem = NSMenuItem(title: "Close Other Tabs", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
-        closeOthersItem.tag = index
-        closeOthersItem.target = self
-        menu.addItem(closeOthersItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let newTabItem = NSMenuItem(title: "New Tab", action: #selector(newTabFromMenu(_:)), keyEquivalent: "")
-        newTabItem.target = self
-        menu.addItem(newTabItem)
-
-        return menu
-    }
-
-    @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
-        if let handler = tabCloseHandler {
-            handler(sender.tag)
-        } else {
-            closeTab(index: sender.tag)
-        }
-    }
-
-    @objc private func pinTabFromMenu(_ sender: NSMenuItem) {
-        togglePin(index: sender.tag)
-    }
-
-    @objc private func newTabFromMenu(_ sender: NSMenuItem) {
-        addTerminalTab()
-    }
-
-    @objc private func closeOtherTabsFromMenu(_ sender: NSMenuItem) {
-        closeOtherTabs(keepIndex: sender.tag)
-    }
-
-    // MARK: - Editor Options
-
-    /// Builds an `EditorOptions` value from the current `Settings` so that
-    /// newly opened editor tabs inherit the user's preferences.
-    func editorOptionsFromSettings() -> EditorOptions {
-        return EditorOptions(
-            fontSize: UInt32(settings.fontSize),
-            fontFamily: settings.fontFamily,
-            tabSize: UInt32(settings.tabWidth),
-            insertSpaces: settings.useSpaces,
-            wordWrap: settings.wordWrap ? "on" : "off",
-            minimapEnabled: settings.minimapEnabled,
-            lineNumbers: settings.showLineNumbers ? "on" : "off",
-            renderWhitespace: settings.renderWhitespace,
-            renderLineHighlight: settings.highlightCurrentLine ? "line" : "none",
-            rulers: settings.showRightMargin ? [UInt32(settings.rightMarginPosition)] : [],
-            stickyScroll: settings.stickyScroll,
-            bracketPairColorization: settings.bracketPairColorization,
-            indentGuides: settings.indentGuides,
-            fontLigatures: settings.fontLigatures,
-            folding: settings.folding,
-            scrollBeyondLastLine: settings.scrollBeyondLastLine,
-            smoothScrolling: settings.smoothScrolling,
-            cursorStyle: settings.editorCursorStyle,
-            cursorBlinking: settings.editorCursorBlinking,
-            lineHeight: settings.editorLineHeight > 0 ? UInt32(settings.editorLineHeight) : nil,
-            autoClosingBrackets: settings.editorAutoClosingBrackets,
-            cursorSurroundingLines: UInt32(settings.editorCursorSurroundingLines),
-            selectionHighlight: settings.editorSelectionHighlight,
-            occurrencesHighlight: settings.editorOccurrencesHighlight,
-            wordBasedSuggestions: settings.editorWordBasedSuggestions
-        )
-    }
-
-    // MARK: - Language Detection
-
-    /// Maps a file path to its Monaco language identifier based on extension.
-    private func languageIdForPath(_ path: String) -> String {
-        // Check filename (without extension) for special cases.
-        let filename = (path as NSString).lastPathComponent.lowercased()
-        if filename == "dockerfile" || filename == "containerfile" || filename.hasPrefix("dockerfile.") || filename.hasPrefix("containerfile.") {
-            return "dockerfile"
-        }
-        switch filename {
-        case "makefile", "gnumakefile": return "plaintext"
-        case "cmakelists.txt": return "plaintext"
-        case ".gitignore", ".dockerignore": return "ini"
-        case ".env", ".env.local", ".env.example": return "ini"
-        default: break
-        }
-
-        let ext = (path as NSString).pathExtension.lowercased()
-        switch ext {
-        case "rs": return "rust"
-        case "swift": return "swift"
-        case "py", "pyi": return "python"
-        case "js", "mjs", "cjs", "jsx": return "javascript"
-        case "ts", "mts", "cts", "tsx": return "typescript"
-        case "c": return "c"
-        case "cpp", "cc", "cxx", "hxx", "hh": return "cpp"
-        case "h", "hpp": return "cpp"
-        case "go": return "go"
-        case "java": return "java"
-        case "rb": return "ruby"
-        case "sh", "bash", "zsh", "fish": return "shell"
-        case "json", "jsonc": return "json"
-        case "yaml", "yml": return "yaml"
-        case "toml": return "toml"
-        case "md", "markdown": return "markdown"
-        case "html", "htm": return "html"
-        case "css": return "css"
-        case "scss": return "scss"
-        case "less": return "less"
-        case "xml", "svg", "xsl", "xslt": return "xml"
-        case "php": return "php"
-        case "sql": return "sql"
-        case "lua": return "lua"
-        case "kt", "kts": return "kotlin"
-        case "dart": return "dart"
-        case "ex", "exs": return "elixir"
-        case "graphql", "gql": return "graphql"
-        case "cs": return "csharp"
-        case "fs", "fsx": return "fsharp"
-        case "pl", "pm": return "perl"
-        case "r": return "r"
-        case "m": return "objective-c"
-        case "scala": return "scala"
-        case "clj", "cljs", "cljc": return "clojure"
-        case "coffee": return "coffee"
-        case "pug": return "pug"
-        case "tf", "tfvars": return "hcl"
-        case "proto": return "protobuf"
-        case "ini", "cfg", "conf": return "ini"
-        case "bat", "cmd": return "bat"
-        case "ps1", "psm1": return "powershell"
-        default: return "plaintext"
-        }
-    }
-
-    // MARK: - File Type Detection
-
-    /// Returns `true` if the file path has an image extension.
-    static func isImageFile(_ path: String) -> Bool {
-        let ext = (path as NSString).pathExtension.lowercased()
-        switch ext {
-        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif":
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// Returns `true` if the file is likely a binary (>10 MB or contains null
-    /// bytes in the first 8 KB).
-    static func isBinaryFile(_ path: String) -> Bool {
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: path),
-              let size = attrs[.size] as? UInt64 else { return false }
-
-        // Files larger than 10 MB are treated as binary.
-        if size > 10 * 1024 * 1024 { return true }
-
-        // Read the first 8 KB and check for null bytes.
-        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
-        defer { handle.closeFile() }
-        let data = handle.readData(ofLength: 8192)
-        return data.contains(0)
-    }
+  }
+
+  /// Returns `true` if the file is likely a binary (>10 MB or contains null
+  /// bytes in the first 8 KB).
+  static func isBinaryFile(_ path: String) -> Bool {
+    let fm = FileManager.default
+    guard let attrs = try? fm.attributesOfItem(atPath: path),
+      let size = attrs[.size] as? UInt64
+    else { return false }
+
+    // Files larger than 10 MB are treated as binary.
+    if size > 10 * 1024 * 1024 { return true }
+
+    // Read the first 8 KB and check for null bytes.
+    guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+    defer { handle.closeFile() }
+    let data = handle.readData(ofLength: 8192)
+    return data.contains(0)
+  }
 }
