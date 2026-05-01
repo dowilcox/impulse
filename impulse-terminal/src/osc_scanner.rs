@@ -183,8 +183,12 @@ impl OscScanner {
         // URL-decode the path.
         let decoded = Self::url_decode(encoded_path)?;
 
-        // Validate: must be absolute and non-empty.
-        if decoded.starts_with('/') && !decoded.is_empty() {
+        // Validate: must be an existing absolute directory and safe to pass
+        // across FFI boundaries.
+        if decoded.starts_with('/')
+            && !decoded.contains('\0')
+            && std::path::Path::new(&decoded).is_dir()
+        {
             Some(decoded)
         } else {
             None
@@ -222,26 +226,53 @@ mod tests {
 
     #[test]
     fn test_osc7_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().to_string_lossy();
         let mut scanner = OscScanner::new();
-        let seq = b"\x1b]7;file://myhost/Users/test\x07";
-        scanner.scan(seq);
+        let seq = format!("\x1b]7;file://myhost{cwd}\x07");
+        scanner.scan(seq.as_bytes());
         let events = scanner.drain_events();
-        assert_eq!(
-            events,
-            vec![OscEvent::CwdChanged("/Users/test".to_string())]
-        );
+        assert_eq!(events, vec![OscEvent::CwdChanged(cwd.to_string())]);
     }
 
     #[test]
     fn test_osc7_url_encoded() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("my dir").join("foo").join("bar");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let encoded = cwd.to_string_lossy().replace(' ', "%20");
         let mut scanner = OscScanner::new();
-        let seq = b"\x1b]7;file://host/Users/my%20dir/foo%2Fbar\x07";
-        scanner.scan(seq);
+        let seq = format!("\x1b]7;file://host{encoded}\x07");
+        scanner.scan(seq.as_bytes());
         let events = scanner.drain_events();
         assert_eq!(
             events,
-            vec![OscEvent::CwdChanged("/Users/my dir/foo/bar".to_string())]
+            vec![OscEvent::CwdChanged(cwd.to_string_lossy().to_string())]
         );
+    }
+
+    #[test]
+    fn test_osc7_ignores_nonexistent_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let mut scanner = OscScanner::new();
+        let seq = format!("\x1b]7;file://host{}\x07", missing.to_string_lossy());
+        scanner.scan(seq.as_bytes());
+
+        assert!(scanner.drain_events().is_empty());
+    }
+
+    #[test]
+    fn test_osc7_ignores_nul_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut scanner = OscScanner::new();
+        let seq = format!(
+            "\x1b]7;file://host{}%00suffix\x07",
+            temp.path().to_string_lossy()
+        );
+        scanner.scan(seq.as_bytes());
+
+        assert!(scanner.drain_events().is_empty());
     }
 
     #[test]

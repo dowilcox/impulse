@@ -1812,12 +1812,9 @@ fn detect_project_root(file_uri: &str, markers: &[String]) -> Option<String> {
     let path = uri_to_file_path(file_uri)?;
     let mut dir = path.parent()?;
     let mut best: Option<String> = None;
+    let mut git_root: Option<String> = None;
 
     loop {
-        if dir.join(".git").exists() {
-            return path_to_file_uri(dir);
-        }
-
         if best.is_none() {
             for marker in markers {
                 if dir.join(marker).exists() {
@@ -1826,6 +1823,9 @@ fn detect_project_root(file_uri: &str, markers: &[String]) -> Option<String> {
                 }
             }
         }
+        if git_root.is_none() && dir.join(".git").exists() {
+            git_root = path_to_file_uri(dir);
+        }
 
         match dir.parent() {
             Some(parent) if parent != dir => dir = parent,
@@ -1833,7 +1833,7 @@ fn detect_project_root(file_uri: &str, markers: &[String]) -> Option<String> {
         }
     }
 
-    best
+    best.or(git_root)
 }
 
 impl LspRegistry {
@@ -2030,5 +2030,45 @@ impl LspRegistry {
         for client in clients {
             let _ = client.shutdown().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod root_detection_tests {
+    use super::{detect_project_root, path_to_file_uri};
+
+    #[test]
+    fn marker_root_beats_outer_git_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        let package = repo.join("packages").join("app");
+        std::fs::create_dir_all(package.join("src")).unwrap();
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+        let file = package.join("src").join("main.ts");
+        std::fs::write(&file, "export {};\n").unwrap();
+
+        let root = detect_project_root(
+            &path_to_file_uri(&file).unwrap(),
+            &[String::from("package.json")],
+        );
+
+        assert_eq!(root, path_to_file_uri(&package));
+    }
+
+    #[test]
+    fn git_root_used_when_no_marker_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        let src = repo.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let file = src.join("main.rs");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+
+        let root =
+            detect_project_root(&path_to_file_uri(&file).unwrap(), &[String::from("go.mod")]);
+
+        assert_eq!(root, path_to_file_uri(repo));
     }
 }

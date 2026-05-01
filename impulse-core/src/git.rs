@@ -72,6 +72,21 @@ pub struct BlameInfo {
     pub summary: String,
 }
 
+fn file_diff_all_lines_added(path: &Path) -> Result<FileDiff, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let changed_lines = content
+        .lines()
+        .enumerate()
+        .map(|(idx, _)| ((idx + 1) as u32, DiffLineStatus::Added))
+        .collect();
+
+    Ok(FileDiff {
+        changed_lines,
+        deleted_lines: Vec::new(),
+    })
+}
+
 /// Get diff status for each line of a file (working tree vs HEAD).
 /// Returns changed lines with their status.
 pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
@@ -89,14 +104,31 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
     let path = Path::new(file_path);
     let repo = open_repo(path)?;
 
+    // Make file_path relative to repo root
+    let repo_root = repo.workdir().ok_or("Bare repository")?;
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical_repo_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let rel_path = canonical_path
+        .strip_prefix(&canonical_repo_root)
+        .map_err(|_| "File not in repo".to_string())?;
+
+    if repo
+        .status_file(rel_path)
+        .map(|status| {
+            status.contains(git2::Status::WT_NEW) || status.contains(git2::Status::INDEX_NEW)
+        })
+        .unwrap_or(false)
+    {
+        return file_diff_all_lines_added(path);
+    }
+
     let head = match repo.head() {
         Ok(head) => head,
         Err(_) => {
             // No HEAD (empty repo) -- all lines are added
-            return Ok(FileDiff {
-                changed_lines: HashMap::new(),
-                deleted_lines: Vec::new(),
-            });
+            return file_diff_all_lines_added(path);
         }
     };
     let head_tree = head
@@ -104,11 +136,6 @@ pub fn get_file_diff(file_path: &str) -> Result<FileDiff, String> {
         .map_err(|e| format!("Failed to get HEAD tree: {}", e))?;
 
     let mut diff_opts = git2::DiffOptions::new();
-    // Make file_path relative to repo root
-    let repo_root = repo.workdir().ok_or("Bare repository")?;
-    let rel_path = path
-        .strip_prefix(repo_root)
-        .map_err(|_| "File not in repo".to_string())?;
     diff_opts.pathspec(rel_path.to_string_lossy().as_ref());
 
     let diff = repo
@@ -366,6 +393,51 @@ pub fn get_git_root(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn commit_file(repo: &git2::Repository, path: &str, message: &str) {
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(path)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("Impulse Test", "impulse@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
+            .unwrap();
+    }
+
+    #[test]
+    fn get_file_diff_marks_no_head_file_lines_added() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        let file = temp.path().join("new.txt");
+        std::fs::write(&file, "one\ntwo\n").unwrap();
+        drop(repo);
+
+        let diff = get_file_diff(file.to_str().unwrap()).unwrap();
+
+        assert_eq!(diff.changed_lines.get(&1), Some(&DiffLineStatus::Added));
+        assert_eq!(diff.changed_lines.get(&2), Some(&DiffLineStatus::Added));
+        assert!(diff.deleted_lines.is_empty());
+    }
+
+    #[test]
+    fn get_file_diff_marks_untracked_file_lines_added() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        let tracked = temp.path().join("tracked.txt");
+        std::fs::write(&tracked, "tracked\n").unwrap();
+        commit_file(&repo, "tracked.txt", "Initial commit");
+
+        let file = temp.path().join("untracked.txt");
+        std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
+
+        let diff = get_file_diff(file.to_str().unwrap()).unwrap();
+
+        assert_eq!(diff.changed_lines.get(&1), Some(&DiffLineStatus::Added));
+        assert_eq!(diff.changed_lines.get(&2), Some(&DiffLineStatus::Added));
+        assert_eq!(diff.changed_lines.get(&3), Some(&DiffLineStatus::Added));
+        assert!(diff.deleted_lines.is_empty());
+    }
 
     #[test]
     fn is_leap_year_basic() {

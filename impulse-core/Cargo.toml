@@ -8,7 +8,6 @@ license = "GPL-3.0-only"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-portable-pty = "0.8"
 uuid = { version = "1", features = ["v4"] }
 ignore = "0.4"
 log = { workspace = true }

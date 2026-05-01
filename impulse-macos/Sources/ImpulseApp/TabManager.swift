@@ -220,15 +220,7 @@ final class TabManager: NSObject {
   /// Creates a new terminal tab (wrapped in a TerminalContainer for split
   /// support) and makes it active.
   func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
-    let fallbackDir: String
-    if !settings.lastDirectory.isEmpty,
-      FileManager.default.fileExists(atPath: settings.lastDirectory)
-    {
-      fallbackDir = settings.lastDirectory
-    } else {
-      fallbackDir = NSHomeDirectory()
-    }
-    let dir = directory ?? fallbackDir
+    let dir = directory ?? NSHomeDirectory()
     let termSettings = settings.terminalSettings(directory: dir)
     let termTheme = TerminalTheme(
       bg: theme.terminalBg,

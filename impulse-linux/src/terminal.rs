@@ -79,6 +79,12 @@ impl ShellSpawnCache {
     }
 }
 
+impl Drop for ShellSpawnCache {
+    fn drop(&mut self) {
+        impulse_core::shell::cleanup_temp_files(&self.launch.temp_files);
+    }
+}
+
 struct TerminalState {
     drawing: gtk4::DrawingArea,
     backend: RefCell<Option<TerminalBackend>>,

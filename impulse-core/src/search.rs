@@ -264,6 +264,10 @@ pub fn replace_in_file(
     replacement: &str,
     case_sensitive: bool,
 ) -> Result<usize, String> {
+    if search.is_empty() {
+        return Err("Search string cannot be empty".to_string());
+    }
+
     // Check file size before reading
     let metadata = std::fs::metadata(path)
         .map_err(|e| format!("Failed to read metadata for '{}': {}", path, e))?;
@@ -384,4 +388,21 @@ pub fn replace_in_files(
             (path.clone(), result)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_in_file;
+
+    #[test]
+    fn replace_in_file_rejects_empty_search_string() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("sample.txt");
+        std::fs::write(&file, "abc\n").unwrap();
+
+        let err = replace_in_file(file.to_str().unwrap(), "", "x", true).unwrap_err();
+
+        assert_eq!(err, "Search string cannot be empty");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "abc\n");
+    }
 }

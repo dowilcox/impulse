@@ -2,8 +2,9 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::grid::Dimensions;
@@ -254,6 +255,8 @@ fn flush_pending_input<W: Write>(writer: &mut W, pending: &mut VecDeque<u8>) -> 
 // TerminalBackend
 // ---------------------------------------------------------------------------
 
+const READ_THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// The main terminal backend. One instance per terminal tab/split.
 pub struct TerminalBackend {
     term: Arc<FairMutex<Term<EventProxy>>>,
@@ -262,6 +265,8 @@ pub struct TerminalBackend {
     read_thread: Mutex<Option<JoinHandle<()>>>,
     cols: u16,
     rows: u16,
+    cell_width: u16,
+    cell_height: u16,
     colors: ConfiguredColors,
     child_pid: u32,
     search: Mutex<TerminalSearch>,
@@ -327,6 +332,8 @@ impl TerminalBackend {
             read_thread: Mutex::new(Some(read_thread)),
             cols,
             rows,
+            cell_width,
+            cell_height,
             colors,
             child_pid,
             search: Mutex::new(TerminalSearch::new()),
@@ -484,11 +491,17 @@ impl TerminalBackend {
 
     /// Resize the terminal grid and PTY.
     pub fn resize(&mut self, cols: u16, rows: u16, cell_width: u16, cell_height: u16) {
-        if cols == self.cols && rows == self.rows {
+        if cols == self.cols
+            && rows == self.rows
+            && cell_width == self.cell_width
+            && cell_height == self.cell_height
+        {
             return;
         }
         self.cols = cols;
         self.rows = rows;
+        self.cell_width = cell_width;
+        self.cell_height = cell_height;
         let _ = self.cmd_tx.send(BackendMsg::Resize {
             cols,
             rows,
@@ -529,48 +542,15 @@ impl TerminalBackend {
         // each cell maps to a 0-based viewport row.
         let display_offset = term.grid().display_offset() as i32;
 
-        // Build mode flags.
-        let mut mode_flags = TerminalMode::empty();
-        if mode.contains(TermMode::SHOW_CURSOR) {
-            mode_flags |= TerminalMode::SHOW_CURSOR;
-        }
-        if mode.contains(TermMode::APP_CURSOR) {
-            mode_flags |= TerminalMode::APP_CURSOR;
-        }
-        if mode.contains(TermMode::APP_KEYPAD) {
-            mode_flags |= TerminalMode::APP_KEYPAD;
-        }
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
-            mode_flags |= TerminalMode::MOUSE_REPORT_CLICK;
-        }
-        if mode.contains(TermMode::MOUSE_MOTION) {
-            mode_flags |= TerminalMode::MOUSE_MOTION;
-        }
-        if mode.contains(TermMode::MOUSE_DRAG) {
-            mode_flags |= TerminalMode::MOUSE_DRAG;
-        }
-        if mode.contains(TermMode::SGR_MOUSE) {
-            mode_flags |= TerminalMode::MOUSE_SGR;
-        }
-        if mode.contains(TermMode::BRACKETED_PASTE) {
-            mode_flags |= TerminalMode::BRACKETED_PASTE;
-        }
-        if mode.contains(TermMode::FOCUS_IN_OUT) {
-            mode_flags |= TerminalMode::FOCUS_IN_OUT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            mode_flags |= TerminalMode::ALT_SCREEN;
-        }
-        if mode.contains(TermMode::LINE_WRAP) {
-            mode_flags |= TerminalMode::LINE_WRAP;
-        }
+        let mode_flags = convert_mode(mode);
 
         // Cursor state.
+        let cursor_row = cursor.point.line.0 + display_offset;
         let cursor_visible = mode.contains(TermMode::SHOW_CURSOR)
-            && cursor.point.line.0 >= 0
-            && (cursor.point.line.0 as usize) < num_lines;
+            && cursor_row >= 0
+            && (cursor_row as usize) < num_lines;
         let cursor_state = CursorState {
-            row: cursor.point.line.0.max(0) as usize,
+            row: cursor_row.max(0) as usize,
             col: cursor.point.column.0,
             shape: match cursor.shape {
                 AlacCursorShape::Block => CursorShape::Block,
@@ -585,24 +565,32 @@ impl TerminalBackend {
         // Selection ranges.
         let mut selection_ranges = Vec::new();
         if let Some(sel) = &content.selection {
-            let start_line = sel.start.line.0.max(0) as usize;
-            let end_line = (sel.end.line.0.max(0) as usize).min(num_lines.saturating_sub(1));
-            for row in start_line..=end_line {
-                let sc = if row == start_line {
-                    sel.start.column.0
-                } else {
-                    0
-                };
-                let ec = if row == end_line {
-                    sel.end.column.0
-                } else {
-                    num_cols.saturating_sub(1)
-                };
-                selection_ranges.push(HighlightRange {
-                    row: row as u16,
-                    start_col: sc as u16,
-                    end_col: ec as u16,
-                });
+            let viewport_top = -display_offset;
+            let viewport_bottom = num_lines as i32 - 1 - display_offset;
+            let start_line = sel.start.line.0.max(viewport_top);
+            let end_line = sel.end.line.0.min(viewport_bottom);
+            if start_line <= end_line {
+                for grid_line in start_line..=end_line {
+                    let row = grid_line + display_offset;
+                    if row < 0 {
+                        continue;
+                    }
+                    let sc = if grid_line == sel.start.line.0 {
+                        sel.start.column.0
+                    } else {
+                        0
+                    };
+                    let ec = if grid_line == sel.end.line.0 {
+                        sel.end.column.0
+                    } else {
+                        num_cols.saturating_sub(1)
+                    };
+                    selection_ranges.push(HighlightRange {
+                        row: row as u16,
+                        start_col: sc as u16,
+                        end_col: ec as u16,
+                    });
+                }
             }
         }
 
@@ -676,17 +664,17 @@ impl TerminalBackend {
         // grid and returns 0 because the buffer is too small.
         let lines = self.rows;
         let cols = self.cols;
-        // Allow up to lines*2 ranges for selection + search.
-        buffer::buffer_size(cols, lines, lines, lines)
+        // Selection can produce at most one range per visible line. Search can
+        // produce one range per visible cell for dense or single-character
+        // queries, so reserve the viewport worst case.
+        let search_ranges = cols.saturating_mul(lines);
+        buffer::buffer_size(cols, lines, lines, search_ranges)
     }
 
     /// Start a text selection.
     pub fn start_selection(&self, col: usize, row: usize, kind: SelectionKind) {
         let mut term = self.term.lock();
-        let point = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(row as i32),
-            alacritty_terminal::index::Column(col),
-        );
+        let point = viewport_point(&term, col, row);
         let ty = match kind {
             SelectionKind::Simple => SelectionType::Simple,
             SelectionKind::Block => SelectionType::Block,
@@ -703,11 +691,8 @@ impl TerminalBackend {
     /// Update the current selection endpoint.
     pub fn update_selection(&self, col: usize, row: usize) {
         let mut term = self.term.lock();
+        let point = viewport_point(&term, col, row);
         if let Some(ref mut sel) = term.selection {
-            let point = alacritty_terminal::index::Point::new(
-                alacritty_terminal::index::Line(row as i32),
-                alacritty_terminal::index::Column(col),
-            );
             sel.update(point, alacritty_terminal::index::Side::Right);
         }
     }
@@ -767,14 +752,11 @@ impl TerminalBackend {
     /// Used by the frontend for hover/click handling on OSC 8 hyperlinks.
     pub fn hyperlink_at(&self, col: usize, row: usize) -> Option<String> {
         let term = self.term.lock();
-        let point = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(row as i32),
-            alacritty_terminal::index::Column(col),
-        );
         let grid = term.grid();
         if row >= grid.screen_lines() || col >= grid.columns() {
             return None;
         }
+        let point = viewport_point(&term, col, row);
         let cell = &grid[point];
         cell.hyperlink().map(|h| h.uri().to_string())
     }
@@ -782,41 +764,7 @@ impl TerminalBackend {
     /// Get the current terminal mode flags.
     pub fn mode(&self) -> TerminalMode {
         let mode = *self.term.lock().mode();
-        let mut flags = TerminalMode::empty();
-        if mode.contains(TermMode::SHOW_CURSOR) {
-            flags |= TerminalMode::SHOW_CURSOR;
-        }
-        if mode.contains(TermMode::APP_CURSOR) {
-            flags |= TerminalMode::APP_CURSOR;
-        }
-        if mode.contains(TermMode::APP_KEYPAD) {
-            flags |= TerminalMode::APP_KEYPAD;
-        }
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
-            flags |= TerminalMode::MOUSE_REPORT_CLICK;
-        }
-        if mode.contains(TermMode::MOUSE_MOTION) {
-            flags |= TerminalMode::MOUSE_MOTION;
-        }
-        if mode.contains(TermMode::MOUSE_DRAG) {
-            flags |= TerminalMode::MOUSE_DRAG;
-        }
-        if mode.contains(TermMode::SGR_MOUSE) {
-            flags |= TerminalMode::MOUSE_SGR;
-        }
-        if mode.contains(TermMode::BRACKETED_PASTE) {
-            flags |= TerminalMode::BRACKETED_PASTE;
-        }
-        if mode.contains(TermMode::FOCUS_IN_OUT) {
-            flags |= TerminalMode::FOCUS_IN_OUT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            flags |= TerminalMode::ALT_SCREEN;
-        }
-        if mode.contains(TermMode::LINE_WRAP) {
-            flags |= TerminalMode::LINE_WRAP;
-        }
-        flags
+        convert_mode(mode)
     }
 
     /// Get the current terminal dimensions.
@@ -846,14 +794,31 @@ impl TerminalBackend {
         }
     }
 
-    /// Shut down the terminal and wait for the reader thread to exit so the
-    /// `Arc<FairMutex<Term>>` has no outstanding borrows when this backend is
-    /// dropped.
+    /// Shut down the terminal. The reader thread is joined when it exits
+    /// promptly, but shutdown does not block the UI indefinitely if a child
+    /// process or PTY close hangs.
     pub fn shutdown(&self) {
         let _ = self.cmd_tx.send(BackendMsg::Shutdown);
         let handle = self.read_thread.lock().ok().and_then(|mut h| h.take());
         if let Some(handle) = handle {
-            let _ = handle.join();
+            let (done_tx, done_rx) = mpsc::channel();
+            match std::thread::Builder::new()
+                .name("impulse-pty-reader-join".into())
+                .spawn(move || {
+                    let _ = handle.join();
+                    let _ = done_tx.send(());
+                }) {
+                Ok(joiner) => {
+                    if done_rx.recv_timeout(READ_THREAD_JOIN_TIMEOUT).is_ok() {
+                        let _ = joiner.join();
+                    } else {
+                        log::warn!("timed out waiting for PTY reader thread shutdown");
+                    }
+                }
+                Err(err) => {
+                    log::warn!("failed to spawn PTY reader joiner thread: {err}");
+                }
+            }
         }
     }
 
@@ -896,6 +861,53 @@ impl Drop for TerminalBackend {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn convert_mode(mode: TermMode) -> TerminalMode {
+    let mut flags = TerminalMode::empty();
+    if mode.contains(TermMode::SHOW_CURSOR) {
+        flags |= TerminalMode::SHOW_CURSOR;
+    }
+    if mode.contains(TermMode::APP_CURSOR) {
+        flags |= TerminalMode::APP_CURSOR;
+    }
+    if mode.contains(TermMode::APP_KEYPAD) {
+        flags |= TerminalMode::APP_KEYPAD;
+    }
+    if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+        flags |= TerminalMode::MOUSE_REPORT_CLICK;
+    }
+    if mode.contains(TermMode::MOUSE_MOTION) {
+        flags |= TerminalMode::MOUSE_MOTION;
+    }
+    if mode.contains(TermMode::MOUSE_DRAG) {
+        flags |= TerminalMode::MOUSE_DRAG;
+    }
+    if mode.contains(TermMode::SGR_MOUSE) {
+        flags |= TerminalMode::MOUSE_SGR;
+    }
+    if mode.contains(TermMode::BRACKETED_PASTE) {
+        flags |= TerminalMode::BRACKETED_PASTE;
+    }
+    if mode.contains(TermMode::FOCUS_IN_OUT) {
+        flags |= TerminalMode::FOCUS_IN_OUT;
+    }
+    if mode.contains(TermMode::ALT_SCREEN) {
+        flags |= TerminalMode::ALT_SCREEN;
+    }
+    if mode.contains(TermMode::LINE_WRAP) {
+        flags |= TerminalMode::LINE_WRAP;
+    }
+    flags
+}
+
+/// Convert a frontend viewport coordinate into alacritty's grid coordinate.
+fn viewport_point<T>(term: &Term<T>, col: usize, row: usize) -> alacritty_terminal::index::Point {
+    let display_offset = term.grid().display_offset() as i32;
+    alacritty_terminal::index::Point::new(
+        alacritty_terminal::index::Line(row as i32 - display_offset),
+        alacritty_terminal::index::Column(col),
+    )
 }
 
 /// Strip ASCII control characters (except tab and newline) from a shell-set
@@ -1034,11 +1046,13 @@ mod tests {
 
     #[test]
     fn configured_colors_dims_bright_palette_without_overflow() {
-        let mut config = TerminalConfig::default();
-        config.colors = TerminalColors {
-            foreground: RgbColor::new(255, 255, 255),
-            background: RgbColor::new(0, 0, 0),
-            palette: [RgbColor::new(255, 240, 224); 16],
+        let config = TerminalConfig {
+            colors: TerminalColors {
+                foreground: RgbColor::new(255, 255, 255),
+                background: RgbColor::new(0, 0, 0),
+                palette: [RgbColor::new(255, 240, 224); 16],
+            },
+            ..TerminalConfig::default()
         };
 
         let colors = ConfiguredColors::from_config(&config);

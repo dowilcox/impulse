@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::pty::url_decode;
-
 /// Maximum number of outstanding (timed-out) background threads before we
 /// refuse to spawn new ones, preventing unbounded resource exhaustion.
 const MAX_OUTSTANDING_TIMEOUT_THREADS: usize = 10;
@@ -111,6 +109,34 @@ pub fn uri_to_file_path(uri: &str) -> String {
     }
 
     uri.to_string()
+}
+
+/// Decode percent-encoded URL strings, preserving invalid escape sequences.
+fn url_decode(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut chars = input.as_bytes().iter();
+
+    while let Some(&b) = chars.next() {
+        if b == b'%' {
+            let hex: Vec<u8> = chars.by_ref().take(2).copied().collect();
+            if hex.len() == 2 {
+                if let Ok(decoded) = u8::from_str_radix(&String::from_utf8_lossy(&hex), 16) {
+                    bytes.push(decoded);
+                } else {
+                    bytes.push(b'%');
+                    bytes.extend_from_slice(&hex);
+                }
+            } else {
+                bytes.push(b'%');
+                bytes.extend_from_slice(&hex);
+            }
+        } else {
+            bytes.push(b);
+        }
+    }
+
+    bytes.retain(|&b| b != 0);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Determine LSP language ID from a file URI based on extension.
@@ -262,6 +288,39 @@ mod tests {
         let uri = file_path_to_uri(Path::new("/tmp"));
         assert!(uri.is_some());
         assert!(uri.unwrap().starts_with("file:///tmp"));
+    }
+
+    #[test]
+    fn url_decode_preserves_plain_string() {
+        assert_eq!(url_decode("/home/user/project"), "/home/user/project");
+    }
+
+    #[test]
+    fn url_decode_spaces() {
+        assert_eq!(
+            url_decode("/home/user/my%20project"),
+            "/home/user/my project"
+        );
+    }
+
+    #[test]
+    fn url_decode_multibyte_utf8() {
+        assert_eq!(url_decode("/home/caf%C3%A9"), "/home/café");
+    }
+
+    #[test]
+    fn url_decode_invalid_hex() {
+        assert_eq!(url_decode("/home/%ZZ"), "/home/%ZZ");
+    }
+
+    #[test]
+    fn url_decode_truncated_percent() {
+        assert_eq!(url_decode("/home/%2"), "/home/%2");
+    }
+
+    #[test]
+    fn url_decode_removes_nul() {
+        assert_eq!(url_decode("/tmp/%00suffix"), "/tmp/suffix");
     }
 
     #[test]

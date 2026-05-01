@@ -69,8 +69,10 @@ impl TerminalSearch {
             }
         }
 
-        // Search forward from the top-left of the visible viewport.
-        let origin = Point::new(Line(0), Column(0));
+        // Search forward from the top-left of the visible viewport. Alacritty
+        // represents scrollback rows as negative line numbers when the display
+        // is scrolled away from the bottom.
+        let (origin, _, _) = Self::viewport_bounds(term);
         self.find(term, origin, Direction::Right)
     }
 
@@ -86,7 +88,10 @@ impl TerminalSearch {
                 // Advance past the current match so we don't find it again.
                 pt.add(term, alacritty_terminal::index::Boundary::None, 1)
             }
-            None => Point::new(Line(0), Column(0)),
+            None => {
+                let (origin, _, _) = Self::viewport_bounds(term);
+                origin
+            }
         };
 
         match term.search_next(regex, origin, Direction::Right, Side::Left, None) {
@@ -94,11 +99,7 @@ impl TerminalSearch {
                 let start = *m.start();
                 let end = *m.end();
                 self.last_match = Some(start);
-                SearchResult {
-                    match_row: start.line.0,
-                    match_start_col: start.column.0 as i32,
-                    match_end_col: end.column.0 as i32,
-                }
+                Self::result_from_match(term, start, end)
             }
             None => SearchResult::no_match(),
         }
@@ -117,9 +118,8 @@ impl TerminalSearch {
                 pt.sub(term, alacritty_terminal::index::Boundary::None, 1)
             }
             None => {
-                let last_line = Line(term.screen_lines() as i32 - 1);
-                let last_col = Column(term.columns().saturating_sub(1));
-                Point::new(last_line, last_col)
+                let (_, end, _) = Self::viewport_bounds(term);
+                end
             }
         };
 
@@ -128,11 +128,7 @@ impl TerminalSearch {
                 let start = *m.start();
                 let end = *m.end();
                 self.last_match = Some(start);
-                SearchResult {
-                    match_row: start.line.0,
-                    match_start_col: start.column.0 as i32,
-                    match_end_col: end.column.0 as i32,
-                }
+                Self::result_from_match(term, start, end)
             }
             None => SearchResult::no_match(),
         }
@@ -158,11 +154,7 @@ impl TerminalSearch {
         let mut ranges = Vec::new();
 
         // Search through the entire visible viewport.
-        let start = Point::new(Line(0), Column(0));
-        let end = Point::new(
-            Line(num_lines as i32 - 1),
-            Column(num_cols.saturating_sub(1)),
-        );
+        let (start, end, display_offset) = Self::viewport_bounds(term);
 
         // Use regex_search_right to iterate through all matches in the viewport.
         let mut cursor = start;
@@ -181,17 +173,20 @@ impl TerminalSearch {
                     let m_end = *m.end();
 
                     // Only include matches whose lines are in [0, num_lines).
-                    if m_start.line.0 >= 0 && (m_start.line.0 as usize) < num_lines {
+                    let viewport_start_row = m_start.line.0 + display_offset;
+                    if viewport_start_row >= 0 && (viewport_start_row as usize) < num_lines {
                         // A match may span multiple lines; emit one range per line.
-                        let start_row = m_start.line.0.max(0) as usize;
-                        let end_row = (m_end.line.0.max(0) as usize).min(num_lines - 1);
+                        let start_row = (m_start.line.0 + display_offset).max(0) as usize;
+                        let end_row =
+                            ((m_end.line.0 + display_offset).max(0) as usize).min(num_lines - 1);
                         for row in start_row..=end_row {
-                            let sc = if row == start_row {
+                            let grid_line = row as i32 - display_offset;
+                            let sc = if grid_line == m_start.line.0 {
                                 m_start.column.0
                             } else {
                                 0
                             };
-                            let ec = if row == end_row {
+                            let ec = if grid_line == m_end.line.0 {
                                 m_end.column.0
                             } else {
                                 num_cols - 1
@@ -236,13 +231,30 @@ impl TerminalSearch {
                 let start = *m.start();
                 let end = *m.end();
                 self.last_match = Some(start);
-                SearchResult {
-                    match_row: start.line.0,
-                    match_start_col: start.column.0 as i32,
-                    match_end_col: end.column.0 as i32,
-                }
+                Self::result_from_match(term, start, end)
             }
             None => SearchResult::no_match(),
+        }
+    }
+
+    fn viewport_bounds<T>(term: &Term<T>) -> (Point, Point, i32) {
+        let display_offset = term.grid().display_offset() as i32;
+        let top_line = Line(-display_offset);
+        let bottom_line = Line(term.screen_lines() as i32 - 1 - display_offset);
+        let last_col = Column(term.columns().saturating_sub(1));
+        (
+            Point::new(top_line, Column(0)),
+            Point::new(bottom_line, last_col),
+            display_offset,
+        )
+    }
+
+    fn result_from_match<T>(term: &Term<T>, start: Point, end: Point) -> SearchResult {
+        let display_offset = term.grid().display_offset() as i32;
+        SearchResult {
+            match_row: start.line.0 + display_offset,
+            match_start_col: start.column.0 as i32,
+            match_end_col: end.column.0 as i32,
         }
     }
 }

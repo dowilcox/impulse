@@ -1,5 +1,4 @@
-use portable_pty::CommandBuilder;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[cfg(unix)]
@@ -143,29 +142,6 @@ fn escape_single_quotes(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
-/// Build the shell command with integration scripts injected.
-/// Returns the CommandBuilder and a list of temp files that must be kept alive.
-pub fn build_shell_command(
-    shell_path: &str,
-    shell_type: &ShellType,
-) -> Result<(CommandBuilder, Vec<PathBuf>), std::io::Error> {
-    let launch = build_shell_launch_config(shell_path, shell_type)?;
-    let mut cmd = CommandBuilder::new(&launch.shell_path);
-    for arg in &launch.shell_args {
-        cmd.arg(arg);
-    }
-    for (key, value) in &launch.env_vars {
-        cmd.env(key, value);
-    }
-    cmd.env_remove("LD_PRELOAD");
-    cmd.env_remove("LD_LIBRARY_PATH");
-    cmd.env_remove("LD_AUDIT");
-    cmd.env_remove("DYLD_INSERT_LIBRARIES");
-    cmd.env_remove("DYLD_LIBRARY_PATH");
-    cmd.env_remove("DYLD_FRAMEWORK_PATH");
-    Ok((cmd, launch.temp_files))
-}
-
 /// Get the shell integration script content for a given shell type.
 /// Useful when the caller (e.g. VTE, SwiftTerm) manages its own PTY
 /// and just needs the script text to inject via env vars.
@@ -183,6 +159,34 @@ pub struct ShellLaunchConfig {
     pub shell_args: Vec<String>,
     pub env_vars: HashMap<String, String>,
     pub temp_files: Vec<PathBuf>,
+}
+
+/// Remove temporary shell-integration files created by `ShellLaunchConfig`.
+pub fn cleanup_temp_files(temp_files: &[PathBuf]) {
+    let mut candidate_dirs = HashSet::new();
+    for path in temp_files {
+        if let Some(parent) = path.parent() {
+            candidate_dirs.insert(parent.to_path_buf());
+        }
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    for dir in candidate_dirs {
+        if is_impulse_temp_dir(&dir) {
+            let _ = std::fs::remove_dir(&dir);
+        }
+    }
+}
+
+fn is_impulse_temp_dir(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.starts_with("impulse-zsh-") && path.parent() == Some(std::env::temp_dir().as_path())
 }
 
 /// Build shell arguments, environment, and temp files for shell integration.
@@ -318,30 +322,6 @@ pub fn prepare_shell_launch_config() -> Result<ShellLaunchConfig, std::io::Error
     build_shell_launch_config(&shell_path, &shell_type)
 }
 
-/// Prepare environment variables and arguments for spawning a shell with integration.
-/// This is the high-level API for frontends that manage their own PTY (VTE, SwiftTerm).
-/// Returns (shell_path, args, env_vars, temp_files).
-pub fn prepare_shell_spawn() -> Result<ShellSpawnConfig, std::io::Error> {
-    let shell_path = get_default_shell_path();
-    let shell_type = detect_shell_type(&shell_path);
-    let (cmd, temp_files) = build_shell_command(&shell_path, &shell_type)?;
-
-    Ok(ShellSpawnConfig {
-        shell_path,
-        shell_type,
-        command: cmd,
-        temp_files,
-    })
-}
-
-/// Configuration for spawning a shell with integration.
-pub struct ShellSpawnConfig {
-    pub shell_path: String,
-    pub shell_type: ShellType,
-    pub command: CommandBuilder,
-    pub temp_files: Vec<PathBuf>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +367,30 @@ mod tests {
 
         let fish = get_integration_script(&ShellType::Fish);
         assert!(fish.contains("133"));
+    }
+
+    #[test]
+    fn cleanup_temp_files_removes_files_and_owned_zsh_dir() {
+        let zsh_dir = std::env::temp_dir().join(format!(
+            "impulse-zsh-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().as_simple()
+        ));
+        std::fs::create_dir(&zsh_dir).unwrap();
+        let zshrc = zsh_dir.join(".zshrc");
+        std::fs::write(&zshrc, "echo test\n").unwrap();
+
+        let bash_rc = std::env::temp_dir().join(format!(
+            "impulse-bash-rc-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().as_simple()
+        ));
+        std::fs::write(&bash_rc, "echo test\n").unwrap();
+
+        cleanup_temp_files(&[zshrc, bash_rc.clone()]);
+
+        assert!(!zsh_dir.exists());
+        assert!(!bash_rc.exists());
     }
 
     #[test]
