@@ -70,6 +70,14 @@ class TerminalRenderer: NSView {
     /// Called when the user presses Cmd+C in the terminal.
     var onCopy: (() -> Void)?
 
+    /// Called when the user chooses command-block actions from the context menu.
+    var onCopyLastCommand: (() -> Void)?
+    var onCopyLastCommandOutput: (() -> Void)?
+    var onRerunLastCommand: (() -> Void)?
+    var onJumpToPreviousCommandBlock: (() -> Void)?
+    var onJumpToNextCommandBlock: (() -> Void)?
+    var onJumpToLastFailedCommandBlock: (() -> Void)?
+
     /// Called when a mouse selection gesture finishes with a real selection.
     var onSelectionFinished: (() -> Void)?
 
@@ -1417,6 +1425,14 @@ class TerminalRenderer: NSView {
         window?.makeFirstResponder(self)
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let commandBlocks = backend?.commandBlocks() ?? []
+        let hasCommand = commandBlocks.contains { block in
+            guard let command = block.command else { return false }
+            return !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let hasOutput = commandBlocks.contains { !$0.output.isEmpty }
+        let hasBlock = hasCommand || hasOutput
+        let hasFailedBlock = commandBlocks.contains { ($0.exitCode ?? 0) != 0 }
 
         let copyItem = NSMenuItem(
             title: "Copy",
@@ -1437,6 +1453,64 @@ class TerminalRenderer: NSView {
         pasteItem.isEnabled = pasteboard.string(forType: .string) != nil
             || pasteboard.canReadObject(forClasses: [NSImage.self], options: nil)
         menu.addItem(pasteItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let copyCommandItem = NSMenuItem(
+            title: "Copy Last Command",
+            action: #selector(contextCopyLastCommand(_:)),
+            keyEquivalent: ""
+        )
+        copyCommandItem.target = self
+        copyCommandItem.isEnabled = hasCommand
+        menu.addItem(copyCommandItem)
+
+        let copyOutputItem = NSMenuItem(
+            title: "Copy Last Command Output",
+            action: #selector(contextCopyLastCommandOutput(_:)),
+            keyEquivalent: ""
+        )
+        copyOutputItem.target = self
+        copyOutputItem.isEnabled = hasOutput
+        menu.addItem(copyOutputItem)
+
+        let rerunItem = NSMenuItem(
+            title: "Rerun Last Command",
+            action: #selector(contextRerunLastCommand(_:)),
+            keyEquivalent: ""
+        )
+        rerunItem.target = self
+        rerunItem.isEnabled = hasCommand
+        menu.addItem(rerunItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let previousBlockItem = NSMenuItem(
+            title: "Previous Command Block",
+            action: #selector(contextPreviousCommandBlock(_:)),
+            keyEquivalent: ""
+        )
+        previousBlockItem.target = self
+        previousBlockItem.isEnabled = hasBlock
+        menu.addItem(previousBlockItem)
+
+        let nextBlockItem = NSMenuItem(
+            title: "Next Command Block",
+            action: #selector(contextNextCommandBlock(_:)),
+            keyEquivalent: ""
+        )
+        nextBlockItem.target = self
+        nextBlockItem.isEnabled = hasBlock
+        menu.addItem(nextBlockItem)
+
+        let failedBlockItem = NSMenuItem(
+            title: "Last Failed Command",
+            action: #selector(contextLastFailedCommandBlock(_:)),
+            keyEquivalent: ""
+        )
+        failedBlockItem.target = self
+        failedBlockItem.isEnabled = hasFailedBlock
+        menu.addItem(failedBlockItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1465,6 +1539,30 @@ class TerminalRenderer: NSView {
 
     @objc private func contextPaste(_ sender: Any?) {
         onPaste?()
+    }
+
+    @objc private func contextCopyLastCommand(_ sender: Any?) {
+        onCopyLastCommand?()
+    }
+
+    @objc private func contextCopyLastCommandOutput(_ sender: Any?) {
+        onCopyLastCommandOutput?()
+    }
+
+    @objc private func contextRerunLastCommand(_ sender: Any?) {
+        onRerunLastCommand?()
+    }
+
+    @objc private func contextPreviousCommandBlock(_ sender: Any?) {
+        onJumpToPreviousCommandBlock?()
+    }
+
+    @objc private func contextNextCommandBlock(_ sender: Any?) {
+        onJumpToNextCommandBlock?()
+    }
+
+    @objc private func contextLastFailedCommandBlock(_ sender: Any?) {
+        onJumpToLastFailedCommandBlock?()
     }
 
     @objc private func contextSelectAll(_ sender: Any?) {

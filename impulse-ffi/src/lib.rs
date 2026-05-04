@@ -1510,6 +1510,23 @@ pub extern "C" fn impulse_terminal_poll_events(handle: *mut TerminalHandle) -> *
 }
 
 #[no_mangle]
+pub extern "C" fn impulse_terminal_command_blocks(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return to_c_string("[]");
+            }
+            let h = unsafe { &*handle };
+            match serde_json::to_string(&h.backend.command_blocks()) {
+                Ok(json) => to_c_string(&json),
+                Err(_) => to_c_string("[]"),
+            }
+        }),
+    )
+}
+
+#[no_mangle]
 pub extern "C" fn impulse_terminal_start_selection(
     handle: *mut TerminalHandle,
     col: u16,
@@ -1602,6 +1619,24 @@ pub extern "C" fn impulse_terminal_scroll_to_bottom(handle: *mut TerminalHandle)
             }
             let h = unsafe { &*handle };
             h.backend.scroll_to_bottom();
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_scroll_to_command_block(
+    handle: *mut TerminalHandle,
+    block_id: u64,
+) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return false;
+            }
+            let h = unsafe { &*handle };
+            h.backend
+                .scroll_to_command_block(impulse_terminal::TerminalBlockId(block_id))
         }),
     )
 }

@@ -4,6 +4,7 @@
 //! need to render a grid of styled cells and forward input events.
 
 mod backend;
+mod blocks;
 mod buffer;
 mod config;
 mod event;
@@ -12,6 +13,7 @@ pub mod osc_scanner;
 mod search;
 
 pub use backend::{SelectionKind, TerminalBackend};
+pub use blocks::{TerminalBlockId, TerminalCommandBlock};
 pub use buffer::{
     buffer_size, write_cell, write_header, HighlightRange, CELL_STRIDE, FIXED_HEADER_SIZE,
     RANGE_ENTRY_SIZE,

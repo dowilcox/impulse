@@ -16,12 +16,15 @@ __impulse_precmd() {
     local exit_code=$?
     if [ -n "$__impulse_command_started" ]; then
         printf '\e]133;D;%d\a' "$exit_code"
+        __impulse_command_started=""
     fi
     printf '\e]7;file://%s%s\a' "$HOST" "$(__impulse_urlencode "$PWD")"
     printf '\e]133;A\a'
 }
 __impulse_preexec() {
+    local command="$1"
     __impulse_command_started=1
+    printf '\e]6973;Command=%s\a' "$(__impulse_urlencode "$command")"
     printf '\e]133;C\a'
 }
 autoload -Uz add-zsh-hook

@@ -19,6 +19,7 @@ use alacritty_terminal::vte::ansi::{
 };
 use crossbeam_channel::{Receiver, Sender};
 
+use crate::blocks::{CommandBlockTracker, TerminalBlockId, TerminalCommandBlock};
 use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
@@ -270,6 +271,7 @@ pub struct TerminalBackend {
     colors: ConfiguredColors,
     child_pid: u32,
     search: Mutex<TerminalSearch>,
+    blocks: Arc<Mutex<CommandBlockTracker>>,
 }
 
 impl TerminalBackend {
@@ -317,11 +319,13 @@ impl TerminalBackend {
             .try_clone()
             .map_err(|e| format!("Failed to clone PTY fd: {e}"))?;
 
+        let blocks = Arc::new(Mutex::new(CommandBlockTracker::new()));
         let term_clone = Arc::clone(&term);
+        let blocks_clone = Arc::clone(&blocks);
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
-                Self::read_loop(pty, reader_file, term_clone, event_tx, cmd_rx);
+                Self::read_loop(pty, reader_file, term_clone, event_tx, cmd_rx, blocks_clone);
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
 
@@ -337,6 +341,7 @@ impl TerminalBackend {
             colors,
             child_pid,
             search: Mutex::new(TerminalSearch::new()),
+            blocks,
         })
     }
 
@@ -351,6 +356,7 @@ impl TerminalBackend {
         term: Arc<FairMutex<Term<EventProxy>>>,
         event_tx: Sender<TerminalEvent>,
         cmd_rx: Receiver<BackendMsg>,
+        blocks: Arc<Mutex<CommandBlockTracker>>,
     ) {
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
@@ -422,20 +428,51 @@ impl TerminalBackend {
                     return;
                 }
                 Ok(n) => {
-                    // Scan for OSC sequences.
+                    // Scan for OSC sequences, then use their offsets to capture
+                    // command output without including shell prompt markers.
                     scanner.scan(&buf[..n]);
-                    for osc_event in scanner.drain_events() {
-                        match osc_event {
+                    let osc_events = scanner.drain_event_spans();
+                    let mut output_cursor = 0usize;
+                    for osc_event in osc_events {
+                        if let Some(start_offset) = osc_event.start_offset {
+                            let start_offset = start_offset.min(n);
+                            if start_offset > output_cursor {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    blocks.observe_output(&buf[output_cursor..start_offset]);
+                                }
+                            }
+                        }
+
+                        match osc_event.event {
                             crate::osc_scanner::OscEvent::CwdChanged(path) => {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    blocks.set_cwd(path.clone());
+                                }
                                 let _ = event_tx.send(TerminalEvent::CwdChanged(path));
+                            }
+                            crate::osc_scanner::OscEvent::CommandText(command) => {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    blocks.set_pending_command(command);
+                                }
                             }
                             crate::osc_scanner::OscEvent::PromptStart => {
                                 let _ = event_tx.send(TerminalEvent::PromptStart);
                             }
                             crate::osc_scanner::OscEvent::CommandStart => {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    let block = blocks.command_started();
+                                    let _ =
+                                        event_tx.send(TerminalEvent::CommandBlockStarted(block));
+                                }
                                 let _ = event_tx.send(TerminalEvent::CommandStart);
                             }
                             crate::osc_scanner::OscEvent::CommandEnd(code) => {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    if let Some(block) = blocks.command_ended(code) {
+                                        let _ =
+                                            event_tx.send(TerminalEvent::CommandBlockEnded(block));
+                                    }
+                                }
                                 let _ = event_tx.send(TerminalEvent::CommandEnd(code));
                             }
                             crate::osc_scanner::OscEvent::AttentionRequest(value) => {
@@ -444,6 +481,13 @@ impl TerminalBackend {
                             crate::osc_scanner::OscEvent::Notification { title, body } => {
                                 let _ = event_tx.send(TerminalEvent::Notification { title, body });
                             }
+                        }
+
+                        output_cursor = output_cursor.max(osc_event.end_offset.min(n));
+                    }
+                    if output_cursor < n {
+                        if let Ok(mut blocks) = blocks.lock() {
+                            blocks.observe_output(&buf[output_cursor..n]);
                         }
                     }
 
@@ -525,6 +569,14 @@ impl TerminalBackend {
             }
         }
         events
+    }
+
+    /// Return command block metadata observed for this terminal session.
+    pub fn command_blocks(&self) -> Vec<TerminalCommandBlock> {
+        self.blocks
+            .lock()
+            .map(|blocks| blocks.blocks())
+            .unwrap_or_default()
     }
 
     /// Write the visible grid into a pre-allocated binary buffer.
@@ -741,6 +793,25 @@ impl TerminalBackend {
         self.term
             .lock()
             .scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+    }
+
+    /// Scroll the viewport to the approximate start of a command block.
+    pub fn scroll_to_command_block(&self, id: TerminalBlockId) -> bool {
+        let Some((current_line, start_line)) = self.blocks.lock().ok().and_then(|blocks| {
+            blocks
+                .block_start_line(id)
+                .map(|start_line| (blocks.current_output_line(), start_line))
+        }) else {
+            return false;
+        };
+
+        let delta = current_line.saturating_sub(start_line).min(i32::MAX as u64) as i32;
+        let mut term = self.term.lock();
+        term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+        if delta > 0 {
+            term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+        }
+        true
     }
 
     /// Update the terminal's color palette at runtime (for live theme changes).

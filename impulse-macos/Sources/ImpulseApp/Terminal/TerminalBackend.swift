@@ -78,8 +78,35 @@ enum TerminalBackendEvent {
     case promptStart
     case commandStart
     case commandEnd(Int32)
+    case commandBlockStarted(TerminalCommandBlock)
+    case commandBlockEnded(TerminalCommandBlock)
     case attentionRequest(String)
     case notification(title: String, body: String)
+}
+
+/// Command block metadata emitted by the Rust terminal backend.
+struct TerminalCommandBlock: Codable, Equatable {
+    let id: UInt64
+    let command: String?
+    let cwd: String?
+    let startedAtMs: UInt64
+    let endedAtMs: UInt64?
+    let exitCode: Int32?
+    let outputStartLine: UInt64
+    let outputEndLine: UInt64?
+    let output: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case command
+        case cwd
+        case startedAtMs = "started_at_ms"
+        case endedAtMs = "ended_at_ms"
+        case exitCode = "exit_code"
+        case outputStartLine = "output_start_line"
+        case outputEndLine = "output_end_line"
+        case output
+    }
 }
 
 // MARK: - Grid Buffer Reader
@@ -310,6 +337,12 @@ final class TerminalBackend {
                     events.append(.cwdChanged(path))
                 } else if let code = dict["CommandEnd"] as? Int {
                     events.append(.commandEnd(Int32(code)))
+                } else if let payload = dict["CommandBlockStarted"] as? [String: Any],
+                          let block = Self.decodeCommandBlock(payload) {
+                    events.append(.commandBlockStarted(block))
+                } else if let payload = dict["CommandBlockEnded"] as? [String: Any],
+                          let block = Self.decodeCommandBlock(payload) {
+                    events.append(.commandBlockEnded(block))
                 } else if let value = dict["AttentionRequest"] as? String {
                     events.append(.attentionRequest(value))
                 } else if let payload = dict["Notification"] as? [String: Any] {
@@ -320,6 +353,25 @@ final class TerminalBackend {
             }
         }
         return events
+    }
+
+    func commandBlocks() -> [TerminalCommandBlock] {
+        guard let handle, !isShutdown,
+              let json = ImpulseCore.terminalCommandBlocks(handle: handle),
+              let data = json.data(using: .utf8)
+        else {
+            return []
+        }
+        return (try? decoder.decode([TerminalCommandBlock].self, from: data)) ?? []
+    }
+
+    private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload)
+        else {
+            return nil
+        }
+        return try? JSONDecoder().decode(TerminalCommandBlock.self, from: data)
     }
 
     // MARK: - Selection
@@ -354,6 +406,11 @@ final class TerminalBackend {
     func scrollToBottom() {
         guard let handle, !isShutdown else { return }
         ImpulseCore.terminalScrollToBottom(handle: handle)
+    }
+
+    func scrollToCommandBlock(id: UInt64) -> Bool {
+        guard let handle, !isShutdown else { return false }
+        return ImpulseCore.terminalScrollToCommandBlock(handle: handle, blockId: id)
     }
 
     // MARK: - Mode / Focus

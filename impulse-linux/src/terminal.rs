@@ -7,8 +7,8 @@ use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::glib;
 use gtk4::prelude::*;
 use impulse_terminal::{
-    CellFlags, CursorShape, RgbColor, SelectionKind, TerminalBackend, TerminalConfig,
-    TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    CellFlags, CursorShape, RgbColor, SelectionKind, TerminalBackend, TerminalCommandBlock,
+    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
 use crate::theme::ThemeColors;
@@ -105,6 +105,7 @@ struct TerminalState {
     copy_on_select: Rc<Cell<bool>>,
     scroll_on_output: Cell<bool>,
     terminal_bell: Cell<bool>,
+    selected_command_block_id: Cell<Option<u64>>,
     cwd_callbacks: RefCell<Vec<TerminalCallback>>,
     title_callbacks: RefCell<Vec<TerminalCallback>>,
     child_exited_callbacks: RefCell<Vec<TerminalCallback>>,
@@ -132,6 +133,7 @@ impl TerminalState {
             copy_on_select,
             scroll_on_output: Cell::new(true),
             terminal_bell: Cell::new(false),
+            selected_command_block_id: Cell::new(None),
             cwd_callbacks: RefCell::new(Vec::new()),
             title_callbacks: RefCell::new(Vec::new()),
             child_exited_callbacks: RefCell::new(Vec::new()),
@@ -408,6 +410,172 @@ pub fn search_clear(terminal: &Terminal) {
     }
 }
 
+pub fn command_blocks(terminal: &Terminal) -> Vec<TerminalCommandBlock> {
+    state(terminal)
+        .and_then(|state| {
+            state
+                .backend
+                .borrow()
+                .as_ref()
+                .map(TerminalBackend::command_blocks)
+        })
+        .unwrap_or_default()
+}
+
+pub fn copy_last_command(terminal: &Terminal) {
+    if let Some(block) = latest_command_block(terminal) {
+        if let Some(command) = block.command {
+            if !command.trim().is_empty() {
+                terminal.clipboard().set_text(&command);
+            }
+        }
+    }
+}
+
+pub fn copy_last_command_output(terminal: &Terminal) {
+    if let Some(block) = latest_output_block(terminal) {
+        if !block.output.is_empty() {
+            terminal.clipboard().set_text(&block.output);
+        }
+    }
+}
+
+pub fn rerun_last_command(terminal: &Terminal) {
+    if let Some(block) = latest_command_block(terminal) {
+        if let Some(command) = block.command {
+            if !command.trim().is_empty() {
+                write_text(terminal, &(command + "\n"));
+            }
+        }
+    }
+}
+
+pub fn jump_to_previous_command_block(terminal: &Terminal) -> bool {
+    let Some(state) = state(terminal) else {
+        return false;
+    };
+    let blocks = navigable_command_blocks(terminal);
+    if blocks.is_empty() {
+        return false;
+    }
+
+    let selected = state.selected_command_block_id.get();
+    let target = selected
+        .and_then(|selected| {
+            blocks
+                .iter()
+                .position(|block| block.id.0 == selected)
+                .and_then(|index| index.checked_sub(1))
+        })
+        .and_then(|index| blocks.get(index))
+        .or_else(|| blocks.last());
+
+    let Some(target) = target else {
+        return false;
+    };
+    scroll_to_command_block(&state, target.id.0)
+}
+
+pub fn jump_to_next_command_block(terminal: &Terminal) -> bool {
+    let Some(state) = state(terminal) else {
+        return false;
+    };
+    let blocks = navigable_command_blocks(terminal);
+    if blocks.is_empty() {
+        return false;
+    }
+
+    let selected = state.selected_command_block_id.get();
+    let target = selected
+        .and_then(|selected| {
+            blocks
+                .iter()
+                .position(|block| block.id.0 == selected)
+                .map(|index| index + 1)
+        })
+        .and_then(|index| blocks.get(index));
+
+    if let Some(target) = target {
+        return scroll_to_command_block(&state, target.id.0);
+    }
+
+    if selected.is_some() {
+        state.selected_command_block_id.set(None);
+        if let Some(backend) = state.backend.borrow().as_ref() {
+            backend.scroll_to_bottom();
+            refresh_grid(&state);
+            return true;
+        }
+        return false;
+    }
+
+    scroll_to_command_block(&state, blocks[0].id.0)
+}
+
+pub fn jump_to_last_failed_command_block(terminal: &Terminal) -> bool {
+    let Some(state) = state(terminal) else {
+        return false;
+    };
+    let Some(target) = latest_failed_command_block(terminal) else {
+        return false;
+    };
+    scroll_to_command_block(&state, target.id.0)
+}
+
+fn latest_command_block(terminal: &Terminal) -> Option<TerminalCommandBlock> {
+    command_blocks(terminal)
+        .into_iter()
+        .rev()
+        .find(has_command_text)
+}
+
+fn latest_output_block(terminal: &Terminal) -> Option<TerminalCommandBlock> {
+    command_blocks(terminal)
+        .into_iter()
+        .rev()
+        .find(|block| !block.output.is_empty())
+}
+
+fn latest_failed_command_block(terminal: &Terminal) -> Option<TerminalCommandBlock> {
+    command_blocks(terminal)
+        .into_iter()
+        .rev()
+        .find(is_failed_command_block)
+}
+
+fn navigable_command_blocks(terminal: &Terminal) -> Vec<TerminalCommandBlock> {
+    command_blocks(terminal)
+        .into_iter()
+        .filter(|block| has_command_text(block) || !block.output.is_empty())
+        .collect()
+}
+
+fn has_command_text(block: &TerminalCommandBlock) -> bool {
+    block
+        .command
+        .as_ref()
+        .map(|command| !command.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn is_failed_command_block(block: &TerminalCommandBlock) -> bool {
+    block.exit_code.map(|code| code != 0).unwrap_or(false)
+}
+
+fn scroll_to_command_block(state: &Rc<TerminalState>, block_id: u64) -> bool {
+    let scrolled = state
+        .backend
+        .borrow()
+        .as_ref()
+        .map(|backend| backend.scroll_to_command_block(impulse_terminal::TerminalBlockId(block_id)))
+        .unwrap_or(false);
+    if scrolled {
+        state.selected_command_block_id.set(Some(block_id));
+        refresh_grid(state);
+    }
+    scrolled
+}
+
 pub fn set_font(terminal: &Terminal, family: &str, size: i32) {
     if let Some(state) = state(terminal) {
         *state.font_family.borrow_mut() = family.to_string();
@@ -548,7 +716,9 @@ fn install_input_handlers(terminal: &Terminal) {
         let term = terminal.clone();
         click.connect_pressed(move |gesture, n_press, x, y| {
             term.grab_focus();
-            if gesture.current_button() == 1 {
+            if gesture.current_button() == 3 {
+                show_context_menu(&term, x, y);
+            } else if gesture.current_button() == 1 {
                 let kind = match n_press {
                     2 => SelectionKind::Semantic,
                     3 => SelectionKind::Lines,
@@ -638,6 +808,145 @@ fn install_input_handlers(terminal: &Terminal) {
     terminal.add_controller(drop_target_files);
 }
 
+fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
+    let popover = gtk4::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_parent(terminal);
+    popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    popover.connect_closed(|popover| popover.unparent());
+
+    let menu_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    menu_box.set_margin_top(6);
+    menu_box.set_margin_bottom(6);
+    menu_box.set_margin_start(6);
+    menu_box.set_margin_end(6);
+
+    let blocks = command_blocks(terminal);
+    let has_command = blocks.iter().any(has_command_text);
+    let has_output = blocks.iter().any(|block| !block.output.is_empty());
+    let has_block = has_command || has_output;
+    let has_failed_block = blocks.iter().any(is_failed_command_block);
+    let has_selection = selected_text(terminal)
+        .map(|text| !text.is_empty())
+        .unwrap_or(false);
+
+    append_context_button(&menu_box, "Copy", has_selection, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            copy_selection(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Paste", true, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            paste_from_clipboard(&term);
+            popover.popdown();
+        }
+    });
+
+    append_context_separator(&menu_box);
+
+    append_context_button(&menu_box, "Copy Last Command", has_command, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            copy_last_command(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Copy Last Command Output", has_output, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            copy_last_command_output(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Rerun Last Command", has_command, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            rerun_last_command(&term);
+            popover.popdown();
+        }
+    });
+
+    append_context_separator(&menu_box);
+
+    append_context_button(&menu_box, "Previous Command Block", has_block, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_previous_command_block(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Next Command Block", has_block, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_next_command_block(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Last Failed Command", has_failed_block, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_last_failed_command_block(&term);
+            popover.popdown();
+        }
+    });
+
+    append_context_separator(&menu_box);
+
+    append_context_button(&menu_box, "Select All", true, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            if let Some(state) = state(&term) {
+                if let Some(backend) = state.backend.borrow().as_ref() {
+                    backend.select_all();
+                    refresh_grid(&state);
+                }
+            }
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Clear", true, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            write(&term, b"\x0c");
+            popover.popdown();
+        }
+    });
+
+    popover.set_child(Some(&menu_box));
+    popover.popup();
+}
+
+fn append_context_button(
+    menu_box: &gtk4::Box,
+    label: &str,
+    enabled: bool,
+    action: impl Fn() + 'static,
+) {
+    let button = gtk4::Button::with_label(label);
+    button.set_sensitive(enabled);
+    button.set_halign(gtk4::Align::Fill);
+    button.connect_clicked(move |_| action());
+    menu_box.append(&button);
+}
+
+fn append_context_separator(menu_box: &gtk4::Box) {
+    let separator = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    menu_box.append(&separator);
+}
+
 fn install_destroy_handler(terminal: &Terminal) {
     terminal.connect_destroy(|term| {
         if let Some(state) = state(term) {
@@ -711,6 +1020,9 @@ fn poll_events(terminal: &Terminal) {
             | TerminalEvent::AttentionRequest(_)
             | TerminalEvent::Notification { .. }
             | TerminalEvent::PtyWrite(_) => {}
+            TerminalEvent::CommandBlockStarted(_) | TerminalEvent::CommandBlockEnded(_) => {
+                state.selected_command_block_id.set(None);
+            }
         }
     }
 

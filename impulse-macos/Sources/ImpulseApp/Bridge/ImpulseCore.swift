@@ -586,6 +586,12 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    /// Returns command block metadata as a JSON array string.
+    static func terminalCommandBlocks(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_command_blocks(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
     /// Starts a text selection at the given grid position.
     ///
     /// - Parameter kind: Selection kind — 0 = simple, 1 = block, 2 = semantic, 3 = line.
@@ -617,6 +623,11 @@ final class ImpulseCore {
     /// Scrolls the terminal viewport to the bottom (most recent output).
     static func terminalScrollToBottom(handle: OpaquePointer) {
         impulse_terminal_scroll_to_bottom(UnsafeMutableRawPointer(handle))
+    }
+
+    /// Scrolls the terminal viewport to the approximate start of a command block.
+    static func terminalScrollToCommandBlock(handle: OpaquePointer, blockId: UInt64) -> Bool {
+        return impulse_terminal_scroll_to_command_block(UnsafeMutableRawPointer(handle), blockId)
     }
 
     /// Returns terminal mode flags as a JSON string.

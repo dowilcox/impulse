@@ -7,11 +7,14 @@ function __impulse_prompt --on-event fish_prompt
     set -l exit_code $status
     if test -n "$__impulse_command_started"
         printf '\e]133;D;%d\a' $exit_code
+        set -g __impulse_command_started ""
     end
     printf '\e]7;file://%s%s\a' (hostname) (__impulse_urlencode $PWD)
     printf '\e]133;A\a'
 end
 function __impulse_preexec --on-event fish_preexec
+    set -l command $argv[1]
     set -g __impulse_command_started 1
+    printf '\e]6973;Command=%s\a' (__impulse_urlencode $command)
     printf '\e]133;C\a'
 end

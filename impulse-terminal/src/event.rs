@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 
+use crate::blocks::TerminalCommandBlock;
+
 /// Events emitted by the terminal backend.
 /// Frontends poll these via `TerminalBackend::poll_events()`.
 #[derive(Clone, Debug, Serialize)]
@@ -32,6 +34,10 @@ pub enum TerminalEvent {
     CommandStart,
     /// Command execution ended with exit code (OSC 133;D).
     CommandEnd(i32),
+    /// Command block metadata was created.
+    CommandBlockStarted(TerminalCommandBlock),
+    /// Command block metadata was completed.
+    CommandBlockEnded(TerminalCommandBlock),
     /// Terminal requested user attention (iTerm2 OSC 1337;RequestAttention).
     AttentionRequest(String),
     /// Terminal requested a user notification (OSC 9 or OSC 777 notify).

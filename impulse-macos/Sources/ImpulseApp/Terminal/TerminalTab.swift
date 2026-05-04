@@ -45,6 +45,9 @@ class TerminalTab: NSView {
   /// Tracks command duration from OSC 133 shell integration.
   private var commandStartDate: Date?
 
+  /// Currently navigated command block in terminal scrollback.
+  private var selectedCommandBlockId: UInt64?
+
   /// Outstanding continuous macOS attention request, if any.
   private var attentionRequestId: Int?
 
@@ -93,6 +96,24 @@ class TerminalTab: NSView {
     }
     renderer.onCopy = { [weak self] in
       self?.copySelection()
+    }
+    renderer.onCopyLastCommand = { [weak self] in
+      self?.copyLastCommand()
+    }
+    renderer.onCopyLastCommandOutput = { [weak self] in
+      self?.copyLastCommandOutput()
+    }
+    renderer.onRerunLastCommand = { [weak self] in
+      self?.rerunLastCommand()
+    }
+    renderer.onJumpToPreviousCommandBlock = { [weak self] in
+      self?.jumpToPreviousCommandBlock()
+    }
+    renderer.onJumpToNextCommandBlock = { [weak self] in
+      self?.jumpToNextCommandBlock()
+    }
+    renderer.onJumpToLastFailedCommandBlock = { [weak self] in
+      self?.jumpToLastFailedCommandBlock()
     }
     renderer.onSelectionFinished = { [weak self] in
       guard let self, self.copyOnSelectEnabled else { return }
@@ -170,6 +191,9 @@ class TerminalTab: NSView {
       commandStartDate = Date()
     case .commandEnd(let code):
       handleCommandEnd(exitCode: code)
+    case .commandBlockStarted, .commandBlockEnded:
+      selectedCommandBlockId = nil
+      break
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
@@ -426,6 +450,112 @@ class TerminalTab: NSView {
     guard let text = backend?.selectedText(), !text.isEmpty else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  private func copyLastCommand() {
+    guard let command = latestCommandBlock()?.command,
+      !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(command, forType: .string)
+  }
+
+  private func copyLastCommandOutput() {
+    guard let output = latestOutputBlock()?.output, !output.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(output, forType: .string)
+  }
+
+  private func rerunLastCommand() {
+    guard let command = latestCommandBlock()?.command,
+      !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return }
+    backend?.write(command + "\n")
+  }
+
+  private func jumpToPreviousCommandBlock() {
+    let blocks = navigableCommandBlocks()
+    guard !blocks.isEmpty else { return }
+
+    let target: TerminalCommandBlock
+    if let selectedCommandBlockId,
+      let index = blocks.firstIndex(where: { $0.id == selectedCommandBlockId }),
+      index > 0
+    {
+      target = blocks[index - 1]
+    } else {
+      target = blocks[blocks.count - 1]
+    }
+
+    selectedCommandBlockId = target.id
+    if backend?.scrollToCommandBlock(id: target.id) == true {
+      renderer.needsDisplay = true
+    }
+  }
+
+  private func jumpToNextCommandBlock() {
+    let blocks = navigableCommandBlocks()
+    guard !blocks.isEmpty else { return }
+
+    guard let selectedCommandBlockId,
+      let index = blocks.firstIndex(where: { $0.id == selectedCommandBlockId })
+    else {
+      let target = blocks[0]
+      self.selectedCommandBlockId = target.id
+      if backend?.scrollToCommandBlock(id: target.id) == true {
+        renderer.needsDisplay = true
+      }
+      return
+    }
+
+    guard index + 1 < blocks.count else {
+      self.selectedCommandBlockId = nil
+      backend?.scrollToBottom()
+      renderer.needsDisplay = true
+      return
+    }
+
+    let target = blocks[index + 1]
+    self.selectedCommandBlockId = target.id
+    if backend?.scrollToCommandBlock(id: target.id) == true {
+      renderer.needsDisplay = true
+    }
+  }
+
+  private func jumpToLastFailedCommandBlock() {
+    guard let target = navigableCommandBlocks().last(where: { ($0.exitCode ?? 0) != 0 }) else {
+      return
+    }
+
+    selectedCommandBlockId = target.id
+    if backend?.scrollToCommandBlock(id: target.id) == true {
+      renderer.needsDisplay = true
+    }
+  }
+
+  private func latestCommandBlock() -> TerminalCommandBlock? {
+    guard let blocks = backend?.commandBlocks() else { return nil }
+    return blocks.last { block in
+      guard let command = block.command else { return false }
+      return !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
+
+  private func latestOutputBlock() -> TerminalCommandBlock? {
+    guard let blocks = backend?.commandBlocks() else { return nil }
+    return blocks.last { !$0.output.isEmpty }
+  }
+
+  private func navigableCommandBlocks() -> [TerminalCommandBlock] {
+    guard let blocks = backend?.commandBlocks() else { return [] }
+    return blocks.filter { block in
+      if let command = block.command,
+        !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        return true
+      }
+      return !block.output.isEmpty
+    }
   }
 
   // MARK: Drag & Drop
