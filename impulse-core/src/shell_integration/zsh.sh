@@ -22,7 +22,6 @@ __impulse_precmd() {
 }
 __impulse_preexec() {
     __impulse_command_started=1
-    printf '\e]133;B\a'
     printf '\e]133;C\a'
 }
 autoload -Uz add-zsh-hook

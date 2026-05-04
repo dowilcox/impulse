@@ -22,7 +22,6 @@ __impulse_prompt_command() {
 }
 __impulse_preexec() {
     __impulse_command_started=1
-    printf '\e]133;B\a'
     printf '\e]133;C\a'
 }
 if [[ ! "$PROMPT_COMMAND" == *"__impulse_prompt_command"* ]]; then

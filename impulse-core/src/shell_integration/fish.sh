@@ -13,6 +13,5 @@ function __impulse_prompt --on-event fish_prompt
 end
 function __impulse_preexec --on-event fish_preexec
     set -g __impulse_command_started 1
-    printf '\e]133;B\a'
     printf '\e]133;C\a'
 end

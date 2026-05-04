@@ -28,7 +28,7 @@ pub enum TerminalEvent {
     CwdChanged(String),
     /// Shell prompt started (OSC 133;A).
     PromptStart,
-    /// Command execution started (OSC 133;B).
+    /// Command execution started (OSC 133;C).
     CommandStart,
     /// Command execution ended with exit code (OSC 133;D).
     CommandEnd(i32),

@@ -11,7 +11,7 @@ pub enum OscEvent {
     CwdChanged(String),
     /// OSC 133;A: shell prompt started.
     PromptStart,
-    /// OSC 133;B: command execution started.
+    /// OSC 133;C: command execution started.
     CommandStart,
     /// OSC 133;D;{code}: command execution ended with exit code.
     CommandEnd(i32),
@@ -108,8 +108,8 @@ impl OscScanner {
         else if self.buf.starts_with(b"133;") && self.buf.len() >= 5 {
             match self.buf[4] {
                 b'A' => self.events.push(OscEvent::PromptStart),
-                b'B' => self.events.push(OscEvent::CommandStart),
-                b'C' => {} // Ignored (redundant with B)
+                b'B' => {} // Prompt end. Not currently exposed to frontends.
+                b'C' => self.events.push(OscEvent::CommandStart),
                 b'D' => {
                     let code = if self.buf.len() > 6 && self.buf[5] == b';' {
                         std::str::from_utf8(&self.buf[6..])
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_osc133_command_start() {
         let mut scanner = OscScanner::new();
-        scanner.scan(b"\x1b]133;B\x07");
+        scanner.scan(b"\x1b]133;C\x07");
         let events = scanner.drain_events();
         assert_eq!(events, vec![OscEvent::CommandStart]);
     }
@@ -308,9 +308,9 @@ mod tests {
     }
 
     #[test]
-    fn test_osc133_c_ignored() {
+    fn test_osc133_prompt_end_ignored() {
         let mut scanner = OscScanner::new();
-        scanner.scan(b"\x1b]133;C\x07");
+        scanner.scan(b"\x1b]133;B\x07");
         let events = scanner.drain_events();
         assert!(events.is_empty());
     }
@@ -343,7 +343,7 @@ mod tests {
         let mut scanner = OscScanner::new();
         scanner.scan(b"\x1b]133");
         assert!(scanner.drain_events().is_empty());
-        scanner.scan(b";B\x07");
+        scanner.scan(b";C\x07");
         let events = scanner.drain_events();
         assert_eq!(events, vec![OscEvent::CommandStart]);
     }
