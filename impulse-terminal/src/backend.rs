@@ -1,6 +1,7 @@
 //! Terminal backend — owns the alacritty_terminal::Term and PTY event loop.
 
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -12,7 +13,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
 use alacritty_terminal::term::{Term, TermMode};
-use alacritty_terminal::tty;
+use alacritty_terminal::tty::{self, Options as PtyOptions};
 use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
     Color as AlacColor, CursorShape as AlacCursorShape, NamedColor,
@@ -25,6 +26,10 @@ use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
 use crate::grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
 use crate::search::{SearchResult, TerminalSearch};
+
+const FILTERED_CHILD_ENV_VARS: &[&str] = &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
+
+static CHILD_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Event proxy — bridges alacritty events to our channel
@@ -210,6 +215,42 @@ impl SelectionKind {
     }
 }
 
+fn spawn_pty(pty_options: &PtyOptions, window_size: WindowSize) -> io::Result<tty::Pty> {
+    let _guard = CHILD_ENV_LOCK
+        .lock()
+        .expect("child environment lock poisoned");
+    let saved_env = save_and_remove_child_env();
+    let result = tty::new(pty_options, window_size, 0);
+    restore_child_env(saved_env);
+    result
+}
+
+fn save_and_remove_child_env() -> Vec<(&'static str, Option<OsString>)> {
+    let mut saved_env = Vec::with_capacity(FILTERED_CHILD_ENV_VARS.len());
+    for key in FILTERED_CHILD_ENV_VARS {
+        saved_env.push((*key, std::env::var_os(key)));
+        // alacritty_terminal merges `PtyOptions.env` with the parent process
+        // environment, so omitted keys must be removed before spawning.
+        unsafe {
+            std::env::remove_var(key);
+        }
+    }
+    saved_env
+}
+
+fn restore_child_env(saved_env: Vec<(&'static str, Option<OsString>)>) {
+    for (key, value) in saved_env {
+        match value {
+            Some(value) => unsafe {
+                std::env::set_var(key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(key);
+            },
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BackendMsg — commands sent to the PTY read thread
 // ---------------------------------------------------------------------------
@@ -306,7 +347,7 @@ impl TerminalBackend {
             cell_width,
             cell_height,
         };
-        let pty = tty::new(&pty_options, window_size, 0)
+        let pty = spawn_pty(&pty_options, window_size)
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
 

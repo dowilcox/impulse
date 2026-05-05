@@ -1411,7 +1411,35 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let font_size = font_size.clone();
         let settings = settings.clone();
         let lsp_tx = lsp_request_tx.clone();
+        let close_confirmed = Rc::new(Cell::new(false));
         window.connect_close_request(move |window| {
+            if !close_confirmed.get() && settings.borrow().confirm_close_warnings {
+                let summary = close_risk_summary_for_tab_view(&tab_view_ref, &settings.borrow());
+                if summary.has_risk {
+                    let dialog = adw::AlertDialog::builder()
+                        .heading(&summary.title)
+                        .body(close_risk_body(&summary))
+                        .build();
+                    dialog.add_response("cancel", &summary.cancel_title);
+                    dialog.add_response("close", &summary.destructive_action_title);
+                    dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+                    dialog.set_default_response(Some("cancel"));
+                    dialog.set_close_response("cancel");
+
+                    let window_for_response = window.clone();
+                    let window_for_dialog = window.clone();
+                    let close_confirmed = close_confirmed.clone();
+                    dialog.connect_response(None, move |_dialog, response| {
+                        if response == "close" {
+                            close_confirmed.set(true);
+                            window_for_response.close();
+                        }
+                    });
+                    dialog.present(Some(&window_for_dialog));
+                    return gtk4::glib::Propagation::Stop;
+                }
+            }
+
             // Shutdown LSP servers
             if let Err(e) = lsp_tx.try_send(LspRequest::Shutdown) {
                 log::warn!("LSP request channel full, dropping shutdown request: {}", e);
@@ -1466,6 +1494,55 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     }
 
     window.present();
+}
+
+fn close_risk_summary_for_tab_view(
+    tab_view: &adw::TabView,
+    settings: &crate::settings::Settings,
+) -> impulse_core::close_risk::CloseRiskSummary {
+    let mut unsaved_editor_count = 0usize;
+    let mut running_commands = Vec::new();
+
+    let n = tab_view.n_pages();
+    for i in 0..n {
+        let page = tab_view.nth_page(i);
+        let child = page.child();
+        if editor::is_editor(&child) && editor::is_modified(&child) {
+            unsaved_editor_count += 1;
+        }
+        for term in terminal_container::collect_terminals(&child) {
+            if let Some(command) = terminal::running_close_risk_command(&term) {
+                running_commands.push(command);
+            }
+        }
+    }
+
+    impulse_core::close_risk::summarize_close_risk(&impulse_core::close_risk::CloseRiskInput {
+        action: impulse_core::close_risk::CloseRiskAction::CloseWindow,
+        unsaved_editor_count,
+        running_terminal_process_count: 0,
+        running_commands,
+        now_ms: current_unix_time_ms(),
+        long_command_threshold_seconds: settings.terminal_long_command_seconds.max(1) as u64,
+    })
+}
+
+fn close_risk_body(summary: &impulse_core::close_risk::CloseRiskSummary) -> String {
+    let details = summary.detail_lines.join("\n");
+    if summary.informative_text.is_empty() {
+        return details;
+    }
+    if details.is_empty() {
+        return summary.informative_text.clone();
+    }
+    format!("{}\n\n{}", summary.informative_text, details)
+}
+
+fn current_unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 /// Opens files in the active window by activating the GIO "open-file" action.

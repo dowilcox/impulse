@@ -709,6 +709,7 @@ pub(super) fn setup_tab_close_handler(
     let closed_tabs_for_close = closed_tabs.clone();
     let open_editor_paths = ctx.open_editor_paths.clone();
     let editor_tab_pages = ctx.editor_tab_pages.clone();
+    let settings_for_close = ctx.settings.clone();
     ctx.tab_view.connect_close_page(move |tv, page| {
         // Confirm before closing pinned tabs
         if page.is_pinned() {
@@ -734,8 +735,59 @@ pub(super) fn setup_tab_close_handler(
             return gtk4::glib::Propagation::Stop;
         }
 
-        sidebar_state.remove_tab_state(&page.child());
         let child = page.child();
+        if settings_for_close.borrow().confirm_close_warnings && !editor::is_editor(&child) {
+            let running_commands = terminal_container::collect_terminals(&child)
+                .into_iter()
+                .filter_map(|term| terminal::running_close_risk_command(&term))
+                .collect::<Vec<_>>();
+            let summary = impulse_core::close_risk::summarize_close_risk(
+                &impulse_core::close_risk::CloseRiskInput {
+                    action: impulse_core::close_risk::CloseRiskAction::CloseTab,
+                    unsaved_editor_count: 0,
+                    running_terminal_process_count: 0,
+                    running_commands,
+                    now_ms: current_unix_time_ms(),
+                    long_command_threshold_seconds: settings_for_close
+                        .borrow()
+                        .terminal_long_command_seconds
+                        .max(1) as u64,
+                },
+            );
+            if summary.has_risk {
+                let dialog = adw::AlertDialog::builder()
+                    .heading(&summary.title)
+                    .body(close_risk_body(&summary))
+                    .build();
+                dialog.add_response("cancel", &summary.cancel_title);
+                dialog.add_response("close", &summary.destructive_action_title);
+                dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+                dialog.set_default_response(Some("cancel"));
+                dialog.set_close_response("cancel");
+
+                let tv = tv.clone();
+                let page = page.clone();
+                let create_tab = create_tab_on_empty.clone();
+                dialog.connect_response(None, move |_dialog, response| {
+                    if response == "close" {
+                        tv.close_page_finish(&page, true);
+                        let tv2 = tv.clone();
+                        let new_tab = create_tab.clone();
+                        gtk4::glib::idle_add_local_once(move || {
+                            if tv2.n_pages() == 0 {
+                                new_tab();
+                            }
+                        });
+                    } else {
+                        tv.close_page_finish(&page, false);
+                    }
+                });
+                dialog.present(Some(&window_ref));
+                return gtk4::glib::Propagation::Stop;
+            }
+        }
+
+        sidebar_state.remove_tab_state(&page.child());
 
         // Record closed tab info for "reopen closed tab" feature.
         // Only editor and image preview tabs can be reopened (terminals cannot).
@@ -887,4 +939,22 @@ pub(super) fn setup_tab_close_handler(
         });
         gtk4::glib::Propagation::Stop
     });
+}
+
+fn close_risk_body(summary: &impulse_core::close_risk::CloseRiskSummary) -> String {
+    let details = summary.detail_lines.join("\n");
+    if summary.informative_text.is_empty() {
+        return details;
+    }
+    if details.is_empty() {
+        return summary.informative_text.clone();
+    }
+    format!("{}\n\n{}", summary.informative_text, details)
+}
+
+fn current_unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }

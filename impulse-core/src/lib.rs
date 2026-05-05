@@ -1,3 +1,4 @@
+pub mod close_risk;
 pub mod filesystem;
 pub mod git;
 pub mod lsp;

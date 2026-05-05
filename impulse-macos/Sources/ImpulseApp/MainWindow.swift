@@ -1144,8 +1144,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           break
         }
       }
+    } else if case .terminal(let container) = tabManager.tabs[index] {
+      confirmClosingTerminalTabIfNeeded(container) { [weak self] shouldClose in
+        guard let self, shouldClose else { return }
+        guard
+          let currentIndex = self.tabManager.tabs.firstIndex(where: {
+            if case .terminal(let currentContainer) = $0 {
+              return currentContainer === container
+            }
+            return false
+          })
+        else { return }
+        self.tabManager.closeTab(index: currentIndex)
+      }
     } else {
-      // Not an editor or not modified — close immediately.
+      // Non-editor tabs without terminal processes can close immediately.
       if case .editor(let editor) = tabManager.tabs[index] {
         if let path = editor.filePath {
           untrackEditorTab(forPath: path)
@@ -1153,6 +1166,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         lspDidClose(editor: editor)
       }
       tabManager.closeTab(index: index)
+    }
+  }
+
+  private func confirmClosingTerminalTabIfNeeded(
+    _ container: TerminalContainer,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard settings.confirmCloseWarnings else {
+      completion(true)
+      return
+    }
+
+    guard
+      let summary = closeRiskSummary(
+        action: .closeTab,
+        unsavedEditorCount: 0,
+        runningTerminalProcessCount: container.runningDescendantProcessCount(),
+        runningCommands: container.runningCloseRiskCommands()
+      ),
+      summary.hasRisk
+    else {
+      completion(true)
+      return
+    }
+
+    let alert = NSAlert()
+    alert.messageText = summary.title
+    alert.informativeText = closeRiskInformativeText(summary)
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: summary.destructiveActionTitle)
+    alert.addButton(withTitle: summary.cancelTitle)
+
+    guard let window = self.window else {
+      completion(alert.runModal() == .alertFirstButtonReturn)
+      return
+    }
+
+    alert.beginSheetModal(for: window) { response in
+      completion(response == .alertFirstButtonReturn)
     }
   }
 
@@ -2508,21 +2560,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
   }
 
+  func runningCloseRiskCommands() -> [CloseRiskCommand] {
+    tabManager.tabs.flatMap { tab in
+      if case .terminal(let container) = tab {
+        return container.runningCloseRiskCommands()
+      }
+      return []
+    }
+  }
+
+  private func closeRiskSummary(action: CloseRiskAction) -> CloseRiskSummary? {
+    closeRiskSummary(
+      action: action,
+      unsavedEditorCount: 0,
+      runningTerminalProcessCount: runningTerminalProcessCount(),
+      runningCommands: runningCloseRiskCommands()
+    )
+  }
+
+  private func closeRiskSummary(
+    action: CloseRiskAction,
+    unsavedEditorCount: Int,
+    runningTerminalProcessCount: Int,
+    runningCommands: [CloseRiskCommand]
+  ) -> CloseRiskSummary? {
+    let input = CloseRiskInput(
+      action: action,
+      unsavedEditorCount: unsavedEditorCount,
+      runningTerminalProcessCount: runningTerminalProcessCount,
+      runningCommands: runningCommands,
+      nowMs: currentUnixTimeMs(),
+      longCommandThresholdSeconds: UInt64(max(1, settings.terminalLongCommandSeconds))
+    )
+    return ImpulseCore.closeRiskSummary(input: input)
+  }
+
   private func confirmClosingTerminalProcessesIfNeeded() -> Bool {
-    let count = runningTerminalProcessCount()
-    guard count > 0 else { return true }
+    guard settings.confirmCloseWarnings else { return true }
+    guard let summary = closeRiskSummary(action: .closeWindow), summary.hasRisk else {
+      return true
+    }
 
     let alert = NSAlert()
-    alert.messageText =
-      count == 1
-      ? "Close window with 1 running terminal process?"
-      : "Close window with \(count) running terminal processes?"
-    alert.informativeText =
-      "Closing this window will terminate running processes in its terminal tabs."
+    alert.messageText = summary.title
+    alert.informativeText = closeRiskInformativeText(summary)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "Close Window")
-    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: summary.destructiveActionTitle)
+    alert.addButton(withTitle: summary.cancelTitle)
     return alert.runModal() == .alertFirstButtonReturn
+  }
+
+  private func closeRiskInformativeText(_ summary: CloseRiskSummary) -> String {
+    let details = summary.detailLines.joined(separator: "\n")
+    if summary.informativeText.isEmpty {
+      return details
+    }
+    if details.isEmpty {
+      return summary.informativeText
+    }
+    return "\(summary.informativeText)\n\n\(details)"
   }
 
   private func reviewDirtyEditorsBeforeWindowClose(_ dirty: [EditorTab]) {

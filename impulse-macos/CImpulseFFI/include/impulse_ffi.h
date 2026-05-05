@@ -64,6 +64,7 @@ char *impulse_settings_default_json(void);
 char *impulse_settings_load_json(const char *json);
 char *impulse_settings_validate_json(const char *json);
 bool impulse_matches_file_pattern(const char *path, const char *pattern);
+char *impulse_close_risk_summary(const char *input_json);
 
 // Theme API
 char *impulse_available_themes(void);

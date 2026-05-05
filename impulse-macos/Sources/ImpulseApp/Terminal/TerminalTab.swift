@@ -333,6 +333,17 @@ class TerminalTab: NSView {
     return collectDescendants(of: pid).count
   }
 
+  func runningCloseRiskCommand() -> CloseRiskCommand? {
+    guard let block = backend?.commandBlocks().last(where: { $0.endedAtMs == nil }) else {
+      return nil
+    }
+    return CloseRiskCommand(
+      command: block.command,
+      cwd: block.cwd ?? currentWorkingDirectory,
+      startedAtMs: block.startedAtMs
+    )
+  }
+
   /// Recursively collect all descendant PIDs of a given process using
   /// `proc_listchildpids()`. Returns PIDs in leaf-first order.
   private func collectDescendants(of pid: pid_t) -> [pid_t] {
@@ -693,11 +704,15 @@ class TerminalTab: NSView {
       "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG",
       "LD_PROFILE", "LD_DYNAMIC_WEAK", "LD_BIND_NOW",
     ]
+    let parentOnlyEnvKeys: Set<String> = [
+      "NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR",
+    ]
 
     // Inherit the current process environment.
     for (key, value) in ProcessInfo.processInfo.environment {
       if key == "TERM" || key == "TERM_PROGRAM" || key == "COLORTERM" { continue }
       if dangerousEnvKeys.contains(key) { continue }
+      if parentOnlyEnvKeys.contains(key) { continue }
       envDict[key] = value
     }
 

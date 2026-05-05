@@ -30,6 +30,8 @@ const FILTERED_LD_VARS: &[&str] = &[
     "LD_DYNAMIC_WEAK",
     "LD_BIND_NOW",
 ];
+const FILTERED_PARENT_COLOR_VARS: &[&str] =
+    &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
 
 /// GTK terminal widget backed by `impulse_terminal::TerminalBackend`.
 ///
@@ -420,6 +422,20 @@ pub fn command_blocks(terminal: &Terminal) -> Vec<TerminalCommandBlock> {
                 .map(TerminalBackend::command_blocks)
         })
         .unwrap_or_default()
+}
+
+pub fn running_close_risk_command(
+    terminal: &Terminal,
+) -> Option<impulse_core::close_risk::RunningCommandRisk> {
+    let block = command_blocks(terminal)
+        .into_iter()
+        .rev()
+        .find(|block| block.ended_at_ms.is_none())?;
+    Some(impulse_core::close_risk::RunningCommandRisk {
+        command: block.command,
+        cwd: block.cwd.or_else(|| current_directory(terminal)),
+        started_at_ms: block.started_at_ms,
+    })
 }
 
 pub fn copy_last_command(terminal: &Terminal) {
@@ -1363,7 +1379,10 @@ fn current_background(state: &TerminalState) -> RgbColor {
 
 fn filtered_env_map() -> HashMap<String, String> {
     std::env::vars()
-        .filter(|(k, _)| !FILTERED_LD_VARS.contains(&k.as_str()))
+        .filter(|(k, _)| {
+            !FILTERED_LD_VARS.contains(&k.as_str())
+                && !FILTERED_PARENT_COLOR_VARS.contains(&k.as_str())
+        })
         .collect()
 }
 

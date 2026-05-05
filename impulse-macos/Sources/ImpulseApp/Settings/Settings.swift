@@ -89,6 +89,7 @@ struct Settings: Codable {
     var windowHeight: Int
     var sidebarVisible: Bool
     var sidebarWidth: Int
+    var confirmCloseWarnings: Bool
     var lastDirectory: String
     var openFiles: [String]
 
@@ -167,6 +168,7 @@ struct Settings: Codable {
         case windowHeight = "window_height"
         case sidebarVisible = "sidebar_visible"
         case sidebarWidth = "sidebar_width"
+        case confirmCloseWarnings = "confirm_close_warnings"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -229,6 +231,7 @@ struct Settings: Codable {
             windowHeight: 800,
             sidebarVisible: false,
             sidebarWidth: 250,
+            confirmCloseWarnings: true,
             lastDirectory: "",
             openFiles: [],
             autoSave: false,
@@ -295,6 +298,7 @@ struct Settings: Codable {
         windowHeight = (try? c.decode(Int.self, forKey: .windowHeight)) ?? d.windowHeight
         sidebarVisible = (try? c.decode(Bool.self, forKey: .sidebarVisible)) ?? d.sidebarVisible
         sidebarWidth = (try? c.decode(Int.self, forKey: .sidebarWidth)) ?? d.sidebarWidth
+        confirmCloseWarnings = (try? c.decode(Bool.self, forKey: .confirmCloseWarnings)) ?? d.confirmCloseWarnings
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave
@@ -351,6 +355,7 @@ struct Settings: Codable {
 
     /// Memberwise initializer used by `Settings.default`.
     init(windowWidth: Int, windowHeight: Int, sidebarVisible: Bool, sidebarWidth: Int,
+         confirmCloseWarnings: Bool,
          lastDirectory: String, openFiles: [String], autoSave: Bool, fontSize: Int,
          fontFamily: String, tabWidth: Int, useSpaces: Bool, showLineNumbers: Bool,
          showRightMargin: Bool, rightMarginPosition: Int, wordWrap: Bool,
@@ -377,6 +382,7 @@ struct Settings: Codable {
         self.windowHeight = windowHeight
         self.sidebarVisible = sidebarVisible
         self.sidebarWidth = sidebarWidth
+        self.confirmCloseWarnings = confirmCloseWarnings
         self.lastDirectory = lastDirectory
         self.openFiles = openFiles
         self.autoSave = autoSave

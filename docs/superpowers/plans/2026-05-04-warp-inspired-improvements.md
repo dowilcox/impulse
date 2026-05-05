@@ -189,11 +189,13 @@
 
 **Implementation tasks:**
 
-- [ ] Add a shared close-risk summary model in `impulse-core`.
-- [ ] Thread terminal command-start timestamps and editor dirty state into the summary.
-- [ ] Add macOS window/app close confirmation.
-- [ ] Add Linux window close confirmation.
-- [ ] Add tests for summary wording and warning thresholds.
+- [x] Add a shared close-risk summary model in `impulse-core`.
+- [x] Thread terminal command-start timestamps and editor dirty state into the summary.
+- [x] Add macOS window/app close confirmation.
+- [x] Add Linux window close confirmation.
+- [x] Add tests for summary wording and warning thresholds.
+
+**Implementation note:** The first pass warns on macOS for unsaved editors, running terminal processes, and active command blocks. Linux warns for unsaved editors and active command blocks; process counts remain `0` until the GTK frontend exposes a platform-specific child-process count.
 
 ### 10. Shared Command Palette Registry and Recents
 

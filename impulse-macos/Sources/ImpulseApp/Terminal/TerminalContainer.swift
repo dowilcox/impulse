@@ -180,6 +180,10 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     }
   }
 
+  func runningCloseRiskCommands() -> [CloseRiskCommand] {
+    terminals.compactMap { $0.runningCloseRiskCommand() }
+  }
+
   /// Remove the terminal at the given index. If only one terminal remains
   /// after removal, collapse the split view back to a single terminal.
   func removeTerminal(at index: Int) {

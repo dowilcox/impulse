@@ -56,6 +56,7 @@ pub struct Settings {
     pub window_height: i32,
     pub sidebar_visible: bool,
     pub sidebar_width: i32,
+    pub confirm_close_warnings: bool,
     pub last_directory: String,
     pub open_files: Vec<String>,
 
@@ -135,6 +136,7 @@ impl Default for Settings {
             window_height: 800,
             sidebar_visible: false,
             sidebar_width: 250,
+            confirm_close_warnings: true,
             last_directory: String::new(),
             open_files: Vec::new(),
 
@@ -175,7 +177,7 @@ impl Default for Settings {
             terminal_allow_notifications: true,
             terminal_attention_on_long_command: true,
             terminal_long_command_seconds: 30,
-            terminal_bold_is_bright: false,
+            terminal_bold_is_bright: true,
 
             // Editor (additional)
             editor_line_height: 0,
@@ -298,6 +300,7 @@ mod tests {
         assert_eq!(settings.font_size, 20);
         assert_eq!(settings.color_scheme, "nord");
         assert_eq!(settings.tab_width, 4);
+        assert!(settings.confirm_close_warnings);
     }
 
     #[test]

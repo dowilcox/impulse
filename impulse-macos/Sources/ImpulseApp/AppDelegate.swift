@@ -221,21 +221,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func confirmTerminatingTerminalProcessesIfNeeded() -> Bool {
-    let count = windowControllers.reduce(0) { result, controller in
-      result + controller.runningTerminalProcessCount()
+    guard settings.confirmCloseWarnings else { return true }
+    let input = CloseRiskInput(
+      action: .quit,
+      unsavedEditorCount: 0,
+      runningTerminalProcessCount: runningTerminalProcessCount(),
+      runningCommands: runningCloseRiskCommands(),
+      nowMs: currentUnixTimeMs(),
+      longCommandThresholdSeconds: UInt64(max(1, settings.terminalLongCommandSeconds))
+    )
+    guard let summary = ImpulseCore.closeRiskSummary(input: input), summary.hasRisk else {
+      return true
     }
-    guard count > 0 else { return true }
 
     let alert = NSAlert()
-    alert.messageText =
-      count == 1
-      ? "Quit Impulse with 1 running terminal process?"
-      : "Quit Impulse with \(count) running terminal processes?"
-    alert.informativeText = "Quitting will terminate running processes in terminal tabs."
+    alert.messageText = summary.title
+    alert.informativeText = closeRiskInformativeText(summary)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "Quit")
-    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: summary.destructiveActionTitle)
+    alert.addButton(withTitle: summary.cancelTitle)
     return alert.runModal() == .alertFirstButtonReturn
+  }
+
+  private func runningTerminalProcessCount() -> Int {
+    windowControllers.reduce(0) { result, controller in
+      result + controller.runningTerminalProcessCount()
+    }
+  }
+
+  private func runningCloseRiskCommands() -> [CloseRiskCommand] {
+    windowControllers.flatMap { $0.runningCloseRiskCommands() }
+  }
+
+  private func closeRiskInformativeText(_ summary: CloseRiskSummary) -> String {
+    let details = summary.detailLines.joined(separator: "\n")
+    if summary.informativeText.isEmpty {
+      return details
+    }
+    if details.isEmpty {
+      return summary.informativeText
+    }
+    return "\(summary.informativeText)\n\n\(details)"
   }
 
   func applicationWillTerminate(_ notification: Notification) {

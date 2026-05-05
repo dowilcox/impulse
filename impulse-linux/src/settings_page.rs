@@ -1075,6 +1075,23 @@ pub fn show_settings_window(
     }
     term_behavior_group.add(&allow_hyperlink_row);
 
+    let close_warnings_row = adw::SwitchRow::new();
+    close_warnings_row.set_title("Warn Before Closing Active Work");
+    close_warnings_row
+        .set_subtitle("Confirm before closing windows with unsaved files or running commands");
+    close_warnings_row.set_active(settings.borrow().confirm_close_warnings);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        close_warnings_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.confirm_close_warnings = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&close_warnings_row);
+
     let bold_is_bright_row = adw::SwitchRow::new();
     bold_is_bright_row.set_title("Bold is Bright");
     bold_is_bright_row.set_subtitle("Map bold text to bright color variants");

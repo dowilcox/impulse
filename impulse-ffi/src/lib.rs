@@ -1266,6 +1266,46 @@ pub extern "C" fn impulse_matches_file_pattern(
     )
 }
 
+#[no_mangle]
+pub extern "C" fn impulse_close_risk_summary(input_json: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let Some(raw) = to_rust_str(input_json) else {
+                return to_c_string(
+                    &serde_json::json!({
+                        "has_risk": false,
+                        "error": "missing close risk input"
+                    })
+                    .to_string(),
+                );
+            };
+            let input: impulse_core::close_risk::CloseRiskInput = match serde_json::from_str(&raw) {
+                Ok(input) => input,
+                Err(err) => {
+                    return to_c_string(
+                        &serde_json::json!({
+                            "has_risk": false,
+                            "error": format!("invalid close risk input: {err}")
+                        })
+                        .to_string(),
+                    );
+                }
+            };
+            match serde_json::to_string(&input.summarize()) {
+                Ok(json) => to_c_string(&json),
+                Err(err) => to_c_string(
+                    &serde_json::json!({
+                        "has_risk": false,
+                        "error": format!("close risk serialization failed: {err}")
+                    })
+                    .to_string(),
+                ),
+            }
+        }),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Theme API
 // ---------------------------------------------------------------------------

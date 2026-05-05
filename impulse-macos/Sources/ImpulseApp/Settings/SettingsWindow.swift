@@ -433,6 +433,11 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(termLongCommandAttentionChanged(_:)))
     longCommandCheck.state = settings.terminalAttentionOnLongCommand ? .on : .off
 
+    let closeWarningsCheck = NSButton(
+      checkboxWithTitle: "Warn before closing active work",
+      target: self, action: #selector(closeWarningsChanged(_:)))
+    closeWarningsCheck.state = settings.confirmCloseWarnings ? .on : .off
+
     let longCommandThresholdField = NSTextField(string: "\(settings.terminalLongCommandSeconds)")
     longCommandThresholdField.target = self
     longCommandThresholdField.action = #selector(termLongCommandSecondsChanged(_:))
@@ -451,6 +456,7 @@ final class SettingsWindowController: NSWindowController {
         scrollOutputCheck,
         hyperlinkCheck,
         notificationsCheck,
+        closeWarningsCheck,
         longCommandCheck,
         makeRow(label: "Long Command Seconds:", control: longCommandThresholdField),
         boldBrightCheck,
@@ -1334,6 +1340,11 @@ final class SettingsWindowController: NSWindowController {
 
   @objc private func termLongCommandAttentionChanged(_ sender: NSButton) {
     settings.terminalAttentionOnLongCommand = sender.state == .on
+    persistSettings()
+  }
+
+  @objc private func closeWarningsChanged(_ sender: NSButton) {
+    settings.confirmCloseWarnings = sender.state == .on
     persistSettings()
   }
 
