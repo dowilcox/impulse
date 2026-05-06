@@ -1,8 +1,9 @@
+use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A formatter command that runs on save before the editor reloads the file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FormatOnSave {
     pub command: String,
     #[serde(default)]
@@ -10,7 +11,7 @@ pub struct FormatOnSave {
 }
 
 /// Per-file-type overrides for editor settings (tab width, spaces, formatter).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct FileTypeOverride {
     pub pattern: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -22,7 +23,7 @@ pub struct FileTypeOverride {
 }
 
 /// A command that runs automatically when a file matching the pattern is saved.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct CommandOnSave {
     pub name: String,
     pub command: String,
@@ -34,7 +35,7 @@ pub struct CommandOnSave {
 }
 
 /// A user-defined keybinding that runs a command.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct CustomKeybinding {
     pub name: String,
     pub key: String,
@@ -48,7 +49,7 @@ pub struct CustomKeybinding {
 /// The `#[serde(default)]` on the struct ensures that any fields missing from
 /// an existing settings file are filled in with their `Default` values, making
 /// it safe to add new fields without breaking old config files.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Settings {
     // ── Window ───────────────────────────────────────────────────────────
@@ -230,6 +231,12 @@ impl Settings {
         serde_json::to_string_pretty(&Settings::default()).expect("default settings must serialize")
     }
 
+    /// Return the generated JSON Schema for settings.
+    pub fn schema_json() -> String {
+        serde_json::to_string_pretty(&schema_for!(Settings))
+            .expect("settings schema must serialize")
+    }
+
     /// Clamp settings values to valid ranges.
     pub fn validate(&mut self) {
         self.font_size = self.font_size.clamp(6, 72);
@@ -340,5 +347,21 @@ mod tests {
         let settings = Settings::from_json(json).unwrap();
         assert_eq!(settings.font_family, "JetBrains Mono");
         assert_eq!(settings.terminal_font_family, "JetBrains Mono");
+    }
+
+    #[test]
+    fn default_settings_validate_against_generated_schema() {
+        let schema: serde_json::Value = serde_json::from_str(&Settings::schema_json()).unwrap();
+        let compiled = jsonschema::JSONSchema::compile(&schema).unwrap();
+        let default_settings: serde_json::Value =
+            serde_json::from_str(&Settings::default_json()).unwrap();
+
+        if let Err(errors) = compiled.validate(&default_settings) {
+            let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+            panic!(
+                "default settings did not validate against generated schema: {}",
+                messages.join("; ")
+            );
+        };
     }
 }

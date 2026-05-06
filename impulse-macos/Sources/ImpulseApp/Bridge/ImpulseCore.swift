@@ -760,6 +760,14 @@ final class ImpulseCore {
         return result
     }
 
+    /// Return generated JSON Schema for settings as a JSON string.
+    static func settingsSchemaJSON() -> String {
+        guard let raw = CImpulseFFI.impulse_settings_schema_json() else { return "{}" }
+        let result = String(cString: raw)
+        impulse_free_string(raw)
+        return result
+    }
+
     /// Parse, migrate, and validate raw settings JSON.
     static func settingsLoadJSON(_ rawJSON: String) -> String {
         guard let raw = rawJSON.withCString({ CImpulseFFI.impulse_settings_load_json($0) }) else {

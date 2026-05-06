@@ -539,6 +539,11 @@ extension Settings {
             settings.validate()
             return settings
         } catch {
+            if let backupURL = backupInvalidSettingsFile(url: url, data: data) {
+                os_log(.error,
+                       "Backed up invalid settings file to '%{public}@'",
+                       backupURL.path)
+            }
             os_log(.error, "Failed to decode settings from '%{public}@': %{public}@",
                    url.path, error.localizedDescription)
             return .default
@@ -575,6 +580,41 @@ extension Settings {
     /// Static variant for callers that don't hold an instance.
     static func save(_ settings: Settings) {
         settings.save()
+    }
+
+    private static func backupInvalidSettingsFile(url: URL, data: Data) -> URL? {
+        let directory = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension.isEmpty ? "json" : url.pathExtension
+        let timestamp = Int(Date().timeIntervalSince1970)
+
+        for attempt in 0..<100 {
+            let suffix = attempt == 0 ? "" : "-\(attempt)"
+            let backup = directory.appendingPathComponent(
+                "\(stem).invalid-\(timestamp)\(suffix).\(ext)"
+            )
+            if FileManager.default.fileExists(atPath: backup.path) {
+                continue
+            }
+            do {
+                try data.write(to: backup, options: .withoutOverwriting)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: backup.path
+                )
+                return backup
+            } catch CocoaError.fileWriteFileExists {
+                continue
+            } catch {
+                os_log(.error,
+                       "Failed to back up invalid settings file to '%{public}@': %{public}@",
+                       backup.path, error.localizedDescription)
+                return nil
+            }
+        }
+
+        os_log(.error, "Failed to choose a unique invalid settings backup path")
+        return nil
     }
 }
 

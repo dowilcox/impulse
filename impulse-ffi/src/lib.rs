@@ -1163,6 +1163,15 @@ pub extern "C" fn impulse_settings_default_json() -> *mut c_char {
     )
 }
 
+/// Return the generated JSON Schema for settings.
+#[no_mangle]
+pub extern "C" fn impulse_settings_schema_json() -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| to_c_string(&impulse_core::settings::Settings::schema_json())),
+    )
+}
+
 /// Parse, migrate, and validate a raw settings JSON string.
 /// Returns the cleaned JSON. If the input is null or invalid, returns default settings.
 #[no_mangle]
