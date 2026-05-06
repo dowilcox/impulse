@@ -79,7 +79,7 @@
 - [x] Surface schema validation errors in settings import/load paths.
 - [x] Preserve broken settings files on disk instead of overwriting them with defaults.
 - [x] Add a dismissible settings-error banner with an "Open settings file" action.
-- [ ] Track a stable content hash for settings files so offline edits are not silently lost when future sync exists.
+- [x] Track a stable content hash for settings files so offline edits are not silently lost when future sync exists.
 
 ### 4. Terminal Block Search and Filtering
 

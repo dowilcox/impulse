@@ -9,6 +9,11 @@ struct SettingsLoadWarning: Equatable {
     let message: String
 }
 
+private struct SettingsFileSnapshot: Equatable {
+    let path: String
+    let contentHash: String
+}
+
 /// A formatter command that runs on save before the editor reloads the file.
 struct FormatOnSave: Codable {
     var command: String
@@ -448,6 +453,7 @@ struct Settings: Codable {
 
 extension Settings {
     private static var saveBlockedByLoadError = false
+    private static var fileSnapshot: SettingsFileSnapshot?
     static private(set) var loadWarning: SettingsLoadWarning?
 
     /// Returns the path to `~/Library/Application Support/impulse/settings.json`.
@@ -546,11 +552,13 @@ extension Settings {
                     message: error.localizedDescription
                 )
                 saveBlockedByLoadError = true
+                fileSnapshot = nil
                 os_log(.error, "Failed to read settings from '%{public}@': %{public}@",
                        url.path, error.localizedDescription)
             } else {
                 loadWarning = nil
                 saveBlockedByLoadError = false
+                fileSnapshot = nil
             }
             return .default
         }
@@ -558,6 +566,10 @@ extension Settings {
             var settings = try JSONDecoder().decode(Settings.self, from: data)
             loadWarning = nil
             saveBlockedByLoadError = false
+            fileSnapshot = SettingsFileSnapshot(
+                path: url.path,
+                contentHash: stableContentHash(data)
+            )
             settings.migrateFormatOnSave()
             settings.migrateDefaultFont()
             settings.validate()
@@ -575,6 +587,7 @@ extension Settings {
                 message: error.localizedDescription
             )
             saveBlockedByLoadError = true
+            fileSnapshot = nil
             os_log(.error, "Failed to decode settings from '%{public}@': %{public}@",
                    url.path, error.localizedDescription)
             return .default
@@ -604,12 +617,29 @@ extension Settings {
             return
         }
         let url = Settings.settingsPath()
+        if let message = Settings.settingsFileChangedSinceLoad(url: url) {
+            os_log(.error,
+                   "Skipping settings save because %{public}@. Open settings.json and reload Impulse before saving settings.",
+                   message)
+            return
+        }
+        let writtenHash = Settings.stableContentHash(data)
         DispatchQueue.global(qos: .utility).async {
+            if let message = Settings.settingsFileChangedSinceLoad(url: url) {
+                os_log(.error,
+                       "Skipping settings save because %{public}@. Open settings.json and reload Impulse before saving settings.",
+                       message)
+                return
+            }
             do {
                 try data.write(to: url, options: .atomic)
                 // Restrict permissions to owner-only (0600).
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: url.path)
+                Settings.fileSnapshot = SettingsFileSnapshot(
+                    path: url.path,
+                    contentHash: writtenHash
+                )
             } catch {
                 os_log(.error, "Failed to write settings to '%{public}@': %{public}@",
                        url.path, error.localizedDescription)
@@ -620,6 +650,39 @@ extension Settings {
     /// Static variant for callers that don't hold an instance.
     static func save(_ settings: Settings) {
         settings.save()
+    }
+
+    private static func settingsFileChangedSinceLoad(url: URL) -> String? {
+        do {
+            let data = try Data(contentsOf: url)
+            let currentHash = stableContentHash(data)
+            guard let snapshot = fileSnapshot else {
+                return "\(url.path) was created after startup"
+            }
+            guard snapshot.path == url.path else {
+                return "\(url.path) was not the file loaded at startup"
+            }
+            if snapshot.contentHash != currentHash {
+                return "\(url.path) changed on disk since it was loaded"
+            }
+            return nil
+        } catch {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return "\(url.path) could not be checked: \(error.localizedDescription)"
+            }
+            return fileSnapshot == nil ? nil : "\(url.path) was removed after it was loaded"
+        }
+    }
+
+    private static func stableContentHash(_ data: Data) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        let hex = String(hash, radix: 16)
+        let paddedHex = String(repeating: "0", count: max(0, 16 - hex.count)) + hex
+        return "fnv1a64:\(data.count):\(paddedHex)"
     }
 
     private static func backupInvalidSettingsFile(url: URL, data: Data) -> URL? {
