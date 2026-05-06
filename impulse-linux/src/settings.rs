@@ -1,12 +1,26 @@
 pub use impulse_core::settings::*;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
-static INVALID_SETTINGS_BACKED_UP: AtomicBool = AtomicBool::new(false);
+#[derive(Clone, Debug)]
+pub struct SettingsLoadWarning {
+    pub settings_path: PathBuf,
+    pub backup_path: Option<PathBuf>,
+    pub message: String,
+}
+
+static SETTINGS_LOAD_WARNING: OnceLock<Mutex<Option<SettingsLoadWarning>>> = OnceLock::new();
 
 pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
     impulse_core::util::matches_file_pattern(path, pattern)
+}
+
+pub fn settings_load_warning() -> Option<SettingsLoadWarning> {
+    settings_load_warning_cell()
+        .lock()
+        .ok()
+        .and_then(|warning| warning.clone())
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -30,14 +44,28 @@ pub fn load() -> Settings {
         Some(p) => p,
         None => {
             log::warn!("Cannot determine config directory; using default settings");
+            set_settings_load_warning(None);
             return Settings::default();
         }
     };
     let settings = match std::fs::read_to_string(&path) {
         Ok(contents) => match Settings::from_json(&contents) {
-            Ok(s) => s,
+            Ok(s) => {
+                set_settings_load_warning(None);
+                s
+            }
             Err(e) => {
-                let backup_path = backup_invalid_settings_file(&path, contents.as_bytes());
+                let existing_warning =
+                    settings_load_warning().filter(|warning| warning.settings_path == path);
+                let backup_path = match existing_warning {
+                    Some(warning) => warning.backup_path,
+                    None => backup_invalid_settings_file(&path, contents.as_bytes()),
+                };
+                set_settings_load_warning(Some(SettingsLoadWarning {
+                    settings_path: path.clone(),
+                    backup_path: backup_path.clone(),
+                    message: e.clone(),
+                }));
                 log::error!(
                     "Failed to parse settings from {}: {}; using defaults{}",
                     path.display(),
@@ -50,7 +78,24 @@ pub fn load() -> Settings {
                 Settings::default()
             }
         },
-        Err(_) => Settings::default(),
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                set_settings_load_warning(None);
+            } else {
+                let message = e.to_string();
+                set_settings_load_warning(Some(SettingsLoadWarning {
+                    settings_path: path.clone(),
+                    backup_path: None,
+                    message: message.clone(),
+                }));
+                log::error!(
+                    "Failed to read settings from {}: {}; using defaults",
+                    path.display(),
+                    message
+                );
+            }
+            Settings::default()
+        }
     };
 
     // Check if migrations changed anything and save if so.
@@ -85,6 +130,14 @@ pub fn save(settings: &Settings) {
             return;
         }
     };
+    if let Some(warning) = settings_load_warning() {
+        log::warn!(
+            "Skipping settings save to preserve invalid settings file {}: {}",
+            warning.settings_path.display(),
+            warning.message
+        );
+        return;
+    }
     let json = match settings.to_json() {
         Ok(j) => j,
         Err(e) => {
@@ -119,11 +172,17 @@ pub fn save(settings: &Settings) {
     }
 }
 
-fn backup_invalid_settings_file(path: &std::path::Path, contents: &[u8]) -> Option<PathBuf> {
-    if INVALID_SETTINGS_BACKED_UP.swap(true, Ordering::Relaxed) {
-        return None;
-    }
+fn settings_load_warning_cell() -> &'static Mutex<Option<SettingsLoadWarning>> {
+    SETTINGS_LOAD_WARNING.get_or_init(|| Mutex::new(None))
+}
 
+fn set_settings_load_warning(warning: Option<SettingsLoadWarning>) {
+    if let Ok(mut cell) = settings_load_warning_cell().lock() {
+        *cell = warning;
+    }
+}
+
+fn backup_invalid_settings_file(path: &std::path::Path, contents: &[u8]) -> Option<PathBuf> {
     let parent = path.parent()?;
     let stem = path
         .file_stem()
@@ -158,7 +217,10 @@ fn backup_invalid_settings_file(path: &std::path::Path, contents: &[u8]) -> Opti
                 if file.write_all(contents).is_ok() {
                     return Some(backup);
                 }
-                log::error!("Failed to write invalid settings backup {}", backup.display());
+                log::error!(
+                    "Failed to write invalid settings backup {}",
+                    backup.display()
+                );
                 return None;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

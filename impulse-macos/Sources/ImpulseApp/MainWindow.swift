@@ -213,6 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     self.tabManager.windowModel = windowModel
     self.windowModel.theme = theme
     self.windowModel.iconCache = tabManager.iconCache
+    self.windowModel.settingsLoadWarning = Settings.loadWarning
     self.windowModel.showHiddenFiles = settings.sidebarShowHidden
     self.windowModel.sidebarVisible = settings.sidebarVisible
     self.windowModel.sidebarWidth = CGFloat(settings.sidebarWidth)
@@ -395,6 +396,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           self.fileTreeCacheInsert(key: root, nodes: nodes)
         }
       }
+    }
+    windowModel.onOpenSettingsFile = {
+      NSWorkspace.shared.open(Settings.filePath)
+    }
+    windowModel.onDismissSettingsWarning = { [weak self] in
+      self?.windowModel.settingsLoadWarning = nil
     }
     windowModel.onNewFile = { [weak self] (dirPath: String) in
       guard let self, !dirPath.isEmpty else { return }

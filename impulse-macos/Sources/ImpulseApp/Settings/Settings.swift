@@ -3,6 +3,12 @@ import os.log
 
 // MARK: - Sub-Types
 
+struct SettingsLoadWarning: Equatable {
+    let settingsPath: URL
+    let backupPath: URL?
+    let message: String
+}
+
 /// A formatter command that runs on save before the editor reloads the file.
 struct FormatOnSave: Codable {
     var command: String
@@ -441,6 +447,9 @@ struct Settings: Codable {
 // MARK: - Settings I/O
 
 extension Settings {
+    private static var saveBlockedByLoadError = false
+    static private(set) var loadWarning: SettingsLoadWarning?
+
     /// Returns the path to `~/Library/Application Support/impulse/settings.json`.
     static func settingsPath() -> URL {
         guard let appSupport = FileManager.default.urls(
@@ -529,21 +538,43 @@ extension Settings {
         do {
             data = try Data(contentsOf: url)
         } catch {
-            // File may not exist on first launch — this is expected.
+            // A missing file is expected on first launch; existing unreadable files are not.
+            if FileManager.default.fileExists(atPath: url.path) {
+                loadWarning = SettingsLoadWarning(
+                    settingsPath: url,
+                    backupPath: nil,
+                    message: error.localizedDescription
+                )
+                saveBlockedByLoadError = true
+                os_log(.error, "Failed to read settings from '%{public}@': %{public}@",
+                       url.path, error.localizedDescription)
+            } else {
+                loadWarning = nil
+                saveBlockedByLoadError = false
+            }
             return .default
         }
         do {
             var settings = try JSONDecoder().decode(Settings.self, from: data)
+            loadWarning = nil
+            saveBlockedByLoadError = false
             settings.migrateFormatOnSave()
             settings.migrateDefaultFont()
             settings.validate()
             return settings
         } catch {
-            if let backupURL = backupInvalidSettingsFile(url: url, data: data) {
+            let backupURL = backupInvalidSettingsFile(url: url, data: data)
+            if let backupURL {
                 os_log(.error,
                        "Backed up invalid settings file to '%{public}@'",
                        backupURL.path)
             }
+            loadWarning = SettingsLoadWarning(
+                settingsPath: url,
+                backupPath: backupURL,
+                message: error.localizedDescription
+            )
+            saveBlockedByLoadError = true
             os_log(.error, "Failed to decode settings from '%{public}@': %{public}@",
                    url.path, error.localizedDescription)
             return .default
@@ -554,6 +585,15 @@ extension Settings {
     /// Encoding and writing happen on a background queue to avoid blocking the
     /// main thread. File permissions are set to 0600 (owner read/write only).
     func save() {
+        if Settings.saveBlockedByLoadError {
+            let path = Settings.loadWarning?.settingsPath.path ?? Settings.settingsPath().path
+            let message = Settings.loadWarning?.message ?? "settings load failed"
+            os_log(.error,
+                   "Skipping settings save to preserve invalid settings file '%{public}@': %{public}@",
+                   path, message)
+            return
+        }
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data: Data

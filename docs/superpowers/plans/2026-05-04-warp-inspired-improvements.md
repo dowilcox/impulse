@@ -73,12 +73,12 @@
 
 **Implementation tasks:**
 
-- [ ] Add schema generation for `Settings`, `CommandOnSave`, `CustomKeybinding`, and file-type overrides.
-- [ ] Add tests that validate `Settings::default_json()` against the generated schema.
-- [ ] Add `impulse settings schema` or a script target to write the schema artifact.
-- [ ] Surface schema validation errors in settings import/load paths.
-- [ ] Preserve broken settings files on disk instead of overwriting them with defaults.
-- [ ] Add a dismissible settings-error banner with an "Open settings file" action.
+- [x] Add schema generation for `Settings`, `CommandOnSave`, `CustomKeybinding`, and file-type overrides.
+- [x] Add tests that validate `Settings::default_json()` against the generated schema.
+- [x] Add `impulse settings schema` or a script target to write the schema artifact.
+- [x] Surface schema validation errors in settings import/load paths.
+- [x] Preserve broken settings files on disk instead of overwriting them with defaults.
+- [x] Add a dismissible settings-error banner with an "Open settings file" action.
 - [ ] Track a stable content hash for settings files so offline edits are not silently lost when future sync exists.
 
 ### 4. Terminal Block Search and Filtering

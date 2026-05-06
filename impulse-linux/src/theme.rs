@@ -819,6 +819,46 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             color: {fg};
             background-color: alpha({fg}, 0.08);
         }}
+        .settings-error-banner {{
+            background-color: alpha({yellow}, 0.14);
+            border-bottom: 1px solid alpha({yellow}, 0.35);
+            padding: 8px 12px;
+        }}
+        .settings-error-banner image {{
+            color: {yellow};
+        }}
+        .settings-error-title {{
+            color: {fg};
+            font-weight: 600;
+        }}
+        .settings-error-detail {{
+            color: {fg_dark};
+            font-size: 11px;
+        }}
+        button.settings-error-action {{
+            min-height: 24px;
+            padding: 2px 10px;
+            border-radius: 4px;
+            color: {yellow};
+            border: 1px solid alpha({yellow}, 0.45);
+            background: transparent;
+            box-shadow: none;
+        }}
+        button.settings-error-action:hover {{
+            background: alpha({yellow}, 0.12);
+        }}
+        button.settings-error-dismiss {{
+            min-width: 26px;
+            min-height: 26px;
+            padding: 2px;
+            border-radius: 999px;
+            background: transparent;
+            border: 1px solid transparent;
+            box-shadow: none;
+        }}
+        button.settings-error-dismiss:hover {{
+            background: alpha({fg}, 0.08);
+        }}
         button.impulse-header-button {{
             min-width: 30px;
             min-height: 30px;

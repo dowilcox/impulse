@@ -94,6 +94,7 @@ final class WindowModel {
   // MARK: Overlays
 
   var commandPaletteVisible: Bool = false
+  var settingsLoadWarning: SettingsLoadWarning? = nil
 
   // MARK: Theme
 
@@ -119,6 +120,8 @@ final class WindowModel {
   var onRefreshTree: (() -> Void)?
   var onCollapseAll: (() -> Void)?
   var onToggleHidden: (() -> Void)?
+  var onOpenSettingsFile: (() -> Void)?
+  var onDismissSettingsWarning: (() -> Void)?
 
   // MARK: Methods
 

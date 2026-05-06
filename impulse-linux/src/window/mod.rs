@@ -706,6 +706,9 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     header.pack_start(&settings_btn);
 
     main_box.append(&header);
+    if let Some(warning) = crate::settings::settings_load_warning() {
+        main_box.append(&settings_load_warning_banner(warning));
+    }
 
     // Horizontal pane: sidebar + tab view
     let paned = gtk4::Paned::new(gtk4::Orientation::Horizontal);
@@ -1494,6 +1497,71 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     }
 
     window.present();
+}
+
+fn settings_load_warning_banner(warning: crate::settings::SettingsLoadWarning) -> gtk4::Revealer {
+    let revealer = gtk4::Revealer::new();
+    revealer.set_transition_type(gtk4::RevealerTransitionType::SlideDown);
+    revealer.set_reveal_child(true);
+
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
+    row.add_css_class("settings-error-banner");
+
+    let icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+    row.append(&icon);
+
+    let text_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    text_box.set_hexpand(true);
+
+    let title = gtk4::Label::new(Some("Settings file could not be loaded"));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-error-title");
+    text_box.append(&title);
+
+    let detail_text = match &warning.backup_path {
+        Some(path) => format!(
+            "Using defaults. The invalid file was backed up to {}.",
+            path.display()
+        ),
+        None => {
+            "Using defaults. Automatic settings saves are paused until this is fixed.".to_string()
+        }
+    };
+    let detail = gtk4::Label::new(Some(&detail_text));
+    detail.set_xalign(0.0);
+    detail.set_wrap(true);
+    detail.add_css_class("settings-error-detail");
+    text_box.append(&detail);
+
+    row.append(&text_box);
+
+    let open_button = gtk4::Button::with_label("Open Settings File");
+    open_button.add_css_class("settings-error-action");
+    {
+        let settings_path = warning.settings_path.clone();
+        open_button.connect_clicked(move |_| {
+            let file = gio::File::for_path(&settings_path);
+            let _ = gio::AppInfo::launch_default_for_uri(
+                file.uri().as_str(),
+                None::<&gio::AppLaunchContext>,
+            );
+        });
+    }
+    row.append(&open_button);
+
+    let dismiss_button = gtk4::Button::from_icon_name("window-close-symbolic");
+    dismiss_button.set_tooltip_text(Some("Dismiss"));
+    dismiss_button.add_css_class("settings-error-dismiss");
+    {
+        let revealer = revealer.clone();
+        dismiss_button.connect_clicked(move |_| {
+            revealer.set_reveal_child(false);
+        });
+    }
+    row.append(&dismiss_button);
+
+    revealer.set_child(Some(&row));
+    revealer
 }
 
 fn close_risk_summary_for_tab_view(
