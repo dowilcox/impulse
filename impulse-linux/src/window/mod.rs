@@ -1473,6 +1473,10 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 s.open_files = open_files;
             }
             crate::settings::save(&settings.borrow());
+            crate::session_state::save(&session_state_for_tab_view(
+                &tab_view_ref,
+                Some(sidebar_state.current_path.borrow().clone()),
+            ));
             gtk4::glib::Propagation::Proceed
         });
     }
@@ -1611,6 +1615,92 @@ fn current_unix_time_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+fn session_state_for_tab_view(
+    tab_view: &adw::TabView,
+    project_root: Option<String>,
+) -> impulse_core::session_state::SessionState {
+    let mut tabs = Vec::new();
+    let mut active_tab_index = None;
+    let selected_position = tab_view
+        .selected_page()
+        .map(|page| tab_view.page_position(&page));
+    let n = tab_view.n_pages();
+
+    for i in 0..n {
+        let page = tab_view.nth_page(i);
+        let child = page.child();
+        let tab = if editor::is_editor(&child) || editor::is_image_preview(&child) {
+            let path = child.widget_name().to_string();
+            if restorable_path(&path) {
+                Some(impulse_core::session_state::SessionTab::Editor(
+                    impulse_core::session_state::SessionEditorTab {
+                        path,
+                        cursor_line: None,
+                        cursor_column: None,
+                        scroll_line: None,
+                        pinned: false,
+                    },
+                ))
+            } else {
+                None
+            }
+        } else {
+            terminal_container::get_active_terminal(&child).map(|term| {
+                impulse_core::session_state::SessionTab::Terminal(
+                    impulse_core::session_state::SessionTerminalTab {
+                        cwd: terminal::current_directory(&term)
+                            .unwrap_or_else(default_terminal_directory),
+                        title: non_empty_string(terminal::title(&term)),
+                        shell: None,
+                        pinned: false,
+                    },
+                )
+            })
+        };
+
+        if let Some(tab) = tab {
+            tabs.push(tab);
+            if selected_position == Some(i) {
+                active_tab_index = tabs.len().checked_sub(1);
+            }
+        }
+    }
+
+    let tab_indices = (0..tabs.len()).collect();
+    impulse_core::session_state::SessionState {
+        version: impulse_core::session_state::SESSION_STATE_VERSION,
+        active_window_index: if tabs.is_empty() { None } else { Some(0) },
+        windows: vec![impulse_core::session_state::SessionWindow {
+            project_root: project_root.and_then(non_empty_string),
+            tabs,
+            active_tab_index,
+            layout: impulse_core::session_state::SessionLayout::TabGroup(
+                impulse_core::session_state::SessionTabGroupLayout {
+                    tab_indices,
+                    active_tab_index,
+                },
+            ),
+        }],
+    }
+}
+
+fn restorable_path(path: &str) -> bool {
+    !path.is_empty() && path != "GtkBox" && !editor::is_untitled_path(path)
+}
+
+fn default_terminal_directory() -> String {
+    impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string())
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// Opens files in the active window by activating the GIO "open-file" action.

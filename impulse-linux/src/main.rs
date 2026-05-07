@@ -5,6 +5,7 @@ mod keybindings;
 mod lsp_completion;
 mod lsp_hover;
 mod project_search;
+mod session_state;
 mod settings;
 mod settings_page;
 mod sidebar;

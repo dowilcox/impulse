@@ -3,6 +3,7 @@ pub mod filesystem;
 pub mod git;
 pub mod lsp;
 pub mod search;
+pub mod session_state;
 pub mod settings;
 pub mod shell;
 pub mod theme;

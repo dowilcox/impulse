@@ -37,9 +37,11 @@
 - [x] Add focused scanner/backend tests for command text, cwd, exit code, and line range.
 - [x] Add macOS and Linux UI affordances for copy, rerun, and block navigation.
 
-### 2. Project Launch Configs
+### 2. Project Launch Configs (Nice-to-have)
 
 **User value:** One command opens a project exactly as needed: files, terminal tabs, working directories, and startup commands.
+
+**Priority:** Nice-to-have / deferred. This is useful, but it is less urgent than terminal safety, search, restore, and shared command infrastructure.
 
 **Fit:** Strong. Impulse already owns editor tabs, terminal tabs, and project directory state.
 
@@ -81,9 +83,11 @@
 - [x] Add a dismissible settings-error banner with an "Open settings file" action.
 - [x] Track a stable content hash for settings files so offline edits are not silently lost when future sync exists.
 
-### 4. Terminal Block Search and Filtering
+### 4. Terminal Block Search and Filtering (Deferred for now)
 
 **User value:** Search the terminal by command, output, cwd, duration, or failure state.
+
+**Priority:** Deferred for now. This should wait until the current session-continuity work lands.
 
 **Fit:** Medium-high. This should build on Command Blocks instead of being implemented first.
 
@@ -133,8 +137,9 @@
 
 **Implementation tasks:**
 
-- [ ] Add a versioned session-state model in `impulse-core`.
-- [ ] Record editor tabs, terminal tabs, cwd, active tab, and split layout.
+- [x] Add a versioned session-state model in `impulse-core`.
+- [x] Record editor tabs, terminal tabs, cwd, active tab, and top-level tab layout into `session-state.json`.
+- [ ] Extend session recording to split layouts.
 - [ ] Restore state at startup after project selection.
 - [ ] Add settings to enable/disable session restore.
 
@@ -155,9 +160,11 @@
 - [ ] Add iTerm color/theme import for macOS.
 - [ ] Add import preview UI before applying settings.
 
-### 8. Terminal Secret Redaction
+### 8. Terminal Secret Redaction (Nice-to-have)
 
 **User value:** API keys, tokens, and passwords printed in terminal output are harder to expose accidentally in screenshots, copy operations, and saved history.
+
+**Priority:** Nice-to-have / deferred. This is valuable safety work, but it can wait until core terminal navigation, search, and session continuity are stronger.
 
 **Fit:** Strong. Impulse owns terminal grid processing in `impulse-terminal`, and redaction should be shared across frontends.
 
@@ -411,13 +418,12 @@
 
 ---
 
-## First Implementation Recommendation
+## Current Implementation Recommendation
 
-Build **Command Blocks** first. It is the enabling layer for block search, command history, rerun, long-command notifications, and richer terminal UI. Keep the first version narrow:
+With **Command Blocks**, **Quit and Close Safety Warnings**, **Settings Schema and Validation**, and top-level **Session Restore** snapshotting complete, continue Session Restore by covering split layouts before replaying saved state:
 
-- record block metadata,
-- capture command text,
-- expose copy/rerun actions,
-- add tests around OSC parsing and block lifecycle.
+- extend session recording to terminal split layouts,
+- keep restore disabled until the recorded snapshot is reliable enough to replay,
+- then wire startup restore behind an explicit setting.
 
-After Command Blocks, prioritize the safety stack: **Terminal Secret Redaction**, **Quit and Close Safety Warnings**, and **Settings Error Banner**. Those are high-value features with limited dependency on larger launch-config or worktree work.
+Keep **Project Launch Configs**, **Terminal Block Search and Filtering**, and **Terminal Secret Redaction** deferred until session continuity and shared command infrastructure are further along.

@@ -2528,6 +2528,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
   // MARK: - Window State
 
+  func sessionWindowState() -> SessionWindowState {
+    tabManager.sessionWindowState(projectRoot: fileTreeRootPath)
+  }
+
   func restorableOpenFiles() -> [String] {
     let paths = tabManager.tabs.compactMap { tab -> String? in
       switch tab {

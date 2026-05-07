@@ -1,5 +1,11 @@
 import AppKit
 
+private func nonEmpty(_ value: String?) -> String? {
+  guard let value else { return nil }
+  let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return trimmed.isEmpty ? nil : trimmed
+}
+
 // MARK: - Tab Info
 
 /// Lightweight snapshot of the active tab's state for the status bar.
@@ -619,6 +625,60 @@ final class TabManager: NSObject {
   var selectedEditor: EditorTab? {
     if case .editor(let et) = selectedTab { return et }
     return nil
+  }
+
+  func sessionWindowState(projectRoot: String?) -> SessionWindowState {
+    var sessionTabs: [SessionTabState] = []
+    var activeSessionTabIndex: Int?
+
+    for (index, tab) in tabs.enumerated() {
+      let pinned = index < pinnedTabs.count ? pinnedTabs[index] : false
+      let sessionTab: SessionTabState?
+
+      switch tab {
+      case .editor(let editor):
+        if let path = editor.filePath, FileManager.default.fileExists(atPath: path) {
+          sessionTab = .editor(path: path, pinned: pinned)
+        } else {
+          sessionTab = nil
+        }
+      case .imagePreview(let path, _):
+        if FileManager.default.fileExists(atPath: path) {
+          sessionTab = .editor(path: path, pinned: pinned)
+        } else {
+          sessionTab = nil
+        }
+      case .terminal(let container):
+        if let terminal = container.activeTerminal {
+          let cwd = terminal.currentWorkingDirectory.isEmpty
+            ? NSHomeDirectory()
+            : terminal.currentWorkingDirectory
+          sessionTab = .terminal(
+            cwd: cwd,
+            title: nonEmpty(terminal.tabTitle),
+            shell: nonEmpty(ImpulseCore.getUserLoginShellName()),
+            pinned: pinned
+          )
+        } else {
+          sessionTab = nil
+        }
+      }
+
+      if let sessionTab {
+        sessionTabs.append(sessionTab)
+        if index == selectedIndex {
+          activeSessionTabIndex = sessionTabs.count - 1
+        }
+      }
+    }
+
+    let indices = Array(sessionTabs.indices)
+    return SessionWindowState(
+      projectRoot: nonEmpty(projectRoot),
+      tabs: sessionTabs,
+      activeTabIndex: activeSessionTabIndex,
+      layout: .tabGroup(tabIndices: indices, activeTabIndex: activeSessionTabIndex)
+    )
   }
 
   // MARK: - Ownership Queries
