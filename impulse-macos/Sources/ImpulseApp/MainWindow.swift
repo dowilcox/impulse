@@ -2532,6 +2532,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     tabManager.sessionWindowState(projectRoot: fileTreeRootPath)
   }
 
+  @discardableResult
+  func restoreSessionWindow(_ state: SessionWindowState) -> Bool {
+    if let projectRoot = state.projectRoot,
+      FileManager.default.fileExists(atPath: projectRoot)
+    {
+      switchFileTreeRoot(projectRoot)
+    }
+
+    var restoredAny = false
+    for tab in state.tabs {
+      switch tab.kind {
+      case "editor":
+        if let path = tab.path, FileManager.default.fileExists(atPath: path) {
+          tabManager.addEditorTab(path: path, projectDirectory: state.projectRoot)
+          restoredAny = true
+        }
+      case "terminal":
+        tabManager.addRestoredTerminalTab(tab)
+        restoredAny = true
+      default:
+        continue
+      }
+    }
+
+    if restoredAny, let activeTabIndex = state.activeTabIndex {
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        if self.tabManager.tabs.indices.contains(activeTabIndex) {
+          self.tabManager.selectTab(index: activeTabIndex)
+        }
+      }
+    }
+
+    return restoredAny
+  }
+
   func restorableOpenFiles() -> [String] {
     let paths = tabManager.tabs.compactMap { tab -> String? in
       switch tab {

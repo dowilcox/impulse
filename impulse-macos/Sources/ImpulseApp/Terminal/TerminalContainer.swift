@@ -62,6 +62,29 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     }
   }
 
+  init(
+    frame frameRect: NSRect,
+    settings: TerminalSettings,
+    theme: TerminalTheme,
+    sessionTab: SessionTabState
+  ) {
+    self.currentSettings = settings
+    self.currentTheme = theme
+    super.init(frame: frameRect)
+
+    if !restoreSessionTab(sessionTab) {
+      let fallbackTerminal = createTerminal()
+      terminals.append(fallbackTerminal)
+      addSubview(fallbackTerminal)
+      constrainChildToFill(fallbackTerminal)
+      let dir = settings.lastDirectory.isEmpty ? NSHomeDirectory() : settings.lastDirectory
+      DispatchQueue.main.async {
+        fallbackTerminal.spawnShell(initialDirectory: dir)
+        fallbackTerminal.focus()
+      }
+    }
+  }
+
   @available(*, unavailable)
   required init?(coder: NSCoder) {
     fatalError("init(coder:) is not supported")
@@ -182,6 +205,207 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
 
   func runningCloseRiskCommands() -> [CloseRiskCommand] {
     terminals.compactMap { $0.runningCloseRiskCommand() }
+  }
+
+  func sessionSnapshot(shellName: String) -> TerminalSessionSnapshot? {
+    var panes: [SessionTerminalPaneState] = []
+    var activePaneIndex: Int?
+
+    let layout: SessionTerminalPaneLayoutState?
+    if let splitView {
+      layout = sessionLayout(
+        in: splitView,
+        shellName: shellName,
+        panes: &panes,
+        activePaneIndex: &activePaneIndex
+      )
+    } else if let terminal = terminals.first {
+      layout = sessionLayout(
+        in: terminal,
+        shellName: shellName,
+        panes: &panes,
+        activePaneIndex: &activePaneIndex
+      )
+    } else {
+      layout = nil
+    }
+
+    guard let layout, !panes.isEmpty else { return nil }
+    return TerminalSessionSnapshot(
+      panes: panes,
+      activePaneIndex: activePaneIndex ?? 0,
+      paneLayout: layout
+    )
+  }
+
+  private func sessionLayout(
+    in view: NSView,
+    shellName: String,
+    panes: inout [SessionTerminalPaneState],
+    activePaneIndex: inout Int?
+  ) -> SessionTerminalPaneLayoutState? {
+    if let terminal = view as? TerminalTab {
+      let paneIndex = panes.count
+      if terminal === activeTerminal {
+        activePaneIndex = paneIndex
+      }
+      let cwd = terminal.currentWorkingDirectory.isEmpty
+        ? NSHomeDirectory()
+        : terminal.currentWorkingDirectory
+      panes.append(SessionTerminalPaneState(
+        cwd: cwd,
+        title: nonEmptySessionText(terminal.tabTitle),
+        shell: nonEmptySessionText(shellName)
+      ))
+      return .pane(paneIndex: paneIndex)
+    }
+
+    if let split = view as? NSSplitView {
+      let axis = split.isVertical ? "horizontal" : "vertical"
+      let children = split.arrangedSubviews.compactMap {
+        child -> (layout: SessionTerminalPaneLayoutState, size: Double)? in
+        guard let layout = sessionLayout(
+          in: child,
+          shellName: shellName,
+          panes: &panes,
+          activePaneIndex: &activePaneIndex
+        ) else {
+          return nil
+        }
+        return (layout, splitDimension(for: child, in: split))
+      }
+      return combineSplitLayouts(children, axis: axis)?.layout
+    }
+
+    for child in view.subviews {
+      if let layout = sessionLayout(
+        in: child,
+        shellName: shellName,
+        panes: &panes,
+        activePaneIndex: &activePaneIndex
+      ) {
+        return layout
+      }
+    }
+    return nil
+  }
+
+  private func combineSplitLayouts(
+    _ children: [(layout: SessionTerminalPaneLayoutState, size: Double)],
+    axis: String
+  ) -> (layout: SessionTerminalPaneLayoutState, size: Double)? {
+    guard let first = children.first else { return nil }
+    if children.count == 1 {
+      return first
+    }
+
+    guard let rest = combineSplitLayouts(Array(children.dropFirst()), axis: axis) else {
+      return first
+    }
+    let total = max(first.size + rest.size, 1.0)
+    let ratio = min(max(first.size / total, 0.1), 0.9)
+    return (
+      .split(axis: axis, ratio: ratio, first: first.layout, second: rest.layout),
+      total
+    )
+  }
+
+  private func splitDimension(for child: NSView, in split: NSSplitView) -> Double {
+    let raw = split.isVertical ? child.frame.width : child.frame.height
+    return max(Double(raw), 1.0)
+  }
+
+  private func nonEmptySessionText(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private func restoreSessionTab(_ tab: SessionTabState) -> Bool {
+    let panes = sessionPanes(for: tab)
+    guard !panes.isEmpty else { return false }
+
+    let layout = tab.paneLayout ?? .pane(paneIndex: 0)
+    let activePaneIndex = tab.activePaneIndex ?? 0
+    guard let restored = restoreSessionLayout(
+      layout,
+      panes: panes,
+      activePaneIndex: activePaneIndex
+    ) else {
+      return false
+    }
+
+    addSubview(restored)
+    constrainChildToFill(restored)
+    splitView = restored as? ThemedSplitView
+
+    DispatchQueue.main.async { [weak self] in
+      self?.activeTerminal?.focus()
+    }
+    return true
+  }
+
+  private func sessionPanes(for tab: SessionTabState) -> [SessionTerminalPaneState] {
+    if let panes = tab.panes, !panes.isEmpty {
+      return panes
+    }
+    return [SessionTerminalPaneState(
+      cwd: nonEmptySessionText(tab.cwd) ?? NSHomeDirectory(),
+      title: tab.title,
+      shell: tab.shell
+    )]
+  }
+
+  private func restoreSessionLayout(
+    _ layout: SessionTerminalPaneLayoutState,
+    panes: [SessionTerminalPaneState],
+    activePaneIndex: Int
+  ) -> NSView? {
+    switch layout {
+    case .pane(let paneIndex):
+      guard panes.indices.contains(paneIndex) else { return nil }
+      let pane = panes[paneIndex]
+      let terminal = createTerminal()
+      let terminalIndex = terminals.count
+      terminals.append(terminal)
+      if paneIndex == activePaneIndex {
+        activeTerminalIndex = terminalIndex
+      }
+      let cwd = pane.cwd.isEmpty ? NSHomeDirectory() : pane.cwd
+      DispatchQueue.main.async {
+        terminal.spawnShell(initialDirectory: cwd)
+      }
+      return terminal
+
+    case .split(let axis, let ratio, let first, let second):
+      let split = ThemedSplitView()
+      split.isVertical = axis == "horizontal"
+      split.dividerStyle = .thin
+      split.delegate = self
+      split.customDividerColor = dividerColor
+
+      let firstView = restoreSessionLayout(first, panes: panes, activePaneIndex: activePaneIndex)
+      let secondView = restoreSessionLayout(second, panes: panes, activePaneIndex: activePaneIndex)
+
+      switch (firstView, secondView) {
+      case let (firstView?, secondView?):
+        split.addArrangedSubview(firstView)
+        split.addArrangedSubview(secondView)
+        DispatchQueue.main.async {
+          let dimension = split.isVertical ? split.bounds.width : split.bounds.height
+          if dimension > 0 {
+            split.setPosition(dimension * CGFloat(ratio), ofDividerAt: 0)
+          }
+        }
+        return split
+      case let (firstView?, nil):
+        return firstView
+      case let (nil, secondView?):
+        return secondView
+      case (nil, nil):
+        return nil
+      }
+    }
   }
 
   /// Remove the terminal at the given index. If only one terminal remains

@@ -62,21 +62,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     core.initializeLsp(rootUri: rootUri)
     startLspPolling()
 
+    let sessionToRestore: SessionWindowState?
+    if pendingFiles.isEmpty && settings.restoreSession {
+      sessionToRestore = SessionState.load()?.activeWindow
+    } else {
+      sessionToRestore = nil
+    }
+
     let filesToOpen: [String]
-    if pendingFiles.isEmpty {
+    if sessionToRestore != nil {
+      filesToOpen = []
+    } else if pendingFiles.isEmpty && settings.restoreSession {
       filesToOpen = settings.openFiles.filter {
         FileManager.default.fileExists(atPath: $0)
       }
+    } else if pendingFiles.isEmpty {
+      filesToOpen = []
     } else {
       filesToOpen = pendingFiles
     }
 
-    openNewWindow(skipInitialTerminal: !filesToOpen.isEmpty)
+    openNewWindow(skipInitialTerminal: sessionToRestore != nil || !filesToOpen.isEmpty)
+
+    if let sessionToRestore {
+      DispatchQueue.main.async { [weak self] in
+        guard let controller = self?.windowControllers.first else { return }
+        if !controller.restoreSessionWindow(sessionToRestore) {
+          controller.tabManager.addTerminalTab()
+        }
+      }
+    }
 
     // Open any files queued before the window was created (CLI args or Finder).
     // Dispatch to the next run loop iteration so the window is fully visible
     // and the tab manager has completed its initial layout.
-    if !filesToOpen.isEmpty {
+    if sessionToRestore == nil && !filesToOpen.isEmpty {
       let files = filesToOpen
       pendingFiles.removeAll()
       DispatchQueue.main.async { [weak self] in

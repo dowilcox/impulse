@@ -868,23 +868,50 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         }
     }
 
-    // Create initial terminal tab (skipped when opening files directly).
-    if !has_initial_files {
-        (create_tab.clone())();
-    }
+    let restored_window = if !has_initial_files && settings.borrow().restore_session {
+        crate::session_state::load().and_then(|state| {
+            let index = state.active_window_index.unwrap_or(0);
+            state
+                .windows
+                .get(index)
+                .cloned()
+                .or_else(|| state.windows.first().cloned())
+        })
+    } else {
+        None
+    };
 
-    // Restore previously open editor tabs
-    for file_path in &settings.borrow().open_files.clone() {
-        if std::path::Path::new(file_path).exists() {
-            if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
-                cb(file_path);
+    let restored_session = restored_window.as_ref().is_some_and(|window_state| {
+        restore_session_window(
+            window_state,
+            &tab_view,
+            &setup_terminal_signals,
+            &settings,
+            &copy_on_select_flag,
+            &shell_cache,
+            &sidebar_state.icon_cache,
+            &sidebar_state,
+            &status_bar,
+        )
+    });
+
+    if !has_initial_files && !restored_session {
+        // Create initial terminal tab, then restore legacy open-file state.
+        (create_tab.clone())();
+
+        if settings.borrow().restore_session {
+            for file_path in &settings.borrow().open_files.clone() {
+                if std::path::Path::new(file_path).exists() {
+                    if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                        cb(file_path);
+                    }
+                }
             }
         }
-    }
 
-    // Switch back to first tab (terminal) after restoring editor tabs
-    if !has_initial_files && tab_view.n_pages() > 0 {
-        tab_view.set_selected_page(&tab_view.nth_page(0));
+        if tab_view.n_pages() > 0 {
+            tab_view.set_selected_page(&tab_view.nth_page(0));
+        }
     }
 
     // Register a window-level action so that files can be opened from connect_open
@@ -1617,6 +1644,85 @@ fn current_unix_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn restore_session_window(
+    window_state: &impulse_core::session_state::SessionWindow,
+    tab_view: &adw::TabView,
+    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
+    settings: &Rc<RefCell<crate::settings::Settings>>,
+    copy_on_select_flag: &Rc<Cell<bool>>,
+    shell_cache: &Rc<terminal::ShellSpawnCache>,
+    icon_cache: &Rc<RefCell<crate::file_icons::IconCache>>,
+    sidebar_state: &Rc<sidebar::SidebarState>,
+    status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
+) -> bool {
+    if let Some(project_root) = window_state
+        .project_root
+        .as_deref()
+        .filter(|path| std::path::Path::new(path).is_dir())
+    {
+        sidebar_state.load_directory(project_root);
+        status_bar.borrow().update_cwd(project_root);
+        *sidebar_state.project_search.current_root.borrow_mut() = project_root.to_string();
+    }
+
+    let mut restored_any = false;
+    for tab in &window_state.tabs {
+        match tab {
+            impulse_core::session_state::SessionTab::Editor(editor_tab) => {
+                if std::path::Path::new(&editor_tab.path).exists() {
+                    if let Some(cb) = sidebar_state.on_file_activated.borrow().as_ref() {
+                        cb(&editor_tab.path);
+                        restored_any = true;
+                    }
+                }
+            }
+            impulse_core::session_state::SessionTab::Terminal(terminal_tab) => {
+                let s = settings.borrow();
+                let theme = crate::theme::get_theme(&s.color_scheme);
+                let container = terminal_container::TerminalContainer::from_session_tab(
+                    terminal_tab,
+                    setup_terminal_signals.as_ref(),
+                    &s,
+                    &theme,
+                    copy_on_select_flag.clone(),
+                    shell_cache,
+                );
+                drop(s);
+
+                let page = tab_view.append(&container.widget);
+                page.set_title(
+                    terminal_tab
+                        .title
+                        .as_deref()
+                        .filter(|title| !title.trim().is_empty())
+                        .unwrap_or(shell_cache.shell_name()),
+                );
+                if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                    page.set_icon(Some(texture));
+                }
+                if terminal_tab.pinned {
+                    tab_view.set_page_pinned(&page, true);
+                }
+                restored_any = true;
+            }
+        }
+    }
+
+    if restored_any {
+        if let Some(index) = window_state.active_tab_index {
+            let tab_view = tab_view.clone();
+            gtk4::glib::idle_add_local_once(move || {
+                if index < tab_view.n_pages() as usize {
+                    tab_view.set_selected_page(&tab_view.nth_page(index as i32));
+                }
+            });
+        }
+    }
+
+    restored_any
+}
+
 fn session_state_for_tab_view(
     tab_view: &adw::TabView,
     project_root: Option<String>,
@@ -1647,14 +1753,38 @@ fn session_state_for_tab_view(
                 None
             }
         } else {
-            terminal_container::get_active_terminal(&child).map(|term| {
+            terminal_container::session_snapshot(&child).map(|snapshot| {
+                let active_pane = snapshot
+                    .active_pane_index
+                    .and_then(|index| snapshot.panes.get(index))
+                    .or_else(|| snapshot.panes.first());
+                let cwd = active_pane
+                    .map(|pane| pane.cwd.clone())
+                    .unwrap_or_else(default_terminal_directory);
+                let title = active_pane.and_then(|pane| pane.title.clone());
+                let shell = active_pane.and_then(|pane| pane.shell.clone());
+                let has_split_layout = snapshot.panes.len() > 1;
                 impulse_core::session_state::SessionTab::Terminal(
                     impulse_core::session_state::SessionTerminalTab {
-                        cwd: terminal::current_directory(&term)
-                            .unwrap_or_else(default_terminal_directory),
-                        title: non_empty_string(terminal::title(&term)),
-                        shell: None,
+                        cwd,
+                        title,
+                        shell,
                         pinned: false,
+                        panes: if has_split_layout {
+                            snapshot.panes
+                        } else {
+                            Vec::new()
+                        },
+                        active_pane_index: if has_split_layout {
+                            snapshot.active_pane_index
+                        } else {
+                            None
+                        },
+                        pane_layout: if has_split_layout {
+                            Some(snapshot.pane_layout)
+                        } else {
+                            None
+                        },
                     },
                 )
             })

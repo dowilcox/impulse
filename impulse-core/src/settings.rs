@@ -58,6 +58,7 @@ pub struct Settings {
     pub sidebar_visible: bool,
     pub sidebar_width: i32,
     pub confirm_close_warnings: bool,
+    pub restore_session: bool,
     pub last_directory: String,
     pub open_files: Vec<String>,
 
@@ -138,6 +139,7 @@ impl Default for Settings {
             sidebar_visible: false,
             sidebar_width: 250,
             confirm_close_warnings: true,
+            restore_session: true,
             last_directory: String::new(),
             open_files: Vec::new(),
 

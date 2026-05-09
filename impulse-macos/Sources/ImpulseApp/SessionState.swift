@@ -28,6 +28,40 @@ struct SessionState: Codable {
       .appendingPathComponent("session-state.json")
   }
 
+  static func load() -> SessionState? {
+    let url = Self.filePath()
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch {
+      if FileManager.default.fileExists(atPath: url.path) {
+        os_log(.error, "Failed to read session state from '%{public}@': %{public}@",
+               url.path, error.localizedDescription)
+      }
+      return nil
+    }
+
+    do {
+      let state = try JSONDecoder().decode(SessionState.self, from: data)
+      guard state.version == sessionStateVersion else {
+        os_log(.error, "Unsupported session state version %d", state.version)
+        return nil
+      }
+      return state
+    } catch {
+      os_log(.error, "Failed to decode session state from '%{public}@': %{public}@",
+             url.path, error.localizedDescription)
+      return nil
+    }
+  }
+
+  var activeWindow: SessionWindowState? {
+    if let activeWindowIndex, windows.indices.contains(activeWindowIndex) {
+      return windows[activeWindowIndex]
+    }
+    return windows.first
+  }
+
   func save() {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -75,6 +109,21 @@ struct SessionTabState: Codable {
   var title: String?
   var shell: String?
   var pinned: Bool
+  var panes: [SessionTerminalPaneState]?
+  var activePaneIndex: Int?
+  var paneLayout: SessionTerminalPaneLayoutState?
+
+  enum CodingKeys: String, CodingKey {
+    case kind
+    case path
+    case cwd
+    case title
+    case shell
+    case pinned
+    case panes
+    case activePaneIndex = "active_pane_index"
+    case paneLayout = "pane_layout"
+  }
 
   static func editor(path: String, pinned: Bool) -> SessionTabState {
     SessionTabState(
@@ -83,7 +132,10 @@ struct SessionTabState: Codable {
       cwd: nil,
       title: nil,
       shell: nil,
-      pinned: pinned
+      pinned: pinned,
+      panes: nil,
+      activePaneIndex: nil,
+      paneLayout: nil
     )
   }
 
@@ -91,7 +143,10 @@ struct SessionTabState: Codable {
     cwd: String,
     title: String?,
     shell: String?,
-    pinned: Bool
+    pinned: Bool,
+    panes: [SessionTerminalPaneState]? = nil,
+    activePaneIndex: Int? = nil,
+    paneLayout: SessionTerminalPaneLayoutState? = nil
   ) -> SessionTabState {
     SessionTabState(
       kind: "terminal",
@@ -99,8 +154,78 @@ struct SessionTabState: Codable {
       cwd: cwd,
       title: title,
       shell: shell,
-      pinned: pinned
+      pinned: pinned,
+      panes: panes,
+      activePaneIndex: activePaneIndex,
+      paneLayout: paneLayout
     )
+  }
+}
+
+struct TerminalSessionSnapshot {
+  var panes: [SessionTerminalPaneState]
+  var activePaneIndex: Int?
+  var paneLayout: SessionTerminalPaneLayoutState
+}
+
+struct SessionTerminalPaneState: Codable {
+  var cwd: String
+  var title: String?
+  var shell: String?
+}
+
+indirect enum SessionTerminalPaneLayoutState: Codable {
+  case pane(paneIndex: Int)
+  case split(
+    axis: String,
+    ratio: Double,
+    first: SessionTerminalPaneLayoutState,
+    second: SessionTerminalPaneLayoutState
+  )
+
+  enum CodingKeys: String, CodingKey {
+    case kind
+    case paneIndex = "pane_index"
+    case axis
+    case ratio
+    case first
+    case second
+  }
+
+  enum Kind: String, Codable {
+    case pane
+    case split
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .pane(let paneIndex):
+      try container.encode(Kind.pane, forKey: .kind)
+      try container.encode(paneIndex, forKey: .paneIndex)
+    case .split(let axis, let ratio, let first, let second):
+      try container.encode(Kind.split, forKey: .kind)
+      try container.encode(axis, forKey: .axis)
+      try container.encode(ratio, forKey: .ratio)
+      try container.encode(first, forKey: .first)
+      try container.encode(second, forKey: .second)
+    }
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let kind = try container.decode(Kind.self, forKey: .kind)
+    switch kind {
+    case .pane:
+      self = .pane(paneIndex: try container.decode(Int.self, forKey: .paneIndex))
+    case .split:
+      self = .split(
+        axis: try container.decode(String.self, forKey: .axis),
+        ratio: try container.decode(Double.self, forKey: .ratio),
+        first: try container.decode(SessionTerminalPaneLayoutState.self, forKey: .first),
+        second: try container.decode(SessionTerminalPaneLayoutState.self, forKey: .second)
+      )
+    }
   }
 }
 

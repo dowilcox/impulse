@@ -246,6 +246,27 @@ final class TabManager: NSObject {
     insertTab(entry)
   }
 
+  func addRestoredTerminalTab(_ tab: SessionTabState) {
+    let dir = nonEmpty(tab.cwd) ?? NSHomeDirectory()
+    let termSettings = settings.terminalSettings(directory: dir)
+    let termTheme = TerminalTheme(
+      bg: theme.terminalBg,
+      fg: theme.terminalFg,
+      selection: theme.selection,
+      cursor: theme.cursor,
+      terminalPalette: theme.terminalPalette
+    )
+    let container = TerminalContainer(
+      frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+      settings: termSettings,
+      theme: termTheme,
+      sessionTab: tab
+    )
+    container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+    let entry = TabEntry.terminal(container)
+    insertTab(entry)
+  }
+
   /// Creates a new editor tab for the given file path.
   ///
   /// If a tab for the same file is already open, it is selected instead of
@@ -649,15 +670,23 @@ final class TabManager: NSObject {
           sessionTab = nil
         }
       case .terminal(let container):
-        if let terminal = container.activeTerminal {
-          let cwd = terminal.currentWorkingDirectory.isEmpty
-            ? NSHomeDirectory()
-            : terminal.currentWorkingDirectory
+        let shellName = ImpulseCore.getUserLoginShellName()
+        if let snapshot = container.sessionSnapshot(shellName: shellName) {
+          let activePane: SessionTerminalPaneState?
+          if let index = snapshot.activePaneIndex, snapshot.panes.indices.contains(index) {
+            activePane = snapshot.panes[index]
+          } else {
+            activePane = snapshot.panes.first
+          }
+          let hasSplitLayout = snapshot.panes.count > 1
           sessionTab = .terminal(
-            cwd: cwd,
-            title: nonEmpty(terminal.tabTitle),
-            shell: nonEmpty(ImpulseCore.getUserLoginShellName()),
-            pinned: pinned
+            cwd: activePane?.cwd ?? NSHomeDirectory(),
+            title: activePane?.title,
+            shell: activePane?.shell ?? nonEmpty(shellName),
+            pinned: pinned,
+            panes: hasSplitLayout ? snapshot.panes : nil,
+            activePaneIndex: hasSplitLayout ? snapshot.activePaneIndex : nil,
+            paneLayout: hasSplitLayout ? snapshot.paneLayout : nil
           )
         } else {
           sessionTab = nil

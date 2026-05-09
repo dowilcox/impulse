@@ -139,9 +139,11 @@
 
 - [x] Add a versioned session-state model in `impulse-core`.
 - [x] Record editor tabs, terminal tabs, cwd, active tab, and top-level tab layout into `session-state.json`.
-- [ ] Extend session recording to split layouts.
-- [ ] Restore state at startup after project selection.
-- [ ] Add settings to enable/disable session restore.
+- [x] Extend session recording to split layouts.
+- [x] Restore state at startup after project selection.
+- [x] Add settings to enable/disable session restore.
+
+**Implementation note:** Terminal tabs now persist split-pane metadata with per-pane cwd/title/shell, active pane index, split axis, and divider ratio from both Linux GTK and macOS. Startup restore is gated by `restore_session`; explicit file-open launches still take precedence and do not replay saved state.
 
 ### 7. Settings Import
 

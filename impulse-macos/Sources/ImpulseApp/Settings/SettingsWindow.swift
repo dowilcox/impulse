@@ -438,6 +438,11 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(closeWarningsChanged(_:)))
     closeWarningsCheck.state = settings.confirmCloseWarnings ? .on : .off
 
+    let restoreSessionCheck = NSButton(
+      checkboxWithTitle: "Restore previous session",
+      target: self, action: #selector(restoreSessionChanged(_:)))
+    restoreSessionCheck.state = settings.restoreSession ? .on : .off
+
     let longCommandThresholdField = NSTextField(string: "\(settings.terminalLongCommandSeconds)")
     longCommandThresholdField.target = self
     longCommandThresholdField.action = #selector(termLongCommandSecondsChanged(_:))
@@ -457,6 +462,7 @@ final class SettingsWindowController: NSWindowController {
         hyperlinkCheck,
         notificationsCheck,
         closeWarningsCheck,
+        restoreSessionCheck,
         longCommandCheck,
         makeRow(label: "Long Command Seconds:", control: longCommandThresholdField),
         boldBrightCheck,
@@ -1345,6 +1351,11 @@ final class SettingsWindowController: NSWindowController {
 
   @objc private func closeWarningsChanged(_ sender: NSButton) {
     settings.confirmCloseWarnings = sender.state == .on
+    persistSettings()
+  }
+
+  @objc private func restoreSessionChanged(_ sender: NSButton) {
+    settings.restoreSession = sender.state == .on
     persistSettings()
   }
 

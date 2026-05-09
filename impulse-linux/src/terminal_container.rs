@@ -12,6 +12,13 @@ pub struct TerminalContainer {
     pub widget: gtk4::Box,
 }
 
+#[derive(Clone, Debug)]
+pub struct TerminalSessionSnapshot {
+    pub panes: Vec<impulse_core::session_state::SessionTerminalPane>,
+    pub active_pane_index: Option<usize>,
+    pub pane_layout: impulse_core::session_state::SessionTerminalPaneLayout,
+}
+
 impl TerminalContainer {
     pub fn new(term: &terminal::Terminal) -> Self {
         let widget = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -20,6 +27,159 @@ impl TerminalContainer {
         widget.append(term);
 
         TerminalContainer { widget }
+    }
+
+    pub fn from_session_tab(
+        tab: &impulse_core::session_state::SessionTerminalTab,
+        setup_terminal: &dyn Fn(&terminal::Terminal),
+        settings: &crate::settings::Settings,
+        theme: &crate::theme::ThemeColors,
+        copy_on_select_flag: Rc<Cell<bool>>,
+        shell_cache: &Rc<terminal::ShellSpawnCache>,
+    ) -> Self {
+        let widget = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        widget.set_hexpand(true);
+        widget.set_vexpand(true);
+
+        let panes = session_panes_for_tab(tab);
+        let active_pane_index = tab.active_pane_index.unwrap_or(0);
+        let layout = tab.pane_layout.clone().unwrap_or(
+            impulse_core::session_state::SessionTerminalPaneLayout::Pane(
+                impulse_core::session_state::SessionTerminalPaneLeaf { pane_index: 0 },
+            ),
+        );
+        let mut active_terminal = None;
+
+        if let Some(restored) = restore_session_layout(
+            &layout,
+            &panes,
+            active_pane_index,
+            &mut active_terminal,
+            setup_terminal,
+            settings,
+            theme,
+            copy_on_select_flag.clone(),
+            shell_cache,
+        ) {
+            widget.append(&restored);
+        } else {
+            let term = terminal::create_terminal(settings, theme, copy_on_select_flag);
+            setup_terminal(&term);
+            terminal::spawn_shell(
+                &term,
+                shell_cache,
+                Some(default_terminal_directory().as_str()),
+            );
+            active_terminal = Some(term.clone());
+            widget.append(&term);
+        }
+
+        if let Some(term) = active_terminal {
+            gtk4::glib::idle_add_local_once(move || {
+                term.grab_focus();
+            });
+        }
+
+        TerminalContainer { widget }
+    }
+}
+
+fn session_panes_for_tab(
+    tab: &impulse_core::session_state::SessionTerminalTab,
+) -> Vec<impulse_core::session_state::SessionTerminalPane> {
+    if !tab.panes.is_empty() {
+        return tab.panes.clone();
+    }
+    vec![impulse_core::session_state::SessionTerminalPane {
+        cwd: tab.cwd.clone(),
+        title: tab.title.clone(),
+        shell: tab.shell.clone(),
+    }]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_session_layout(
+    layout: &impulse_core::session_state::SessionTerminalPaneLayout,
+    panes: &[impulse_core::session_state::SessionTerminalPane],
+    active_pane_index: usize,
+    active_terminal: &mut Option<terminal::Terminal>,
+    setup_terminal: &dyn Fn(&terminal::Terminal),
+    settings: &crate::settings::Settings,
+    theme: &crate::theme::ThemeColors,
+    copy_on_select_flag: Rc<Cell<bool>>,
+    shell_cache: &Rc<terminal::ShellSpawnCache>,
+) -> Option<gtk4::Widget> {
+    match layout {
+        impulse_core::session_state::SessionTerminalPaneLayout::Pane(leaf) => {
+            let pane = panes.get(leaf.pane_index)?;
+            let term = terminal::create_terminal(settings, theme, copy_on_select_flag);
+            setup_terminal(&term);
+            let cwd = if pane.cwd.trim().is_empty() {
+                default_terminal_directory()
+            } else {
+                pane.cwd.clone()
+            };
+            terminal::spawn_shell(&term, shell_cache, Some(cwd.as_str()));
+            if leaf.pane_index == active_pane_index {
+                *active_terminal = Some(term.clone());
+            }
+
+            let wrapper = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+            wrapper.set_hexpand(true);
+            wrapper.set_vexpand(true);
+            wrapper.append(&term);
+            Some(wrapper.upcast())
+        }
+        impulse_core::session_state::SessionTerminalPaneLayout::Split(split) => {
+            let paned = gtk4::Paned::new(orientation_from_session_axis(split.axis));
+            paned.set_hexpand(true);
+            paned.set_vexpand(true);
+            paned.set_shrink_start_child(false);
+            paned.set_shrink_end_child(false);
+
+            let first = restore_session_layout(
+                &split.first,
+                panes,
+                active_pane_index,
+                active_terminal,
+                setup_terminal,
+                settings,
+                theme,
+                copy_on_select_flag.clone(),
+                shell_cache,
+            );
+            let second = restore_session_layout(
+                &split.second,
+                panes,
+                active_pane_index,
+                active_terminal,
+                setup_terminal,
+                settings,
+                theme,
+                copy_on_select_flag,
+                shell_cache,
+            );
+            match (first, second) {
+                (Some(first), Some(second)) => {
+                    paned.set_start_child(Some(&first));
+                    paned.set_end_child(Some(&second));
+                    let ratio = split.ratio;
+                    paned.connect_map(move |paned| {
+                        let dimension = match paned.orientation() {
+                            gtk4::Orientation::Horizontal => paned.width(),
+                            gtk4::Orientation::Vertical => paned.height(),
+                            _ => 0,
+                        };
+                        if dimension > 0 {
+                            paned.set_position(((dimension as f32) * ratio).round() as i32);
+                        }
+                    });
+                    Some(paned.upcast())
+                }
+                (Some(layout), None) | (None, Some(layout)) => Some(layout),
+                (None, None) => None,
+            }
+        }
     }
 }
 
@@ -132,6 +292,118 @@ pub fn collect_terminals(widget: &gtk4::Widget) -> Vec<terminal::Terminal> {
     let mut terminals = Vec::new();
     collect_terminals_recursive(widget, &mut terminals);
     terminals
+}
+
+pub fn session_snapshot(widget: &gtk4::Widget) -> Option<TerminalSessionSnapshot> {
+    let mut panes = Vec::new();
+    let mut active_pane_index = None;
+    let pane_layout = session_layout_recursive(widget, &mut panes, &mut active_pane_index)?;
+    if panes.is_empty() {
+        return None;
+    }
+    let active_pane_index = active_pane_index.or(Some(0));
+    Some(TerminalSessionSnapshot {
+        panes,
+        active_pane_index,
+        pane_layout,
+    })
+}
+
+fn session_layout_recursive(
+    widget: &gtk4::Widget,
+    panes: &mut Vec<impulse_core::session_state::SessionTerminalPane>,
+    active_pane_index: &mut Option<usize>,
+) -> Option<impulse_core::session_state::SessionTerminalPaneLayout> {
+    if let Some(term) = terminal::from_widget(widget) {
+        let pane_index = panes.len();
+        if term.has_focus() {
+            *active_pane_index = Some(pane_index);
+        }
+        panes.push(impulse_core::session_state::SessionTerminalPane {
+            cwd: terminal::current_directory(&term).unwrap_or_else(default_terminal_directory),
+            title: non_empty_string(terminal::title(&term)),
+            shell: None,
+        });
+        return Some(
+            impulse_core::session_state::SessionTerminalPaneLayout::Pane(
+                impulse_core::session_state::SessionTerminalPaneLeaf { pane_index },
+            ),
+        );
+    }
+
+    if let Some(paned) = widget.downcast_ref::<gtk4::Paned>() {
+        let first = paned
+            .start_child()
+            .and_then(|child| session_layout_recursive(&child, panes, active_pane_index));
+        let second = paned
+            .end_child()
+            .and_then(|child| session_layout_recursive(&child, panes, active_pane_index));
+        return match (first, second) {
+            (Some(first), Some(second)) => Some(
+                impulse_core::session_state::SessionTerminalPaneLayout::Split(
+                    impulse_core::session_state::SessionTerminalPaneSplit {
+                        axis: session_axis(paned.orientation()),
+                        ratio: paned_ratio(paned),
+                        first: Box::new(first),
+                        second: Box::new(second),
+                    },
+                ),
+            ),
+            (Some(layout), None) | (None, Some(layout)) => Some(layout),
+            (None, None) => None,
+        };
+    }
+
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if let Some(layout) = session_layout_recursive(&c, panes, active_pane_index) {
+            return Some(layout);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+fn session_axis(orientation: gtk4::Orientation) -> impulse_core::session_state::SessionSplitAxis {
+    match orientation {
+        gtk4::Orientation::Horizontal => impulse_core::session_state::SessionSplitAxis::Horizontal,
+        gtk4::Orientation::Vertical => impulse_core::session_state::SessionSplitAxis::Vertical,
+        _ => impulse_core::session_state::SessionSplitAxis::Horizontal,
+    }
+}
+
+fn orientation_from_session_axis(
+    axis: impulse_core::session_state::SessionSplitAxis,
+) -> gtk4::Orientation {
+    match axis {
+        impulse_core::session_state::SessionSplitAxis::Horizontal => gtk4::Orientation::Horizontal,
+        impulse_core::session_state::SessionSplitAxis::Vertical => gtk4::Orientation::Vertical,
+    }
+}
+
+fn paned_ratio(paned: &gtk4::Paned) -> f32 {
+    let dimension = match paned.orientation() {
+        gtk4::Orientation::Horizontal => paned.width(),
+        gtk4::Orientation::Vertical => paned.height(),
+        _ => 0,
+    };
+    if dimension <= 0 {
+        return 0.5;
+    }
+    ((paned.position().max(0) as f32) / (dimension as f32)).clamp(0.1, 0.9)
+}
+
+fn default_terminal_directory() -> String {
+    impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string())
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn collect_terminals_recursive(widget: &gtk4::Widget, terminals: &mut Vec<terminal::Terminal>) {

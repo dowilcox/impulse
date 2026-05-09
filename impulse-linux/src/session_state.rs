@@ -1,5 +1,33 @@
 use std::path::PathBuf;
 
+pub fn load() -> Option<impulse_core::session_state::SessionState> {
+    let path = session_state_path()?;
+    let json = match std::fs::read_to_string(&path) {
+        Ok(json) => json,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "Failed to read session state from {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+            return None;
+        }
+    };
+    match impulse_core::session_state::SessionState::from_json(&json) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            log::warn!(
+                "Failed to parse session state from {}: {}",
+                path.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
 pub fn save(state: &impulse_core::session_state::SessionState) {
     let Some(path) = session_state_path() else {
         log::warn!("Cannot determine state directory; session state will not be saved");

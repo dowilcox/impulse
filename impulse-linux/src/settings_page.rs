@@ -1092,6 +1092,23 @@ pub fn show_settings_window(
     }
     term_behavior_group.add(&close_warnings_row);
 
+    let restore_session_row = adw::SwitchRow::new();
+    restore_session_row.set_title("Restore Previous Session");
+    restore_session_row
+        .set_subtitle("Reopen saved editor tabs and terminal working directories on launch");
+    restore_session_row.set_active(settings.borrow().restore_session);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        restore_session_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.restore_session = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&restore_session_row);
+
     let bold_is_bright_row = adw::SwitchRow::new();
     bold_is_bright_row.set_title("Bold is Bright");
     bold_is_bright_row.set_subtitle("Map bold text to bright color variants");

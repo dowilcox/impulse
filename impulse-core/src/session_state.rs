@@ -54,6 +54,44 @@ pub struct SessionTerminalTab {
     pub shell: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panes: Vec<SessionTerminalPane>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_pane_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_layout: Option<SessionTerminalPaneLayout>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct SessionTerminalPane {
+    pub cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionTerminalPaneLayout {
+    Pane(SessionTerminalPaneLeaf),
+    Split(SessionTerminalPaneSplit),
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct SessionTerminalPaneLeaf {
+    pub pane_index: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct SessionTerminalPaneSplit {
+    pub axis: SessionSplitAxis,
+    pub ratio: f32,
+    pub first: Box<SessionTerminalPaneLayout>,
+    pub second: Box<SessionTerminalPaneLayout>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, JsonSchema)]
@@ -111,6 +149,23 @@ impl Default for SessionSplitLayout {
             ratio: 0.5,
             first: Box::new(SessionLayout::default()),
             second: Box::new(SessionLayout::default()),
+        }
+    }
+}
+
+impl Default for SessionTerminalPaneLayout {
+    fn default() -> Self {
+        SessionTerminalPaneLayout::Pane(SessionTerminalPaneLeaf::default())
+    }
+}
+
+impl Default for SessionTerminalPaneSplit {
+    fn default() -> Self {
+        Self {
+            axis: SessionSplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(SessionTerminalPaneLayout::default()),
+            second: Box::new(SessionTerminalPaneLayout::default()),
         }
     }
 }
@@ -189,6 +244,63 @@ impl SessionTerminalTab {
         self.cwd = self.cwd.trim().to_string();
         trim_empty_option(&mut self.title);
         trim_empty_option(&mut self.shell);
+
+        for pane in &mut self.panes {
+            pane.validate();
+        }
+
+        if self.panes.is_empty() {
+            self.active_pane_index = None;
+            self.pane_layout = None;
+            return;
+        }
+
+        if !index_in_bounds(self.active_pane_index, self.panes.len()) {
+            self.active_pane_index = last_index(self.panes.len());
+        }
+
+        if let Some(layout) = &mut self.pane_layout {
+            layout.validate(self.panes.len());
+        } else {
+            self.pane_layout = Some(SessionTerminalPaneLayout::Pane(SessionTerminalPaneLeaf {
+                pane_index: self.active_pane_index.unwrap_or(0),
+            }));
+        }
+    }
+}
+
+impl SessionTerminalPane {
+    fn validate(&mut self) {
+        self.cwd = self.cwd.trim().to_string();
+        trim_empty_option(&mut self.title);
+        trim_empty_option(&mut self.shell);
+    }
+}
+
+impl SessionTerminalPaneLayout {
+    fn validate(&mut self, pane_count: usize) {
+        match self {
+            SessionTerminalPaneLayout::Pane(leaf) => leaf.validate(pane_count),
+            SessionTerminalPaneLayout::Split(split) => split.validate(pane_count),
+        }
+    }
+}
+
+impl SessionTerminalPaneLeaf {
+    fn validate(&mut self, pane_count: usize) {
+        if self.pane_index >= pane_count {
+            self.pane_index = last_index(pane_count).unwrap_or(0);
+        }
+    }
+}
+
+impl SessionTerminalPaneSplit {
+    fn validate(&mut self, pane_count: usize) {
+        if !(0.1..=0.9).contains(&self.ratio) {
+            self.ratio = 0.5;
+        }
+        self.first.validate(pane_count);
+        self.second.validate(pane_count);
     }
 }
 
@@ -280,6 +392,31 @@ mod tests {
                         title: Some("server".to_string()),
                         shell: Some("zsh".to_string()),
                         pinned: false,
+                        panes: vec![
+                            SessionTerminalPane {
+                                cwd: "/repo".to_string(),
+                                title: Some("server".to_string()),
+                                shell: Some("zsh".to_string()),
+                            },
+                            SessionTerminalPane {
+                                cwd: "/repo/logs".to_string(),
+                                title: Some("logs".to_string()),
+                                shell: Some("zsh".to_string()),
+                            },
+                        ],
+                        active_pane_index: Some(1),
+                        pane_layout: Some(SessionTerminalPaneLayout::Split(
+                            SessionTerminalPaneSplit {
+                                axis: SessionSplitAxis::Horizontal,
+                                ratio: 0.4,
+                                first: Box::new(SessionTerminalPaneLayout::Pane(
+                                    SessionTerminalPaneLeaf { pane_index: 0 },
+                                )),
+                                second: Box::new(SessionTerminalPaneLayout::Pane(
+                                    SessionTerminalPaneLeaf { pane_index: 1 },
+                                )),
+                            },
+                        )),
                     }),
                 ],
                 layout: SessionLayout::TabGroup(SessionTabGroupLayout {
@@ -344,6 +481,22 @@ mod tests {
                     title: Some("  ".to_string()),
                     shell: Some(" zsh ".to_string()),
                     pinned: false,
+                    panes: vec![SessionTerminalPane {
+                        cwd: " /repo/a ".to_string(),
+                        title: Some(" logs ".to_string()),
+                        shell: Some(" fish ".to_string()),
+                    }],
+                    active_pane_index: Some(12),
+                    pane_layout: Some(SessionTerminalPaneLayout::Split(SessionTerminalPaneSplit {
+                        axis: SessionSplitAxis::Vertical,
+                        ratio: 1.5,
+                        first: Box::new(SessionTerminalPaneLayout::Pane(SessionTerminalPaneLeaf {
+                            pane_index: 99,
+                        })),
+                        second: Box::new(SessionTerminalPaneLayout::Pane(
+                            SessionTerminalPaneLeaf { pane_index: 0 },
+                        )),
+                    })),
                 })],
                 layout: SessionLayout::Split(SessionSplitLayout {
                     axis: SessionSplitAxis::Vertical,
@@ -370,6 +523,22 @@ mod tests {
                 assert_eq!(tab.cwd, "/repo");
                 assert_eq!(tab.title, None);
                 assert_eq!(tab.shell.as_deref(), Some("zsh"));
+                assert_eq!(tab.active_pane_index, Some(0));
+                assert_eq!(tab.panes[0].cwd, "/repo/a");
+                assert_eq!(tab.panes[0].title.as_deref(), Some("logs"));
+                assert_eq!(tab.panes[0].shell.as_deref(), Some("fish"));
+                match tab.pane_layout.as_ref().expect("pane layout") {
+                    SessionTerminalPaneLayout::Split(split) => {
+                        assert_eq!(split.ratio, 0.5);
+                        match split.first.as_ref() {
+                            SessionTerminalPaneLayout::Pane(leaf) => {
+                                assert_eq!(leaf.pane_index, 0);
+                            }
+                            SessionTerminalPaneLayout::Split(_) => panic!("expected pane leaf"),
+                        }
+                    }
+                    SessionTerminalPaneLayout::Pane(_) => panic!("expected split"),
+                }
             }
             SessionTab::Editor(_) => panic!("expected terminal tab"),
         }
