@@ -67,6 +67,12 @@ char *impulse_settings_validate_json(const char *json);
 bool impulse_matches_file_pattern(const char *path, const char *pattern);
 char *impulse_close_risk_summary(const char *input_json);
 
+// Command palette
+char *impulse_command_palette_builtin_items_json(void);
+char *impulse_command_palette_custom_item_json(const char *name, const char *shortcut, const char *command, const char *args_json);
+char *impulse_command_palette_filter_json(const char *items_json, const char *recents_json, const char *query);
+char *impulse_command_palette_record_recent_json(const char *recents_json, const char *item_json, uint64_t now_ms, unsigned long max_items);
+
 // Theme API
 char *impulse_available_themes(void);
 char *impulse_theme_display_name(const char *id);

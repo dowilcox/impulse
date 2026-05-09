@@ -1,7 +1,10 @@
 use gtk4::prelude::*;
+use impulse_core::command_palette::{filter_items, RecentCommandStore};
 use libadwaita as adw;
 
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::editor;
 use crate::sidebar;
@@ -158,7 +161,11 @@ pub(super) fn show_quick_open(
     entry.grab_focus();
 }
 
-pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[Command]) {
+pub(super) fn show_command_palette(
+    window: &adw::ApplicationWindow,
+    commands: &[Command],
+    recents: &Rc<RefCell<RecentCommandStore>>,
+) {
     let dialog = gtk4::Window::builder()
         .transient_for(window)
         .modal(true)
@@ -185,16 +192,17 @@ pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[
 
     // Populate with all commands
     let commands: Vec<Command> = commands.to_vec();
-    populate_command_list(&list, &commands, "");
+    populate_command_list(&list, &commands, "", recents);
 
     // Filter on type
     {
         let list = list.clone();
         let commands = commands.clone();
+        let recents = recents.clone();
         entry.connect_search_changed(move |entry| {
             run_guarded_ui("command-palette-search-changed", || {
-                let query = entry.text().to_string().to_lowercase();
-                populate_command_list(&list, &commands, &query);
+                let query = entry.text().to_string();
+                populate_command_list(&list, &commands, &query, &recents);
             });
         });
     }
@@ -203,17 +211,9 @@ pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[
     {
         let dialog = dialog.clone();
         let commands = commands.clone();
+        let recents = recents.clone();
         list.connect_row_activated(move |_list, row| {
-            if let Some(child) = row.child() {
-                let cmd_idx = child
-                    .widget_name()
-                    .to_string()
-                    .parse::<usize>()
-                    .unwrap_or(0);
-                if cmd_idx < commands.len() {
-                    (commands[cmd_idx].action)();
-                }
-            }
+            execute_command_for_row(row, &commands, &recents);
             dialog.close();
         });
     }
@@ -223,6 +223,7 @@ pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[
         let list = list.clone();
         let dialog = dialog.clone();
         let commands = commands.clone();
+        let recents = recents.clone();
         let key_controller = gtk4::EventControllerKey::new();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk4::gdk::Key::Escape {
@@ -231,16 +232,7 @@ pub(super) fn show_command_palette(window: &adw::ApplicationWindow, commands: &[
             }
             if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
                 if let Some(row) = list.selected_row() {
-                    if let Some(child) = row.child() {
-                        let cmd_idx = child
-                            .widget_name()
-                            .to_string()
-                            .parse::<usize>()
-                            .unwrap_or(0);
-                        if cmd_idx < commands.len() {
-                            (commands[cmd_idx].action)();
-                        }
-                    }
+                    execute_command_for_row(&row, &commands, &recents);
                     dialog.close();
                     return gtk4::glib::Propagation::Stop;
                 }
@@ -321,22 +313,60 @@ pub(super) fn show_go_to_line_dialog(
     entry.grab_focus();
 }
 
-fn populate_command_list(list: &gtk4::ListBox, commands: &[Command], filter: &str) {
+fn execute_command_for_row(
+    row: &gtk4::ListBoxRow,
+    commands: &[Command],
+    recents: &Rc<RefCell<RecentCommandStore>>,
+) {
+    let Some(child) = row.child() else {
+        return;
+    };
+    let command_id = child.widget_name().to_string();
+    let Some(command) = commands
+        .iter()
+        .find(|command| command.item.id == command_id)
+    else {
+        return;
+    };
+    recents
+        .borrow_mut()
+        .record(&command.item, current_unix_time_ms(), 20);
+    (command.action)();
+}
+
+fn current_unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn populate_command_list(
+    list: &gtk4::ListBox,
+    commands: &[Command],
+    filter: &str,
+    recents: &Rc<RefCell<RecentCommandStore>>,
+) {
     while let Some(row) = list.row_at_index(0) {
         list.remove(&row);
     }
-    for (idx, cmd) in commands.iter().enumerate() {
-        if !filter.is_empty() && !cmd.name.to_lowercase().contains(filter) {
+    let items: Vec<_> = commands
+        .iter()
+        .map(|command| command.item.clone())
+        .collect();
+    let filtered_items = filter_items(&items, &recents.borrow(), filter);
+    for item in filtered_items {
+        let Some(cmd) = commands.iter().find(|command| command.item.id == item.id) else {
             continue;
-        }
+        };
         let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-        row.set_widget_name(&idx.to_string());
+        row.set_widget_name(&cmd.item.id);
         row.set_margin_start(12);
         row.set_margin_end(12);
         row.set_margin_top(4);
         row.set_margin_bottom(4);
 
-        let name_label = gtk4::Label::new(Some(&cmd.name));
+        let name_label = gtk4::Label::new(Some(&cmd.item.title));
         name_label.set_halign(gtk4::Align::Start);
         name_label.set_hexpand(true);
         row.append(&name_label);

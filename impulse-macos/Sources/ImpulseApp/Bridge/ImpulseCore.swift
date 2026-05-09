@@ -32,6 +32,35 @@ struct SearchResult: Codable {
     }
 }
 
+// MARK: - Command Palette
+
+struct CommandPaletteItem: Codable, Hashable {
+    let id: String
+    let title: String
+    let category: String
+    let keywords: [String]
+    let source: String
+    let shortcut: String?
+}
+
+struct RecentCommandItem: Codable, Hashable {
+    let id: String
+    let title: String
+    let lastUsedMs: UInt64
+    let useCount: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case lastUsedMs = "last_used_ms"
+        case useCount = "use_count"
+    }
+}
+
+struct RecentCommandStore: Codable, Hashable {
+    var items: [RecentCommandItem] = []
+}
+
 // MARK: - Error Type
 
 /// Simple error wrapper so we can use `Result<String, ImpulseError>` (Swift
@@ -795,6 +824,110 @@ final class ImpulseCore {
                 CImpulseFFI.impulse_matches_file_pattern(pathPtr, patternPtr)
             }
         }
+    }
+
+    // MARK: - Command Palette
+
+    static func commandPaletteBuiltinItems() -> [CommandPaletteItem] {
+        guard let json = consumeCString(impulse_command_palette_builtin_items_json()) else {
+            return []
+        }
+        return decodeCommandPaletteItems(json)
+    }
+
+    static func commandPaletteCustomItem(
+        name: String,
+        shortcut: String?,
+        command: String,
+        args: [String]
+    ) -> CommandPaletteItem? {
+        let argsJSON = String(
+            data: (try? JSONEncoder().encode(args)) ?? Data("[]".utf8),
+            encoding: .utf8
+        ) ?? "[]"
+        let shortcut = shortcut ?? ""
+        let json = name.withCString { namePtr in
+            shortcut.withCString { shortcutPtr in
+                command.withCString { commandPtr in
+                    argsJSON.withCString { argsPtr in
+                        consumeCString(impulse_command_palette_custom_item_json(
+                            namePtr,
+                            shortcutPtr,
+                            commandPtr,
+                            argsPtr
+                        ))
+                    }
+                }
+            }
+        }
+        guard let json else { return nil }
+        return try? JSONDecoder().decode(CommandPaletteItem.self, from: Data(json.utf8))
+    }
+
+    static func filterCommandPaletteItems(
+        _ items: [CommandPaletteItem],
+        recents: RecentCommandStore,
+        query: String
+    ) -> [CommandPaletteItem] {
+        let encoder = JSONEncoder()
+        let itemsJSON = String(
+            data: (try? encoder.encode(items)) ?? Data("[]".utf8),
+            encoding: .utf8
+        ) ?? "[]"
+        let recentsJSON = String(
+            data: (try? encoder.encode(recents)) ?? Data(#"{"items":[]}"#.utf8),
+            encoding: .utf8
+        ) ?? #"{"items":[]}"#
+        let json = itemsJSON.withCString { itemsPtr in
+            recentsJSON.withCString { recentsPtr in
+                query.withCString { queryPtr in
+                    consumeCString(impulse_command_palette_filter_json(
+                        itemsPtr,
+                        recentsPtr,
+                        queryPtr
+                    ))
+                }
+            }
+        }
+        guard let json else { return items }
+        return decodeCommandPaletteItems(json)
+    }
+
+    static func recordRecentCommand(
+        _ recents: RecentCommandStore,
+        item: CommandPaletteItem,
+        maxItems: UInt = 20
+    ) -> RecentCommandStore {
+        let encoder = JSONEncoder()
+        let recentsJSON = String(
+            data: (try? encoder.encode(recents)) ?? Data(#"{"items":[]}"#.utf8),
+            encoding: .utf8
+        ) ?? #"{"items":[]}"#
+        let itemJSON = String(
+            data: (try? encoder.encode(item)) ?? Data("{}".utf8),
+            encoding: .utf8
+        ) ?? "{}"
+        let nowMs = UInt64(Date().timeIntervalSince1970 * 1000)
+        let json = recentsJSON.withCString { recentsPtr in
+            itemJSON.withCString { itemPtr in
+                consumeCString(impulse_command_palette_record_recent_json(
+                    recentsPtr,
+                    itemPtr,
+                    nowMs,
+                    maxItems
+                ))
+            }
+        }
+        guard let json,
+              let store = try? JSONDecoder().decode(RecentCommandStore.self, from: Data(json.utf8))
+        else {
+            return recents
+        }
+        return store
+    }
+
+    private static func decodeCommandPaletteItems(_ json: String) -> [CommandPaletteItem] {
+        (try? JSONDecoder().decode([CommandPaletteItem].self, from: Data(json.utf8))) ?? []
     }
 
     /// Check for a newer version on GitHub Releases.

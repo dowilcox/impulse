@@ -1,7 +1,9 @@
 use super::tab_management;
 use gtk4::prelude::*;
+use impulse_core::command_palette::RecentCommandStore;
 use libadwaita as adw;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor;
@@ -295,6 +297,7 @@ pub(super) fn setup_shortcut_controller(
     search_revealer: &gtk4::Revealer,
     find_entry: &gtk4::SearchEntry,
     commands: &[Command],
+    command_recents: &Rc<RefCell<RecentCommandStore>>,
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
 ) {
@@ -655,11 +658,12 @@ pub(super) fn setup_shortcut_controller(
     {
         let window_ref = window.clone();
         let commands = commands.to_vec();
+        let command_recents = command_recents.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("command_palette", &kb_overrides),
             move || {
-                super::show_command_palette(&window_ref, &commands);
+                super::show_command_palette(&window_ref, &commands, &command_recents);
             },
         );
     }

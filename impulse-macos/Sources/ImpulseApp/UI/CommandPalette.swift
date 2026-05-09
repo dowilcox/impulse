@@ -5,10 +5,12 @@ import AppKit
 /// A single entry in the command palette, associating a user-visible title
 /// and optional shortcut with an action closure.
 struct PaletteCommand {
-  let id: String
-  let title: String
+  let item: CommandPaletteItem
   let shortcut: String?
   let action: () -> Void
+
+  var id: String { item.id }
+  var title: String { item.title }
 }
 
 // MARK: - Command Palette Window
@@ -31,6 +33,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
   private(set) var commands: [PaletteCommand] = []
   private(set) var filteredCommands: [PaletteCommand] = []
+  private var recentCommands = RecentCommandStore()
   private var clickMonitor: Any?
   private weak var ownerWindow: NSWindow?
 
@@ -158,40 +161,17 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
   func registerBuiltinCommands(overrides: [String: String] = [:]) {
     var result: [PaletteCommand] = []
 
-    for binding in Keybindings.builtins {
-      let shortcut = Keybindings.shortcutDisplay(forId: binding.id, overrides: overrides)
-      let action = Self.builtinAction(for: binding.id)
+    for item in ImpulseCore.commandPaletteBuiltinItems() {
+      let shortcut = item.shortcut ?? Keybindings.shortcutDisplay(forId: item.id, overrides: overrides)
+      let action = Self.builtinAction(for: item.id)
 
       result.append(
         PaletteCommand(
-          id: binding.id,
-          title: binding.description,
+          item: item,
           shortcut: shortcut,
           action: action
         ))
     }
-
-    // Quick Open File
-    result.append(
-      PaletteCommand(
-        id: "quick_open",
-        title: "Quick Open File",
-        shortcut: Keybindings.shortcutDisplay(forId: "quick_open"),
-        action: {
-          NotificationCenter.default.post(name: .impulseQuickOpen, object: nil)
-        }
-      ))
-
-    // Install Web LSP Servers
-    result.append(
-      PaletteCommand(
-        id: "install_lsp",
-        title: "Install Web LSP Servers",
-        shortcut: nil,
-        action: {
-          NotificationCenter.default.post(name: .impulseInstallLsp, object: nil)
-        }
-      ))
 
     commands = result
     filteredCommands = result
@@ -212,6 +192,8 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
       "toggle_sidebar": .impulseToggleSidebar,
       "project_search": .impulseFindInProject,
       "command_palette": .impulseShowCommandPalette,
+      "quick_open": .impulseQuickOpen,
+      "install_lsp": .impulseInstallLsp,
       "font_increase": .impulseFontIncrease,
       "font_decrease": .impulseFontDecrease,
       "font_reset": .impulseFontReset,
@@ -260,10 +242,23 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
       let command = custom.command
       let args = custom.args
 
+      let item = ImpulseCore.commandPaletteCustomItem(
+        name: custom.name,
+        shortcut: shortcut,
+        command: command,
+        args: args
+      ) ?? CommandPaletteItem(
+        id: "custom_\(custom.name)",
+        title: custom.name,
+        category: "Custom",
+        keywords: [command],
+        source: "custom",
+        shortcut: shortcut
+      )
+
       commands.append(
         PaletteCommand(
-          id: "custom_\(custom.name)",
-          title: custom.name,
+          item: item,
           shortcut: shortcut,
           action: {
             NotificationCenter.default.post(
@@ -287,6 +282,8 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
   /// window and makes it key.
   func show(relativeTo parentWindow: NSWindow) {
     self.ownerWindow = parentWindow
+    searchField.stringValue = ""
+    filteredCommands = filteredCommandPaletteCommands(for: "")
 
     let parentFrame = parentWindow.frame
     let paletteWidth = min(Self.paletteWidth, parentFrame.width - 40)
@@ -300,8 +297,6 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
     setFrame(NSRect(x: x, y: y, width: paletteWidth, height: totalHeight), display: true)
 
-    searchField.stringValue = ""
-    filteredCommands = commands
     tableView.reloadData()
 
     if !filteredCommands.isEmpty {
@@ -371,18 +366,23 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
   private func applyFilter() {
     let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
-    if query.isEmpty {
-      filteredCommands = commands
-    } else {
-      let lowered = query.lowercased()
-      filteredCommands = commands.filter {
-        $0.title.lowercased().contains(lowered)
-      }
-    }
+    filteredCommands = filteredCommandPaletteCommands(for: query)
     tableView.reloadData()
     if !filteredCommands.isEmpty {
       tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     }
+  }
+
+  private func filteredCommandPaletteCommands(for query: String) -> [PaletteCommand] {
+    var commandsById: [String: PaletteCommand] = [:]
+    for command in commands {
+      commandsById[command.id] = command
+    }
+    return ImpulseCore.filterCommandPaletteItems(
+      commands.map(\.item),
+      recents: recentCommands,
+      query: query
+    ).compactMap { commandsById[$0.id] }
   }
 
   // MARK: - Selection & Execution
@@ -398,6 +398,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     let row = tableView.selectedRow
     guard row >= 0, row < filteredCommands.count else { return }
     let command = filteredCommands[row]
+    recentCommands = ImpulseCore.recordRecentCommand(recentCommands, item: command.item)
     dismiss()
     command.action()
   }

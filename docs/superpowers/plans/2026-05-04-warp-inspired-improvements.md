@@ -220,11 +220,13 @@
 
 **Implementation tasks:**
 
-- [ ] Define `CommandPaletteItem`, stable item IDs, and `RecentCommandItem` in `impulse-core`.
-- [ ] Port existing macOS palette commands onto the shared registry.
-- [ ] Add Linux palette integration against the same registry.
-- [ ] Add recents storage with deduping and stable identity across renamed labels.
+- [x] Define `CommandPaletteItem`, stable item IDs, and `RecentCommandItem` in `impulse-core`.
+- [x] Port existing macOS palette commands onto the shared registry.
+- [x] Add Linux palette integration against the same registry.
+- [x] Add recents storage with deduping and stable identity across renamed labels.
 - [ ] Add async file/project search sources after the synchronous registry is stable.
+
+**Implementation note:** Shared registry, filtering, custom-command identity, and recents now live in `impulse-core`. macOS reaches the registry through FFI and Linux builds its palette against the same item IDs; async file/project palette sources remain the next step.
 
 ### 11. Incremental File Tree Store
 

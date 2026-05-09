@@ -1210,6 +1210,109 @@ pub extern "C" fn impulse_settings_validate_json(json: *const c_char) -> *mut c_
     )
 }
 
+// ---------------------------------------------------------------------------
+// Command palette
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn impulse_command_palette_builtin_items_json() -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            match serde_json::to_string(&impulse_core::command_palette::builtin_items()) {
+                Ok(json) => to_c_string(&json),
+                Err(e) => to_c_string(&serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_command_palette_custom_item_json(
+    name: *const c_char,
+    shortcut: *const c_char,
+    command: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let name = to_rust_str(name).unwrap_or_default();
+            let shortcut = to_rust_str(shortcut);
+            let command = to_rust_str(command).unwrap_or_default();
+            let args: Vec<String> = to_rust_str(args_json)
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+            let item = impulse_core::command_palette::custom_command_item(
+                &name,
+                shortcut.as_deref(),
+                &command,
+                &args,
+            );
+            match serde_json::to_string(&item) {
+                Ok(json) => to_c_string(&json),
+                Err(e) => to_c_string(&serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_command_palette_filter_json(
+    items_json: *const c_char,
+    recents_json: *const c_char,
+    query: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let items: Vec<impulse_core::command_palette::CommandPaletteItem> =
+                to_rust_str(items_json)
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
+            let recents: impulse_core::command_palette::RecentCommandStore =
+                to_rust_str(recents_json)
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
+            let query = to_rust_str(query).unwrap_or_default();
+            let filtered = impulse_core::command_palette::filter_items(&items, &recents, &query);
+            match serde_json::to_string(&filtered) {
+                Ok(json) => to_c_string(&json),
+                Err(e) => to_c_string(&serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_command_palette_record_recent_json(
+    recents_json: *const c_char,
+    item_json: *const c_char,
+    now_ms: u64,
+    max_items: usize,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let mut recents: impulse_core::command_palette::RecentCommandStore =
+                to_rust_str(recents_json)
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
+            let Some(item_json) = to_rust_str(item_json) else {
+                return std::ptr::null_mut();
+            };
+            let Ok(item) = serde_json::from_str(&item_json) else {
+                return std::ptr::null_mut();
+            };
+            recents.record(&item, now_ms, max_items);
+            match serde_json::to_string(&recents) {
+                Ok(json) => to_c_string(&json),
+                Err(e) => to_c_string(&serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }),
+    )
+}
+
 /// Check for a newer version on GitHub Releases.
 ///
 /// Returns a JSON string `{"version":"X.Y.Z","url":"..."}` if an update is

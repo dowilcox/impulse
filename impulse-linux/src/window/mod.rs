@@ -8,6 +8,7 @@ use dialogs::{show_command_palette, show_go_to_line_dialog, show_quick_open};
 
 use gtk4::gio;
 use gtk4::prelude::*;
+use impulse_core::command_palette::{CommandPaletteItem, CommandPaletteSource, RecentCommandStore};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
@@ -25,7 +26,7 @@ use crate::terminal_container;
 
 #[derive(Clone)]
 struct Command {
-    name: String,
+    item: CommandPaletteItem,
     shortcut: String,
     action: Rc<dyn Fn()>,
 }
@@ -1097,26 +1098,29 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let setup_terminal_signals = setup_terminal_signals.clone();
         let toast_overlay = toast_overlay.clone();
         let lsp_install_result_tx = lsp_install_result_tx.clone();
+        let builtin_items_by_id: HashMap<String, CommandPaletteItem> =
+            impulse_core::command_palette::builtin_items()
+                .into_iter()
+                .map(|item| (item.id.clone(), item))
+                .collect();
+        let shortcut_for =
+            |id: &str| keybindings::accel_to_display(&keybindings::get_accel(id, &kb_overrides));
 
-        vec![
-            Command {
-                name: "New Terminal Tab".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "new_tab",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+        let mut result = vec![
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "new_tab",
+                shortcut_for("new_tab"),
+                Rc::new({
                     let create_tab = create_tab.clone();
                     move || create_tab()
                 }),
-            },
-            Command {
-                name: "Close Tab".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "close_tab",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "close_tab",
+                shortcut_for("close_tab"),
+                Rc::new({
                     let tab_view = tab_view.clone();
                     move || {
                         if let Some(page) = tab_view.selected_page() {
@@ -1124,49 +1128,43 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         }
                     }
                 }),
-            },
-            Command {
-                name: "Reopen Closed Tab".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "reopen_tab",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "reopen_tab",
+                shortcut_for("reopen_tab"),
+                Rc::new({
                     let reopen_tab = reopen_tab.clone();
                     move || reopen_tab()
                 }),
-            },
-            Command {
-                name: "Toggle Sidebar".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "toggle_sidebar",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "toggle_sidebar",
+                shortcut_for("toggle_sidebar"),
+                Rc::new({
                     let sidebar_btn = sidebar_btn.clone();
                     move || sidebar_btn.set_active(!sidebar_btn.is_active())
                 }),
-            },
-            Command {
-                name: "Quick Open File".to_string(),
-                shortcut: "".to_string(),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "quick_open",
+                shortcut_for("quick_open"),
+                Rc::new({
                     let window_ref = window_ref.clone();
                     let sidebar_state = sidebar_state.clone();
                     move || show_quick_open(&window_ref, &sidebar_state)
                 }),
-            },
-            Command {
-                name: "Find in Project".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "project_search",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "project_search",
+                shortcut_for("project_search"),
+                Rc::new({
                     let sidebar_btn = sidebar_btn.clone();
                     let sidebar_state = sidebar_state.clone();
                     move || {
-                        // Show sidebar and switch to search tab
                         if !sidebar_btn.is_active() {
                             sidebar_btn.set_active(true);
                         }
@@ -1174,14 +1172,12 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         sidebar_state.project_search.search_entry.grab_focus();
                     }
                 }),
-            },
-            Command {
-                name: "Toggle Fullscreen".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "fullscreen",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "fullscreen",
+                shortcut_for("fullscreen"),
+                Rc::new({
                     let window_ref = window_ref.clone();
                     move || {
                         if window_ref.is_fullscreen() {
@@ -1191,25 +1187,21 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         }
                     }
                 }),
-            },
-            Command {
-                name: "New Window".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "new_window",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "new_window",
+                shortcut_for("new_window"),
+                Rc::new({
                     let app = app.clone();
                     move || build_window(&app, None)
                 }),
-            },
-            Command {
-                name: "Split Terminal Horizontally".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "split_horizontal",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "split_horizontal",
+                shortcut_for("split_horizontal"),
+                Rc::new({
                     let split = make_split_terminal(
                         &tab_view,
                         &setup_terminal_signals,
@@ -1219,14 +1211,12 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                     );
                     move || split(gtk4::Orientation::Horizontal)
                 }),
-            },
-            Command {
-                name: "Split Terminal Vertically".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "split_vertical",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "split_vertical",
+                shortcut_for("split_vertical"),
+                Rc::new({
                     let split = make_split_terminal(
                         &tab_view,
                         &setup_terminal_signals,
@@ -1236,27 +1226,23 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                     );
                     move || split(gtk4::Orientation::Vertical)
                 }),
-            },
-            Command {
-                name: "Open Settings".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "open_settings",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "open_settings",
+                shortcut_for("open_settings"),
+                Rc::new({
                     let open_settings = open_settings.clone();
                     move || {
                         open_settings();
                     }
                 }),
-            },
-            Command {
-                name: "Toggle Preview".to_string(),
-                shortcut: keybindings::accel_to_display(&keybindings::get_accel(
-                    "toggle_markdown_preview",
-                    &kb_overrides,
-                )),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "toggle_markdown_preview",
+                shortcut_for("toggle_markdown_preview"),
+                Rc::new({
                     let tab_view = tab_view.clone();
                     let settings = settings.clone();
                     let status_bar = status_bar.clone();
@@ -1275,11 +1261,12 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         }
                     }
                 }),
-            },
-            Command {
-                name: "Install Web LSP Servers".to_string(),
-                shortcut: "".to_string(),
-                action: Rc::new({
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "install_lsp",
+                shortcut_for("install_lsp"),
+                Rc::new({
                     let toast_overlay = toast_overlay.clone();
                     let lsp_install_result_tx = lsp_install_result_tx.clone();
                     move || {
@@ -1310,9 +1297,57 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         });
                     }
                 }),
-            },
-        ]
+            ),
+        ];
+
+        for kb in settings.borrow().custom_keybindings.clone() {
+            if kb.name.trim().is_empty() || kb.command.trim().is_empty() {
+                continue;
+            }
+            let item = impulse_core::command_palette::custom_command_item(
+                &kb.name,
+                Some(&kb.key),
+                &kb.command,
+                &kb.args,
+            );
+            let shortcut = kb.key.clone();
+            let command = kb.command.clone();
+            let args = kb.args.clone();
+            let kb_name = kb.name.clone();
+            let tab_view = tab_view.clone();
+            let setup_terminal_signals = setup_terminal_signals.clone();
+            let settings = settings.clone();
+            let copy_on_select_flag = copy_on_select_flag.clone();
+            let icon_cache = sidebar_state.icon_cache.clone();
+            result.push(Command {
+                item,
+                shortcut,
+                action: Rc::new(move || {
+                    let cwd = get_active_cwd(&tab_view);
+                    let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+                    let term = terminal::create_terminal(
+                        &settings.borrow(),
+                        theme,
+                        copy_on_select_flag.clone(),
+                    );
+                    setup_terminal_signals(&term);
+                    terminal::spawn_command(&term, &command, &args, cwd.as_deref());
+
+                    let container = terminal_container::TerminalContainer::new(&term);
+                    let page = tab_management::insert_after_selected(&tab_view, &container.widget);
+                    page.set_title(&kb_name);
+                    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
+                        page.set_icon(Some(texture));
+                    }
+                    tab_view.set_selected_page(&page);
+                    term.grab_focus();
+                }),
+            });
+        }
+
+        result
     };
+    let command_recents = Rc::new(RefCell::new(RecentCommandStore::default()));
 
     keybinding_setup::setup_shortcut_controller(
         &ctx,
@@ -1324,6 +1359,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         &search_revealer,
         &find_entry,
         &commands,
+        &command_recents,
         &create_tab,
         &reopen_tab,
     );
@@ -1844,6 +1880,43 @@ pub fn open_files_in_active_window(app: &adw::Application, files: &[String]) {
             }
         }
     }
+}
+
+fn make_palette_builtin_command(
+    items_by_id: &HashMap<String, CommandPaletteItem>,
+    id: &str,
+    shortcut: String,
+    action: Rc<dyn Fn()>,
+) -> Command {
+    Command {
+        item: palette_builtin_item(items_by_id, id, &shortcut),
+        shortcut,
+        action,
+    }
+}
+
+fn palette_builtin_item(
+    items_by_id: &HashMap<String, CommandPaletteItem>,
+    id: &str,
+    shortcut: &str,
+) -> CommandPaletteItem {
+    let mut item = items_by_id
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| CommandPaletteItem {
+            id: id.to_string(),
+            title: id.replace('_', " "),
+            category: "Commands".to_string(),
+            keywords: Vec::new(),
+            source: CommandPaletteSource::Builtin,
+            shortcut: None,
+        });
+    item.shortcut = if shortcut.is_empty() {
+        None
+    } else {
+        Some(shortcut.to_string())
+    };
+    item
 }
 
 pub(super) fn make_split_terminal(
