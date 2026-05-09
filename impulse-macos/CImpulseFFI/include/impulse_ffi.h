@@ -72,6 +72,7 @@ char *impulse_command_palette_builtin_items_json(void);
 char *impulse_command_palette_custom_item_json(const char *name, const char *shortcut, const char *command, const char *args_json);
 char *impulse_command_palette_filter_json(const char *items_json, const char *recents_json, const char *query);
 char *impulse_command_palette_record_recent_json(const char *recents_json, const char *item_json, uint64_t now_ms, unsigned long max_items);
+char *impulse_command_palette_search_items_json(const char *root, const char *query, unsigned long limit);
 
 // Theme API
 char *impulse_available_themes(void);

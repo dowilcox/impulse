@@ -33,7 +33,15 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
   private(set) var commands: [PaletteCommand] = []
   private(set) var filteredCommands: [PaletteCommand] = []
+  private var dynamicCommands: [PaletteCommand] = []
   private var recentCommands = RecentCommandStore()
+  private var dynamicSearchGeneration = 0
+  private let dynamicSearchQueue = DispatchQueue(
+    label: "dev.impulse.command-palette-search",
+    qos: .userInitiated
+  )
+  private var dynamicSearchRoot: (() -> String?)?
+  private var dynamicOpenFile: ((String, UInt32?) -> Void)?
   private var clickMonitor: Any?
   private weak var ownerWindow: NSWindow?
 
@@ -253,7 +261,8 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
         category: "Custom",
         keywords: [command],
         source: "custom",
-        shortcut: shortcut
+        shortcut: shortcut,
+        payload: nil
       )
 
       commands.append(
@@ -276,6 +285,14 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     filteredCommands = commands
   }
 
+  func configureDynamicSearch(
+    rootProvider: @escaping () -> String?,
+    openFile: @escaping (String, UInt32?) -> Void
+  ) {
+    dynamicSearchRoot = rootProvider
+    dynamicOpenFile = openFile
+  }
+
   // MARK: - Show / Dismiss
 
   /// Positions the palette centered horizontally near the top of the given
@@ -283,7 +300,9 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
   func show(relativeTo parentWindow: NSWindow) {
     self.ownerWindow = parentWindow
     searchField.stringValue = ""
-    filteredCommands = filteredCommandPaletteCommands(for: "")
+    dynamicSearchGeneration += 1
+    dynamicCommands.removeAll()
+    refreshFilteredCommands(for: "")
 
     let parentFrame = parentWindow.frame
     let paletteWidth = min(Self.paletteWidth, parentFrame.width - 40)
@@ -329,6 +348,8 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     ownerWindow?.removeChildWindow(self)
     orderOut(nil)
     searchField.stringValue = ""
+    dynamicSearchGeneration += 1
+    dynamicCommands.removeAll()
     filteredCommands = commands
     // Return key focus to the parent window.
     ownerWindow?.makeKeyAndOrderFront(nil)
@@ -366,6 +387,11 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
 
   private func applyFilter() {
     let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+    refreshFilteredCommands(for: query)
+    scheduleDynamicSearch(for: query)
+  }
+
+  private func refreshFilteredCommands(for query: String) {
     filteredCommands = filteredCommandPaletteCommands(for: query)
     tableView.reloadData()
     if !filteredCommands.isEmpty {
@@ -374,15 +400,63 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
   }
 
   private func filteredCommandPaletteCommands(for query: String) -> [PaletteCommand] {
+    let allCommands = commands + dynamicCommands
     var commandsById: [String: PaletteCommand] = [:]
-    for command in commands {
+    for command in allCommands {
       commandsById[command.id] = command
     }
     return ImpulseCore.filterCommandPaletteItems(
-      commands.map(\.item),
+      allCommands.map(\.item),
       recents: recentCommands,
       query: query
     ).compactMap { commandsById[$0.id] }
+  }
+
+  private func scheduleDynamicSearch(for query: String) {
+    dynamicSearchGeneration += 1
+    let generation = dynamicSearchGeneration
+
+    guard query.count >= 2,
+      let root = dynamicSearchRoot?(),
+      !root.isEmpty
+    else {
+      if !dynamicCommands.isEmpty {
+        dynamicCommands.removeAll()
+        refreshFilteredCommands(for: query)
+      }
+      return
+    }
+
+    dynamicSearchQueue.async {
+      let items = ImpulseCore.commandPaletteSearchItems(root: root, query: query, limit: 20)
+      DispatchQueue.main.async { [weak self] in
+        guard let self,
+          generation == self.dynamicSearchGeneration,
+          query == self.searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        else {
+          return
+        }
+        self.dynamicCommands = items.compactMap { self.dynamicCommand(for: $0) }
+        self.refreshFilteredCommands(for: query)
+      }
+    }
+  }
+
+  private func dynamicCommand(for item: CommandPaletteItem) -> PaletteCommand? {
+    guard item.source == "dynamic",
+      let path = item.payload?["path"],
+      !path.isEmpty
+    else {
+      return nil
+    }
+    let line = item.payload?["line"].flatMap { UInt32($0) }
+    return PaletteCommand(
+      item: item,
+      shortcut: item.category,
+      action: { [weak self] in
+        self?.dynamicOpenFile?(path, line)
+      }
+    )
   }
 
   // MARK: - Selection & Execution

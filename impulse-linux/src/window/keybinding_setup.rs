@@ -659,11 +659,17 @@ pub(super) fn setup_shortcut_controller(
         let window_ref = window.clone();
         let commands = commands.to_vec();
         let command_recents = command_recents.clone();
+        let sidebar_state = sidebar_state.clone();
         add_shortcut(
             &shortcut_controller,
             &keybindings::get_accel("command_palette", &kb_overrides),
             move || {
-                super::show_command_palette(&window_ref, &commands, &command_recents);
+                super::show_command_palette(
+                    &window_ref,
+                    &commands,
+                    &command_recents,
+                    &sidebar_state,
+                );
             },
         );
     }

@@ -41,6 +41,7 @@ struct CommandPaletteItem: Codable, Hashable {
     let keywords: [String]
     let source: String
     let shortcut: String?
+    let payload: [String: String]?
 }
 
 struct RecentCommandItem: Codable, Hashable {
@@ -924,6 +925,24 @@ final class ImpulseCore {
             return recents
         }
         return store
+    }
+
+    static func commandPaletteSearchItems(
+        root: String,
+        query: String,
+        limit: UInt = 20
+    ) -> [CommandPaletteItem] {
+        let json = root.withCString { rootPtr in
+            query.withCString { queryPtr in
+                consumeCString(impulse_command_palette_search_items_json(
+                    rootPtr,
+                    queryPtr,
+                    limit
+                ))
+            }
+        }
+        guard let json else { return [] }
+        return decodeCommandPaletteItems(json)
     }
 
     private static func decodeCommandPaletteItems(_ json: String) -> [CommandPaletteItem] {

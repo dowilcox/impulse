@@ -1278,6 +1278,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private func configureCommandPalette(_ palette: CommandPaletteWindow, settings: Settings) {
     palette.registerBuiltinCommands(overrides: settings.keybindingOverrides)
     palette.registerCustomCommands(settings.customKeybindings)
+    palette.configureDynamicSearch(
+      rootProvider: { [weak self] in self?.fileTreeRootPath },
+      openFile: { [weak self] path, line in
+        self?.openCommandPaletteSearchResult(path: path, line: line)
+      }
+    )
+  }
+
+  private func openCommandPaletteSearchResult(path: String, line: UInt32?) {
+    tabManager.addEditorTab(
+      path: path,
+      projectDirectory: fileTreeRootPath,
+      goToLine: line,
+      goToColumn: line == nil ? nil : 1
+    )
+    if let editor = findEditorTab(forPath: path) {
+      trackEditorTab(editor, forPath: path)
+      lspDidOpenIfNeeded(path: path)
+      if let line {
+        editor.goToPosition(line: line, column: 1)
+      }
+    }
   }
 
   private func showSearchSidebarAndFocus() {

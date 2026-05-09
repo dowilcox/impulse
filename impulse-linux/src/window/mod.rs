@@ -1910,6 +1910,7 @@ fn palette_builtin_item(
             keywords: Vec::new(),
             source: CommandPaletteSource::Builtin,
             shortcut: None,
+            payload: Default::default(),
         });
     item.shortcut = if shortcut.is_empty() {
         None

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CommandPaletteItem {
@@ -11,6 +12,8 @@ pub struct CommandPaletteItem {
     pub source: CommandPaletteSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shortcut: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub payload: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -222,6 +225,7 @@ pub fn builtin_items() -> Vec<CommandPaletteItem> {
                 .collect(),
             source: CommandPaletteSource::Builtin,
             shortcut: None,
+            payload: BTreeMap::new(),
         })
         .collect()
 }
@@ -244,6 +248,7 @@ pub fn custom_command_item(
             .map(str::trim)
             .filter(|shortcut| !shortcut.is_empty())
             .map(str::to_string),
+        payload: BTreeMap::new(),
     }
 }
 
@@ -255,6 +260,100 @@ pub fn custom_command_id(command: &str, args: &[String]) -> String {
         value.push('\0');
     }
     format!("custom:external:{:016x}", stable_hash(value.as_bytes()))
+}
+
+pub fn search_items(
+    root: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<CommandPaletteItem>, String> {
+    let query = query.trim();
+    if query.len() < 2 || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let file_limit = limit.min(12);
+    let mut results = crate::search::search_filenames(root, query, file_limit, None)?;
+
+    let remaining = limit.saturating_sub(results.len());
+    if remaining > 0 && query.len() >= 3 {
+        results.extend(crate::search::search_contents(
+            root, query, remaining, false, None,
+        )?);
+    }
+
+    Ok(search_result_items(root, &results))
+}
+
+pub fn search_result_items(
+    root: &str,
+    results: &[crate::search::SearchResult],
+) -> Vec<CommandPaletteItem> {
+    results
+        .iter()
+        .map(|result| search_result_item(root, result))
+        .collect()
+}
+
+fn search_result_item(root: &str, result: &crate::search::SearchResult) -> CommandPaletteItem {
+    let relative_path = relative_display_path(root, &result.path);
+    let is_content = result.match_type == "content";
+    let kind = if is_content { "content" } else { "file" };
+
+    let mut id_material = String::new();
+    id_material.push_str(kind);
+    id_material.push('\0');
+    id_material.push_str(&result.path);
+    if let Some(line) = result.line_number {
+        id_material.push('\0');
+        id_material.push_str(&line.to_string());
+    }
+    if let Some(column) = result.column_start {
+        id_material.push('\0');
+        id_material.push_str(&column.to_string());
+    }
+
+    let mut payload = BTreeMap::new();
+    payload.insert("kind".to_string(), kind.to_string());
+    payload.insert("path".to_string(), result.path.clone());
+    if let Some(line) = result.line_number {
+        payload.insert("line".to_string(), line.to_string());
+    }
+    if let Some(column) = result.column_start {
+        payload.insert("column".to_string(), column.to_string());
+    }
+
+    let mut keywords = vec![
+        result.name.clone(),
+        relative_path.clone(),
+        result.path.clone(),
+    ];
+    if let Some(line_content) = result.line_content.as_ref() {
+        keywords.push(line_content.clone());
+    }
+
+    let title = if is_content {
+        match result.line_number {
+            Some(line) => format!("{relative_path}:{line}"),
+            None => relative_path,
+        }
+    } else {
+        relative_path
+    };
+
+    CommandPaletteItem {
+        id: format!("{}:{:016x}", kind, stable_hash(id_material.as_bytes())),
+        title,
+        category: if is_content {
+            "Project Search".to_string()
+        } else {
+            "Files".to_string()
+        },
+        keywords,
+        source: CommandPaletteSource::Dynamic,
+        shortcut: None,
+        payload,
+    }
 }
 
 pub fn filter_items(
@@ -368,6 +467,16 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn relative_display_path(root: &str, path: &str) -> String {
+    Path::new(path)
+        .strip_prefix(Path::new(root))
+        .ok()
+        .and_then(|relative| relative.to_str())
+        .filter(|relative| !relative.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +557,57 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].title, "Test Runner");
+    }
+
+    #[test]
+    fn search_result_items_include_file_payloads() {
+        let results = vec![crate::search::SearchResult {
+            path: "/repo/src/main.rs".to_string(),
+            name: "main.rs".to_string(),
+            line_number: None,
+            line_content: None,
+            column_start: None,
+            column_end: None,
+            match_type: "file".to_string(),
+        }];
+
+        let items = search_result_items("/repo", &results);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "src/main.rs");
+        assert_eq!(items[0].category, "Files");
+        assert_eq!(items[0].source, CommandPaletteSource::Dynamic);
+        assert_eq!(
+            items[0].payload.get("path").map(String::as_str),
+            Some("/repo/src/main.rs")
+        );
+        assert_eq!(
+            items[0].payload.get("kind").map(String::as_str),
+            Some("file")
+        );
+    }
+
+    #[test]
+    fn search_result_items_include_content_payloads() {
+        let results = vec![crate::search::SearchResult {
+            path: "/repo/src/lib.rs".to_string(),
+            name: "lib.rs".to_string(),
+            line_number: Some(42),
+            line_content: Some("pub fn search_items()".to_string()),
+            column_start: Some(7),
+            column_end: Some(19),
+            match_type: "content".to_string(),
+        }];
+
+        let items = search_result_items("/repo", &results);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "src/lib.rs:42");
+        assert_eq!(items[0].category, "Project Search");
+        assert_eq!(items[0].payload.get("line").map(String::as_str), Some("42"));
+        assert!(items[0]
+            .keywords
+            .iter()
+            .any(|keyword| keyword.contains("search_items")));
     }
 }

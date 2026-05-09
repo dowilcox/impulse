@@ -1313,6 +1313,34 @@ pub extern "C" fn impulse_command_palette_record_recent_json(
     )
 }
 
+#[no_mangle]
+pub extern "C" fn impulse_command_palette_search_items_json(
+    root: *const c_char,
+    query: *const c_char,
+    limit: usize,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let root = match to_rust_str(root) {
+                Some(root) => root,
+                None => return std::ptr::null_mut(),
+            };
+            let query = match to_rust_str(query) {
+                Some(query) => query,
+                None => return std::ptr::null_mut(),
+            };
+            match impulse_core::command_palette::search_items(&root, &query, limit) {
+                Ok(items) => match serde_json::to_string(&items) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => to_c_string(&serde_json::json!({"error": e.to_string()}).to_string()),
+                },
+                Err(e) => to_c_string(&serde_json::json!({"error": e}).to_string()),
+            }
+        }),
+    )
+}
+
 /// Check for a newer version on GitHub Releases.
 ///
 /// Returns a JSON string `{"version":"X.Y.Z","url":"..."}` if an update is

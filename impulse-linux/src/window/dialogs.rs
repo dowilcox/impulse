@@ -2,7 +2,7 @@ use gtk4::prelude::*;
 use impulse_core::command_palette::{filter_items, RecentCommandStore};
 use libadwaita as adw;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -165,6 +165,7 @@ pub(super) fn show_command_palette(
     window: &adw::ApplicationWindow,
     commands: &[Command],
     recents: &Rc<RefCell<RecentCommandStore>>,
+    sidebar_state: &Rc<sidebar::SidebarState>,
 ) {
     let dialog = gtk4::Window::builder()
         .transient_for(window)
@@ -192,17 +193,75 @@ pub(super) fn show_command_palette(
 
     // Populate with all commands
     let commands: Vec<Command> = commands.to_vec();
-    populate_command_list(&list, &commands, "", recents);
+    let dynamic_commands: Rc<RefCell<Vec<Command>>> = Rc::new(RefCell::new(Vec::new()));
+    let search_generation = Rc::new(Cell::new(0u64));
+    populate_command_list(&list, &commands, &dynamic_commands.borrow(), "", recents);
 
     // Filter on type
     {
         let list = list.clone();
         let commands = commands.clone();
         let recents = recents.clone();
+        let dynamic_commands = dynamic_commands.clone();
+        let search_generation = search_generation.clone();
+        let sidebar_state = sidebar_state.clone();
         entry.connect_search_changed(move |entry| {
             run_guarded_ui("command-palette-search-changed", || {
                 let query = entry.text().to_string();
-                populate_command_list(&list, &commands, &query, &recents);
+                let generation = search_generation.get().saturating_add(1);
+                search_generation.set(generation);
+                dynamic_commands.borrow_mut().clear();
+                populate_command_list(
+                    &list,
+                    &commands,
+                    &dynamic_commands.borrow(),
+                    &query,
+                    &recents,
+                );
+
+                let root = {
+                    let project_root = sidebar_state.project_search.current_root.borrow().clone();
+                    if project_root.is_empty() {
+                        sidebar_state.current_path.borrow().clone()
+                    } else {
+                        project_root
+                    }
+                };
+                if query.trim().len() < 2 || root.is_empty() {
+                    return;
+                }
+
+                let list = list.clone();
+                let commands = commands.clone();
+                let recents = recents.clone();
+                let dynamic_commands = dynamic_commands.clone();
+                let search_generation = search_generation.clone();
+                let sidebar_state = sidebar_state.clone();
+                gtk4::glib::spawn_future_local(async move {
+                    let search_query = query.clone();
+                    let results = gtk4::gio::spawn_blocking(move || {
+                        impulse_core::command_palette::search_items(&root, &search_query, 20)
+                    })
+                    .await;
+                    if search_generation.get() != generation {
+                        return;
+                    }
+                    let Ok(Ok(items)) = results else {
+                        return;
+                    };
+                    let dynamic: Vec<Command> = items
+                        .into_iter()
+                        .filter_map(|item| dynamic_command_for_item(item, &sidebar_state))
+                        .collect();
+                    *dynamic_commands.borrow_mut() = dynamic;
+                    populate_command_list(
+                        &list,
+                        &commands,
+                        &dynamic_commands.borrow(),
+                        &query,
+                        &recents,
+                    );
+                });
             });
         });
     }
@@ -212,8 +271,9 @@ pub(super) fn show_command_palette(
         let dialog = dialog.clone();
         let commands = commands.clone();
         let recents = recents.clone();
+        let dynamic_commands = dynamic_commands.clone();
         list.connect_row_activated(move |_list, row| {
-            execute_command_for_row(row, &commands, &recents);
+            execute_command_for_row(row, &commands, &dynamic_commands.borrow(), &recents);
             dialog.close();
         });
     }
@@ -224,6 +284,7 @@ pub(super) fn show_command_palette(
         let dialog = dialog.clone();
         let commands = commands.clone();
         let recents = recents.clone();
+        let dynamic_commands = dynamic_commands.clone();
         let key_controller = gtk4::EventControllerKey::new();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk4::gdk::Key::Escape {
@@ -232,7 +293,7 @@ pub(super) fn show_command_palette(
             }
             if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
                 if let Some(row) = list.selected_row() {
-                    execute_command_for_row(&row, &commands, &recents);
+                    execute_command_for_row(&row, &commands, &dynamic_commands.borrow(), &recents);
                     dialog.close();
                     return gtk4::glib::Propagation::Stop;
                 }
@@ -316,22 +377,42 @@ pub(super) fn show_go_to_line_dialog(
 fn execute_command_for_row(
     row: &gtk4::ListBoxRow,
     commands: &[Command],
+    dynamic_commands: &[Command],
     recents: &Rc<RefCell<RecentCommandStore>>,
 ) {
     let Some(child) = row.child() else {
         return;
     };
     let command_id = child.widget_name().to_string();
-    let Some(command) = commands
-        .iter()
-        .find(|command| command.item.id == command_id)
-    else {
+    let Some(command) = find_command(commands, dynamic_commands, &command_id) else {
         return;
     };
     recents
         .borrow_mut()
         .record(&command.item, current_unix_time_ms(), 20);
     (command.action)();
+}
+
+fn dynamic_command_for_item(
+    item: impulse_core::command_palette::CommandPaletteItem,
+    sidebar_state: &Rc<sidebar::SidebarState>,
+) -> Option<Command> {
+    let path = item.payload.get("path")?.clone();
+    let line = item
+        .payload
+        .get("line")
+        .and_then(|line| line.parse::<u32>().ok())
+        .unwrap_or(1);
+    let on_result_activated = sidebar_state.project_search.on_result_activated.clone();
+    Some(Command {
+        shortcut: item.category.clone(),
+        item,
+        action: Rc::new(move || {
+            if let Some(callback) = on_result_activated.borrow().as_ref() {
+                callback(&path, line);
+            }
+        }),
+    })
 }
 
 fn current_unix_time_ms() -> u64 {
@@ -344,6 +425,7 @@ fn current_unix_time_ms() -> u64 {
 fn populate_command_list(
     list: &gtk4::ListBox,
     commands: &[Command],
+    dynamic_commands: &[Command],
     filter: &str,
     recents: &Rc<RefCell<RecentCommandStore>>,
 ) {
@@ -352,11 +434,12 @@ fn populate_command_list(
     }
     let items: Vec<_> = commands
         .iter()
+        .chain(dynamic_commands.iter())
         .map(|command| command.item.clone())
         .collect();
     let filtered_items = filter_items(&items, &recents.borrow(), filter);
     for item in filtered_items {
-        let Some(cmd) = commands.iter().find(|command| command.item.id == item.id) else {
+        let Some(cmd) = find_command(commands, dynamic_commands, &item.id) else {
             continue;
         };
         let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -384,4 +467,15 @@ fn populate_command_list(
     if let Some(first_row) = list.row_at_index(0) {
         list.select_row(Some(&first_row));
     }
+}
+
+fn find_command<'a>(
+    commands: &'a [Command],
+    dynamic_commands: &'a [Command],
+    id: &str,
+) -> Option<&'a Command> {
+    commands
+        .iter()
+        .chain(dynamic_commands.iter())
+        .find(|command| command.item.id == id)
 }
