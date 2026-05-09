@@ -242,10 +242,12 @@
 
 **Implementation tasks:**
 
-- [ ] Add an incremental file-tree update protocol in `impulse-core`.
+- [x] Add an incremental file-tree update protocol in `impulse-core`.
 - [ ] Convert watcher events into batched remove/update operations.
 - [ ] Teach macOS and Linux sidebars to apply patches instead of full reloads.
 - [ ] Add tests for rename, move, delete, nested directory replacement, and git-status refresh.
+
+**Implementation note:** The first shared protocol pass adds stable path-based node IDs, `FileTreePatch` remove/upsert operations, child-diff generation, and view-state reconciliation helpers in `impulse-core`. Watcher batching and frontend patch application remain next.
 
 ### 12. Rich Inline Command History
 
