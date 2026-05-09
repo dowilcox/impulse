@@ -374,6 +374,12 @@ mod tests {
         }
     }
 
+    fn entry_with_status(name: &str, path: &str, is_dir: bool, status: &str) -> FileEntry {
+        let mut entry = entry(name, path, is_dir);
+        entry.git_status = Some(status.to_string());
+        entry
+    }
+
     fn event(kind: FileTreeWatchEventKind, paths: &[&str]) -> FileTreeWatchEvent {
         FileTreeWatchEvent {
             kind,
@@ -413,6 +419,64 @@ mod tests {
     }
 
     #[test]
+    fn batch_represents_same_parent_rename() {
+        let events = vec![event(
+            FileTreeWatchEventKind::Rename,
+            &["/repo/old.rs", "/repo/new.rs"],
+        )];
+        let mut before = HashMap::new();
+        before.insert(
+            "/repo".to_string(),
+            vec![entry("old.rs", "/repo/old.rs", false)],
+        );
+        let mut after = HashMap::new();
+        after.insert(
+            "/repo".to_string(),
+            vec![entry("new.rs", "/repo/new.rs", false)],
+        );
+
+        let batch = build_patch_batch("/repo", &events, &before, &after);
+
+        assert_eq!(batch.patches.len(), 1);
+        assert_eq!(batch.patches[0].operations.len(), 2);
+        assert!(matches!(
+            &batch.patches[0].operations[0],
+            FileTreeOperation::Remove { id } if id == "/repo/old.rs"
+        ));
+        assert!(matches!(
+            &batch.patches[0].operations[1],
+            FileTreeOperation::Upsert { index, node, .. } if *index == 0 && node.id == "/repo/new.rs"
+        ));
+    }
+
+    #[test]
+    fn batch_represents_delete_without_upsert() {
+        let events = vec![event(FileTreeWatchEventKind::Remove, &["/repo/doomed.rs"])];
+        let mut before = HashMap::new();
+        before.insert(
+            "/repo".to_string(),
+            vec![
+                entry("keep.rs", "/repo/keep.rs", false),
+                entry("doomed.rs", "/repo/doomed.rs", false),
+            ],
+        );
+        let mut after = HashMap::new();
+        after.insert(
+            "/repo".to_string(),
+            vec![entry("keep.rs", "/repo/keep.rs", false)],
+        );
+
+        let batch = build_patch_batch("/repo", &events, &before, &after);
+
+        assert_eq!(batch.patches.len(), 1);
+        assert_eq!(batch.patches[0].operations.len(), 1);
+        assert!(matches!(
+            &batch.patches[0].operations[0],
+            FileTreeOperation::Remove { id } if id == "/repo/doomed.rs"
+        ));
+    }
+
+    #[test]
     fn metadata_or_position_changes_emit_upsert() {
         let before = vec![
             entry("a.rs", "/repo/a.rs", false),
@@ -431,6 +495,23 @@ mod tests {
             .operations
             .iter()
             .all(|operation| { matches!(operation, FileTreeOperation::Upsert { .. }) }));
+    }
+
+    #[test]
+    fn git_status_refresh_emits_upsert_only() {
+        let before = vec![entry("lib.rs", "/repo/lib.rs", false)];
+        let after = vec![entry_with_status("lib.rs", "/repo/lib.rs", false, "M")];
+
+        let patch = build_child_patch("/repo", &before, &after);
+
+        assert_eq!(patch.operations.len(), 1);
+        assert!(matches!(
+            &patch.operations[0],
+            FileTreeOperation::Upsert { index, node, .. }
+                if *index == 0
+                    && node.id == "/repo/lib.rs"
+                    && node.git_status.as_deref() == Some("M")
+        ));
     }
 
     #[test]
@@ -590,5 +671,44 @@ mod tests {
         assert_eq!(reconciled.expanded_ids, vec!["/repo/tests"]);
         assert_eq!(reconciled.selected_id, None);
         assert_eq!(reconciled.scroll_offset, 12.0);
+    }
+
+    #[test]
+    fn nested_directory_replacement_removes_loaded_descendants() {
+        let events = vec![event(FileTreeWatchEventKind::Modify, &["/repo/src"])];
+        let mut before = HashMap::new();
+        before.insert("/repo".to_string(), vec![entry("src", "/repo/src", true)]);
+        before.insert(
+            "/repo/src".to_string(),
+            vec![entry("lib.rs", "/repo/src/lib.rs", false)],
+        );
+        let mut after = HashMap::new();
+        after.insert("/repo".to_string(), vec![entry("src", "/repo/src", false)]);
+        after.insert("/repo/src".to_string(), Vec::new());
+
+        let batch = build_patch_batch("/repo", &events, &before, &after);
+        let state = FileTreeViewState {
+            expanded_ids: vec!["/repo/src".to_string()],
+            selected_id: Some("/repo/src/lib.rs".to_string()),
+            scroll_offset: 99.0,
+        };
+        let reconciled = reconcile_view_state_for_batch(&state, &batch);
+
+        assert_eq!(batch.patches.len(), 2);
+        assert!(matches!(
+            &batch.patches[0].operations[0],
+            FileTreeOperation::Remove { id } if id == "/repo/src"
+        ));
+        assert!(matches!(
+            &batch.patches[0].operations[1],
+            FileTreeOperation::Upsert { node, .. } if node.id == "/repo/src" && !node.is_dir
+        ));
+        assert!(matches!(
+            &batch.patches[1].operations[0],
+            FileTreeOperation::Remove { id } if id == "/repo/src/lib.rs"
+        ));
+        assert!(reconciled.expanded_ids.is_empty());
+        assert_eq!(reconciled.selected_id, None);
+        assert_eq!(reconciled.scroll_offset, 99.0);
     }
 }
