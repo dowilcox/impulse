@@ -9,6 +9,7 @@ mod buffer;
 mod config;
 mod event;
 mod grid;
+mod history;
 pub mod osc_scanner;
 mod search;
 
@@ -21,4 +22,8 @@ pub use buffer::{
 pub use config::{TerminalColors, TerminalConfig};
 pub use event::TerminalEvent;
 pub use grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
+pub use history::{
+    CommandHistoryContext, CommandHistoryMatchKind, CommandHistoryQuery, CommandHistoryRecord,
+    CommandHistorySearchResult, CommandHistoryStore,
+};
 pub use search::SearchResult;

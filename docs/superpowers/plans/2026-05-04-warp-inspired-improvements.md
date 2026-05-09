@@ -263,11 +263,13 @@
 
 **Implementation tasks:**
 
-- [ ] Add a history store in `impulse-core` or `impulse-terminal` after Command Blocks land.
-- [ ] Record completed block metadata into history.
-- [ ] Add prefix and fuzzy matching.
+- [x] Add a history store in `impulse-core` or `impulse-terminal` after Command Blocks land.
+- [x] Record completed block metadata into history.
+- [x] Add prefix and fuzzy matching.
 - [ ] Add terminal input UI for selecting a history entry.
 - [ ] Add rerun-from-history behavior with clear shell escaping rules.
+
+**Implementation note:** The first history pass adds `CommandHistoryStore`, `CommandHistoryRecord`, and `CommandHistoryContext` in `impulse-terminal`, including deterministic insertion, newest-first reads, completed-block conversion, and bounded eviction. `TerminalBackend` now records completed command blocks into the per-terminal store with session and shell metadata. Store search supports prefix and fuzzy matches, prefers current session/current cwd records, and returns bounded newest-first fallback results for empty queries.
 
 ### 13. Lightweight Shell Parser and Completion Context
 

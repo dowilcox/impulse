@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -25,6 +26,7 @@ use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
 use crate::grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
+use crate::history::{CommandHistoryContext, CommandHistoryRecord, CommandHistoryStore};
 use crate::search::{SearchResult, TerminalSearch};
 
 const FILTERED_CHILD_ENV_VARS: &[&str] = &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
@@ -313,6 +315,7 @@ pub struct TerminalBackend {
     child_pid: u32,
     search: Mutex<TerminalSearch>,
     blocks: Arc<Mutex<CommandBlockTracker>>,
+    history: Arc<Mutex<CommandHistoryStore>>,
 }
 
 impl TerminalBackend {
@@ -350,6 +353,11 @@ impl TerminalBackend {
         let pty = spawn_pty(&pty_options, window_size)
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
+        let history_context = CommandHistoryContext {
+            session_id: Some(format!("terminal:{child_pid}")),
+            shell: shell_name_from_path(&config.shell_path),
+            git_branch: None,
+        };
 
         // Clone the PTY fd up front so the reader thread can own its own handle
         // while the writer side keeps using the original. Doing it here lets us
@@ -361,12 +369,23 @@ impl TerminalBackend {
             .map_err(|e| format!("Failed to clone PTY fd: {e}"))?;
 
         let blocks = Arc::new(Mutex::new(CommandBlockTracker::new()));
+        let history = Arc::new(Mutex::new(CommandHistoryStore::new()));
         let term_clone = Arc::clone(&term);
         let blocks_clone = Arc::clone(&blocks);
+        let history_clone = Arc::clone(&history);
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
-                Self::read_loop(pty, reader_file, term_clone, event_tx, cmd_rx, blocks_clone);
+                Self::read_loop(
+                    pty,
+                    reader_file,
+                    term_clone,
+                    event_tx,
+                    cmd_rx,
+                    blocks_clone,
+                    history_clone,
+                    history_context,
+                );
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
 
@@ -383,6 +402,7 @@ impl TerminalBackend {
             child_pid,
             search: Mutex::new(TerminalSearch::new()),
             blocks,
+            history,
         })
     }
 
@@ -398,6 +418,8 @@ impl TerminalBackend {
         event_tx: Sender<TerminalEvent>,
         cmd_rx: Receiver<BackendMsg>,
         blocks: Arc<Mutex<CommandBlockTracker>>,
+        history: Arc<Mutex<CommandHistoryStore>>,
+        history_context: CommandHistoryContext,
     ) {
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
@@ -510,6 +532,12 @@ impl TerminalBackend {
                             crate::osc_scanner::OscEvent::CommandEnd(code) => {
                                 if let Ok(mut blocks) = blocks.lock() {
                                     if let Some(block) = blocks.command_ended(code) {
+                                        if let Ok(mut history) = history.lock() {
+                                            history.record_completed_block(
+                                                &block,
+                                                history_context.clone(),
+                                            );
+                                        }
                                         let _ =
                                             event_tx.send(TerminalEvent::CommandBlockEnded(block));
                                     }
@@ -617,6 +645,14 @@ impl TerminalBackend {
         self.blocks
             .lock()
             .map(|blocks| blocks.blocks())
+            .unwrap_or_default()
+    }
+
+    /// Return completed command history records observed for this terminal session.
+    pub fn command_history(&self) -> Vec<CommandHistoryRecord> {
+        self.history
+            .lock()
+            .map(|history| history.records())
             .unwrap_or_default()
     }
 
@@ -1020,6 +1056,18 @@ fn viewport_point<T>(term: &Term<T>, col: usize, row: usize) -> alacritty_termin
         alacritty_terminal::index::Line(row as i32 - display_offset),
         alacritty_terminal::index::Column(col),
     )
+}
+
+fn shell_name_from_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 /// Strip ASCII control characters (except tab and newline) from a shell-set
