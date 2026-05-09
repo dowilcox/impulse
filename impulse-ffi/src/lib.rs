@@ -966,6 +966,78 @@ pub extern "C" fn impulse_read_directory_with_git_status(
     )
 }
 
+/// Build an incremental file-tree patch batch from watcher events and loaded
+/// directory snapshots.
+///
+/// `events_json` must be a JSON array of `FileTreeWatchEvent` objects.
+/// `before_by_parent_json` must be a JSON object keyed by parent directory path
+/// with `FileEntry` arrays as values. The returned JSON is a
+/// `FileTreePatchBatch`, or null on invalid input or filesystem errors.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_build_file_tree_patch_batch(
+    root_path: *const c_char,
+    events_json: *const c_char,
+    before_by_parent_json: *const c_char,
+    show_hidden: bool,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let root_path = match to_rust_str(root_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let events_json = match to_rust_str(events_json) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let before_by_parent_json = match to_rust_str(before_by_parent_json) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            let events: Vec<impulse_core::file_tree::FileTreeWatchEvent> =
+                match serde_json::from_str(&events_json) {
+                    Ok(events) => events,
+                    Err(e) => {
+                        log::error!("Failed to parse file-tree watcher events: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+            let before_by_parent: std::collections::HashMap<
+                String,
+                Vec<impulse_core::filesystem::FileEntry>,
+            > = match serde_json::from_str(&before_by_parent_json) {
+                Ok(snapshots) => snapshots,
+                Err(e) => {
+                    log::error!("Failed to parse file-tree snapshots: {}", e);
+                    return std::ptr::null_mut();
+                }
+            };
+
+            match impulse_core::file_tree::build_patch_batch_from_filesystem(
+                &root_path,
+                &events,
+                &before_by_parent,
+                show_hidden,
+            ) {
+                Ok(batch) => match serde_json::to_string(&batch) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => {
+                        log::error!("JSON serialization failed: {}", e);
+                        std::ptr::null_mut()
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to build file-tree patch batch: {}", e);
+                    std::ptr::null_mut()
+                }
+            }
+        }),
+    )
+}
+
 /// Computes diff markers for the given file path (comparing working copy to HEAD).
 ///
 /// Returns a JSON array of objects with `"line"` (1-based u32) and `"status"`

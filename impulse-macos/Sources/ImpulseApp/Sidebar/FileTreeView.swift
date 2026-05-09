@@ -163,6 +163,7 @@ final class FileTreeView: NSView {
     // when the current rebuild completes.
     private var isRefreshingTree = false
     private var needsAnotherRefresh = false
+    private var pendingFileTreeEvents: [ImpulseCore.FileTreeWatchEvent] = []
 
     // Guard against overlapping git status calls from poll timer and
     // refreshGitStatus() running concurrently.
@@ -799,7 +800,7 @@ final class FileTreeView: NSView {
         )
 
         source.setEventHandler { [weak self] in
-            self?.handleFileSystemEvent()
+            self?.handleFileSystemEvent(path: path)
         }
 
         source.setCancelHandler { [fd] in
@@ -830,7 +831,7 @@ final class FileTreeView: NSView {
             queue: .main
         )
         source.setEventHandler { [weak self] in
-            self?.handleFileSystemEvent()
+            self?.handleFileSystemEvent(path: path)
         }
         source.setCancelHandler { [fd] in
             close(fd)
@@ -881,6 +882,7 @@ final class FileTreeView: NSView {
     private func stopWatching() {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
+        pendingFileTreeEvents.removeAll()
         gitRefreshDebounce?.cancel()
         gitRefreshDebounce = nil
 
@@ -1050,20 +1052,188 @@ final class FileTreeView: NSView {
         }
     }
 
-    /// Called when the dispatch source fires. Debounces rapid events by
-    /// scheduling a refresh 500ms in the future. The longer window reduces
-    /// redundant rebuilds during burst changes (e.g. Claude Code editing
-    /// many files in quick succession).
-    private func handleFileSystemEvent() {
+    /// Called when a watched directory dispatch source fires. Debounces rapid
+    /// events and applies a patch for the loaded parent directories instead of
+    /// rebuilding the full tree.
+    private func handleFileSystemEvent(path: String) {
+        pendingFileTreeEvents.append(ImpulseCore.FileTreeWatchEvent(kind: "any", paths: [path]))
         debounceWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.refreshTree()
+            self?.refreshTreePatches()
         }
         debounceWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     // MARK: Private Helpers
+
+    private func refreshTreePatches() {
+        guard !rootPath.isEmpty else { return }
+        guard !pendingFileTreeEvents.isEmpty else { return }
+
+        if isRefreshingTree {
+            needsAnotherRefresh = true
+            return
+        }
+        isRefreshingTree = true
+
+        let root = rootPath
+        let hidden = showHidden
+        let events = pendingFileTreeEvents
+        pendingFileTreeEvents.removeAll()
+        let beforeByParent = loadedDirectorySnapshots()
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let batch = ImpulseCore.buildFileTreePatchBatch(
+                rootPath: root,
+                events: events,
+                beforeByParent: beforeByParent,
+                showHidden: hidden
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.rootPath == root else {
+                    self.isRefreshingTree = false
+                    return
+                }
+
+                self.isRefreshingTree = false
+                guard let batch else {
+                    self.refreshTree()
+                    return
+                }
+
+                self.applyFileTreePatchBatch(batch)
+
+                if self.needsAnotherRefresh || !self.pendingFileTreeEvents.isEmpty {
+                    self.needsAnotherRefresh = false
+                    self.refreshTreePatches()
+                }
+            }
+        }
+    }
+
+    private func loadedDirectorySnapshots() -> [String: [ImpulseCore.FileEntryFFI]] {
+        var snapshots: [String: [ImpulseCore.FileEntryFFI]] = [
+            rootPath: rootNodes.map { $0.fileEntrySnapshot() }
+        ]
+
+        for node in nodeByPath.values where node.isDirectory {
+            if let children = node.children {
+                snapshots[node.path] = children.map { $0.fileEntrySnapshot() }
+            }
+        }
+
+        return snapshots
+    }
+
+    private func applyFileTreePatchBatch(_ batch: ImpulseCore.FileTreePatchBatch) {
+        guard !batch.patches.isEmpty else { return }
+
+        let savedOrigin = scrollView.contentView.bounds.origin
+        let expandedPaths = collectExpandedPaths(rootNodes)
+        var changed = false
+
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        isBulkRestoring = true
+        for patch in batch.patches {
+            changed = applyFileTreePatch(patch) || changed
+        }
+        if !expandedPaths.isEmpty {
+            restoreExpandedPaths(expandedPaths, in: rootNodes)
+        }
+        isBulkRestoring = false
+        NSAnimationContext.endGrouping()
+
+        guard changed else { return }
+        rebuildNodeIndex()
+        stopAllSubdirWatchers()
+        watchExpandedSubdirectories(rootNodes)
+        onTreeRefreshed?(rootNodes)
+        NotificationCenter.default.post(name: .impulseFileTreeChanged, object: nil)
+
+        pendingScrollRestore = savedOrigin
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPendingScrollRestore()
+        }
+        refreshGitStatus()
+    }
+
+    private func applyFileTreePatch(_ patch: ImpulseCore.FileTreePatch) -> Bool {
+        if patch.parent_id == stableNodeID(rootPath) {
+            var children = rootNodes
+            applyFileTreeOperations(patch.operations, to: &children)
+            rootNodes = children
+            outlineView.reloadData()
+            return true
+        }
+
+        guard let parent = nodeByPath[patch.parent_id],
+              parent.isDirectory,
+              parent.children != nil else {
+            return false
+        }
+
+        var children = parent.children ?? []
+        applyFileTreeOperations(patch.operations, to: &children)
+        parent.children = children
+        outlineView.reloadItem(parent, reloadChildren: true)
+        return true
+    }
+
+    private func applyFileTreeOperations(
+        _ operations: [ImpulseCore.FileTreeOperation],
+        to children: inout [FileTreeNode]
+    ) {
+        let removedIDs = Set(operations.compactMap { operation -> String? in
+            if case .remove(let id) = operation { return id }
+            return nil
+        })
+
+        for operation in operations {
+            switch operation {
+            case .remove(let id):
+                if let index = children.firstIndex(where: { stableNodeID($0.path) == id }) {
+                    children.remove(at: index)
+                }
+            case .upsert(_, let index, let patchNode):
+                let existingIndex = children.firstIndex {
+                    stableNodeID($0.path) == patchNode.id
+                }
+                let existing = existingIndex.map { children.remove(at: $0) }
+                let node = nodeForUpsert(
+                    patchNode,
+                    existing: existing,
+                    preserveExisting: !removedIDs.contains(patchNode.id)
+                )
+                children.insert(node, at: min(index, children.count))
+            }
+        }
+    }
+
+    private func nodeForUpsert(
+        _ patchNode: ImpulseCore.FileTreePatchNode,
+        existing: FileTreeNode?,
+        preserveExisting: Bool
+    ) -> FileTreeNode {
+        if preserveExisting,
+           let existing,
+           existing.isDirectory == patchNode.is_dir {
+            existing.updateMetadata(from: patchNode)
+            return existing
+        }
+        return FileTreeNode.fromPatchNode(patchNode)
+    }
+
+    private func stableNodeID(_ path: String) -> String {
+        var id = path
+        while id.count > 1 && (id.hasSuffix("/") || id.hasSuffix("\\")) {
+            id.removeLast()
+        }
+        return id
+    }
 
     /// Rebuild the `nodeByPath` lookup dictionary from the current tree.
     private func rebuildNodeIndex() {

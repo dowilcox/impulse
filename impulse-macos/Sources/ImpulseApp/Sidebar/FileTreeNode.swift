@@ -13,6 +13,9 @@ final class FileTreeNode: Identifiable {
     let name: String
     let path: String
     let isDirectory: Bool
+    var isSymlink: Bool
+    var size: UInt64
+    var modified: UInt64
 
     /// Stable identity for SwiftUI (uses the full path).
     var id: String { path }
@@ -39,10 +42,22 @@ final class FileTreeNode: Identifiable {
 
     // MARK: Initialisation
 
-    init(name: String, path: String, isDirectory: Bool) {
+    init(
+        name: String,
+        path: String,
+        isDirectory: Bool,
+        isSymlink: Bool = false,
+        size: UInt64 = 0,
+        modified: UInt64 = 0,
+        gitStatus: GitStatus = .none
+    ) {
         self.name = name
         self.path = path
         self.isDirectory = isDirectory
+        self.isSymlink = isSymlink
+        self.size = size
+        self.modified = modified
+        self.gitStatus = gitStatus
     }
 
     // MARK: Loading Children
@@ -75,8 +90,25 @@ final class FileTreeNode: Identifiable {
             let itemName = itemURL.lastPathComponent
             if !showHidden && itemName.hasPrefix(".") { continue }
             if itemName == ".DS_Store" { continue }
-            let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            nodes.append(FileTreeNode(name: itemName, path: itemURL.path, isDirectory: isDir))
+            let values = try? itemURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey,
+                .contentModificationDateKey
+            ])
+            let isDir = values?.isDirectory ?? false
+            let isSymlink = values?.isSymbolicLink ?? false
+            let size = UInt64(max(values?.fileSize ?? 0, 0))
+            let modified = values?.contentModificationDate
+                .map { UInt64(max($0.timeIntervalSince1970, 0)) } ?? 0
+            nodes.append(FileTreeNode(
+                name: itemName,
+                path: itemURL.path,
+                isDirectory: isDir,
+                isSymlink: isSymlink,
+                size: size,
+                modified: modified
+            ))
         }
 
         nodes.sort { lhs, rhs in
@@ -146,6 +178,39 @@ final class FileTreeNode: Identifiable {
         }
     }
 
+    // MARK: Incremental Patch Snapshots
+
+    func fileEntrySnapshot() -> ImpulseCore.FileEntryFFI {
+        ImpulseCore.FileEntryFFI(
+            name: name,
+            path: path,
+            is_dir: isDirectory,
+            is_symlink: isSymlink,
+            size: size,
+            modified: modified,
+            git_status: Self.statusCode(from: gitStatus)
+        )
+    }
+
+    static func fromPatchNode(_ node: ImpulseCore.FileTreePatchNode) -> FileTreeNode {
+        FileTreeNode(
+            name: node.name,
+            path: node.path,
+            isDirectory: node.is_dir,
+            isSymlink: node.is_symlink,
+            size: node.size,
+            modified: node.modified,
+            gitStatus: statusFromCode(node.git_status)
+        )
+    }
+
+    func updateMetadata(from node: ImpulseCore.FileTreePatchNode) {
+        isSymlink = node.is_symlink
+        size = node.size
+        modified = node.modified
+        gitStatus = Self.statusFromCode(node.git_status)
+    }
+
     // MARK: Private Helpers
 
     /// Collect (node, status) pairs using the pre-computed batch status map.
@@ -192,6 +257,19 @@ final class FileTreeNode: Identifiable {
         case "?":  return .untracked
         case "I":  return .ignored
         default:   return .modified
+        }
+    }
+
+    private static func statusCode(from status: GitStatus) -> String? {
+        switch status {
+        case .none:      return nil
+        case .modified:  return "M"
+        case .added:     return "A"
+        case .deleted:   return "D"
+        case .renamed:   return "R"
+        case .conflict:  return "C"
+        case .untracked: return "?"
+        case .ignored:   return "I"
         }
     }
 

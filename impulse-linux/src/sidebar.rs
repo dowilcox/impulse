@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::file_icons::IconCache;
@@ -17,6 +17,7 @@ use crate::settings;
 use crate::theme::ThemeColors;
 
 type EventCallback = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
+type PendingFileTreeEvents = Arc<Mutex<Vec<impulse_core::file_tree::FileTreeWatchEvent>>>;
 use impulse_core::filesystem::FileEntry;
 
 /// A node in the sidebar file tree, representing either a file or directory at a given depth.
@@ -885,6 +886,7 @@ pub fn build_sidebar(
         #[allow(clippy::arc_with_non_send_sync)]
         _git_index_watcher: Rc::new(RefCell::new(None)),
         _refresh_dirty: Arc::new(AtomicBool::new(false)),
+        _pending_file_tree_events: Arc::new(Mutex::new(Vec::new())),
         _refresh_timer: Rc::new(RefCell::new(None)),
         _refresh_in_progress: refresh_in_progress.clone(),
         _git_poll_timer: Rc::new(RefCell::new(None)),
@@ -1154,8 +1156,11 @@ pub struct SidebarState {
     /// Keeps the .git/index watcher alive.
     _git_index_watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
     /// Coalesced dirty flag: set by FS watcher and .git/index watcher callbacks,
-    /// checked by a single 300ms timer that triggers refresh_tree when dirty.
+    /// checked by a single 300ms timer that applies file-tree patches when dirty.
     _refresh_dirty: Arc<AtomicBool>,
+    /// Watcher events accumulated during the debounce window and converted into
+    /// incremental file-tree patches on the GTK main thread.
+    _pending_file_tree_events: PendingFileTreeEvents,
     /// Source ID for the coalesced refresh timer.
     _refresh_timer: Rc<RefCell<Option<glib::SourceId>>>,
     /// Guard to prevent concurrent refresh_tree() calls from racing.
@@ -1212,7 +1217,7 @@ impl SidebarState {
 
     /// Set up a filesystem watcher for the given directory.
     /// Both the FS watcher and .git watcher set a shared dirty flag;
-    /// a single 300ms timer checks the flag and triggers `refresh_tree`.
+    /// a single 300ms timer checks the flag and applies a patch batch.
     fn setup_watcher(&self, path: &str) {
         use notify::{RecursiveMode, Watcher};
 
@@ -1225,18 +1230,30 @@ impl SidebarState {
         }
         self._refresh_dirty.store(false, Ordering::Relaxed);
         self._refresh_in_progress.set(false);
+        if let Ok(mut events) = self._pending_file_tree_events.lock() {
+            events.clear();
+        }
 
         let dirty = self._refresh_dirty.clone();
+        let pending_events = self._pending_file_tree_events.clone();
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
-                    match event.kind {
-                        notify::EventKind::Create(_)
-                        | notify::EventKind::Remove(_)
-                        | notify::EventKind::Modify(_) => {
+                    if let Some(kind) = notify_event_kind(&event.kind) {
+                        let paths: Vec<String> = event
+                            .paths
+                            .iter()
+                            .map(|path| path.to_string_lossy().to_string())
+                            .collect();
+                        if !paths.is_empty() {
+                            if let Ok(mut events) = pending_events.lock() {
+                                events.push(impulse_core::file_tree::FileTreeWatchEvent {
+                                    kind,
+                                    paths,
+                                });
+                            }
                             dirty.store(true, Ordering::Relaxed);
                         }
-                        _ => {}
                     }
                 }
             }) {
@@ -1278,6 +1295,7 @@ impl SidebarState {
         let icon_cache = self.icon_cache.clone();
         let refresh_in_progress = self._refresh_in_progress.clone();
         let watcher_for_timer = self._watcher.clone();
+        let pending_events = self._pending_file_tree_events.clone();
 
         let timer_id = glib::timeout_add_local(Duration::from_millis(300), move || {
             if dirty.swap(false, Ordering::Relaxed) {
@@ -1285,16 +1303,31 @@ impl SidebarState {
                     // Re-arm dirty so next tick retries
                     dirty.store(true, Ordering::Relaxed);
                 } else {
-                    refresh_tree(
-                        &tree_nodes,
-                        &file_tree_list,
-                        &file_tree_scroll,
-                        &current_path,
-                        *show_hidden.borrow(),
-                        icon_cache.clone(),
-                        refresh_in_progress.clone(),
-                        watcher_for_timer.clone(),
-                    );
+                    let events = drain_pending_file_tree_events(&pending_events);
+                    if events.is_empty() {
+                        refresh_tree(
+                            &tree_nodes,
+                            &file_tree_list,
+                            &file_tree_scroll,
+                            &current_path,
+                            *show_hidden.borrow(),
+                            icon_cache.clone(),
+                            refresh_in_progress.clone(),
+                            watcher_for_timer.clone(),
+                        );
+                    } else {
+                        apply_file_tree_patch_batch(
+                            &tree_nodes,
+                            &file_tree_list,
+                            &file_tree_scroll,
+                            &current_path,
+                            *show_hidden.borrow(),
+                            icon_cache.clone(),
+                            refresh_in_progress.clone(),
+                            watcher_for_timer.clone(),
+                            events,
+                        );
+                    }
                 }
             }
             glib::ControlFlow::Continue
@@ -1329,6 +1362,8 @@ impl SidebarState {
         }
 
         let dirty = self._refresh_dirty.clone();
+        let pending_events = self._pending_file_tree_events.clone();
+        let root_path = path.to_string();
         let mut watcher =
             match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
@@ -1356,6 +1391,12 @@ impl SidebarState {
                             .unwrap_or(false)
                     });
                     if dominated_by_relevant {
+                        if let Ok(mut events) = pending_events.lock() {
+                            events.push(impulse_core::file_tree::FileTreeWatchEvent {
+                                kind: impulse_core::file_tree::FileTreeWatchEventKind::Any,
+                                paths: vec![root_path.clone()],
+                            });
+                        }
                         dirty.store(true, Ordering::Relaxed);
                     }
                 }
@@ -1691,6 +1732,332 @@ fn find_sorted_insert_position(
         idx += 1;
     }
     idx
+}
+
+fn notify_event_kind(
+    kind: &notify::EventKind,
+) -> Option<impulse_core::file_tree::FileTreeWatchEventKind> {
+    match kind {
+        notify::EventKind::Any => Some(impulse_core::file_tree::FileTreeWatchEventKind::Any),
+        notify::EventKind::Create(_) => {
+            Some(impulse_core::file_tree::FileTreeWatchEventKind::Create)
+        }
+        notify::EventKind::Remove(_) => {
+            Some(impulse_core::file_tree::FileTreeWatchEventKind::Remove)
+        }
+        notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+            Some(impulse_core::file_tree::FileTreeWatchEventKind::Rename)
+        }
+        notify::EventKind::Modify(_) => {
+            Some(impulse_core::file_tree::FileTreeWatchEventKind::Modify)
+        }
+        _ => None,
+    }
+}
+
+fn drain_pending_file_tree_events(
+    pending_events: &PendingFileTreeEvents,
+) -> Vec<impulse_core::file_tree::FileTreeWatchEvent> {
+    pending_events
+        .lock()
+        .map(|mut events| events.drain(..).collect())
+        .unwrap_or_default()
+}
+
+fn loaded_directory_snapshots(
+    root_path: &str,
+    nodes: &[TreeNode],
+) -> HashMap<String, Vec<FileEntry>> {
+    let mut snapshots = HashMap::new();
+    snapshots.insert(root_path.to_string(), direct_child_entries(nodes, 0, 0));
+
+    for (index, node) in nodes.iter().enumerate() {
+        if node.entry.is_dir && node.expanded {
+            snapshots.insert(
+                node.entry.path.clone(),
+                direct_child_entries(nodes, index + 1, node.depth + 1),
+            );
+        }
+    }
+
+    snapshots
+}
+
+fn direct_child_entries(nodes: &[TreeNode], start_index: usize, depth: usize) -> Vec<FileEntry> {
+    let mut entries = Vec::new();
+    let mut index = start_index;
+    while index < nodes.len() {
+        if nodes[index].depth < depth {
+            break;
+        }
+        if nodes[index].depth == depth {
+            entries.push(nodes[index].entry.clone());
+        }
+        index += 1;
+    }
+    entries
+}
+
+/// Apply a watcher-driven file-tree patch batch while preserving expanded
+/// directory subtrees and updating only affected ListBox rows.
+#[allow(clippy::too_many_arguments)]
+fn apply_file_tree_patch_batch(
+    tree_nodes: &Rc<RefCell<Vec<TreeNode>>>,
+    file_tree_list: &gtk4::ListBox,
+    file_tree_scroll: &gtk4::ScrolledWindow,
+    current_path: &Rc<RefCell<String>>,
+    show_hidden: bool,
+    icon_cache: Rc<RefCell<IconCache>>,
+    refresh_in_progress: Rc<Cell<bool>>,
+    watcher: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
+    events: Vec<impulse_core::file_tree::FileTreeWatchEvent>,
+) {
+    if refresh_in_progress.get() {
+        return;
+    }
+    refresh_in_progress.set(true);
+
+    let path = current_path.borrow().clone();
+    if path.is_empty() {
+        refresh_in_progress.set(false);
+        return;
+    }
+
+    let before_by_parent = loaded_directory_snapshots(&path, &tree_nodes.borrow());
+    let scroll_pos = file_tree_scroll.vadjustment().value();
+    let tree_nodes = tree_nodes.clone();
+    let file_tree_list = file_tree_list.clone();
+    let file_tree_scroll = file_tree_scroll.clone();
+    let current_path = current_path.clone();
+
+    glib::spawn_future_local(async move {
+        let root_path = path.clone();
+        let result = gio::spawn_blocking(move || {
+            impulse_core::file_tree::build_patch_batch_from_filesystem(
+                &root_path,
+                &events,
+                &before_by_parent,
+                show_hidden,
+            )
+        })
+        .await;
+
+        match result {
+            Ok(Ok(batch)) => {
+                let mut nodes = tree_nodes.borrow_mut();
+                let mut changed = false;
+                for patch in &batch.patches {
+                    changed |= apply_file_tree_patch_to_nodes(
+                        &mut nodes,
+                        &path,
+                        patch,
+                        &file_tree_list,
+                        &icon_cache.borrow(),
+                    );
+                }
+                drop(nodes);
+
+                if changed {
+                    watch_expanded_directories(&watcher, &tree_nodes.borrow());
+                    glib::idle_add_local_once(move || {
+                        file_tree_scroll.vadjustment().set_value(scroll_pos);
+                    });
+                }
+                refresh_in_progress.set(false);
+            }
+            _ => {
+                refresh_in_progress.set(false);
+                refresh_tree(
+                    &tree_nodes,
+                    &file_tree_list,
+                    &file_tree_scroll,
+                    &current_path,
+                    show_hidden,
+                    icon_cache,
+                    refresh_in_progress,
+                    watcher,
+                );
+            }
+        }
+    });
+}
+
+fn apply_file_tree_patch_to_nodes(
+    nodes: &mut Vec<TreeNode>,
+    root_path: &str,
+    patch: &impulse_core::file_tree::FileTreePatch,
+    file_tree_list: &gtk4::ListBox,
+    icon_cache: &IconCache,
+) -> bool {
+    let mut changed = false;
+
+    for operation in &patch.operations {
+        match operation {
+            impulse_core::file_tree::FileTreeOperation::Remove { id } => {
+                if let Some((index, removed)) = take_tree_subtree(nodes, id) {
+                    remove_rows_at(file_tree_list, index, removed.len());
+                    changed = true;
+                }
+            }
+            impulse_core::file_tree::FileTreeOperation::Upsert {
+                parent_id,
+                index,
+                node,
+            } => {
+                let Some(target_depth) = patch_child_depth(nodes, root_path, parent_id) else {
+                    continue;
+                };
+                let preserved = take_tree_subtree(nodes, &node.id).map(|(old_index, subtree)| {
+                    remove_rows_at(file_tree_list, old_index, subtree.len());
+                    subtree
+                });
+                let Some(insert_index) = patch_insert_position(nodes, root_path, parent_id, *index)
+                else {
+                    continue;
+                };
+
+                let mut subtree = build_upsert_subtree(node, target_depth, preserved);
+                let rendered = subtree.clone();
+                nodes.splice(insert_index..insert_index, subtree.drain(..));
+                insert_rows_at(file_tree_list, insert_index, &rendered, icon_cache);
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+fn build_upsert_subtree(
+    node: &impulse_core::file_tree::FileTreeNode,
+    target_depth: usize,
+    preserved: Option<Vec<TreeNode>>,
+) -> Vec<TreeNode> {
+    let mut tree_node = TreeNode {
+        entry: FileEntry {
+            name: node.name.clone(),
+            path: node.path.clone(),
+            is_dir: node.is_dir,
+            is_symlink: node.is_symlink,
+            size: node.size,
+            modified: node.modified,
+            git_status: node.git_status.clone(),
+        },
+        depth: target_depth,
+        expanded: false,
+    };
+
+    let Some(mut preserved) = preserved else {
+        return vec![tree_node];
+    };
+
+    let preserved_root = preserved.remove(0);
+    let preserve_descendants = tree_node.entry.is_dir && preserved_root.expanded;
+    tree_node.expanded = preserve_descendants;
+
+    if !preserve_descendants {
+        return vec![tree_node];
+    }
+
+    let depth_delta = target_depth as isize - preserved_root.depth as isize;
+    let mut subtree = vec![tree_node];
+    subtree.extend(preserved.into_iter().map(|mut child| {
+        child.depth = (child.depth as isize + depth_delta) as usize;
+        child
+    }));
+    subtree
+}
+
+fn patch_child_depth(nodes: &[TreeNode], root_path: &str, parent_id: &str) -> Option<usize> {
+    if parent_id == impulse_core::file_tree::stable_node_id(root_path) {
+        return Some(0);
+    }
+
+    nodes
+        .iter()
+        .find(|node| impulse_core::file_tree::stable_node_id(&node.entry.path) == parent_id)
+        .filter(|node| node.entry.is_dir && node.expanded)
+        .map(|node| node.depth + 1)
+}
+
+fn patch_insert_position(
+    nodes: &[TreeNode],
+    root_path: &str,
+    parent_id: &str,
+    child_index: usize,
+) -> Option<usize> {
+    let (start_index, parent_depth, target_depth) =
+        if parent_id == impulse_core::file_tree::stable_node_id(root_path) {
+            (0, None, 0)
+        } else {
+            let parent_index = nodes.iter().position(|node| {
+                impulse_core::file_tree::stable_node_id(&node.entry.path) == parent_id
+            })?;
+            if !nodes[parent_index].expanded {
+                return None;
+            }
+            (
+                parent_index + 1,
+                Some(nodes[parent_index].depth),
+                nodes[parent_index].depth + 1,
+            )
+        };
+
+    let end_index = parent_depth
+        .and_then(|depth| {
+            nodes[start_index..]
+                .iter()
+                .position(|node| node.depth <= depth)
+                .map(|offset| start_index + offset)
+        })
+        .unwrap_or(nodes.len());
+
+    let mut index = start_index;
+    let mut direct_child_count = 0;
+    while index < end_index {
+        if nodes[index].depth == target_depth {
+            if direct_child_count == child_index {
+                return Some(index);
+            }
+            direct_child_count += 1;
+            index = subtree_end(nodes, index);
+        } else {
+            index += 1;
+        }
+    }
+
+    Some(end_index)
+}
+
+fn take_tree_subtree(nodes: &mut Vec<TreeNode>, id: &str) -> Option<(usize, Vec<TreeNode>)> {
+    let index = nodes
+        .iter()
+        .position(|node| impulse_core::file_tree::stable_node_id(&node.entry.path) == id)?;
+    let end = subtree_end(nodes, index);
+    Some((index, nodes.drain(index..end).collect()))
+}
+
+fn subtree_end(nodes: &[TreeNode], index: usize) -> usize {
+    let depth = nodes[index].depth;
+    let mut end = index + 1;
+    while end < nodes.len() && nodes[end].depth > depth {
+        end += 1;
+    }
+    end
+}
+
+fn watch_expanded_directories(
+    watcher: &Rc<RefCell<Option<notify::RecommendedWatcher>>>,
+    nodes: &[TreeNode],
+) {
+    use notify::{RecursiveMode, Watcher};
+    if let Some(ref mut watcher) = *watcher.borrow_mut() {
+        for node in nodes {
+            if node.entry.is_dir && node.expanded {
+                let _ = watcher.watch(Path::new(&node.entry.path), RecursiveMode::NonRecursive);
+            }
+        }
+    }
 }
 
 /// Refresh the tree while preserving expansion state and scroll position.

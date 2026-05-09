@@ -319,6 +319,82 @@ final class ImpulseCore {
         let git_status: String?
     }
 
+    /// Codable struct matching the Rust `FileTreeNode` patch serialization.
+    struct FileTreePatchNode: Codable {
+        let id: String
+        let parent_id: String?
+        let name: String
+        let path: String
+        let is_dir: Bool
+        let is_symlink: Bool
+        let size: UInt64
+        let modified: UInt64
+        let git_status: String?
+    }
+
+    struct FileTreePatchBatch: Codable {
+        let root_id: String
+        let patches: [FileTreePatch]
+    }
+
+    struct FileTreePatch: Codable {
+        let parent_id: String
+        let operations: [FileTreeOperation]
+    }
+
+    enum FileTreeOperation: Codable {
+        case remove(id: String)
+        case upsert(parentId: String, index: Int, node: FileTreePatchNode)
+
+        private enum CodingKeys: String, CodingKey {
+            case type
+            case id
+            case parentId = "parent_id"
+            case index
+            case node
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
+            case "remove":
+                self = .remove(id: try container.decode(String.self, forKey: .id))
+            case "upsert":
+                self = .upsert(
+                    parentId: try container.decode(String.self, forKey: .parentId),
+                    index: try container.decode(Int.self, forKey: .index),
+                    node: try container.decode(FileTreePatchNode.self, forKey: .node)
+                )
+            default:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type,
+                    in: container,
+                    debugDescription: "Unknown file-tree operation type: \(type)"
+                )
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .remove(let id):
+                try container.encode("remove", forKey: .type)
+                try container.encode(id, forKey: .id)
+            case .upsert(let parentId, let index, let node):
+                try container.encode("upsert", forKey: .type)
+                try container.encode(parentId, forKey: .parentId)
+                try container.encode(index, forKey: .index)
+                try container.encode(node, forKey: .node)
+            }
+        }
+    }
+
+    struct FileTreeWatchEvent: Codable {
+        let kind: String
+        let paths: [String]
+    }
+
     /// Read directory contents with git status enrichment in a single FFI call.
     ///
     /// Returns an array of `FileEntryFFI` values, or `nil` on error.
@@ -326,6 +402,27 @@ final class ImpulseCore {
         guard let json = consumeCString(impulse_read_directory_with_git_status(path, showHidden)) else { return nil }
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode([FileEntryFFI].self, from: data)
+    }
+
+    /// Build a shared Rust file-tree patch batch from watcher events and the
+    /// directories currently loaded by the UI.
+    static func buildFileTreePatchBatch(
+        rootPath: String,
+        events: [FileTreeWatchEvent],
+        beforeByParent: [String: [FileEntryFFI]],
+        showHidden: Bool
+    ) -> FileTreePatchBatch? {
+        guard let eventsData = try? JSONEncoder().encode(events),
+              let eventsJSON = String(data: eventsData, encoding: .utf8),
+              let snapshotsData = try? JSONEncoder().encode(beforeByParent),
+              let snapshotsJSON = String(data: snapshotsData, encoding: .utf8) else {
+            return nil
+        }
+        guard let json = consumeCString(
+            impulse_build_file_tree_patch_batch(rootPath, eventsJSON, snapshotsJSON, showHidden)
+        ) else { return nil }
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(FileTreePatchBatch.self, from: data)
     }
 
     /// Returns git blame info for a specific 1-based line in a file.
