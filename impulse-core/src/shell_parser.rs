@@ -89,7 +89,8 @@ pub fn parse_shell_input(input: &str, cursor: usize) -> ShellParseResult {
         .iter()
         .position(|token| token_contains_cursor(token, cursor));
     let segment_start = current_segment_start(&tokens);
-    let pipeline_index = tokens[..segment_start]
+    let pipeline_start = current_pipeline_start(&tokens, segment_start);
+    let pipeline_index = tokens[pipeline_start..segment_start]
         .iter()
         .filter(|token| token.role == ShellTokenRole::PipelineSeparator)
         .count();
@@ -339,6 +340,9 @@ fn redirect_operator_at(input: &str, pos: usize) -> Option<(String, usize)> {
     if let Some(next) = rest.as_bytes().get(consumed).copied() {
         if next == byte || next == b'&' {
             consumed += 1;
+            if byte == b'<' && next == b'<' && rest.as_bytes().get(consumed) == Some(&b'<') {
+                consumed += 1;
+            }
         }
     }
 
@@ -385,6 +389,14 @@ fn current_segment_start(tokens: &[ShellToken]) -> usize {
                 ShellTokenRole::PipelineSeparator | ShellTokenRole::ControlOperator
             )
         })
+        .map(|index| index + 1)
+        .unwrap_or(0)
+}
+
+fn current_pipeline_start(tokens: &[ShellToken], segment_start: usize) -> usize {
+    tokens[..segment_start]
+        .iter()
+        .rposition(|token| token.role == ShellTokenRole::ControlOperator)
         .map(|index| index + 1)
         .unwrap_or(0)
 }
@@ -587,6 +599,16 @@ mod tests {
     }
 
     #[test]
+    fn resets_pipeline_index_after_control_operator() {
+        let input = "cat Cargo.toml | rg serde && echo done";
+        let parsed = parse_shell_input(input, input.len());
+
+        assert_eq!(parsed.pipeline_index, 0);
+        assert_eq!(parsed.completion.command.as_deref(), Some("echo"));
+        assert_eq!(parsed.completion.prefix, "done");
+    }
+
+    #[test]
     fn parses_redirect_operator_and_target() {
         let input = "cargo test > target/out.log";
         let parsed = parse_shell_input(input, input.len());
@@ -613,6 +635,22 @@ mod tests {
             Some("/tmp/impulse.log")
         );
         assert_eq!(parsed.completion.kind, ShellCompletionKind::RedirectTarget);
+    }
+
+    #[test]
+    fn parses_here_string_as_one_redirect_operator() {
+        let input = "cat <<< hello";
+        let parsed = parse_shell_input(input, input.len());
+
+        assert_eq!(parsed.redirects.len(), 1);
+        assert_eq!(parsed.redirects[0].operator, "<<<");
+        assert_eq!(
+            parsed.redirects[0].operator_span,
+            TextSpan { start: 4, end: 7 }
+        );
+        assert_eq!(parsed.redirects[0].target.as_deref(), Some("hello"));
+        assert_eq!(parsed.completion.kind, ShellCompletionKind::RedirectTarget);
+        assert_eq!(parsed.completion.prefix, "hello");
     }
 
     #[test]
