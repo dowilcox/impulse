@@ -1779,6 +1779,51 @@ pub extern "C" fn impulse_terminal_command_blocks(handle: *mut TerminalHandle) -
 }
 
 #[no_mangle]
+pub extern "C" fn impulse_terminal_command_history_search(
+    handle: *mut TerminalHandle,
+    query_json: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return to_c_string("[]");
+            }
+            let query = to_rust_str(query_json)
+                .and_then(|json| {
+                    serde_json::from_str::<impulse_terminal::CommandHistoryQuery>(&json).ok()
+                })
+                .unwrap_or_default();
+            let h = unsafe { &*handle };
+            match serde_json::to_string(&h.backend.search_command_history(&query)) {
+                Ok(json) => to_c_string(&json),
+                Err(_) => to_c_string("[]"),
+            }
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_rerun_command(
+    handle: *mut TerminalHandle,
+    command: *const c_char,
+) -> bool {
+    ffi_catch(
+        false,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return false;
+            }
+            let Some(command) = to_rust_str(command) else {
+                return false;
+            };
+            let h = unsafe { &*handle };
+            h.backend.rerun_command(&command)
+        }),
+    )
+}
+
+#[no_mangle]
 pub extern "C" fn impulse_terminal_start_selection(
     handle: *mut TerminalHandle,
     col: u16,

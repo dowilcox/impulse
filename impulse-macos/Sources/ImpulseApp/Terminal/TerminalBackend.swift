@@ -109,6 +109,57 @@ struct TerminalCommandBlock: Codable, Equatable {
     }
 }
 
+struct TerminalCommandHistoryRecord: Codable, Equatable {
+    let id: UInt64
+    let command: String
+    let cwd: String?
+    let shell: String?
+    let exitCode: Int32?
+    let startedAtMs: UInt64
+    let endedAtMs: UInt64
+    let gitBranch: String?
+    let sessionId: String?
+    let blockId: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case command
+        case cwd
+        case shell
+        case exitCode = "exit_code"
+        case startedAtMs = "started_at_ms"
+        case endedAtMs = "ended_at_ms"
+        case gitBranch = "git_branch"
+        case sessionId = "session_id"
+        case blockId = "block_id"
+    }
+}
+
+enum TerminalCommandHistoryMatchKind: String, Codable, Equatable {
+    case recent = "Recent"
+    case prefix = "Prefix"
+    case fuzzy = "Fuzzy"
+}
+
+struct TerminalCommandHistorySearchResult: Codable, Equatable {
+    let record: TerminalCommandHistoryRecord
+    let kind: TerminalCommandHistoryMatchKind
+}
+
+private struct TerminalCommandHistoryQuery: Codable {
+    let text: String
+    let cwd: String?
+    let sessionId: String?
+    let limit: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case cwd
+        case sessionId = "session_id"
+        case limit
+    }
+}
+
 // MARK: - Grid Buffer Reader
 
 /// Provides typed read access to the binary grid snapshot buffer.
@@ -363,6 +414,34 @@ final class TerminalBackend {
             return []
         }
         return (try? decoder.decode([TerminalCommandBlock].self, from: data)) ?? []
+    }
+
+    func commandHistorySearch(
+        text: String,
+        cwd: String?,
+        sessionId: String? = nil,
+        limit: Int = 20
+    ) -> [TerminalCommandHistorySearchResult] {
+        guard let handle, !isShutdown else { return [] }
+        let query = TerminalCommandHistoryQuery(
+            text: text,
+            cwd: cwd,
+            sessionId: sessionId,
+            limit: limit
+        )
+        guard let queryData = try? encoder.encode(query),
+              let queryJson = String(data: queryData, encoding: .utf8),
+              let json = ImpulseCore.terminalCommandHistorySearch(handle: handle, queryJson: queryJson),
+              let data = json.data(using: .utf8)
+        else {
+            return []
+        }
+        return (try? decoder.decode([TerminalCommandHistorySearchResult].self, from: data)) ?? []
+    }
+
+    func rerunCommand(_ command: String) -> Bool {
+        guard let handle, !isShutdown else { return false }
+        return ImpulseCore.terminalRerunCommand(handle: handle, command: command)
     }
 
     private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {

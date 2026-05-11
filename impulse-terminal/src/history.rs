@@ -27,7 +27,7 @@ pub struct CommandHistoryRecord {
     pub block_id: u64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommandHistoryQuery {
     pub text: String,
     pub cwd: Option<String>,
@@ -53,6 +53,34 @@ pub struct CommandHistoryStore {
     next_id: u64,
     max_records: usize,
     records: VecDeque<CommandHistoryRecord>,
+}
+
+/// Build the exact PTY input used to rerun a stored command.
+///
+/// The command is sent back to the interactive shell as typed text, not wrapped
+/// in `sh -c` and not shell-escaped. Rejecting control bytes keeps a corrupted
+/// history record from injecting terminal control sequences while still
+/// allowing tabs and multiline shell input.
+pub fn command_history_rerun_input(command: &str) -> Option<String> {
+    let normalized = command.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_matches('\n');
+    if trimmed.trim().is_empty() {
+        return None;
+    }
+    if trimmed.chars().any(is_disallowed_rerun_control) {
+        return None;
+    }
+    Some(format!("{trimmed}\n"))
+}
+
+fn is_disallowed_rerun_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0000}'..='\u{0008}'
+            | '\u{000b}'..='\u{000c}'
+            | '\u{000e}'..='\u{001f}'
+            | '\u{007f}'
+    )
 }
 
 impl Default for CommandHistoryStore {
@@ -429,5 +457,24 @@ mod tests {
         assert_eq!(results[0].record.command, "three");
         assert_eq!(results[0].kind, CommandHistoryMatchKind::Recent);
         assert_eq!(results[1].record.command, "two");
+    }
+
+    #[test]
+    fn rerun_input_appends_single_newline_without_shell_escaping() {
+        assert_eq!(
+            command_history_rerun_input("echo '$HOME'"),
+            Some("echo '$HOME'\n".to_string())
+        );
+        assert_eq!(
+            command_history_rerun_input("printf one\r\nprintf two\n"),
+            Some("printf one\nprintf two\n".to_string())
+        );
+    }
+
+    #[test]
+    fn rerun_input_rejects_empty_and_control_sequences() {
+        assert_eq!(command_history_rerun_input(" \n\t "), None);
+        assert_eq!(command_history_rerun_input("echo hi\u{1b}[2J"), None);
+        assert_eq!(command_history_rerun_input("echo hi\u{7f}"), None);
     }
 }

@@ -48,6 +48,9 @@ class TerminalTab: NSView {
   /// Currently navigated command block in terminal scrollback.
   private var selectedCommandBlockId: UInt64?
 
+  /// Lazily-created command history picker for this terminal session.
+  private var historyPicker: TerminalHistoryPicker?
+
   /// Outstanding continuous macOS attention request, if any.
   private var attentionRequestId: Int?
 
@@ -78,6 +81,7 @@ class TerminalTab: NSView {
 
   deinit {
     cancelAttentionRequest()
+    historyPicker?.close()
     cwdPollTimer?.invalidate()
     for path in shellIntegrationTempPaths {
       try? FileManager.default.removeItem(at: path)
@@ -105,6 +109,9 @@ class TerminalTab: NSView {
     }
     renderer.onRerunLastCommand = { [weak self] in
       self?.rerunLastCommand()
+    }
+    renderer.onShowCommandHistory = { [weak self] in
+      self?.showCommandHistory()
     }
     renderer.onJumpToPreviousCommandBlock = { [weak self] in
       self?.jumpToPreviousCommandBlock()
@@ -481,7 +488,34 @@ class TerminalTab: NSView {
     guard let command = latestCommandBlock()?.command,
       !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return }
-    backend?.write(command + "\n")
+    _ = backend?.rerunCommand(command)
+  }
+
+  private func showCommandHistory() {
+    guard backend != nil else { return }
+    if historyPicker == nil {
+      historyPicker = TerminalHistoryPicker(
+        search: { [weak self] query in
+          guard let self, let backend = self.backend else { return [] }
+          return backend.commandHistorySearch(
+            text: query,
+            cwd: self.currentWorkingDirectory,
+            limit: 30
+          )
+        },
+        insertCommand: { [weak self] command in
+          self?.backend?.write(command)
+          self?.renderer.window?.makeFirstResponder(self?.renderer)
+        },
+        runCommand: { [weak self] command in
+          guard let self, let backend = self.backend else { return false }
+          let didRun = backend.rerunCommand(command)
+          self.renderer.window?.makeFirstResponder(self.renderer)
+          return didRun
+        }
+      )
+    }
+    historyPicker?.show(attachedTo: renderer)
   }
 
   private func jumpToPreviousCommandBlock() {

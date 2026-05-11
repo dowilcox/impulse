@@ -719,6 +719,22 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    /// Searches completed terminal command history and returns a JSON array string.
+    static func terminalCommandHistorySearch(handle: OpaquePointer, queryJson: String) -> String? {
+        let ptr = queryJson.withCString { queryPtr in
+            impulse_terminal_command_history_search(UnsafeMutableRawPointer(handle), queryPtr)
+        }
+        guard let ptr else { return nil }
+        return consumeCString(ptr)
+    }
+
+    /// Reruns a command by writing backend-approved interactive input to the PTY.
+    static func terminalRerunCommand(handle: OpaquePointer, command: String) -> Bool {
+        return command.withCString { commandPtr in
+            impulse_terminal_rerun_command(UnsafeMutableRawPointer(handle), commandPtr)
+        }
+    }
+
     /// Starts a text selection at the given grid position.
     ///
     /// - Parameter kind: Selection kind — 0 = simple, 1 = block, 2 = semantic, 3 = line.

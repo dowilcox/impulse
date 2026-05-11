@@ -74,6 +74,7 @@ class TerminalRenderer: NSView {
     var onCopyLastCommand: (() -> Void)?
     var onCopyLastCommandOutput: (() -> Void)?
     var onRerunLastCommand: (() -> Void)?
+    var onShowCommandHistory: (() -> Void)?
     var onJumpToPreviousCommandBlock: (() -> Void)?
     var onJumpToNextCommandBlock: (() -> Void)?
     var onJumpToLastFailedCommandBlock: (() -> Void)?
@@ -1433,6 +1434,7 @@ class TerminalRenderer: NSView {
         let hasOutput = commandBlocks.contains { !$0.output.isEmpty }
         let hasBlock = hasCommand || hasOutput
         let hasFailedBlock = commandBlocks.contains { ($0.exitCode ?? 0) != 0 }
+        let hasHistory = !(backend?.commandHistorySearch(text: "", cwd: nil, limit: 1).isEmpty ?? true)
 
         let copyItem = NSMenuItem(
             title: "Copy",
@@ -1482,6 +1484,15 @@ class TerminalRenderer: NSView {
         rerunItem.target = self
         rerunItem.isEnabled = hasCommand
         menu.addItem(rerunItem)
+
+        let historyItem = NSMenuItem(
+            title: "Command History...",
+            action: #selector(contextCommandHistory(_:)),
+            keyEquivalent: ""
+        )
+        historyItem.target = self
+        historyItem.isEnabled = hasHistory
+        menu.addItem(historyItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1551,6 +1562,10 @@ class TerminalRenderer: NSView {
 
     @objc private func contextRerunLastCommand(_ sender: Any?) {
         onRerunLastCommand?()
+    }
+
+    @objc private func contextCommandHistory(_ sender: Any?) {
+        onShowCommandHistory?()
     }
 
     @objc private func contextPreviousCommandBlock(_ sender: Any?) {

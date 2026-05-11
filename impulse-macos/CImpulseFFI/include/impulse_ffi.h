@@ -95,6 +95,8 @@ unsigned long impulse_terminal_grid_snapshot(void *handle, unsigned char *out_bu
 unsigned long impulse_terminal_grid_snapshot_size(void *handle);
 char *impulse_terminal_poll_events(void *handle);
 char *impulse_terminal_command_blocks(void *handle);
+char *impulse_terminal_command_history_search(void *handle, const char *query_json);
+_Bool impulse_terminal_rerun_command(void *handle, const char *command);
 void impulse_terminal_start_selection(void *handle, unsigned short col, unsigned short row, unsigned char kind);
 void impulse_terminal_update_selection(void *handle, unsigned short col, unsigned short row);
 void impulse_terminal_clear_selection(void *handle);

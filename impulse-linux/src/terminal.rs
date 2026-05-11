@@ -459,8 +459,10 @@ pub fn copy_last_command_output(terminal: &Terminal) {
 pub fn rerun_last_command(terminal: &Terminal) {
     if let Some(block) = latest_command_block(terminal) {
         if let Some(command) = block.command {
-            if !command.trim().is_empty() {
-                write_text(terminal, &(command + "\n"));
+            if let Some(state) = state(terminal) {
+                if let Some(backend) = state.backend.borrow().as_ref() {
+                    backend.rerun_command(&command);
+                }
             }
         }
     }

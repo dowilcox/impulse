@@ -26,7 +26,10 @@ use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
 use crate::grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
-use crate::history::{CommandHistoryContext, CommandHistoryRecord, CommandHistoryStore};
+use crate::history::{
+    command_history_rerun_input, CommandHistoryContext, CommandHistoryQuery, CommandHistoryRecord,
+    CommandHistorySearchResult, CommandHistoryStore,
+};
 use crate::search::{SearchResult, TerminalSearch};
 
 const FILTERED_CHILD_ENV_VARS: &[&str] = &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
@@ -654,6 +657,26 @@ impl TerminalBackend {
             .lock()
             .map(|history| history.records())
             .unwrap_or_default()
+    }
+
+    /// Search completed command history records observed for this terminal session.
+    pub fn search_command_history(
+        &self,
+        query: &CommandHistoryQuery,
+    ) -> Vec<CommandHistorySearchResult> {
+        self.history
+            .lock()
+            .map(|history| history.search(query))
+            .unwrap_or_default()
+    }
+
+    /// Rerun a stored command by writing it back to the interactive PTY.
+    pub fn rerun_command(&self, command: &str) -> bool {
+        let Some(input) = command_history_rerun_input(command) else {
+            return false;
+        };
+        self.write(input.as_bytes());
+        true
     }
 
     /// Write the visible grid into a pre-allocated binary buffer.
