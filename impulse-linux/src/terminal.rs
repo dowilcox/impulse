@@ -7,8 +7,9 @@ use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::glib;
 use gtk4::prelude::*;
 use impulse_terminal::{
-    CellFlags, CursorShape, RgbColor, SelectionKind, TerminalBackend, TerminalCommandBlock,
-    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    CellFlags, CommandHistoryMatchKind, CommandHistoryQuery, CommandHistorySearchResult,
+    CursorShape, RgbColor, SelectionKind, TerminalBackend, TerminalCommandBlock, TerminalConfig,
+    TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
 use crate::theme::ThemeColors;
@@ -459,13 +460,47 @@ pub fn copy_last_command_output(terminal: &Terminal) {
 pub fn rerun_last_command(terminal: &Terminal) {
     if let Some(block) = latest_command_block(terminal) {
         if let Some(command) = block.command {
-            if let Some(state) = state(terminal) {
-                if let Some(backend) = state.backend.borrow().as_ref() {
-                    backend.rerun_command(&command);
-                }
-            }
+            rerun_command_text(terminal, &command);
         }
     }
+}
+
+fn command_history_search(
+    terminal: &Terminal,
+    text: &str,
+    limit: usize,
+) -> Vec<CommandHistorySearchResult> {
+    let Some(state) = state(terminal) else {
+        return Vec::new();
+    };
+    let query = CommandHistoryQuery {
+        text: text.to_string(),
+        cwd: state.current_directory.borrow().clone(),
+        session_id: None,
+        limit: Some(limit),
+    };
+    state
+        .backend
+        .borrow()
+        .as_ref()
+        .map(|backend| backend.search_command_history(&query))
+        .unwrap_or_default()
+}
+
+fn has_command_history(terminal: &Terminal) -> bool {
+    !command_history_search(terminal, "", 1).is_empty()
+}
+
+fn rerun_command_text(terminal: &Terminal, command: &str) -> bool {
+    state(terminal)
+        .and_then(|state| {
+            state
+                .backend
+                .borrow()
+                .as_ref()
+                .map(|backend| backend.rerun_command(command))
+        })
+        .unwrap_or(false)
 }
 
 pub fn jump_to_previous_command_block(terminal: &Terminal) -> bool {
@@ -844,6 +879,7 @@ fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
     let has_output = blocks.iter().any(|block| !block.output.is_empty());
     let has_block = has_command || has_output;
     let has_failed_block = blocks.iter().any(is_failed_command_block);
+    let has_history = has_command_history(terminal);
     let has_selection = selected_text(terminal)
         .map(|text| !text.is_empty())
         .unwrap_or(false);
@@ -889,6 +925,14 @@ fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
         move || {
             rerun_last_command(&term);
             popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Command History...", has_history, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            popover.popdown();
+            show_command_history_picker(&term);
         }
     });
 
@@ -963,6 +1007,262 @@ fn append_context_button(
 fn append_context_separator(menu_box: &gtk4::Box) {
     let separator = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     menu_box.append(&separator);
+}
+
+fn show_command_history_picker(terminal: &Terminal) {
+    let dialog = gtk4::Window::builder()
+        .modal(true)
+        .decorated(false)
+        .default_width(680)
+        .default_height(360)
+        .build();
+    dialog.add_css_class("quick-open");
+    if let Some(window) = terminal
+        .root()
+        .and_then(|root| root.downcast::<gtk4::Window>().ok())
+    {
+        dialog.set_transient_for(Some(&window));
+    }
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    vbox.set_margin_top(8);
+    vbox.set_margin_bottom(8);
+    vbox.set_margin_start(8);
+    vbox.set_margin_end(8);
+
+    let entry = gtk4::SearchEntry::new();
+    entry.set_placeholder_text(Some("Search command history..."));
+    vbox.append(&entry);
+
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    let list = gtk4::ListBox::new();
+    list.set_selection_mode(gtk4::SelectionMode::Single);
+    scroll.set_child(Some(&list));
+    vbox.append(&scroll);
+
+    let button_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    button_box.set_halign(gtk4::Align::End);
+    button_box.set_margin_top(8);
+    let insert_button = gtk4::Button::with_label("Insert");
+    let run_button = gtk4::Button::with_label("Run");
+    button_box.append(&insert_button);
+    button_box.append(&run_button);
+    vbox.append(&button_box);
+
+    dialog.set_child(Some(&vbox));
+
+    let results: Rc<RefCell<Vec<CommandHistorySearchResult>>> = Rc::new(RefCell::new(Vec::new()));
+    populate_command_history_list(terminal, &list, &results, "");
+    update_history_picker_buttons(&list, &insert_button, &run_button);
+
+    {
+        let term = terminal.clone();
+        let list = list.clone();
+        let results = results.clone();
+        let insert_button = insert_button.clone();
+        let run_button = run_button.clone();
+        entry.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            populate_command_history_list(&term, &list, &results, &query);
+            update_history_picker_buttons(&list, &insert_button, &run_button);
+        });
+    }
+
+    {
+        let insert_button = insert_button.clone();
+        let run_button = run_button.clone();
+        list.connect_row_selected(move |list, _| {
+            update_history_picker_buttons(list, &insert_button, &run_button);
+        });
+    }
+
+    {
+        let term = terminal.clone();
+        let dialog = dialog.clone();
+        let results = results.clone();
+        list.connect_row_activated(move |list, _| {
+            if activate_selected_history_command(&term, list, &results, true) {
+                dialog.close();
+            }
+        });
+    }
+
+    {
+        let term = terminal.clone();
+        let dialog = dialog.clone();
+        let list = list.clone();
+        let results = results.clone();
+        insert_button.connect_clicked(move |_| {
+            if activate_selected_history_command(&term, &list, &results, false) {
+                dialog.close();
+            }
+        });
+    }
+
+    {
+        let term = terminal.clone();
+        let dialog = dialog.clone();
+        let list = list.clone();
+        let results = results.clone();
+        run_button.connect_clicked(move |_| {
+            if activate_selected_history_command(&term, &list, &results, true) {
+                dialog.close();
+            }
+        });
+    }
+
+    let key_controller = gtk4::EventControllerKey::new();
+    {
+        let term = terminal.clone();
+        let dialog = dialog.clone();
+        let list = list.clone();
+        let results = results.clone();
+        key_controller.connect_key_pressed(move |_, key, _, modifiers| {
+            if key == gtk4::gdk::Key::Escape {
+                dialog.close();
+                return gtk4::glib::Propagation::Stop;
+            }
+            if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
+                let insert = modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
+                if activate_selected_history_command(&term, &list, &results, !insert) {
+                    dialog.close();
+                }
+                return gtk4::glib::Propagation::Stop;
+            }
+            if key == gtk4::gdk::Key::Down {
+                select_adjacent_history_row(&list, 1);
+                return gtk4::glib::Propagation::Stop;
+            }
+            if key == gtk4::gdk::Key::Up {
+                select_adjacent_history_row(&list, -1);
+                return gtk4::glib::Propagation::Stop;
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+    }
+    entry.add_controller(key_controller);
+
+    dialog.present();
+    entry.grab_focus();
+}
+
+fn populate_command_history_list(
+    terminal: &Terminal,
+    list: &gtk4::ListBox,
+    results: &Rc<RefCell<Vec<CommandHistorySearchResult>>>,
+    query: &str,
+) {
+    let matches = command_history_search(terminal, query, 30);
+    *results.borrow_mut() = matches;
+    clear_listbox(list);
+
+    for result in results.borrow().iter() {
+        list.append(&command_history_row(result));
+    }
+    if let Some(first) = list.row_at_index(0) {
+        list.select_row(Some(&first));
+    }
+}
+
+fn command_history_row(result: &CommandHistorySearchResult) -> gtk4::ListBoxRow {
+    let row = gtk4::ListBoxRow::new();
+    let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    box_.set_margin_top(6);
+    box_.set_margin_bottom(6);
+    box_.set_margin_start(8);
+    box_.set_margin_end(8);
+
+    let command = gtk4::Label::new(Some(&result.record.command));
+    command.set_halign(gtk4::Align::Start);
+    command.set_xalign(0.0);
+    command.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    box_.append(&command);
+
+    let detail = gtk4::Label::new(Some(&command_history_detail(result)));
+    detail.set_halign(gtk4::Align::Start);
+    detail.set_xalign(0.0);
+    detail.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    detail.add_css_class("dim-label");
+    box_.append(&detail);
+
+    row.set_child(Some(&box_));
+    row
+}
+
+fn command_history_detail(result: &CommandHistorySearchResult) -> String {
+    let mut parts = Vec::new();
+    parts.push(
+        match result.kind {
+            CommandHistoryMatchKind::Recent => "Recent",
+            CommandHistoryMatchKind::Prefix => "Prefix",
+            CommandHistoryMatchKind::Fuzzy => "Fuzzy",
+        }
+        .to_string(),
+    );
+    if let Some(exit_code) = result.record.exit_code {
+        parts.push(format!("Exit {exit_code}"));
+    }
+    if let Some(cwd) = result.record.cwd.as_deref() {
+        if !cwd.is_empty() {
+            let name = std::path::Path::new(cwd)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(cwd);
+            parts.push(name.to_string());
+        }
+    }
+    parts.join(" - ")
+}
+
+fn activate_selected_history_command(
+    terminal: &Terminal,
+    list: &gtk4::ListBox,
+    results: &Rc<RefCell<Vec<CommandHistorySearchResult>>>,
+    run: bool,
+) -> bool {
+    let Some(row) = list.selected_row() else {
+        return false;
+    };
+    let index = row.index();
+    if index < 0 {
+        return false;
+    }
+    let Some(result) = results.borrow().get(index as usize).cloned() else {
+        return false;
+    };
+    if run {
+        rerun_command_text(terminal, &result.record.command)
+    } else {
+        write_text(terminal, &result.record.command);
+        true
+    }
+}
+
+fn select_adjacent_history_row(list: &gtk4::ListBox, delta: i32) {
+    let next = list
+        .selected_row()
+        .map(|row| (row.index() + delta).max(0))
+        .unwrap_or(0);
+    if let Some(row) = list.row_at_index(next) {
+        list.select_row(Some(&row));
+    }
+}
+
+fn update_history_picker_buttons(
+    list: &gtk4::ListBox,
+    insert_button: &gtk4::Button,
+    run_button: &gtk4::Button,
+) {
+    let has_selection = list.selected_row().is_some();
+    insert_button.set_sensitive(has_selection);
+    run_button.set_sensitive(has_selection);
+}
+
+fn clear_listbox(list: &gtk4::ListBox) {
+    while let Some(row) = list.row_at_index(0) {
+        list.remove(&row);
+    }
 }
 
 fn install_destroy_handler(terminal: &Terminal) {

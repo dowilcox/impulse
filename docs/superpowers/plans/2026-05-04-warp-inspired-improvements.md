@@ -267,12 +267,14 @@
 - [x] Record completed block metadata into history.
 - [x] Add prefix and fuzzy matching.
 - [x] Add macOS terminal input UI for selecting a history entry.
-- [ ] Add Linux terminal input UI for selecting a history entry.
+- [x] Add Linux terminal input UI for selecting a history entry.
 - [x] Add rerun-from-history behavior with clear shell escaping rules.
 
 **Implementation note:** The first history pass adds `CommandHistoryStore`, `CommandHistoryRecord`, and `CommandHistoryContext` in `impulse-terminal`, including deterministic insertion, newest-first reads, completed-block conversion, and bounded eviction. `TerminalBackend` now records completed command blocks into the per-terminal store with session and shell metadata. Store search supports prefix and fuzzy matches, prefers current session/current cwd records, and returns bounded newest-first fallback results for empty queries.
 
-**Implementation note:** macOS now exposes backend command-history search through FFI and adds a Command History picker from the terminal context menu. Selecting a row can insert the command text or run it through the shared backend rerun path. Rerun writes the recorded command back to the interactive PTY without shell wrapping or shell escaping, rejects terminal-control bytes, normalizes carriage returns, and appends a single newline. Linux rerun-last-command now uses the same backend path; Linux history-picker UI remains open.
+**Implementation note:** macOS now exposes backend command-history search through FFI and adds a Command History picker from the terminal context menu. Selecting a row can insert the command text or run it through the shared backend rerun path. Rerun writes the recorded command back to the interactive PTY without shell wrapping or shell escaping, rejects terminal-control bytes, normalizes carriage returns, and appends a single newline. Linux rerun-last-command now uses the same backend path.
+
+**Implementation note:** Linux now has a Command History picker from the terminal context menu. The picker uses the shared backend history search, keeps recent/current-cwd ordering from `impulse-terminal`, supports filtering as the user types, runs the selected command with Enter/double-click/Run, and inserts the selected command without running it with Shift+Enter/Insert.
 
 ### 13. Lightweight Shell Parser and Completion Context
 
@@ -288,10 +290,12 @@
 
 **Implementation tasks:**
 
-- [ ] Add a small parser module in `impulse-core` with bash/zsh/fish-compatible common cases.
-- [ ] Add tests for quoting, escaping, pipes, redirects, env assignments, and unfinished input.
+- [x] Add a small parser module in `impulse-core` with bash/zsh/fish-compatible common cases.
+- [x] Add tests for quoting, escaping, pipes, redirects, env assignments, and unfinished input.
 - [ ] Feed parser output into terminal history search and file completion.
 - [ ] Add a future extension point for git branch and command-specific completions.
+
+**Implementation note:** `impulse-core::shell_parser` now parses the command line prefix up to the cursor and returns stable token metadata plus a completion context. The first pass identifies env assignments, command names, arguments, pipe/control boundaries, redirection operators and targets, current token prefix/span, quote state, and incomplete input without performing shell expansion or executing anything.
 
 ### 14. Terminal Output Filtering With Context
 

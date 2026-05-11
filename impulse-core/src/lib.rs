@@ -8,6 +8,7 @@ pub mod search;
 pub mod session_state;
 pub mod settings;
 pub mod shell;
+pub mod shell_parser;
 pub mod theme;
 pub mod update;
 pub mod util;
