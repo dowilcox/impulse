@@ -119,6 +119,7 @@ final class WindowModel {
   var onNewFolder: ((String) -> Void)?
   var onRefreshTree: (() -> Void)?
   var onCollapseAll: (() -> Void)?
+  var onFileTreeExpansionChanged: (() -> Void)?
   var onToggleHidden: (() -> Void)?
   var onOpenSettingsFile: (() -> Void)?
   var onDismissSettingsWarning: (() -> Void)?

@@ -114,10 +114,12 @@ private struct FlatFileRowView: View {
       // Collapse — always immediate.
       node.isExpanded = false
       model.rebuildFlatTree()
+      model.onFileTreeExpansionChanged?()
     } else if node.isLoaded {
       // Already loaded — expand immediately.
       node.isExpanded = true
       model.rebuildFlatTree()
+      model.onFileTreeExpansionChanged?()
       triggerGitStatusRefresh()
     } else {
       // Need to load children off main thread.
@@ -130,6 +132,7 @@ private struct FlatFileRowView: View {
         DispatchQueue.main.async {
           node.children = children
           model.rebuildFlatTree()
+          model.onFileTreeExpansionChanged?()
           triggerGitStatusRefresh()
         }
       }

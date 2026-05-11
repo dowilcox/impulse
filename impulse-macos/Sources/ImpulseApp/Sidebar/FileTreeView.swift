@@ -383,20 +383,34 @@ final class FileTreeView: NSView {
 
     /// Collapse all expanded directories back to root-level only.
     func collapseAll() {
+        isBulkRestoring = true
         for node in rootNodes {
             collapseRecursively(node)
         }
+        outlineView.reloadData()
+        isBulkRestoring = false
+        stopAllSubdirWatchers()
+        saveExpandedPaths()
     }
 
     private func collapseRecursively(_ node: FileTreeNode) {
-        if node.isDirectory && node.isExpanded {
+        if node.isDirectory {
             if let children = node.children {
                 for child in children {
                     collapseRecursively(child)
                 }
             }
-            outlineView.collapseItem(node)
+            node.isExpanded = false
         }
+    }
+
+    /// Persist expansion state after SwiftUI toggles directory rows. The
+    /// hidden AppKit tree owns watcher setup and UserDefaults persistence, so
+    /// SwiftUI changes need to be reflected here explicitly.
+    func persistCurrentExpandedPaths() {
+        saveExpandedPaths()
+        stopAllSubdirWatchers()
+        watchExpandedSubdirectories(rootNodes)
     }
 
     /// Toggle whether hidden (dot) files are shown, then rebuild the tree.

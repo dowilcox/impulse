@@ -273,8 +273,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.fileTreeRootPath == rootPath else { return }
-        self.fileTreeView.updateTree(nodes: nodes, rootPath: rootPath)
         self.fileTreeView.showHidden = showHidden
+        self.fileTreeView.updateTree(nodes: nodes, rootPath: rootPath)
         self.fileTreeCacheInsert(key: rootPath, nodes: nodes)
         // Push to SwiftUI sidebar
         self.windowModel.updateFileTree(nodes, rootPath: rootPath)
@@ -354,26 +354,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
         DispatchQueue.main.async { [weak self] in
           guard let self else { return }
-          self.windowModel.updateFileTree(nodes)
+          self.fileTreeView.showHidden = showHidden
           self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
+          self.windowModel.updateFileTree(nodes)
           self.fileTreeCacheInsert(key: root, nodes: nodes)
         }
       }
     }
     windowModel.onCollapseAll = { [weak self] in
       guard let self else { return }
-      func collapseRecursively(_ nodes: [FileTreeNode]) {
-        for node in nodes {
-          if node.isDirectory && node.isExpanded {
-            if let children = node.children {
-              collapseRecursively(children)
-            }
-            node.isExpanded = false
-          }
-        }
-      }
-      collapseRecursively(self.windowModel.fileTreeNodes)
-      self.windowModel.rebuildFlatTree()
+      self.fileTreeView.collapseAll()
+      self.windowModel.updateFileTree(self.fileTreeView.rootNodes, rootPath: self.fileTreeRootPath)
+      self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.fileTreeView.rootNodes)
+    }
+    windowModel.onFileTreeExpansionChanged = { [weak self] in
+      guard let self else { return }
+      self.fileTreeView.persistCurrentExpandedPaths()
+      self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: self.windowModel.fileTreeNodes)
     }
     windowModel.onToggleHidden = { [weak self] in
       guard let self else { return }
@@ -390,9 +387,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
         DispatchQueue.main.async { [weak self] in
           guard let self else { return }
-          self.windowModel.updateFileTree(nodes)
-          self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
           self.fileTreeView.showHidden = showHidden
+          self.fileTreeView.updateTree(nodes: nodes, rootPath: root)
+          self.windowModel.updateFileTree(nodes)
           self.fileTreeCacheInsert(key: root, nodes: nodes)
         }
       }
