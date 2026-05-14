@@ -102,14 +102,6 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// and opens them in the default browser instead.
     private let previewNavigationDelegate = PreviewNavigationDelegate()
 
-    /// Per-tab temp file URL used for preview rendering. Reused across preview
-    /// toggles so multiple tabs previewing from the same directory don't clobber
-    /// each other's files.
-    private lazy var previewTempFile: URL = {
-        let base = FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("impulse-preview-\(UUID().uuidString).html")
-    }()
-
     // MARK: Initialisation
 
     override init(frame frameRect: NSRect) {
@@ -790,6 +782,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             let wv = WKWebView(frame: bounds, configuration: config)
             wv.navigationDelegate = previewNavigationDelegate
             wv.translatesAutoresizingMaskIntoConstraints = false
+            wv.underPageBackgroundColor = .clear
             addSubview(wv)
             NSLayoutConstraint.activate([
                 wv.topAnchor.constraint(equalTo: topAnchor),
@@ -800,18 +793,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             previewWebView = wv
         }
 
-        // Write HTML to a per-tab temp file in the system temp dir, and grant
-        // readAccess to the source file's parent directory so relative `<img>`
-        // references in markdown still resolve. The temp file never touches the
-        // user's project directory.
-        let parentDir = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
-        do {
-            try html.write(to: previewTempFile, atomically: true, encoding: .utf8)
-            previewWebView?.loadFileURL(previewTempFile, allowingReadAccessTo: parentDir)
-        } catch {
-            // Fallback to loadHTMLString if temp file creation fails.
-            previewWebView?.loadHTMLString(html, baseURL: parentDir)
-        }
+        loadPreviewHTML(html, filePath: fp)
         previewWebView?.isHidden = false
         webView?.isHidden = true
         isPreviewing = true
@@ -822,13 +804,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func refreshPreview(themeJSON: String, bgColor: String) {
         guard isPreviewing, let fp = filePath else { return }
         guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else { return }
+        loadPreviewHTML(html, filePath: fp)
+    }
+
+    /// Load preview HTML with the source file's parent as the base URL so
+    /// relative image links in markdown resolve without navigating WKWebView
+    /// to a temp file outside that read context.
+    private func loadPreviewHTML(_ html: String, filePath fp: String) {
         let parentDir = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
-        do {
-            try html.write(to: previewTempFile, atomically: true, encoding: .utf8)
-            previewWebView?.loadFileURL(previewTempFile, allowingReadAccessTo: parentDir)
-        } catch {
-            previewWebView?.loadHTMLString(html, baseURL: parentDir)
-        }
+        previewWebView?.loadHTMLString(html, baseURL: parentDir)
     }
 
     /// Render preview HTML for a file (markdown or SVG). Returns `nil` on failure
@@ -840,7 +824,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // Markdown preview
         let hljs: String
         if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
-            hljs = "file://\(monacoDir)/highlight/highlight.min.js"
+            hljs = URL(fileURLWithPath: monacoDir, isDirectory: true)
+                .appendingPathComponent("highlight/highlight.min.js")
+                .absoluteString
         } else {
             hljs = ""
         }
@@ -877,8 +863,6 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
             wv.navigationDelegate = nil
         }
-        // Remove the per-tab preview temp file if it was written.
-        try? FileManager.default.removeItem(at: previewTempFile)
     }
 }
 

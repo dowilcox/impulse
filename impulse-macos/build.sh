@@ -210,6 +210,8 @@ echo "    OK: File icons copied to ${ICONS_DST} (+ material/)"
 # Swift source file to force SwiftPM to re-link.
 SWIFT_BIN="impulse-macos/.build/release/ImpulseApp"
 if [[ -f "${SWIFT_BIN}" && "target/release/libimpulse_ffi.a" -nt "${SWIFT_BIN}" ]]; then
+    echo "    Rust FFI is newer than Swift binary; forcing SwiftPM relink..."
+    rm -f "${SWIFT_BIN}"
     touch impulse-macos/Sources/ImpulseApp/ImpulseApp.swift
 fi
 

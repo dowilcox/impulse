@@ -163,26 +163,47 @@ pub fn render_markdown_preview(
     let font_family = sanitize_font_family(&theme.font_family);
     let code_font_family = sanitize_font_family(&theme.code_font_family);
 
-    // HTML-escape the highlight.js path for safe attribute interpolation
-    let hljs_path = html_escape(highlight_js_path);
+    // HTML-escape the highlight.js path for safe attribute interpolation.
+    let hljs_path = html_escape(highlight_js_path.trim());
+    let highlight_scripts = if hljs_path.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<script src="{hljs_path}"></script>
+<script nonce="aW1wdWxzZVByZXZpZXc=">if (window.hljs) {{ window.hljs.highlightAll(); }}</script>"#,
+            hljs_path = hljs_path
+        )
+    };
 
     Some(format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file: data:; font-src file:;">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file: 'nonce-aW1wdWxzZVByZXZpZXc='; img-src file: data:; font-src file:;">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+html {{
+    background: {bg};
+    inline-size: 100%;
+    min-height: 100%;
+}}
 body {{
     background: {bg};
     color: {fg};
     font-family: {font_family};
     font-size: 15px;
     line-height: 1.6;
-    padding: 24px 32px;
-    max-width: 900px;
-    margin: 0 auto;
+    inline-size: 100%;
+    min-inline-size: 0;
+    max-inline-size: none;
+    padding: 24px clamp(16px, 3vw, 40px);
+    width: 100%;
+    max-width: none;
+    min-height: 100vh;
+    margin: 0;
+    overflow-wrap: break-word;
 }}
 h1, h2, h3, h4, h5, h6 {{
     color: {heading};
@@ -202,6 +223,8 @@ code {{
     padding: 0.15em 0.4em;
     border-radius: 4px;
     font-size: 0.9em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }}
 pre {{
     background: {code_bg};
@@ -216,6 +239,9 @@ pre code {{
     padding: 0;
     font-size: 0.88em;
     line-height: 1.5;
+    overflow-wrap: normal;
+    white-space: pre;
+    word-break: normal;
 }}
 blockquote {{
     border-left: 3px solid {border};
@@ -225,6 +251,9 @@ blockquote {{
 }}
 table {{
     border-collapse: collapse;
+    inline-size: 100%;
+    max-inline-size: 100%;
+    table-layout: fixed;
     width: 100%;
     margin: 0.8em 0;
 }}
@@ -232,6 +261,14 @@ th, td {{
     border: 1px solid {border};
     padding: 8px 12px;
     text-align: left;
+    vertical-align: top;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}}
+th code, td code {{
+    padding: 0.1em 0.3em;
+    white-space: normal;
 }}
 th {{
     background: {code_bg};
@@ -263,8 +300,7 @@ img {{ max-width: 100%; height: auto; border-radius: 4px; }}
 </head>
 <body>
 {body}
-<script src="{hljs_path}"></script>
-<script>hljs.highlightAll();</script>
+{highlight_scripts}
 </body>
 </html>"#,
         bg = bg,
@@ -283,6 +319,73 @@ img {{ max-width: 100%; height: auto; border-radius: 4px; }}
         hljs_function = hljs_function,
         hljs_type = hljs_type,
         body = clean_body,
-        hljs_path = hljs_path,
+        highlight_scripts = highlight_scripts,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_theme() -> MarkdownThemeColors {
+        MarkdownThemeColors {
+            bg: "#101010".to_string(),
+            fg: "#eeeeee".to_string(),
+            heading: "#99ccff".to_string(),
+            link: "#88aaff".to_string(),
+            code_bg: "#181818".to_string(),
+            border: "#333333".to_string(),
+            blockquote_fg: "#999999".to_string(),
+            hljs_keyword: "#ff99ff".to_string(),
+            hljs_string: "#99ff99".to_string(),
+            hljs_number: "#ffaa66".to_string(),
+            hljs_comment: "#777777".to_string(),
+            hljs_function: "#88aaff".to_string(),
+            hljs_type: "#ffdd88".to_string(),
+            font_family: "Inter, system-ui, sans-serif".to_string(),
+            code_font_family: "'JetBrains Mono', monospace".to_string(),
+        }
+    }
+
+    #[test]
+    fn render_markdown_preview_handles_empty_highlight_path() {
+        let html = render_markdown_preview("# Title\n\nBody", &test_theme(), "").unwrap();
+
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(!html.contains("src=\"\""));
+        assert!(!html.contains("highlightAll"));
+    }
+
+    #[test]
+    fn render_markdown_preview_bootstraps_highlight_with_nonce() {
+        let html = render_markdown_preview(
+            "```rust\nfn main() {}\n```",
+            &test_theme(),
+            "file:///tmp/highlight.min.js",
+        )
+        .unwrap();
+
+        assert!(html.contains("script-src file: 'nonce-aW1wdWxzZVByZXZpZXc='"));
+        assert!(html.contains("src=\"file:///tmp/highlight.min.js\""));
+        assert!(html.contains("nonce=\"aW1wdWxzZVByZXZpZXc=\""));
+        assert!(html.contains("window.hljs"));
+    }
+
+    #[test]
+    fn render_markdown_preview_styles_fluid_page_and_wide_tables() {
+        let html =
+            render_markdown_preview("| A | B |\n| - | - |\n| short | long |", &test_theme(), "")
+                .unwrap();
+
+        assert!(html.contains("html {\n    background: #101010;"));
+        assert!(html.contains("<meta name=\"viewport\""));
+        assert!(html.contains("inline-size: 100%;"));
+        assert!(html.contains("padding: 24px clamp(16px, 3vw, 40px);"));
+        assert!(html.contains("width: 100%;"));
+        assert!(html.contains("max-width: none;"));
+        assert!(html.contains("min-height: 100vh;"));
+        assert!(html.contains("table-layout: fixed;"));
+        assert!(html.contains("overflow-wrap: anywhere;"));
+        assert!(html.contains("th code, td code"));
+    }
 }
