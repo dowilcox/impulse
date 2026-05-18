@@ -346,6 +346,7 @@ pub(super) fn setup_shortcut_controller(
         let sidebar_state_for_new = sidebar_state.clone();
         let open_editor_paths = ctx.open_editor_paths.clone();
         let editor_tab_pages = ctx.editor_tab_pages.clone();
+        let close_return_targets = ctx.tab_close_return_targets.clone();
         let window_for_new = window.clone();
         let new_file_action = gtk4::gio::SimpleAction::new("new-file", None);
         new_file_action.connect_activate(move |_, _| {
@@ -591,11 +592,17 @@ pub(super) fn setup_shortcut_controller(
                         }
                     },
                 );
+                let close_return_target = tab_management::selected_page_child_key(&tab_view);
                 let page = tab_management::insert_after_selected(&tab_view, &editor_widget);
                 page.set_title("Untitled");
                 if let Some(texture) = icon_cache.borrow().get_toolbar_icon("console") {
                     page.set_icon(Some(texture));
                 }
+                tab_management::set_close_return_target(
+                    &close_return_targets,
+                    &page,
+                    close_return_target,
+                );
                 // Track the sentinel path in the dedup/page maps so Ctrl+S can find the page.
                 let sentinel = editor_widget.widget_name().to_string();
                 editor_tab_pages.borrow_mut().insert(sentinel.clone(), page.clone());

@@ -821,6 +821,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     let open_editor_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
     let editor_tab_pages: Rc<RefCell<HashMap<String, adw::TabPage>>> =
         Rc::new(RefCell::new(HashMap::new()));
+    let tab_close_return_targets: Rc<RefCell<HashMap<usize, usize>>> =
+        Rc::new(RefCell::new(HashMap::new()));
 
     let ctx = context::WindowContext {
         window: window.clone(),
@@ -832,6 +834,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         status_bar: status_bar.clone(),
         open_editor_paths,
         editor_tab_pages,
+        tab_close_return_targets,
     };
 
     sidebar_signals::wire_sidebar_signals(&ctx);

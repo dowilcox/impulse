@@ -57,4 +57,6 @@ pub(crate) struct WindowContext {
     pub open_editor_paths: Rc<RefCell<HashSet<String>>>,
     /// Maps file paths to their TabPage for O(1) lookup in LSP responses and navigation.
     pub editor_tab_pages: Rc<RefCell<HashMap<String, adw::TabPage>>>,
+    /// Maps a tab widget to the widget that should be selected when it closes.
+    pub tab_close_return_targets: Rc<RefCell<HashMap<usize, usize>>>,
 }

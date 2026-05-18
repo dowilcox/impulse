@@ -172,6 +172,67 @@ pub(super) fn insert_after_selected(
     }
 }
 
+pub(super) fn selected_page_child_key(tab_view: &adw::TabView) -> Option<usize> {
+    tab_view
+        .selected_page()
+        .map(|page| page.child().as_ptr() as usize)
+}
+
+pub(super) fn set_close_return_target(
+    close_return_targets: &Rc<RefCell<HashMap<usize, usize>>>,
+    page: &adw::TabPage,
+    target: Option<usize>,
+) {
+    let child_key = page.child().as_ptr() as usize;
+    let Some(target_key) = target.filter(|target_key| *target_key != child_key) else {
+        close_return_targets.borrow_mut().remove(&child_key);
+        return;
+    };
+
+    close_return_targets
+        .borrow_mut()
+        .insert(child_key, target_key);
+}
+
+fn find_page_by_child_key(tab_view: &adw::TabView, child_key: usize) -> Option<adw::TabPage> {
+    let n = tab_view.n_pages();
+    for i in 0..n {
+        let page = tab_view.nth_page(i);
+        if page.child().as_ptr() as usize == child_key {
+            return Some(page);
+        }
+    }
+    None
+}
+
+fn close_page_finish_with_return_target(
+    tab_view: &adw::TabView,
+    page: &adw::TabPage,
+    confirm: bool,
+    close_return_target: Option<usize>,
+    close_return_targets: &Rc<RefCell<HashMap<usize, usize>>>,
+) {
+    if confirm {
+        let child_key = page.child().as_ptr() as usize;
+        let mut targets = close_return_targets.borrow_mut();
+        targets.remove(&child_key);
+        targets.retain(|_, target| *target != child_key);
+    }
+
+    tab_view.close_page_finish(page, confirm);
+
+    if confirm {
+        if let Some(target_key) = close_return_target {
+            let tab_view = tab_view.clone();
+            gtk4::glib::idle_add_local_once(move || {
+                if let Some(page) = find_page_by_child_key(&tab_view, target_key) {
+                    tab_view.set_selected_page(&page);
+                }
+            });
+        }
+    }
+}
+
 /// Create the closure that spawns a new terminal tab.
 pub(super) fn make_create_tab(
     tab_view: &adw::TabView,
@@ -709,6 +770,7 @@ pub(super) fn setup_tab_close_handler(
     let closed_tabs_for_close = closed_tabs.clone();
     let open_editor_paths = ctx.open_editor_paths.clone();
     let editor_tab_pages = ctx.editor_tab_pages.clone();
+    let close_return_targets = ctx.tab_close_return_targets.clone();
     let settings_for_close = ctx.settings.clone();
     ctx.tab_view.connect_close_page(move |tv, page| {
         // Confirm before closing pinned tabs
@@ -736,6 +798,15 @@ pub(super) fn setup_tab_close_handler(
         }
 
         let child = page.child();
+        let child_key = child.as_ptr() as usize;
+        let closing_selected_page = tv
+            .selected_page()
+            .is_some_and(|selected| selected.as_ptr() == page.as_ptr());
+        let close_return_target = if closing_selected_page {
+            close_return_targets.borrow().get(&child_key).copied()
+        } else {
+            None
+        };
         if settings_for_close.borrow().confirm_close_warnings && !editor::is_editor(&child) {
             let running_commands = terminal_container::collect_terminals(&child)
                 .into_iter()
@@ -768,9 +839,16 @@ pub(super) fn setup_tab_close_handler(
                 let tv = tv.clone();
                 let page = page.clone();
                 let create_tab = create_tab_on_empty.clone();
+                let close_return_targets = close_return_targets.clone();
                 dialog.connect_response(None, move |_dialog, response| {
                     if response == "close" {
-                        tv.close_page_finish(&page, true);
+                        close_page_finish_with_return_target(
+                            &tv,
+                            &page,
+                            true,
+                            close_return_target,
+                            &close_return_targets,
+                        );
                         let tv2 = tv.clone();
                         let new_tab = create_tab.clone();
                         gtk4::glib::idle_add_local_once(move || {
@@ -779,7 +857,13 @@ pub(super) fn setup_tab_close_handler(
                             }
                         });
                     } else {
-                        tv.close_page_finish(&page, false);
+                        close_page_finish_with_return_target(
+                            &tv,
+                            &page,
+                            false,
+                            close_return_target,
+                            &close_return_targets,
+                        );
                     }
                 });
                 dialog.present(Some(&window_ref));
@@ -863,6 +947,7 @@ pub(super) fn setup_tab_close_handler(
             let lsp_tx = lsp_tx.clone();
             let create_tab2 = create_tab_on_empty.clone();
             let create_tab3 = create_tab_on_empty.clone();
+            let close_return_targets = close_return_targets.clone();
             dialog.connect_response(None, move |_dialog, response| {
                 match response {
                     "save" => {
@@ -882,7 +967,13 @@ pub(super) fn setup_tab_close_handler(
                         if let Err(e) = lsp_tx.try_send(LspRequest::DidClose { uri }) {
                             log::warn!("LSP request channel full, dropping request: {}", e);
                         }
-                        tv.close_page_finish(&page, true);
+                        close_page_finish_with_return_target(
+                            &tv,
+                            &page,
+                            true,
+                            close_return_target,
+                            &close_return_targets,
+                        );
                         let tv2 = tv.clone();
                         let new_tab = create_tab2.clone();
                         gtk4::glib::idle_add_local_once(move || {
@@ -898,7 +989,13 @@ pub(super) fn setup_tab_close_handler(
                         if let Err(e) = lsp_tx.try_send(LspRequest::DidClose { uri }) {
                             log::warn!("LSP request channel full, dropping request: {}", e);
                         }
-                        tv.close_page_finish(&page, true);
+                        close_page_finish_with_return_target(
+                            &tv,
+                            &page,
+                            true,
+                            close_return_target,
+                            &close_return_targets,
+                        );
                         let tv2 = tv.clone();
                         let new_tab = create_tab3.clone();
                         gtk4::glib::idle_add_local_once(move || {
@@ -909,7 +1006,13 @@ pub(super) fn setup_tab_close_handler(
                     }
                     _ => {
                         // Cancel - don't close
-                        tv.close_page_finish(&page, false);
+                        close_page_finish_with_return_target(
+                            &tv,
+                            &page,
+                            false,
+                            close_return_target,
+                            &close_return_targets,
+                        );
                     }
                 }
             });
@@ -929,7 +1032,13 @@ pub(super) fn setup_tab_close_handler(
                 log::warn!("LSP request channel full, dropping request: {}", e);
             }
         }
-        tv.close_page_finish(page, true);
+        close_page_finish_with_return_target(
+            tv,
+            page,
+            true,
+            close_return_target,
+            &close_return_targets,
+        );
         let tv = tv.clone();
         let new_tab = create_tab_on_empty.clone();
         gtk4::glib::idle_add_local_once(move || {

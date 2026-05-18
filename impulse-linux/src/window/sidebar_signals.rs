@@ -76,11 +76,19 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
         let toast_overlay_for_editor = toast_overlay.clone();
         let open_editor_paths = ctx.open_editor_paths.clone();
         let editor_tab_pages = ctx.editor_tab_pages.clone();
+        let close_return_targets = ctx.tab_close_return_targets.clone();
         *sidebar_state.on_file_activated.borrow_mut() = Some(Box::new(move |path: &str| {
             run_guarded_ui("on-file-activated", || {
+                let close_return_target = tab_management::selected_page_child_key(&tab_view);
+
                 // O(1) dedup check: if already open, find and select the existing tab
                 if open_editor_paths.borrow().contains(path) {
                     if let Some(page) = editor_tab_pages.borrow().get(path) {
+                        tab_management::set_close_return_target(
+                            &close_return_targets,
+                            page,
+                            close_return_target,
+                        );
                         tab_view.set_selected_page(page);
                     }
                     return;
@@ -100,6 +108,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get_toolbar_icon("image") {
                         page.set_icon(Some(texture));
                     }
+                    tab_management::set_close_return_target(
+                        &close_return_targets,
+                        &page,
+                        close_return_target,
+                    );
                     // Track in dedup set and page map
                     open_editor_paths.borrow_mut().insert(path.to_string());
                     editor_tab_pages
@@ -367,6 +380,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                     if let Some(texture) = icon_cache.borrow().get(&filename, false, false) {
                         page.set_icon(Some(texture));
                     }
+                    tab_management::set_close_return_target(
+                        &close_return_targets,
+                        &page,
+                        close_return_target,
+                    );
                     // Track in dedup set and page map
                     open_editor_paths.borrow_mut().insert(path.to_string());
                     editor_tab_pages

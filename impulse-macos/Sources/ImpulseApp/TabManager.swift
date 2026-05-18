@@ -167,6 +167,9 @@ final class TabManager: NSObject {
   private var tabUniqueIds: [Int] = []
   private var nextTabUniqueId: Int = 0
 
+  /// Stable tab id to return to when the corresponding tab closes.
+  private var tabCloseReturnIds: [Int?] = []
+
   /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
   private var openFilePaths: Set<String> = []
 
@@ -285,6 +288,7 @@ final class TabManager: NSObject {
         default: return false
         }
       }) {
+        updateCloseReturnTarget(forTabAt: existingIndex, sourceIndex: selectedIndex)
         selectTab(index: existingIndex)
         // Navigate to position in the already-open editor.
         if let line = goToLine, let column = goToColumn,
@@ -433,6 +437,13 @@ final class TabManager: NSObject {
     tabs.insert(entry, at: insertionIndex)
     pinnedTabs.insert(false, at: insertionIndex)
     tabUniqueIds.insert(nextTabUniqueId, at: insertionIndex)
+    let returnId: Int?
+    if selectedIndex >= 0 && selectedIndex < tabUniqueIds.count {
+      returnId = tabUniqueIds[selectedIndex]
+    } else {
+      returnId = nil
+    }
+    tabCloseReturnIds.insert(returnId, at: insertionIndex)
     nextTabUniqueId += 1
 
     // Track open file paths for O(1) deduplication.
@@ -447,6 +458,15 @@ final class TabManager: NSObject {
 
     rebuildSegments()
     selectTab(index: insertionIndex)
+  }
+
+  private func updateCloseReturnTarget(forTabAt index: Int, sourceIndex: Int) {
+    guard index >= 0, index < tabCloseReturnIds.count,
+      sourceIndex >= 0, sourceIndex < tabUniqueIds.count,
+      index != sourceIndex
+    else { return }
+
+    tabCloseReturnIds[index] = tabUniqueIds[sourceIndex]
   }
 
   // MARK: - Removing Tabs
@@ -484,13 +504,20 @@ final class TabManager: NSObject {
     }
   }
 
-  /// Closes the tab at the given index. If it is the active tab, the
-  /// nearest neighbor is selected. If it was the last tab, `selectedIndex`
-  /// becomes -1.
+  /// Closes the tab at the given index. If it is the active tab, the tab that
+  /// opened it is selected when possible, otherwise the nearest neighbor is
+  /// selected. If it was the last tab, `selectedIndex` becomes -1.
   func closeTab(index: Int) {
     guard index >= 0, index < tabs.count else { return }
 
     let entry = tabs[index]
+    let closingSelectedTab = index == selectedIndex
+    let closeReturnId: Int?
+    if closingSelectedTab && index < tabCloseReturnIds.count {
+      closeReturnId = tabCloseReturnIds[index]
+    } else {
+      closeReturnId = nil
+    }
     recordClosedTab(entry)
     cleanupTab(entry)
 
@@ -512,12 +539,28 @@ final class TabManager: NSObject {
     tabs.remove(at: index)
     pinnedTabs.remove(at: index)
     tabUniqueIds.remove(at: index)
-    rebuildSegments()
+    tabCloseReturnIds.remove(at: index)
 
     if tabs.isEmpty {
+      selectedIndex = -1
       // Auto-create a new terminal tab so the window is never empty,
       // matching the Linux behavior.
       addTerminalTab()
+      return
+    }
+
+    guard closingSelectedTab else {
+      if index < selectedIndex {
+        selectedIndex -= 1
+      }
+      rebuildSegments()
+      return
+    }
+
+    if let closeReturnId,
+      let returnIndex = tabUniqueIds.firstIndex(of: closeReturnId)
+    {
+      selectTab(index: returnIndex)
       return
     }
 
@@ -577,9 +620,11 @@ final class TabManager: NSObject {
     let entry = tabs.remove(at: sourceIndex)
     let pinned = pinnedTabs.remove(at: sourceIndex)
     let uid = tabUniqueIds.remove(at: sourceIndex)
+    let closeReturnId = tabCloseReturnIds.remove(at: sourceIndex)
     tabs.insert(entry, at: destinationIndex)
     pinnedTabs.insert(pinned, at: destinationIndex)
     tabUniqueIds.insert(uid, at: destinationIndex)
+    tabCloseReturnIds.insert(closeReturnId, at: destinationIndex)
 
     // Track the moved tab's new position.
     if selectedIndex == sourceIndex {
