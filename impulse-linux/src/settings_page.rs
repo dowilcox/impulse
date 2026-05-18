@@ -1093,7 +1093,7 @@ pub fn show_settings_window(
     term_behavior_group.add(&close_warnings_row);
 
     let restore_session_row = adw::SwitchRow::new();
-    restore_session_row.set_title("Restore Previous Session");
+    restore_session_row.set_title("Reopen Tabs on Launch");
     restore_session_row
         .set_subtitle("Reopen saved editor tabs and terminal working directories on launch");
     restore_session_row.set_active(settings.borrow().restore_session);

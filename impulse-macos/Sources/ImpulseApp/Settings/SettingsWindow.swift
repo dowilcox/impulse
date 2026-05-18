@@ -439,7 +439,7 @@ final class SettingsWindowController: NSWindowController {
     closeWarningsCheck.state = settings.confirmCloseWarnings ? .on : .off
 
     let restoreSessionCheck = NSButton(
-      checkboxWithTitle: "Restore previous session",
+      checkboxWithTitle: "Reopen tabs on app launch",
       target: self, action: #selector(restoreSessionChanged(_:)))
     restoreSessionCheck.state = settings.restoreSession ? .on : .off
 

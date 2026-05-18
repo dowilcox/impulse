@@ -1749,13 +1749,16 @@ pub extern "C" fn impulse_terminal_poll_events(handle: *mut TerminalHandle) -> *
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
             if handle.is_null() {
-                return to_c_string("[]");
+                return std::ptr::null_mut();
             }
             let h = unsafe { &*handle };
             let events = h.backend.poll_events();
+            if events.is_empty() {
+                return std::ptr::null_mut();
+            }
             match serde_json::to_string(&events) {
                 Ok(json) => to_c_string(&json),
-                Err(_) => to_c_string("[]"),
+                Err(_) => std::ptr::null_mut(),
             }
         }),
     )

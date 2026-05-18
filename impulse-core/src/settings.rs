@@ -139,7 +139,7 @@ impl Default for Settings {
             sidebar_visible: false,
             sidebar_width: 250,
             confirm_close_warnings: true,
-            restore_session: true,
+            restore_session: false,
             last_directory: String::new(),
             open_files: Vec::new(),
 
@@ -310,6 +310,7 @@ mod tests {
         assert_eq!(settings.color_scheme, "nord");
         assert_eq!(settings.tab_width, 4);
         assert!(settings.confirm_close_warnings);
+        assert!(!settings.restore_session);
     }
 
     #[test]

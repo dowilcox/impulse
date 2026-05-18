@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -43,6 +44,7 @@ static CHILD_ENV_LOCK: Mutex<()> = Mutex::new(());
 #[derive(Clone)]
 struct EventProxy {
     event_tx: Sender<TerminalEvent>,
+    wakeup_pending: Arc<AtomicBool>,
 }
 
 impl EventListener for EventProxy {
@@ -52,7 +54,7 @@ impl EventListener for EventProxy {
                 let _ = self.event_tx.send(TerminalEvent::PtyWrite(text));
             }
             AlacEvent::Wakeup => {
-                let _ = self.event_tx.send(TerminalEvent::Wakeup);
+                send_wakeup(&self.event_tx, &self.wakeup_pending);
             }
             AlacEvent::Title(title) => {
                 let _ = self
@@ -86,6 +88,16 @@ impl EventListener for EventProxy {
             | AlacEvent::TextAreaSizeRequest(_)
             | AlacEvent::MouseCursorDirty => {}
         }
+    }
+}
+
+fn send_wakeup(event_tx: &Sender<TerminalEvent>, wakeup_pending: &AtomicBool) {
+    if wakeup_pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+        && event_tx.send(TerminalEvent::Wakeup).is_err()
+    {
+        wakeup_pending.store(false, Ordering::Release);
     }
 }
 
@@ -319,6 +331,7 @@ pub struct TerminalBackend {
     search: Mutex<TerminalSearch>,
     blocks: Arc<Mutex<CommandBlockTracker>>,
     history: Arc<Mutex<CommandHistoryStore>>,
+    wakeup_pending: Arc<AtomicBool>,
 }
 
 impl TerminalBackend {
@@ -332,8 +345,10 @@ impl TerminalBackend {
     ) -> Result<Self, String> {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
+        let wakeup_pending = Arc::new(AtomicBool::new(false));
         let proxy = EventProxy {
             event_tx: event_tx.clone(),
+            wakeup_pending: Arc::clone(&wakeup_pending),
         };
 
         let alac_config = config.to_alacritty_config();
@@ -376,6 +391,7 @@ impl TerminalBackend {
         let term_clone = Arc::clone(&term);
         let blocks_clone = Arc::clone(&blocks);
         let history_clone = Arc::clone(&history);
+        let wakeup_pending_clone = Arc::clone(&wakeup_pending);
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
@@ -388,6 +404,7 @@ impl TerminalBackend {
                     blocks_clone,
                     history_clone,
                     history_context,
+                    wakeup_pending_clone,
                 );
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
@@ -406,6 +423,7 @@ impl TerminalBackend {
             search: Mutex::new(TerminalSearch::new()),
             blocks,
             history,
+            wakeup_pending,
         })
     }
 
@@ -423,6 +441,7 @@ impl TerminalBackend {
         blocks: Arc<Mutex<CommandBlockTracker>>,
         history: Arc<Mutex<CommandHistoryStore>>,
         history_context: CommandHistoryContext,
+        wakeup_pending: Arc<AtomicBool>,
     ) {
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
@@ -570,7 +589,7 @@ impl TerminalBackend {
                     }
 
                     // Notify frontend of content change.
-                    let _ = event_tx.send(TerminalEvent::Wakeup);
+                    send_wakeup(&event_tx, &wakeup_pending);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -629,6 +648,7 @@ impl TerminalBackend {
     /// Poll for terminal events (non-blocking).
     pub fn poll_events(&self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
+        let mut emitted_wakeup = false;
         while let Ok(ev) = self.event_rx.try_recv() {
             match &ev {
                 TerminalEvent::PtyWrite(text) => {
@@ -636,6 +656,13 @@ impl TerminalBackend {
                     let _ = self
                         .cmd_tx
                         .send(BackendMsg::Input(text.as_bytes().to_vec()));
+                }
+                TerminalEvent::Wakeup => {
+                    self.wakeup_pending.store(false, Ordering::Release);
+                    if !emitted_wakeup {
+                        events.push(ev);
+                        emitted_wakeup = true;
+                    }
                 }
                 _ => events.push(ev),
             }
@@ -1149,11 +1176,12 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{flush_pending_input, ConfiguredColors};
+    use super::{flush_pending_input, send_wakeup, ConfiguredColors};
     use crate::config::{TerminalColors, TerminalConfig};
     use crate::grid::RgbColor;
     use std::collections::VecDeque;
     use std::io::{self, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct FlakyWriter {
         output: Vec<u8>,
@@ -1225,6 +1253,23 @@ mod tests {
         let mut pending = VecDeque::from(Vec::from(&b"payload"[..]));
         let err = flush_pending_input(&mut writer, &mut pending).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+    }
+
+    #[test]
+    fn send_wakeup_coalesces_until_pending_flag_is_cleared() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let pending = AtomicBool::new(false);
+
+        send_wakeup(&tx, &pending);
+        send_wakeup(&tx, &pending);
+
+        assert_eq!(rx.try_iter().count(), 1);
+        assert!(pending.load(Ordering::Acquire));
+
+        pending.store(false, Ordering::Release);
+        send_wakeup(&tx, &pending);
+
+        assert_eq!(rx.try_iter().count(), 1);
     }
 
     #[test]

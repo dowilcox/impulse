@@ -245,7 +245,7 @@ struct Settings: Codable {
             sidebarVisible: false,
             sidebarWidth: 250,
             confirmCloseWarnings: true,
-            restoreSession: true,
+            restoreSession: false,
             lastDirectory: "",
             openFiles: [],
             autoSave: false,
