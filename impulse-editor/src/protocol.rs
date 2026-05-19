@@ -84,7 +84,10 @@ pub enum EditorEvent {
     Ready,
     FileOpened,
     ContentChanged {
-        content: String,
+        #[serde(default)]
+        content: Option<String>,
+        #[serde(default)]
+        changes: Vec<MonacoContentChange>,
         version: u32,
     },
     CursorMoved {
@@ -250,6 +253,14 @@ pub struct MonacoRange {
     pub start_column: u32,
     pub end_line: u32,
     pub end_column: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonacoContentChange {
+    pub range: MonacoRange,
+    pub range_offset: u32,
+    pub range_length: u32,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -801,14 +812,20 @@ mod tests {
     #[test]
     fn editor_event_roundtrip_content_changed() {
         let event = EditorEvent::ContentChanged {
-            content: "hello".to_string(),
+            content: Some("hello".to_string()),
+            changes: Vec::new(),
             version: 5,
         };
         let json = serde_json::to_string(&event).unwrap();
         let parsed: EditorEvent = serde_json::from_str(&json).unwrap();
         match parsed {
-            EditorEvent::ContentChanged { content, version } => {
-                assert_eq!(content, "hello");
+            EditorEvent::ContentChanged {
+                content,
+                changes,
+                version,
+            } => {
+                assert_eq!(content.as_deref(), Some("hello"));
+                assert!(changes.is_empty());
                 assert_eq!(version, 5);
             }
             _ => panic!("Wrong variant"),

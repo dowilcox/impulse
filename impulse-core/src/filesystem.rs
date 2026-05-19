@@ -99,7 +99,7 @@ pub fn get_git_status_for_directory(path: &str) -> Result<HashMap<String, String
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
         .include_unmodified(false)
-        .include_ignored(true)
+        .include_ignored(false)
         .update_index(true)
         .no_refresh(false);
 

@@ -109,6 +109,12 @@ struct TerminalCommandBlock: Codable, Equatable {
     }
 }
 
+struct TerminalCommandBlockFlags {
+    let hasCommand: Bool
+    let hasOutput: Bool
+    let hasFailed: Bool
+}
+
 struct TerminalCommandHistoryRecord: Codable, Equatable {
     let id: UInt64
     let command: String
@@ -414,6 +420,18 @@ final class TerminalBackend {
             return []
         }
         return (try? decoder.decode([TerminalCommandBlock].self, from: data)) ?? []
+    }
+
+    func commandBlockFlags() -> TerminalCommandBlockFlags {
+        guard let handle, !isShutdown else {
+            return TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
+        }
+        let bits = ImpulseCore.terminalCommandBlockFlags(handle: handle)
+        return TerminalCommandBlockFlags(
+            hasCommand: bits & 0b001 != 0,
+            hasOutput: bits & 0b010 != 0,
+            hasFailed: bits & 0b100 != 0
+        )
     }
 
     func commandHistorySearch(

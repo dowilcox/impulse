@@ -105,6 +105,32 @@ impl CommandBlockTracker {
         blocks
     }
 
+    pub(crate) fn has_command_text(&self) -> bool {
+        self.completed
+            .iter()
+            .chain(self.current.iter())
+            .any(|block| {
+                block
+                    .command
+                    .as_ref()
+                    .is_some_and(|command| !command.trim().is_empty())
+            })
+    }
+
+    pub(crate) fn has_output(&self) -> bool {
+        self.completed
+            .iter()
+            .chain(self.current.iter())
+            .any(|block| !block.output.is_empty())
+    }
+
+    pub(crate) fn has_failed_command(&self) -> bool {
+        self.completed
+            .iter()
+            .chain(self.current.iter())
+            .any(|block| block.exit_code.is_some_and(|code| code != 0))
+    }
+
     pub(crate) fn current_output_line(&self) -> u64 {
         self.output_line
     }

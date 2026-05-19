@@ -1717,7 +1717,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         guard let self else { return }
         guard let editor = self.ownedEditor(from: notification) else { return }
         self.tabManager.refreshSegmentLabels()
-        self.lspDidChange(editor: editor)
+        let changes = notification.userInfo?["changes"] as? [MonacoContentChange] ?? []
+        self.lspDidChange(editor: editor, changes: changes)
       }
     )
 

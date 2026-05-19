@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -15,12 +16,13 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
 use alacritty_terminal::term::{Term, TermMode};
-use alacritty_terminal::tty::{self, Options as PtyOptions};
+use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite, Options as PtyOptions};
 use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
     Color as AlacColor, CursorShape as AlacCursorShape, NamedColor,
 };
 use crossbeam_channel::{Receiver, Sender};
+use polling::{Event as PollingEvent, Events, PollMode, Poller};
 
 use crate::blocks::{CommandBlockTracker, TerminalBlockId, TerminalCommandBlock};
 use crate::buffer::{self, HighlightRange};
@@ -221,6 +223,13 @@ pub enum SelectionKind {
     Lines = 3,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CommandBlockFlags {
+    pub has_command: bool,
+    pub has_output: bool,
+    pub has_failed: bool,
+}
+
 impl SelectionKind {
     pub fn from_u8(v: u8) -> Self {
         match v {
@@ -320,6 +329,7 @@ const READ_THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct TerminalBackend {
     term: Arc<FairMutex<Term<EventProxy>>>,
     cmd_tx: Sender<BackendMsg>,
+    poller: Arc<Poller>,
     event_rx: Receiver<TerminalEvent>,
     read_thread: Mutex<Option<JoinHandle<()>>>,
     cols: u16,
@@ -377,14 +387,8 @@ impl TerminalBackend {
             git_branch: None,
         };
 
-        // Clone the PTY fd up front so the reader thread can own its own handle
-        // while the writer side keeps using the original. Doing it here lets us
-        // surface clone failures as a Result instead of panicking on the
-        // background thread.
-        let reader_file = pty
-            .file()
-            .try_clone()
-            .map_err(|e| format!("Failed to clone PTY fd: {e}"))?;
+        let poller =
+            Arc::new(Poller::new().map_err(|e| format!("Failed to create PTY poller: {e}"))?);
 
         let blocks = Arc::new(Mutex::new(CommandBlockTracker::new()));
         let history = Arc::new(Mutex::new(CommandHistoryStore::new()));
@@ -392,15 +396,16 @@ impl TerminalBackend {
         let blocks_clone = Arc::clone(&blocks);
         let history_clone = Arc::clone(&history);
         let wakeup_pending_clone = Arc::clone(&wakeup_pending);
+        let poller_clone = Arc::clone(&poller);
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
                 Self::read_loop(
                     pty,
-                    reader_file,
                     term_clone,
                     event_tx,
                     cmd_rx,
+                    poller_clone,
                     blocks_clone,
                     history_clone,
                     history_context,
@@ -412,6 +417,7 @@ impl TerminalBackend {
         Ok(Self {
             term,
             cmd_tx,
+            poller,
             event_rx,
             read_thread: Mutex::new(Some(read_thread)),
             cols,
@@ -433,11 +439,11 @@ impl TerminalBackend {
     /// alacritty's terminal state machine, and processes commands from the
     /// main thread (input, resize, shutdown).
     fn read_loop(
-        pty: tty::Pty,
-        reader_file: std::fs::File,
+        mut pty: tty::Pty,
         term: Arc<FairMutex<Term<EventProxy>>>,
         event_tx: Sender<TerminalEvent>,
         cmd_rx: Receiver<BackendMsg>,
+        poller: Arc<Poller>,
         blocks: Arc<Mutex<CommandBlockTracker>>,
         history: Arc<Mutex<CommandHistoryStore>>,
         history_context: CommandHistoryContext,
@@ -447,180 +453,236 @@ impl TerminalBackend {
         let mut processor: Processor = Processor::new();
         let mut scanner = crate::osc_scanner::OscScanner::new();
 
-        let mut reader = std::io::BufReader::new(reader_file);
-
-        // We need mutable access to the Pty for on_resize and writing.
-        // Since we own it, we can use an Arc<Mutex> for the rare write/resize path.
-        let pty = Arc::new(std::sync::Mutex::new(pty));
-        let pty_for_loop = Arc::clone(&pty);
         let mut pending_input: VecDeque<u8> = VecDeque::new();
 
         // Helper closure: process a single BackendMsg. Returns false on Shutdown.
-        let handle_cmd = |msg: BackendMsg, pending_input: &mut VecDeque<u8>| -> bool {
-            match msg {
-                BackendMsg::Input(data) => {
-                    pending_input.extend(data);
-                    true
-                }
-                BackendMsg::Resize {
-                    cols,
-                    rows,
-                    cell_width,
-                    cell_height,
-                } => {
-                    let ws = WindowSize {
-                        num_lines: rows,
-                        num_cols: cols,
+        let handle_cmd =
+            |msg: BackendMsg, pty: &mut tty::Pty, pending_input: &mut VecDeque<u8>| -> bool {
+                match msg {
+                    BackendMsg::Input(data) => {
+                        pending_input.extend(data);
+                        true
+                    }
+                    BackendMsg::Resize {
+                        cols,
+                        rows,
                         cell_width,
                         cell_height,
-                    };
-                    if let Ok(mut p) = pty_for_loop.lock() {
-                        p.on_resize(ws);
+                    } => {
+                        let ws = WindowSize {
+                            num_lines: rows,
+                            num_cols: cols,
+                            cell_width,
+                            cell_height,
+                        };
+                        pty.on_resize(ws);
+                        let size = TermSize {
+                            columns: cols as usize,
+                            screen_lines: rows as usize,
+                        };
+                        term.lock().resize(size);
+                        true
                     }
-                    let size = TermSize {
-                        columns: cols as usize,
-                        screen_lines: rows as usize,
-                    };
-                    term.lock().resize(size);
-                    true
+                    BackendMsg::Shutdown => false,
                 }
-                BackendMsg::Shutdown => false,
-            }
-        };
+            };
 
-        loop {
+        let poll_opts = PollMode::Level;
+        let mut interest = PollingEvent::readable(0);
+        if let Err(err) = unsafe { pty.register(&poller, interest, poll_opts) } {
+            log::error!("failed to register PTY poller: {err}");
+            let _ = event_tx.send(TerminalEvent::Exit);
+            return;
+        }
+
+        let mut events = Events::with_capacity(NonZeroUsize::new(1024).unwrap());
+        let mut writable_registered = false;
+
+        'event_loop: loop {
             // Drain all pending commands first (non-blocking).
             while let Ok(msg) = cmd_rx.try_recv() {
-                if !handle_cmd(msg, &mut pending_input) {
-                    return;
+                if !handle_cmd(msg, &mut pty, &mut pending_input) {
+                    break 'event_loop;
                 }
             }
 
             if !pending_input.is_empty() {
-                if let Ok(p) = pty_for_loop.lock() {
-                    let mut file = p.file();
-                    if let Err(err) = flush_pending_input(&mut file, &mut pending_input) {
-                        log::warn!("failed to write PTY input: {err}");
-                        pending_input.clear();
-                    }
+                if let Err(err) = flush_pending_input(pty.writer(), &mut pending_input) {
+                    log::warn!("failed to write PTY input: {err}");
+                    pending_input.clear();
                 }
             }
 
-            // Try to read from PTY (non-blocking since fd is non-blocking).
-            match reader.read(&mut buf) {
-                Ok(0) => {
+            let needs_write = !pending_input.is_empty();
+            if needs_write != writable_registered {
+                interest.writable = needs_write;
+                if let Err(err) = pty.reregister(&poller, interest, poll_opts) {
+                    log::error!("failed to update PTY poll interest: {err}");
                     let _ = event_tx.send(TerminalEvent::Exit);
-                    return;
+                    break 'event_loop;
                 }
-                Ok(n) => {
-                    // Scan for OSC sequences, then use their offsets to capture
-                    // command output without including shell prompt markers.
-                    scanner.scan(&buf[..n]);
-                    let osc_events = scanner.drain_event_spans();
-                    let mut output_cursor = 0usize;
-                    for osc_event in osc_events {
-                        if let Some(start_offset) = osc_event.start_offset {
-                            let start_offset = start_offset.min(n);
-                            if start_offset > output_cursor {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    blocks.observe_output(&buf[output_cursor..start_offset]);
-                                }
-                            }
-                        }
+                writable_registered = needs_write;
+            }
 
-                        match osc_event.event {
-                            crate::osc_scanner::OscEvent::CwdChanged(path) => {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    blocks.set_cwd(path.clone());
-                                }
-                                let _ = event_tx.send(TerminalEvent::CwdChanged(path));
-                            }
-                            crate::osc_scanner::OscEvent::CommandText(command) => {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    blocks.set_pending_command(command);
-                                }
-                            }
-                            crate::osc_scanner::OscEvent::PromptStart => {
-                                let _ = event_tx.send(TerminalEvent::PromptStart);
-                            }
-                            crate::osc_scanner::OscEvent::CommandStart => {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    let block = blocks.command_started();
-                                    let _ =
-                                        event_tx.send(TerminalEvent::CommandBlockStarted(block));
-                                }
-                                let _ = event_tx.send(TerminalEvent::CommandStart);
-                            }
-                            crate::osc_scanner::OscEvent::CommandEnd(code) => {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    if let Some(block) = blocks.command_ended(code) {
-                                        if let Ok(mut history) = history.lock() {
-                                            history.record_completed_block(
-                                                &block,
-                                                history_context.clone(),
-                                            );
-                                        }
-                                        let _ =
-                                            event_tx.send(TerminalEvent::CommandBlockEnded(block));
-                                    }
-                                }
-                                let _ = event_tx.send(TerminalEvent::CommandEnd(code));
-                            }
-                            crate::osc_scanner::OscEvent::AttentionRequest(value) => {
-                                let _ = event_tx.send(TerminalEvent::AttentionRequest(value));
-                            }
-                            crate::osc_scanner::OscEvent::Notification { title, body } => {
-                                let _ = event_tx.send(TerminalEvent::Notification { title, body });
-                            }
-                        }
-
-                        output_cursor = output_cursor.max(osc_event.end_offset.min(n));
-                    }
-                    if output_cursor < n {
-                        if let Ok(mut blocks) = blocks.lock() {
-                            blocks.observe_output(&buf[output_cursor..n]);
-                        }
-                    }
-
-                    // Feed bytes to alacritty's terminal state machine.
-                    {
-                        let mut term_locked = term.lock();
-                        processor.advance(&mut *term_locked, &buf[..n]);
-                    }
-
-                    // Notify frontend of content change.
-                    send_wakeup(&event_tx, &wakeup_pending);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // PTY has no data. Block on the command channel with a
-                    // timeout so we wake instantly on input/resize/shutdown
-                    // instead of busy-polling with a sleep.
-                    crossbeam_channel::select! {
-                        recv(cmd_rx) -> msg => {
-                            match msg {
-                                Ok(msg) => { if !handle_cmd(msg, &mut pending_input) { return; } }
-                                Err(_) => return, // Channel closed
-                            }
-                        }
-                        default(std::time::Duration::from_millis(5)) => {
-                            // Timeout — retry PTY read.
-                        }
-                    }
+            events.clear();
+            if let Err(err) = poller.wait(&mut events, None) {
+                if err.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
-                Err(_) => {
-                    let _ = event_tx.send(TerminalEvent::Exit);
-                    return;
+                log::error!("PTY poll failed: {err}");
+                let _ = event_tx.send(TerminalEvent::Exit);
+                break 'event_loop;
+            }
+
+            // A command-channel notify wakes the poller with no events. Drain
+            // commands immediately instead of waiting for the next PTY event.
+            while let Ok(msg) = cmd_rx.try_recv() {
+                if !handle_cmd(msg, &mut pty, &mut pending_input) {
+                    break 'event_loop;
+                }
+            }
+
+            if let Some(tty::ChildEvent::Exited(status)) = pty.next_child_event() {
+                let code = status.and_then(|s| s.code()).unwrap_or(-1);
+                let _ = event_tx.send(TerminalEvent::ChildExited(code));
+                let _ = event_tx.send(TerminalEvent::Exit);
+                break 'event_loop;
+            }
+
+            let mut readable = false;
+            let mut writable = false;
+            for event in events.iter() {
+                if event.is_interrupt() {
+                    continue;
+                }
+                readable |= event.readable;
+                writable |= event.writable;
+            }
+
+            if writable && !pending_input.is_empty() {
+                if let Err(err) = flush_pending_input(pty.writer(), &mut pending_input) {
+                    log::warn!("failed to write PTY input: {err}");
+                    pending_input.clear();
+                }
+            }
+
+            if readable {
+                loop {
+                    // Read from PTY until it would block, then wait for the
+                    // next readiness notification from the OS.
+                    match pty.reader().read(&mut buf) {
+                        Ok(0) => {
+                            let _ = event_tx.send(TerminalEvent::Exit);
+                            break 'event_loop;
+                        }
+                        Ok(n) => {
+                            // Scan for OSC sequences, then use their offsets to capture
+                            // command output without including shell prompt markers.
+                            scanner.scan(&buf[..n]);
+                            let osc_events = scanner.drain_event_spans();
+                            let mut output_cursor = 0usize;
+                            for osc_event in osc_events {
+                                if let Some(start_offset) = osc_event.start_offset {
+                                    let start_offset = start_offset.min(n);
+                                    if start_offset > output_cursor {
+                                        if let Ok(mut blocks) = blocks.lock() {
+                                            blocks
+                                                .observe_output(&buf[output_cursor..start_offset]);
+                                        }
+                                    }
+                                }
+
+                                match osc_event.event {
+                                    crate::osc_scanner::OscEvent::CwdChanged(path) => {
+                                        if let Ok(mut blocks) = blocks.lock() {
+                                            blocks.set_cwd(path.clone());
+                                        }
+                                        let _ = event_tx.send(TerminalEvent::CwdChanged(path));
+                                    }
+                                    crate::osc_scanner::OscEvent::CommandText(command) => {
+                                        if let Ok(mut blocks) = blocks.lock() {
+                                            blocks.set_pending_command(command);
+                                        }
+                                    }
+                                    crate::osc_scanner::OscEvent::PromptStart => {
+                                        let _ = event_tx.send(TerminalEvent::PromptStart);
+                                    }
+                                    crate::osc_scanner::OscEvent::CommandStart => {
+                                        if let Ok(mut blocks) = blocks.lock() {
+                                            let block = blocks.command_started();
+                                            let _ = event_tx
+                                                .send(TerminalEvent::CommandBlockStarted(block));
+                                        }
+                                        let _ = event_tx.send(TerminalEvent::CommandStart);
+                                    }
+                                    crate::osc_scanner::OscEvent::CommandEnd(code) => {
+                                        if let Ok(mut blocks) = blocks.lock() {
+                                            if let Some(block) = blocks.command_ended(code) {
+                                                if let Ok(mut history) = history.lock() {
+                                                    history.record_completed_block(
+                                                        &block,
+                                                        history_context.clone(),
+                                                    );
+                                                }
+                                                let _ = event_tx
+                                                    .send(TerminalEvent::CommandBlockEnded(block));
+                                            }
+                                        }
+                                        let _ = event_tx.send(TerminalEvent::CommandEnd(code));
+                                    }
+                                    crate::osc_scanner::OscEvent::AttentionRequest(value) => {
+                                        let _ =
+                                            event_tx.send(TerminalEvent::AttentionRequest(value));
+                                    }
+                                    crate::osc_scanner::OscEvent::Notification { title, body } => {
+                                        let _ = event_tx
+                                            .send(TerminalEvent::Notification { title, body });
+                                    }
+                                }
+
+                                output_cursor = output_cursor.max(osc_event.end_offset.min(n));
+                            }
+                            if output_cursor < n {
+                                if let Ok(mut blocks) = blocks.lock() {
+                                    blocks.observe_output(&buf[output_cursor..n]);
+                                }
+                            }
+
+                            // Feed bytes to alacritty's terminal state machine.
+                            {
+                                let mut term_locked = term.lock();
+                                processor.advance(&mut *term_locked, &buf[..n]);
+                            }
+
+                            // Notify frontend of content change.
+                            send_wakeup(&event_tx, &wakeup_pending);
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(err) => {
+                            #[cfg(target_os = "linux")]
+                            if err.raw_os_error() == Some(libc::EIO) {
+                                let _ = event_tx.send(TerminalEvent::Exit);
+                                break 'event_loop;
+                            }
+
+                            log::warn!("failed to read PTY: {err}");
+                            let _ = event_tx.send(TerminalEvent::Exit);
+                            break 'event_loop;
+                        }
+                    };
                 }
             }
         }
+
+        let _ = pty.deregister(&poller);
     }
 
     /// Send input bytes to the PTY.
     pub fn write(&self, data: &[u8]) {
         if !data.is_empty() {
             let _ = self.cmd_tx.send(BackendMsg::Input(data.to_vec()));
+            let _ = self.poller.notify();
         }
     }
 
@@ -643,6 +705,7 @@ impl TerminalBackend {
             cell_width,
             cell_height,
         });
+        let _ = self.poller.notify();
     }
 
     /// Poll for terminal events (non-blocking).
@@ -656,6 +719,7 @@ impl TerminalBackend {
                     let _ = self
                         .cmd_tx
                         .send(BackendMsg::Input(text.as_bytes().to_vec()));
+                    let _ = self.poller.notify();
                 }
                 TerminalEvent::Wakeup => {
                     self.wakeup_pending.store(false, Ordering::Release);
@@ -678,12 +742,32 @@ impl TerminalBackend {
             .unwrap_or_default()
     }
 
+    /// Return lightweight command-block availability flags without cloning block output.
+    pub fn command_block_flags(&self) -> CommandBlockFlags {
+        self.blocks
+            .lock()
+            .map(|blocks| CommandBlockFlags {
+                has_command: blocks.has_command_text(),
+                has_output: blocks.has_output(),
+                has_failed: blocks.has_failed_command(),
+            })
+            .unwrap_or_default()
+    }
+
     /// Return completed command history records observed for this terminal session.
     pub fn command_history(&self) -> Vec<CommandHistoryRecord> {
         self.history
             .lock()
             .map(|history| history.records())
             .unwrap_or_default()
+    }
+
+    /// Return whether this terminal has any completed command history records.
+    pub fn has_command_history(&self) -> bool {
+        self.history
+            .lock()
+            .map(|history| !history.is_empty())
+            .unwrap_or(false)
     }
 
     /// Search completed command history records observed for this terminal session.
@@ -989,6 +1073,7 @@ impl TerminalBackend {
         if emit {
             let seq: &[u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
             let _ = self.cmd_tx.send(BackendMsg::Input(seq.to_vec()));
+            let _ = self.poller.notify();
         }
     }
 
@@ -997,6 +1082,7 @@ impl TerminalBackend {
     /// process or PTY close hangs.
     pub fn shutdown(&self) {
         let _ = self.cmd_tx.send(BackendMsg::Shutdown);
+        let _ = self.poller.notify();
         let handle = self.read_thread.lock().ok().and_then(|mut h| h.take());
         if let Some(handle) = handle {
             let (done_tx, done_rx) = mpsc::channel();

@@ -66,7 +66,6 @@ const pendingReferences = new Map();
 const pendingCodeActions = new Map();
 const pendingRename = new Map();
 const pendingPrepareRename = new Map();
-let contentChangeTimer = null;
 let contentVersion = 0;
 let currentDiffDecorations = [];
 let pendingCommands = [];
@@ -221,17 +220,26 @@ require(["vs/editor/editor.main"], function () {
     cursorSurroundingLines: 3,
   });
 
-  // --- Content change listener (debounced) ---
-  editor.onDidChangeModelContent(function () {
+  // --- Content change listener ---
+  editor.onDidChangeModelContent(function (e) {
     contentVersion++;
-    if (contentChangeTimer) clearTimeout(contentChangeTimer);
-    contentChangeTimer = setTimeout(function () {
-      sendToHost({
-        type: "ContentChanged",
-        content: editor.getValue(),
-        version: contentVersion,
-      });
-    }, 300);
+    sendToHost({
+      type: "ContentChanged",
+      changes: e.changes.map(function (change) {
+        return {
+          range: {
+            start_line: change.range.startLineNumber,
+            start_column: change.range.startColumn,
+            end_line: change.range.endLineNumber,
+            end_column: change.range.endColumn,
+          },
+          range_offset: change.rangeOffset,
+          range_length: change.rangeLength,
+          text: change.text,
+        };
+      }),
+      version: contentVersion,
+    });
   });
 
   // --- Cursor change listener (debounced) ---
@@ -257,18 +265,6 @@ require(["vs/editor/editor.main"], function () {
 
   // --- Ctrl+S keybinding ---
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
-    // Flush any pending debounced content change so the host has the
-    // latest content before we request a save.
-    if (contentChangeTimer) {
-      clearTimeout(contentChangeTimer);
-      contentChangeTimer = null;
-      contentVersion++;
-      sendToHost({
-        type: "ContentChanged",
-        content: editor.getValue(),
-        version: contentVersion,
-      });
-    }
     sendToHost({ type: "SaveRequested" });
   });
 

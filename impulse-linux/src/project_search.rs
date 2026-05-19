@@ -3,6 +3,8 @@ use gtk4::{gio, glib};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use impulse_core::search::SearchResult;
 
@@ -78,12 +80,16 @@ pub fn build_project_search_panel() -> ProjectSearchState {
 
     // Debounced search on text change
     let pending_search: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let active_cancel: Rc<RefCell<Option<Arc<AtomicBool>>>> = Rc::new(RefCell::new(None));
+    let search_generation: Rc<RefCell<u64>> = Rc::new(RefCell::new(0));
     {
         let result_list = result_list.clone();
         let result_count_label = result_count_label.clone();
         let case_sensitive = case_sensitive.clone();
         let current_results = current_results.clone();
         let current_root = current_root.clone();
+        let active_cancel = active_cancel.clone();
+        let search_generation = search_generation.clone();
         search_entry.connect_search_changed(move |entry| {
             run_guarded_ui("project-search-changed", || {
                 // Cancel any pending search
@@ -91,6 +97,14 @@ pub fn build_project_search_panel() -> ProjectSearchState {
                 if let Some(id) = previous_id {
                     id.remove();
                 }
+                if let Some(cancel) = active_cancel.borrow_mut().take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                let generation = {
+                    let mut generation = search_generation.borrow_mut();
+                    *generation = generation.saturating_add(1);
+                    *generation
+                };
 
                 let query = entry.text().to_string();
                 let root = current_root.borrow().clone();
@@ -106,6 +120,10 @@ pub fn build_project_search_panel() -> ProjectSearchState {
                 let case_sensitive = *case_sensitive.borrow();
                 let current_results = current_results.clone();
                 let pending_clear = pending_search.clone();
+                let active_cancel = active_cancel.clone();
+                let search_generation = search_generation.clone();
+                let cancel = Arc::new(AtomicBool::new(false));
+                *active_cancel.borrow_mut() = Some(cancel.clone());
 
                 let id = glib::timeout_add_local_once(
                     std::time::Duration::from_millis(300),
@@ -119,10 +137,29 @@ pub fn build_project_search_panel() -> ProjectSearchState {
                             let q = query.clone();
                             let r = root.clone();
                             let cs = case_sensitive;
+                            let cancel_for_search = cancel.clone();
                             let results = gio::spawn_blocking(move || {
-                                impulse_core::search::search_contents(&r, &q, 500, cs, None)
+                                impulse_core::search::search_contents(
+                                    &r,
+                                    &q,
+                                    500,
+                                    cs,
+                                    Some(cancel_for_search.as_ref()),
+                                )
                             })
                             .await;
+                            if cancel.load(Ordering::Relaxed)
+                                || *search_generation.borrow() != generation
+                            {
+                                return;
+                            }
+                            if active_cancel
+                                .borrow()
+                                .as_ref()
+                                .is_some_and(|active| Arc::ptr_eq(active, &cancel))
+                            {
+                                active_cancel.borrow_mut().take();
+                            }
                             match results {
                                 Ok(Ok(results)) => {
                                     let count = results.len();

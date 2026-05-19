@@ -3,7 +3,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 
 use crate::editor;
-use crate::lsp_completion::LspRequest;
+use crate::lsp_completion::{lsp_content_changes, LspRequest};
 use crate::terminal_container;
 
 use super::{
@@ -184,7 +184,11 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         // Send initial diff decorations
                                         send_diff_decorations(&path);
                                     }
-                                    impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
+                                    impulse_editor::protocol::EditorEvent::ContentChanged {
+                                        content,
+                                        changes,
+                                        ..
+                                    } => {
                                         // Update tab title based on modified state (O(1) lookup)
                                         if let Some(page) = editor_tab_pages.borrow().get(&path) {
                                             let filename = std::path::Path::new(&path)
@@ -202,10 +206,12 @@ pub(super) fn wire_sidebar_signals(ctx: &super::context::WindowContext) {
                                         let mut versions = doc_versions.borrow_mut();
                                         let version = versions.entry(path.clone()).or_insert(0);
                                         *version += 1;
+                                        let changes = lsp_content_changes(&changes);
                                         if let Err(e) = lsp_tx.try_send(LspRequest::DidChange {
                                             uri,
                                             version: *version,
                                             text: content,
+                                            changes,
                                         }) {
                                             log::warn!("LSP request channel full, dropping request: {}", e);
                                         }

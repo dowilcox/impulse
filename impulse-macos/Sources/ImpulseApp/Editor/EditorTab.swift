@@ -243,8 +243,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 userInfo: ["filePath": filePath ?? ""]
             )
 
-        case let .contentChanged(newContent, _):
-            content = newContent
+        case let .contentChanged(newContent, changes, _):
+            if let newContent {
+                content = newContent
+            } else {
+                applyMonacoContentChanges(changes)
+            }
             if suppressNextModify {
                 suppressNextModify = false
             } else {
@@ -253,7 +257,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             NotificationCenter.default.post(
                 name: .editorContentChanged,
                 object: self,
-                userInfo: ["filePath": filePath ?? ""]
+                userInfo: ["filePath": filePath ?? "", "changes": changes]
             )
 
         case let .cursorMoved(line, column):
@@ -428,6 +432,23 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         } else {
             os_log(.info, log: Self.log, "Blocked navigation to non-file URL: %{public}@", url.absoluteString)
             decisionHandler(.cancel)
+        }
+    }
+
+    private func applyMonacoContentChanges(_ changes: [MonacoContentChange]) {
+        guard !changes.isEmpty else { return }
+        for change in changes.sorted(by: { $0.rangeOffset > $1.rangeOffset }) {
+            guard
+                let start = String.Index(utf16Offset: Int(change.rangeOffset), in: content),
+                let end = String.Index(
+                    utf16Offset: Int(change.rangeOffset) + Int(change.rangeLength),
+                    in: content
+                ),
+                start <= end
+            else {
+                continue
+            }
+            content.replaceSubrange(start..<end, with: change.text)
         }
     }
 
@@ -863,6 +884,22 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
             wv.navigationDelegate = nil
         }
+    }
+}
+
+private extension String.Index {
+    init?(utf16Offset: Int, in string: String) {
+        guard utf16Offset >= 0,
+              let utf16Index = string.utf16.index(
+                string.utf16.startIndex,
+                offsetBy: utf16Offset,
+                limitedBy: string.utf16.endIndex
+              ),
+              let index = String.Index(utf16Index, within: string)
+        else {
+            return nil
+        }
+        self = index
     }
 }
 

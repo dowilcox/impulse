@@ -1,9 +1,25 @@
 import AppKit
+import ImageIO
 
 private func nonEmpty(_ value: String?) -> String? {
   guard let value else { return nil }
   let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
   return trimmed.isEmpty ? nil : trimmed
+}
+
+private func loadImagePreview(path: String, maxPixelSize: Int = 4096) -> NSImage? {
+  let url = URL(fileURLWithPath: path) as CFURL
+  guard let source = CGImageSourceCreateWithURL(url, nil) else { return nil }
+  let options: [CFString: Any] = [
+    kCGImageSourceCreateThumbnailFromImageAlways: true,
+    kCGImageSourceCreateThumbnailWithTransform: true,
+    kCGImageSourceShouldCacheImmediately: false,
+    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+  ]
+  guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+    return nil
+  }
+  return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
 }
 
 // MARK: - Tab Info
@@ -396,7 +412,7 @@ final class TabManager: NSObject {
     container.wantsLayer = true
 
     let imageView = NSImageView()
-    imageView.image = NSImage(contentsOfFile: path)
+    imageView.image = loadImagePreview(path: path)
     imageView.imageScaling = .scaleProportionallyDown
     imageView.imageAlignment = .alignCenter
     imageView.translatesAutoresizingMaskIntoConstraints = false

@@ -283,6 +283,7 @@ struct LspRegistryInner {
     registry: Arc<impulse_core::lsp::LspRegistry>,
     runtime: Arc<Runtime>,
     event_rx: parking_lot::Mutex<mpsc::Receiver<impulse_core::lsp::LspEvent>>,
+    documents: parking_lot::Mutex<HashMap<String, String>>,
 }
 
 /// Global registry mapping handle addresses to their inner data.
@@ -292,6 +293,87 @@ fn lsp_handle_registry() -> &'static parking_lot::Mutex<HashMap<usize, Arc<LspRe
     static REGISTRY: OnceLock<parking_lot::Mutex<HashMap<usize, Arc<LspRegistryInner>>>> =
         OnceLock::new();
     REGISTRY.get_or_init(|| parking_lot::Mutex::new(HashMap::new()))
+}
+
+fn update_lsp_document_cache_for_notify(
+    inner: &LspRegistryInner,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    match method {
+        "textDocument/didOpen" => {
+            let Some(document) = params.get("textDocument") else {
+                return;
+            };
+            let Some(uri) = document.get("uri").and_then(|value| value.as_str()) else {
+                return;
+            };
+            let Some(text) = document.get("text").and_then(|value| value.as_str()) else {
+                return;
+            };
+            inner
+                .documents
+                .lock()
+                .insert(uri.to_string(), text.to_string());
+        }
+        "textDocument/didClose" => {
+            let Some(uri) = params
+                .get("textDocument")
+                .and_then(|document| document.get("uri"))
+                .and_then(|value| value.as_str())
+            else {
+                return;
+            };
+            inner.documents.lock().remove(uri);
+        }
+        _ => {}
+    }
+}
+
+fn apply_lsp_content_changes_to_string(
+    content: &mut String,
+    changes: &[lsp_types::TextDocumentContentChangeEvent],
+) {
+    for change in changes.iter().rev() {
+        let Some(range) = change.range else {
+            *content = change.text.clone();
+            continue;
+        };
+        let start = lsp_position_to_byte_offset(content, range.start);
+        let end = lsp_position_to_byte_offset(content, range.end);
+        if start <= end && end <= content.len() {
+            content.replace_range(start..end, &change.text);
+        }
+    }
+}
+
+fn lsp_position_to_byte_offset(content: &str, position: lsp_types::Position) -> usize {
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    for (byte_index, ch) in content.char_indices() {
+        if line == position.line {
+            break;
+        }
+        if ch == '\n' {
+            line = line.saturating_add(1);
+            line_start = byte_index + ch.len_utf8();
+        }
+    }
+    if line != position.line {
+        return content.len();
+    }
+
+    let mut utf16_units = 0u32;
+    for (relative, ch) in content[line_start..].char_indices() {
+        if ch == '\n' || utf16_units >= position.character {
+            return line_start + relative;
+        }
+        utf16_units = utf16_units.saturating_add(ch.len_utf16() as u32);
+        if utf16_units > position.character {
+            return line_start + relative;
+        }
+    }
+    content.len()
 }
 
 /// Look up a handle in the global registry and run `f` with the inner data.
@@ -375,6 +457,7 @@ pub extern "C" fn impulse_lsp_registry_new(root_uri: *const c_char) -> *mut LspR
                 registry,
                 runtime,
                 event_rx: parking_lot::Mutex::new(bounded_rx),
+                documents: parking_lot::Mutex::new(HashMap::new()),
             });
 
             // Allocate a stable address to use as an opaque handle key
@@ -519,6 +602,7 @@ pub extern "C" fn impulse_lsp_notify(
                 .unwrap_or(serde_json::Value::Null);
 
             with_lsp_handle(handle, -1, |inner| {
+                update_lsp_document_cache_for_notify(inner, &method, &params);
                 inner.runtime.block_on(async {
                     let clients = inner.registry.get_clients(&language_id, &file_uri).await;
                     if let Some(client) = clients.first() {
@@ -526,6 +610,66 @@ pub extern "C" fn impulse_lsp_notify(
                             Ok(()) => 0,
                             Err(_) => -1,
                         }
+                    } else {
+                        -1
+                    }
+                })
+            })
+        }),
+    )
+}
+
+/// Send a textDocument/didChange notification with capability-aware incremental fallback.
+///
+/// `changes_json` should encode an array of LSP TextDocumentContentChangeEvent
+/// objects. Servers that did not advertise incremental sync receive `full_text`
+/// as a full-document change instead.
+#[no_mangle]
+pub extern "C" fn impulse_lsp_did_change(
+    handle: *mut LspRegistryHandle,
+    language_id: *const c_char,
+    file_uri: *const c_char,
+    version: i32,
+    full_text: *const c_char,
+    changes_json: *const c_char,
+) -> i32 {
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            let language_id = match to_rust_str(language_id) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let file_uri = match to_rust_str(file_uri) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let full_text = to_rust_str(full_text);
+            let changes = to_rust_str(changes_json)
+                .and_then(|json| {
+                    serde_json::from_str::<Vec<lsp_types::TextDocumentContentChangeEvent>>(&json)
+                        .ok()
+                })
+                .unwrap_or_default();
+
+            with_lsp_handle(handle, -1, |inner| {
+                inner.runtime.block_on(async {
+                    let clients = inner.registry.get_clients(&language_id, &file_uri).await;
+                    let mut documents = inner.documents.lock();
+                    let document = documents.entry(file_uri.clone()).or_default();
+                    if let Some(full_text) = full_text {
+                        *document = full_text;
+                    } else {
+                        apply_lsp_content_changes_to_string(document, &changes);
+                    }
+                    let mut ok = false;
+                    for client in clients {
+                        ok |= client
+                            .did_change_with_changes(&file_uri, version, document, changes.clone())
+                            .is_ok();
+                    }
+                    if ok {
+                        0
                     } else {
                         -1
                     }
@@ -1611,8 +1755,6 @@ use impulse_terminal::{SelectionKind, TerminalBackend};
 /// Opaque handle passed across FFI — never constructed by external code.
 struct TerminalHandle {
     backend: TerminalBackend,
-    /// Pre-allocated buffer for grid snapshots.
-    snapshot_buf: Vec<u8>,
 }
 
 #[no_mangle]
@@ -1636,11 +1778,7 @@ pub extern "C" fn impulse_terminal_create(
             };
             match TerminalBackend::new(config, cols, rows, cell_width, cell_height) {
                 Ok(backend) => {
-                    let buf_size = backend.grid_buffer_size();
-                    let handle = TerminalHandle {
-                        backend,
-                        snapshot_buf: vec![0u8; buf_size],
-                    };
+                    let handle = TerminalHandle { backend };
                     Box::into_raw(Box::new(handle))
                 }
                 Err(e) => {
@@ -1697,8 +1835,6 @@ pub extern "C" fn impulse_terminal_resize(
             }
             let h = unsafe { &mut *handle };
             h.backend.resize(cols, rows, cell_width, cell_height);
-            let new_size = h.backend.grid_buffer_size();
-            h.snapshot_buf.resize(new_size, 0);
         }),
     )
 }
@@ -1715,16 +1851,13 @@ pub extern "C" fn impulse_terminal_grid_snapshot(
             if handle.is_null() || out_buf.is_null() {
                 return 0;
             }
-            let h = unsafe { &mut *handle };
-            let (backend, snapshot_buf) = (&h.backend, &mut h.snapshot_buf);
-            let written = backend.write_grid_to_buffer(snapshot_buf);
-            if written == 0 || written > buf_len {
+            let h = unsafe { &*handle };
+            let required = h.backend.grid_buffer_size();
+            if buf_len < required {
                 return 0;
             }
-            unsafe {
-                std::ptr::copy_nonoverlapping(snapshot_buf.as_ptr(), out_buf, written);
-            }
-            written
+            let out = unsafe { std::slice::from_raw_parts_mut(out_buf, buf_len) };
+            h.backend.write_grid_to_buffer(out)
         }),
     )
 }
@@ -1777,6 +1910,23 @@ pub extern "C" fn impulse_terminal_command_blocks(handle: *mut TerminalHandle) -
                 Ok(json) => to_c_string(&json),
                 Err(_) => to_c_string("[]"),
             }
+        }),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn impulse_terminal_command_block_flags(handle: *mut TerminalHandle) -> u32 {
+    ffi_catch(
+        0,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return 0;
+            }
+            let h = unsafe { &*handle };
+            let flags = h.backend.command_block_flags();
+            (flags.has_command as u32)
+                | ((flags.has_output as u32) << 1)
+                | ((flags.has_failed as u32) << 2)
         }),
     )
 }

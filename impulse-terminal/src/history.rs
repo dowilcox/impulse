@@ -145,6 +145,29 @@ impl CommandHistoryStore {
 
     pub fn search(&self, query: &CommandHistoryQuery) -> Vec<CommandHistorySearchResult> {
         let text = query.text.trim().to_lowercase();
+        let limit = query.limit.unwrap_or(usize::MAX);
+        if limit == 0 {
+            return Vec::new();
+        }
+        if text.is_empty() {
+            let mut results = Vec::new();
+            for score in (0..=3).rev() {
+                for record in self.records.iter().rev() {
+                    if context_score(record, query) != score {
+                        continue;
+                    }
+                    results.push(CommandHistorySearchResult {
+                        record: record.clone(),
+                        kind: CommandHistoryMatchKind::Recent,
+                    });
+                    if results.len() >= limit {
+                        return results;
+                    }
+                }
+            }
+            return results;
+        }
+
         let mut matches: Vec<_> = self
             .records
             .iter()
@@ -168,7 +191,6 @@ impl CommandHistoryStore {
                 .then_with(|| right.record.id.cmp(&left.record.id))
         });
 
-        let limit = query.limit.unwrap_or(usize::MAX);
         matches
             .into_iter()
             .take(limit)

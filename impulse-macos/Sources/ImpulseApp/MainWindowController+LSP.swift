@@ -84,7 +84,7 @@ extension MainWindowController {
   }
 
   /// Sends LSP didChange for a content update.
-  func lspDidChange(editor: EditorTab) {
+  func lspDidChange(editor: EditorTab, changes: [MonacoContentChange] = []) {
     guard let path = editor.filePath else { return }
     let uri = filePathToUri(path)
     guard lspOpenFiles.contains(uri) else { return }
@@ -94,15 +94,32 @@ extension MainWindowController {
 
     let language = editor.lspLanguage
     let content = editor.content
+    let incrementalChanges = changes.map { change -> [String: Any] in
+      [
+        "range": [
+          "start": [
+            "line": max(Int(change.range.startLine) - 1, 0),
+            "character": max(Int(change.range.startColumn) - 1, 0),
+          ],
+          "end": [
+            "line": max(Int(change.range.endLine) - 1, 0),
+            "character": max(Int(change.range.endColumn) - 1, 0),
+          ],
+        ],
+        "rangeLength": change.rangeLength,
+        "text": change.text,
+      ]
+    }
 
     lspQueue.async { [weak self] in
       guard let self else { return }
-      let params = encodeLspJSON([
-        "textDocument": ["uri": uri, "version": version] as [String: Any],
-        "contentChanges": [["text": content]],
-      ])
-      self.core.lspNotify(
-        languageId: language, fileUri: uri, method: "textDocument/didChange", paramsJson: params)
+      self.core.lspDidChange(
+        languageId: language,
+        fileUri: uri,
+        version: Int32(version),
+        fullText: incrementalChanges.isEmpty ? content : nil,
+        changesJson: encodeLspJSON(incrementalChanges)
+      )
     }
   }
 

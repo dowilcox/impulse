@@ -556,6 +556,24 @@ final class ImpulseCore {
         return impulse_lsp_notify(reg, languageId, fileUri, method, paramsJson)
     }
 
+    /// Sends a capability-aware textDocument/didChange using the instance registry.
+    @discardableResult
+    func lspDidChange(languageId: String, fileUri: String, version: Int32, fullText: String?, changesJson: String) -> Int32 {
+        guard let reg = lspRegistry else { return -1 }
+        return languageId.withCString { languagePtr in
+            fileUri.withCString { uriPtr in
+                changesJson.withCString { changesPtr in
+                    if let fullText {
+                        return fullText.withCString { textPtr in
+                            impulse_lsp_did_change(reg, languagePtr, uriPtr, version, textPtr, changesPtr)
+                        }
+                    }
+                    return impulse_lsp_did_change(reg, languagePtr, uriPtr, version, nil, changesPtr)
+                }
+            }
+        }
+    }
+
     /// Polls for the next asynchronous LSP event using the instance registry.
     func lspPollEvent() -> String? {
         guard let reg = lspRegistry else { return nil }
@@ -717,6 +735,11 @@ final class ImpulseCore {
     static func terminalCommandBlocks(handle: OpaquePointer) -> String? {
         guard let ptr = impulse_terminal_command_blocks(UnsafeMutableRawPointer(handle)) else { return nil }
         return consumeCString(ptr)
+    }
+
+    /// Returns command-block availability flags: bit 0 command, bit 1 output, bit 2 failed.
+    static func terminalCommandBlockFlags(handle: OpaquePointer) -> UInt32 {
+        return impulse_terminal_command_block_flags(UnsafeMutableRawPointer(handle))
     }
 
     /// Searches completed terminal command history and returns a JSON array string.

@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use crate::editor;
 use crate::keybindings;
-use crate::lsp_completion::{LspRequest, LspResponse};
+use crate::lsp_completion::{apply_lsp_content_changes, LspRequest, LspResponse};
 use crate::sidebar;
 use crate::status_bar;
 use crate::terminal;
@@ -188,6 +188,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 // Requests are processed in-order to keep didOpen/didChange/completion
                 // sequencing deterministic per document.
                 let gtk_tx_req = gtk_tx;
+                let mut lsp_documents: HashMap<String, String> = HashMap::new();
                 while let Some(request) = lsp_request_rx.recv().await {
                     let gtk_tx = gtk_tx_req.clone();
                     match request {
@@ -197,16 +198,33 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                             version,
                             text,
                         } => {
+                            lsp_documents.insert(uri.clone(), text.clone());
                             let clients = registry.get_clients(&language_id, &uri).await;
                             for client in clients {
                                 let _ = client.did_open(&uri, &language_id, version, &text);
                             }
                         }
-                        LspRequest::DidChange { uri, version, text } => {
+                        LspRequest::DidChange {
+                            uri,
+                            version,
+                            text,
+                            changes,
+                        } => {
                             let lang = language_from_uri(&uri);
                             let clients = registry.get_clients(&lang, &uri).await;
+                            let document = lsp_documents.entry(uri.clone()).or_default();
+                            if let Some(text) = text {
+                                *document = text;
+                            } else {
+                                apply_lsp_content_changes(document, &changes);
+                            }
                             for client in clients {
-                                let _ = client.did_change(&uri, version, &text);
+                                let _ = client.did_change_with_changes(
+                                    &uri,
+                                    version,
+                                    document,
+                                    changes.clone(),
+                                );
                             }
                         }
                         LspRequest::DidSave { uri } => {
@@ -217,6 +235,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                             }
                         }
                         LspRequest::DidClose { uri } => {
+                            lsp_documents.remove(&uri);
                             let lang = language_from_uri(&uri);
                             let clients = registry.get_clients(&lang, &uri).await;
                             for client in clients {

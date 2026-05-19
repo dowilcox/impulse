@@ -1001,14 +1001,14 @@ final class FileTreeView: NSView {
 
     // MARK: Periodic Git Status Timer
 
-    /// Start a repeating timer that polls git status every 2 seconds.
+    /// Start a repeating timer that polls git status periodically.
     /// Catches file-content edits that directory watchers can't see.
     private func startGitStatusTimer() {
         stopGitStatusTimer()
         guard !rootPath.isEmpty else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
+        timer.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(2))
         timer.setEventHandler { [weak self] in
             self?.pollGitStatus()
         }

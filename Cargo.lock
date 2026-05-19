@@ -1315,7 +1315,9 @@ dependencies = [
  "alacritty_terminal",
  "bitflags 2.10.0",
  "crossbeam-channel",
+ "libc",
  "log",
+ "polling",
  "serde",
  "tempfile",
 ]

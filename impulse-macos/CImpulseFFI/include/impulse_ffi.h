@@ -29,6 +29,7 @@ LspRegistryHandle *impulse_lsp_registry_new(const char *root_uri);
 int32_t impulse_lsp_ensure_servers(LspRegistryHandle *handle, const char *language_id, const char *file_uri);
 char *impulse_lsp_request(LspRegistryHandle *handle, const char *language_id, const char *file_uri, const char *method, const char *params_json);
 int32_t impulse_lsp_notify(LspRegistryHandle *handle, const char *language_id, const char *file_uri, const char *method, const char *params_json);
+int32_t impulse_lsp_did_change(LspRegistryHandle *handle, const char *language_id, const char *file_uri, int32_t version, const char *full_text, const char *changes_json);
 char *impulse_lsp_poll_event(LspRegistryHandle *handle);
 void impulse_lsp_shutdown_all(LspRegistryHandle *handle);
 void impulse_lsp_registry_free(LspRegistryHandle *handle);
@@ -95,6 +96,7 @@ unsigned long impulse_terminal_grid_snapshot(void *handle, unsigned char *out_bu
 unsigned long impulse_terminal_grid_snapshot_size(void *handle);
 char *impulse_terminal_poll_events(void *handle);
 char *impulse_terminal_command_blocks(void *handle);
+unsigned int impulse_terminal_command_block_flags(void *handle);
 char *impulse_terminal_command_history_search(void *handle, const char *query_json);
 _Bool impulse_terminal_rerun_command(void *handle, const char *command);
 void impulse_terminal_start_selection(void *handle, unsigned short col, unsigned short row, unsigned char kind);

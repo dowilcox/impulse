@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -110,6 +110,15 @@ fn uri_to_file_path(uri: &str) -> Option<PathBuf> {
 
 fn path_to_file_uri(path: &Path) -> Option<String> {
     crate::util::file_path_to_uri(path)
+}
+
+fn text_document_sync_kind(
+    capabilities: &lsp_types::ServerCapabilities,
+) -> Option<lsp_types::TextDocumentSyncKind> {
+    match capabilities.text_document_sync.as_ref()? {
+        lsp_types::TextDocumentSyncCapability::Kind(kind) => Some(kind.clone()),
+        lsp_types::TextDocumentSyncCapability::Options(options) => options.change.clone(),
+    }
 }
 
 fn workspace_folder_name(root_uri: &str) -> String {
@@ -338,6 +347,7 @@ pub struct LspClient {
     pending: PendingRequests,
     next_id: Arc<TokioMutex<i64>>,
     pub capabilities: Arc<TokioMutex<Option<lsp_types::ServerCapabilities>>>,
+    change_sync_kind: Arc<StdMutex<Option<lsp_types::TextDocumentSyncKind>>>,
     event_tx: mpsc::UnboundedSender<LspEvent>,
     client_key: String,
     server_id: String,
@@ -493,6 +503,7 @@ impl LspClient {
             pending,
             next_id,
             capabilities: Arc::new(TokioMutex::new(None)),
+            change_sync_kind: Arc::new(StdMutex::new(None)),
             event_tx: event_tx.clone(),
             client_key: client_key.to_string(),
             server_id: server_id.to_string(),
@@ -915,6 +926,9 @@ impl LspClient {
         let result = self.request("initialize", params).await?;
 
         if let Ok(init_result) = serde_json::from_value::<lsp_types::InitializeResult>(result) {
+            if let Ok(mut sync_kind) = self.change_sync_kind.lock() {
+                *sync_kind = text_document_sync_kind(&init_result.capabilities);
+            }
             *self.capabilities.lock().await = Some(init_result.capabilities);
         }
 
@@ -961,6 +975,34 @@ impl LspClient {
     }
 
     pub fn did_change(&self, uri: &str, version: i32, text: &str) -> Result<(), String> {
+        self.did_change_with_changes(uri, version, text, Vec::new())
+    }
+
+    pub fn did_change_with_changes(
+        &self,
+        uri: &str,
+        version: i32,
+        text: &str,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) -> Result<(), String> {
+        let use_incremental = !changes.is_empty()
+            && self
+                .change_sync_kind
+                .lock()
+                .ok()
+                .and_then(|kind| kind.clone())
+                .is_some_and(|kind| kind == lsp_types::TextDocumentSyncKind::INCREMENTAL);
+
+        let content_changes = if use_incremental {
+            changes
+        } else {
+            vec![lsp_types::TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: text.to_string(),
+            }]
+        };
+
         self.notify(
             "textDocument/didChange",
             lsp_types::DidChangeTextDocumentParams {
@@ -968,11 +1010,7 @@ impl LspClient {
                     uri: parse_uri(uri)?,
                     version,
                 },
-                content_changes: vec![lsp_types::TextDocumentContentChangeEvent {
-                    range: None,
-                    range_length: None,
-                    text: text.to_string(),
-                }],
+                content_changes,
             },
         )
     }

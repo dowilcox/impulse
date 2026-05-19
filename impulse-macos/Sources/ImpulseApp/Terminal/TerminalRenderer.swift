@@ -51,7 +51,7 @@ struct TerminalFontMetrics {
 ///
 /// Reads cell data from a `TerminalBackend` via `gridSnapshot()` and renders
 /// text, backgrounds, selections, search highlights, cursor, and box-drawing
-/// characters. Uses a CVDisplayLink for refresh timing and `KeyEncoder` for
+/// characters. Uses an adaptive main-thread timer for refresh timing and `KeyEncoder` for
 /// keyboard input translation.
 class TerminalRenderer: NSView {
 
@@ -129,7 +129,7 @@ class TerminalRenderer: NSView {
 
     // MARK: Private Properties
 
-    private var displayLink: CADisplayLink?
+    private var refreshTimer: DispatchSourceTimer?
     private var scrollAccumulator: CGFloat = 0
     private var isScrolledBack: Bool = false
     private var isSelecting = false
@@ -140,6 +140,8 @@ class TerminalRenderer: NSView {
     private var blinkTimer: DispatchSourceTimer?
     private var colorCache: [UInt32: CGColor] = [:]
     private var textLineCache: [UInt64: CTLine] = [:]
+    private let activeRefreshInterval: TimeInterval = 1.0 / 60.0
+    private let idleRefreshInterval: TimeInterval = 1.0 / 30.0
 
     // IME composition state. When non-empty, an IME is composing text that
     // has not yet been committed to the PTY.
@@ -212,28 +214,38 @@ class TerminalRenderer: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
+            startRefreshLoop()
             needsDisplay = true
+        } else {
+            stopRefreshLoop()
         }
     }
 
-    // MARK: Display Link Refresh Loop
+    // MARK: Adaptive Refresh Loop
 
     func startRefreshLoop() {
-        guard displayLink == nil else { return }
-        // NSView.displayLink (macOS 15+) replaces the deprecated CVDisplayLink.
-        // Fires on the main thread at the display's refresh rate.
-        let link = self.displayLink(target: self, selector: #selector(displayLinkTick))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
+        guard refreshTimer == nil else { return }
+        scheduleRefresh(after: 0)
     }
 
     func stopRefreshLoop() {
-        displayLink?.invalidate()
-        displayLink = nil
+        refreshTimer?.cancel()
+        refreshTimer = nil
     }
 
-    @objc private func displayLinkTick() {
-        tick()
+    private func scheduleRefresh(after interval: TimeInterval) {
+        guard refreshTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + interval)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.refreshTimer = nil
+            guard self.window != nil else { return }
+            let hadActivity = self.tick()
+            self.scheduleRefresh(after: hadActivity ? self.activeRefreshInterval : self.idleRefreshInterval)
+        }
+        refreshTimer = timer
+        timer.resume()
     }
 
     // MARK: Cursor Blink Timer
@@ -265,8 +277,9 @@ class TerminalRenderer: NSView {
         startBlinkTimer()
     }
 
-    private func tick() {
-        guard let backend, !backend.isShutdown else { return }
+    @discardableResult
+    private func tick() -> Bool {
+        guard let backend, !backend.isShutdown else { return false }
         let events = backend.pollEvents()
         var wakeup = false
         for event in events {
@@ -285,6 +298,7 @@ class TerminalRenderer: NSView {
             }
             needsDisplay = true
         }
+        return !events.isEmpty || wakeup
     }
 
     // MARK: Drawing
@@ -1426,14 +1440,12 @@ class TerminalRenderer: NSView {
         window?.makeFirstResponder(self)
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let commandBlocks = backend?.commandBlocks() ?? []
-        let hasCommand = commandBlocks.contains { block in
-            guard let command = block.command else { return false }
-            return !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        let hasOutput = commandBlocks.contains { !$0.output.isEmpty }
+        let commandFlags = backend?.commandBlockFlags()
+            ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
+        let hasCommand = commandFlags.hasCommand
+        let hasOutput = commandFlags.hasOutput
         let hasBlock = hasCommand || hasOutput
-        let hasFailedBlock = commandBlocks.contains { ($0.exitCode ?? 0) != 0 }
+        let hasFailedBlock = commandFlags.hasFailed
         let hasHistory = !(backend?.commandHistorySearch(text: "", cwd: nil, limit: 1).isEmpty ?? true)
 
         let copyItem = NSMenuItem(

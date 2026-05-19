@@ -9,7 +9,7 @@ use std::rc::Rc;
 use crate::editor;
 use crate::editor_webview::MonacoEditorHandle;
 use crate::keybindings;
-use crate::lsp_completion::LspRequest;
+use crate::lsp_completion::{lsp_content_changes, LspRequest};
 use crate::terminal;
 use crate::terminal_container;
 
@@ -404,7 +404,11 @@ pub(super) fn setup_shortcut_controller(
                                         send_diff_decorations(&path);
                                     }
                                 }
-                                impulse_editor::protocol::EditorEvent::ContentChanged { content, version: _ } => {
+                                impulse_editor::protocol::EditorEvent::ContentChanged {
+                                    content,
+                                    changes,
+                                    ..
+                                } => {
                                     if let Some(page) = editor_tab_pages.borrow().get(&path) {
                                         if is_untitled {
                                             if handle.is_modified.get() {
@@ -429,8 +433,12 @@ pub(super) fn setup_shortcut_controller(
                                         let mut versions = doc_versions.borrow_mut();
                                         let version = versions.entry(path.clone()).or_insert(0);
                                         *version += 1;
+                                        let changes = lsp_content_changes(&changes);
                                         if let Err(e) = lsp_tx.try_send(LspRequest::DidChange {
-                                            uri, version: *version, text: content,
+                                            uri,
+                                            version: *version,
+                                            text: content,
+                                            changes,
                                         }) {
                                             log::warn!("LSP request channel full: {}", e);
                                         }

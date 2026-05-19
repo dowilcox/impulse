@@ -1,3 +1,5 @@
+use impulse_editor::protocol::MonacoContentChange;
+
 #[derive(Debug)]
 pub enum LspRequest {
     Completion {
@@ -30,7 +32,8 @@ pub enum LspRequest {
     DidChange {
         uri: String,
         version: i32,
-        text: String,
+        text: Option<String>,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
     },
     DidSave {
         uri: String,
@@ -85,6 +88,79 @@ pub enum LspRequest {
         character: u32,
     },
     Shutdown,
+}
+
+pub fn lsp_content_changes(
+    changes: &[MonacoContentChange],
+) -> Vec<lsp_types::TextDocumentContentChangeEvent> {
+    changes
+        .iter()
+        .map(|change| lsp_types::TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range {
+                start: lsp_types::Position {
+                    line: change.range.start_line.saturating_sub(1),
+                    character: change.range.start_column.saturating_sub(1),
+                },
+                end: lsp_types::Position {
+                    line: change.range.end_line.saturating_sub(1),
+                    character: change.range.end_column.saturating_sub(1),
+                },
+            }),
+            range_length: Some(change.range_length),
+            text: change.text.clone(),
+        })
+        .collect()
+}
+
+pub fn apply_lsp_content_changes(
+    content: &mut String,
+    changes: &[lsp_types::TextDocumentContentChangeEvent],
+) {
+    if changes.is_empty() {
+        return;
+    }
+
+    for change in changes.iter().rev() {
+        let Some(range) = change.range else {
+            *content = change.text.clone();
+            continue;
+        };
+        let start = lsp_position_to_byte_offset(content, range.start);
+        let end = lsp_position_to_byte_offset(content, range.end);
+        if start <= end && end <= content.len() {
+            content.replace_range(start..end, &change.text);
+        }
+    }
+}
+
+fn lsp_position_to_byte_offset(content: &str, position: lsp_types::Position) -> usize {
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    for (byte_index, ch) in content.char_indices() {
+        if line == position.line {
+            break;
+        }
+        if ch == '\n' {
+            line = line.saturating_add(1);
+            line_start = byte_index + ch.len_utf8();
+        }
+    }
+
+    if line != position.line {
+        return content.len();
+    }
+
+    let mut utf16_units = 0u32;
+    for (relative, ch) in content[line_start..].char_indices() {
+        if ch == '\n' || utf16_units >= position.character {
+            return line_start + relative;
+        }
+        utf16_units = utf16_units.saturating_add(ch.len_utf16() as u32);
+        if utf16_units > position.character {
+            return line_start + relative;
+        }
+    }
+    content.len()
 }
 
 #[derive(Debug)]

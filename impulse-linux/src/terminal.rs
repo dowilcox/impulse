@@ -7,9 +7,10 @@ use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::glib;
 use gtk4::prelude::*;
 use impulse_terminal::{
-    CellFlags, CommandHistoryMatchKind, CommandHistoryQuery, CommandHistorySearchResult,
-    CursorShape, RgbColor, SelectionKind, TerminalBackend, TerminalCommandBlock, TerminalConfig,
-    TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    CellFlags, CommandBlockFlags, CommandHistoryMatchKind, CommandHistoryQuery,
+    CommandHistorySearchResult, CursorShape, RgbColor, SelectionKind, TerminalBackend,
+    TerminalCommandBlock, TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE,
+    FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
 use crate::theme::ThemeColors;
@@ -21,6 +22,9 @@ const DEFAULT_CELL_WIDTH: u16 = 9;
 const DEFAULT_CELL_HEIGHT: u16 = 18;
 const TERMINAL_PADDING: f64 = 8.0;
 const FONT_POINT_TO_PIXEL_SCALE: f64 = 96.0 / 72.0;
+const ACTIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const IDLE_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(120);
+const HIDDEN_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 const FILTERED_LD_VARS: &[&str] = &[
     "LD_PRELOAD",
@@ -425,6 +429,18 @@ pub fn command_blocks(terminal: &Terminal) -> Vec<TerminalCommandBlock> {
         .unwrap_or_default()
 }
 
+pub fn command_block_flags(terminal: &Terminal) -> CommandBlockFlags {
+    state(terminal)
+        .and_then(|state| {
+            state
+                .backend
+                .borrow()
+                .as_ref()
+                .map(TerminalBackend::command_block_flags)
+        })
+        .unwrap_or_default()
+}
+
 pub fn running_close_risk_command(
     terminal: &Terminal,
 ) -> Option<impulse_core::close_risk::RunningCommandRisk> {
@@ -488,7 +504,15 @@ fn command_history_search(
 }
 
 fn has_command_history(terminal: &Terminal) -> bool {
-    !command_history_search(terminal, "", 1).is_empty()
+    state(terminal)
+        .and_then(|state| {
+            state
+                .backend
+                .borrow()
+                .as_ref()
+                .map(TerminalBackend::has_command_history)
+        })
+        .unwrap_or(false)
 }
 
 fn rerun_command_text(terminal: &Terminal, command: &str) -> bool {
@@ -874,11 +898,11 @@ fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
     menu_box.set_margin_start(6);
     menu_box.set_margin_end(6);
 
-    let blocks = command_blocks(terminal);
-    let has_command = blocks.iter().any(has_command_text);
-    let has_output = blocks.iter().any(|block| !block.output.is_empty());
+    let block_flags = command_block_flags(terminal);
+    let has_command = block_flags.has_command;
+    let has_output = block_flags.has_output;
     let has_block = has_command || has_output;
-    let has_failed_block = blocks.iter().any(is_failed_command_block);
+    let has_failed_block = block_flags.has_failed;
     let has_history = has_command_history(terminal);
     let has_selection = selected_text(terminal)
         .map(|text| !text.is_empty())
@@ -1276,19 +1300,30 @@ fn install_destroy_handler(terminal: &Terminal) {
 }
 
 fn start_event_poll(terminal: &Terminal) {
+    schedule_event_poll(terminal, ACTIVE_EVENT_POLL_INTERVAL);
+}
+
+fn schedule_event_poll(terminal: &Terminal, delay: Duration) {
     let weak = terminal.downgrade();
-    glib::timeout_add_local(Duration::from_millis(16), move || {
+    glib::timeout_add_local_once(delay, move || {
         let Some(term) = weak.upgrade() else {
-            return glib::ControlFlow::Break;
+            return;
         };
-        poll_events(&term);
-        glib::ControlFlow::Continue
+        let had_events = poll_events(&term);
+        let next_delay = if had_events {
+            ACTIVE_EVENT_POLL_INTERVAL
+        } else if term.is_mapped() {
+            IDLE_EVENT_POLL_INTERVAL
+        } else {
+            HIDDEN_EVENT_POLL_INTERVAL
+        };
+        schedule_event_poll(&term, next_delay);
     });
 }
 
-fn poll_events(terminal: &Terminal) {
+fn poll_events(terminal: &Terminal) -> bool {
     let Some(state) = state(terminal) else {
-        return;
+        return false;
     };
     let events = state
         .backend
@@ -1297,6 +1332,7 @@ fn poll_events(terminal: &Terminal) {
         .map(TerminalBackend::poll_events)
         .unwrap_or_default();
 
+    let had_events = !events.is_empty();
     let mut needs_draw = false;
     for event in events {
         match event {
@@ -1347,6 +1383,7 @@ fn poll_events(terminal: &Terminal) {
     if needs_draw {
         refresh_grid(&state);
     }
+    had_events
 }
 
 fn refresh_grid(state: &Rc<TerminalState>) {
@@ -1419,6 +1456,30 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         return;
     }
 
+    let cell_count = snapshot_cols * snapshot_rows;
+    let mut selected_cells = vec![false; cell_count];
+    let mut searched_cells = vec![false; cell_count];
+    mark_ranges(
+        &buf,
+        ranges_offset,
+        selection_count,
+        snapshot_cols,
+        snapshot_rows,
+        &mut selected_cells,
+    );
+    mark_ranges(
+        &buf,
+        search_offset,
+        search_count,
+        snapshot_cols,
+        snapshot_rows,
+        &mut searched_cells,
+    );
+
+    let default_bg = current_background(state);
+    let mut active_font: Option<(FontSlant, FontWeight)> =
+        Some((FontSlant::Normal, FontWeight::Normal));
+
     for row in 0..snapshot_rows {
         for col in 0..snapshot_cols {
             let offset = cell_offset + (row * snapshot_cols + col) * CELL_STRIDE;
@@ -1428,8 +1489,9 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
                 continue;
             }
 
-            let selected = range_contains(&buf, ranges_offset, selection_count, row, col);
-            let searched = range_contains(&buf, search_offset, search_count, row, col);
+            let cell_index = row * snapshot_cols + col;
+            let selected = selected_cells[cell_index];
+            let searched = searched_cells[cell_index];
             let mut fg = RgbColor::new(buf[offset + 4], buf[offset + 5], buf[offset + 6]);
             let mut bg = RgbColor::new(buf[offset + 7], buf[offset + 8], buf[offset + 9]);
             if flags.contains(CellFlags::INVERSE) || selected {
@@ -1441,28 +1503,32 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
 
             let x = TERMINAL_PADDING + col as f64 * cell_width;
             let y = TERMINAL_PADDING + row as f64 * cell_height;
-            set_rgb(cr, bg);
-            cr.rectangle(x, y, cell_width, cell_height);
-            let _ = cr.fill();
+            if bg != default_bg || selected || searched || flags.contains(CellFlags::INVERSE) {
+                set_rgb(cr, bg);
+                cr.rectangle(x, y, cell_width, cell_height);
+                let _ = cr.fill();
+            }
 
             if ch != ' ' && !flags.contains(CellFlags::HIDDEN) {
-                cr.select_font_face(
-                    &font_family,
-                    if flags.contains(CellFlags::ITALIC) {
-                        FontSlant::Italic
-                    } else {
-                        FontSlant::Normal
-                    },
-                    if flags.contains(CellFlags::BOLD) {
-                        FontWeight::Bold
-                    } else {
-                        FontWeight::Normal
-                    },
-                );
-                cr.set_font_size(font_size);
+                let slant = if flags.contains(CellFlags::ITALIC) {
+                    FontSlant::Italic
+                } else {
+                    FontSlant::Normal
+                };
+                let weight = if flags.contains(CellFlags::BOLD) {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Normal
+                };
+                if active_font != Some((slant, weight)) {
+                    cr.select_font_face(&font_family, slant, weight);
+                    cr.set_font_size(font_size);
+                    active_font = Some((slant, weight));
+                }
                 set_rgb(cr, fg);
                 cr.move_to(x, y + ascent);
-                let _ = cr.show_text(&ch.to_string());
+                let mut encoded = [0u8; 4];
+                let _ = cr.show_text(ch.encode_utf8(&mut encoded));
                 if flags.intersects(
                     CellFlags::UNDERLINE
                         | CellFlags::DOUBLE_UNDERLINE
@@ -1721,20 +1787,30 @@ fn read_char(buf: &[u8], offset: usize) -> char {
     char::from_u32(cp).unwrap_or(' ')
 }
 
-fn range_contains(buf: &[u8], offset: usize, count: usize, row: usize, col: usize) -> bool {
+fn mark_ranges(
+    buf: &[u8],
+    offset: usize,
+    count: usize,
+    cols: usize,
+    rows: usize,
+    cells: &mut [bool],
+) {
     for idx in 0..count {
         let base = offset + idx * RANGE_ENTRY_SIZE;
         let range_row = read_u16(buf, base) as usize;
-        if range_row != row {
+        if range_row >= rows {
             continue;
         }
         let start = read_u16(buf, base + 2) as usize;
         let end = read_u16(buf, base + 4) as usize;
-        if col >= start && col <= end {
-            return true;
+        if start >= cols {
+            continue;
+        }
+        let row_offset = range_row * cols;
+        for col in start..=end.min(cols.saturating_sub(1)) {
+            cells[row_offset + col] = true;
         }
     }
-    false
 }
 
 fn shell_escape(s: &str) -> String {

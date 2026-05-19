@@ -1416,7 +1416,7 @@ impl SidebarState {
         *self._git_index_watcher.borrow_mut() = Some(watcher);
     }
 
-    /// Start a repeating 2-second timer that polls git status and triggers
+    /// Start a repeating timer that polls git status and triggers
     /// a lightweight tree update (badges only) when the status map changes.
     fn setup_git_poll_timer(&self, path: &str) {
         // Stop any previous poll timer.
@@ -1436,7 +1436,7 @@ impl SidebarState {
         let last_hash = self._last_git_status_hash.clone();
         let in_flight = self._git_poll_in_flight.clone();
 
-        let timer_id = glib::timeout_add_local(Duration::from_secs(2), move || {
+        let timer_id = glib::timeout_add_local(Duration::from_secs(10), move || {
             // Skip if previous poll is still running to avoid stacking tasks.
             if in_flight.get() {
                 return glib::ControlFlow::Continue;

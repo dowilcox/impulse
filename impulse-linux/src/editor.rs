@@ -54,6 +54,7 @@ pub fn get_handle_for_widget(widget: &gtk4::Widget) -> Option<Rc<MonacoEditorHan
 
 /// Maximum file size (in bytes) before the editor opens in read-only mode.
 const LARGE_FILE_THRESHOLD: u64 = 5 * 1024 * 1024; // 5 MB
+const IMAGE_PREVIEW_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
 /// Create a Monaco editor for the given file.
 ///
@@ -413,6 +414,19 @@ pub fn create_image_preview(file_path: &str) -> gtk4::Box {
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_vexpand(true);
     scroll.set_hexpand(true);
+
+    if std::fs::metadata(file_path)
+        .map(|metadata| metadata.len() > IMAGE_PREVIEW_MAX_BYTES)
+        .unwrap_or(false)
+    {
+        let label = gtk4::Label::new(Some("Image is too large to preview"));
+        label.set_vexpand(true);
+        label.set_hexpand(true);
+        label.set_halign(gtk4::Align::Center);
+        label.set_valign(gtk4::Align::Center);
+        container.append(&label);
+        return container;
+    }
 
     let picture = gtk4::Picture::for_filename(file_path);
     picture.set_can_shrink(true);

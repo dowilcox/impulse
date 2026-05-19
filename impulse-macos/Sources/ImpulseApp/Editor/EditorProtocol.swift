@@ -165,7 +165,7 @@ enum EditorCommand: Encodable {
 enum EditorEvent: Decodable {
     case ready
     case fileOpened
-    case contentChanged(content: String, version: UInt32)
+    case contentChanged(content: String?, changes: [MonacoContentChange], version: UInt32)
     case cursorMoved(line: UInt32, column: UInt32)
     case saveRequested
     case completionRequested(requestId: UInt64, line: UInt32, character: UInt32)
@@ -202,6 +202,7 @@ enum EditorEvent: Decodable {
     private enum CodingKeys: String, CodingKey {
         case type
         case content
+        case changes
         case version
         case line
         case column
@@ -231,9 +232,10 @@ enum EditorEvent: Decodable {
             self = .fileOpened
 
         case .contentChanged:
-            let content = try container.decode(String.self, forKey: .content)
+            let content = try container.decodeIfPresent(String.self, forKey: .content)
+            let changes = try container.decodeIfPresent([MonacoContentChange].self, forKey: .changes) ?? []
             let version = try container.decode(UInt32.self, forKey: .version)
-            self = .contentChanged(content: content, version: version)
+            self = .contentChanged(content: content, changes: changes, version: version)
 
         case .cursorMoved:
             let line = try container.decode(UInt32.self, forKey: .line)
@@ -452,6 +454,20 @@ struct MonacoRange: Codable {
         case startColumn = "start_column"
         case endLine = "end_line"
         case endColumn = "end_column"
+    }
+}
+
+struct MonacoContentChange: Codable {
+    var range: MonacoRange
+    var rangeOffset: UInt32
+    var rangeLength: UInt32
+    var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case range
+        case rangeOffset = "range_offset"
+        case rangeLength = "range_length"
+        case text
     }
 }
 

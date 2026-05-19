@@ -11,9 +11,10 @@ use webkit6::prelude::*;
 
 use impulse_editor::protocol::{
     self, DiffDecoration, EditorCommand, EditorEvent, EditorOptions, MonacoCodeAction,
-    MonacoCompletionItem, MonacoDiagnostic, MonacoHoverContent, MonacoLocation,
-    MonacoParameterInfo, MonacoRange, MonacoSignatureHelp, MonacoSignatureInfo, MonacoTextEdit,
-    MonacoThemeColors, MonacoThemeDefinition, MonacoTokenRule, MonacoWorkspaceTextEdit,
+    MonacoCompletionItem, MonacoContentChange, MonacoDiagnostic, MonacoHoverContent,
+    MonacoLocation, MonacoParameterInfo, MonacoRange, MonacoSignatureHelp, MonacoSignatureInfo,
+    MonacoTextEdit, MonacoThemeColors, MonacoThemeDefinition, MonacoTokenRule,
+    MonacoWorkspaceTextEdit,
 };
 
 use crate::lsp_completion::{
@@ -97,6 +98,15 @@ impl MonacoEditorHandle {
 
     pub fn get_content(&self) -> String {
         self.cached_content.borrow().clone()
+    }
+
+    fn apply_content_changed(&self, content: &Option<String>, changes: &[MonacoContentChange]) {
+        let mut cached = self.cached_content.borrow_mut();
+        if let Some(content) = content {
+            *cached = content.clone();
+        } else {
+            apply_monaco_content_changes(&mut cached, changes);
+        }
     }
 
     pub fn go_to_position(&self, line: u32, column: u32) {
@@ -463,7 +473,7 @@ impl MonacoEditorHandle {
         let is_ready = self.is_ready.clone();
         let watcher_cell = self._file_watcher.clone();
 
-        let timer_id = glib::timeout_add_local(Duration::from_millis(100), move || {
+        let timer_id = glib::timeout_add_local(Duration::from_millis(500), move || {
             if !changed.swap(false, Ordering::Relaxed) {
                 return glib::ControlFlow::Continue;
             }
@@ -736,8 +746,13 @@ where
             };
 
             // Update cached state for content/cursor events.
-            if let EditorEvent::ContentChanged { content, version } = &event {
-                *handle_for_signal.cached_content.borrow_mut() = content.clone();
+            if let EditorEvent::ContentChanged {
+                content,
+                changes,
+                version,
+            } = &event
+            {
+                handle_for_signal.apply_content_changed(content, changes);
                 handle_for_signal.version.set(*version);
                 if handle_for_signal.suppress_next_modify.get() {
                     handle_for_signal.suppress_next_modify.set(false);
@@ -914,8 +929,13 @@ where
         }
 
         // Update cached state for content/cursor events
-        if let EditorEvent::ContentChanged { content, version } = &event {
-            *handle_for_signal.cached_content.borrow_mut() = content.clone();
+        if let EditorEvent::ContentChanged {
+            content,
+            changes,
+            version,
+        } = &event
+        {
+            handle_for_signal.apply_content_changed(content, changes);
             handle_for_signal.version.set(*version);
             if handle_for_signal.suppress_next_modify.get() {
                 handle_for_signal.suppress_next_modify.set(false);
@@ -993,6 +1013,39 @@ fn js_string_escape(s: &str) -> String {
         }
     }
     out
+}
+
+fn apply_monaco_content_changes(content: &mut String, changes: &[MonacoContentChange]) {
+    if changes.is_empty() {
+        return;
+    }
+
+    let mut ordered: Vec<_> = changes.iter().collect();
+    ordered.sort_by_key(|change| std::cmp::Reverse(change.range_offset));
+    for change in ordered {
+        let start = utf16_offset_to_byte_offset(content, change.range_offset as usize);
+        let end = utf16_offset_to_byte_offset(
+            content,
+            change.range_offset.saturating_add(change.range_length) as usize,
+        );
+        if start <= end && end <= content.len() {
+            content.replace_range(start..end, &change.text);
+        }
+    }
+}
+
+fn utf16_offset_to_byte_offset(content: &str, target_units: usize) -> usize {
+    let mut units = 0usize;
+    for (byte_index, ch) in content.char_indices() {
+        if units >= target_units {
+            return byte_index;
+        }
+        units += ch.len_utf16();
+        if units > target_units {
+            return byte_index;
+        }
+    }
+    content.len()
 }
 
 // ---------------------------------------------------------------------------
