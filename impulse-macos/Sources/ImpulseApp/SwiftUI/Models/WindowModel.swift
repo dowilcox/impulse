@@ -146,4 +146,51 @@ final class WindowModel {
   func rebuildFlatTree() {
     flatFileTree = FileTreeNode.flatten(fileTreeNodes)
   }
+
+  /// Expand a directory node, lazily loading its children off the main
+  /// thread if they haven't been loaded yet. Shared by mouse and keyboard
+  /// navigation in the sidebar.
+  func expandDirectory(_ node: FileTreeNode) {
+    guard node.isDirectory, !node.isExpanded else { return }
+    if node.isLoaded {
+      node.isExpanded = true
+      rebuildFlatTree()
+      onFileTreeExpansionChanged?()
+      refreshGitStatusForChildren(of: node)
+    } else {
+      // Flip the chevron immediately so the user knows the action registered.
+      node.isExpanded = true
+      let showHidden = showHiddenFiles
+      let path = node.path
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let children = FileTreeNode.buildChildren(path: path, showHidden: showHidden)
+        DispatchQueue.main.async {
+          guard let self else { return }
+          node.children = children
+          self.rebuildFlatTree()
+          self.onFileTreeExpansionChanged?()
+          self.refreshGitStatusForChildren(of: node)
+        }
+      }
+    }
+  }
+
+  /// Collapse an expanded directory node.
+  func collapseDirectory(_ node: FileTreeNode) {
+    guard node.isDirectory, node.isExpanded else { return }
+    node.isExpanded = false
+    rebuildFlatTree()
+    onFileTreeExpansionChanged?()
+  }
+
+  private func refreshGitStatusForChildren(of node: FileTreeNode) {
+    guard let children = node.children, !children.isEmpty else { return }
+    let nodePath = node.path
+    let rootPath = fileTreeRootPath
+    DispatchQueue.global(qos: .utility).async {
+      FileTreeNode.refreshGitStatus(
+        nodes: children, repoPath: rootPath, dirPath: nodePath
+      )
+    }
+  }
 }

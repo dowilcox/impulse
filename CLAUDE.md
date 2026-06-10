@@ -134,12 +134,11 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **mac
 - **Editor/EditorProtocol.swift** — Bidirectional JSON messaging with Monaco (mirrors `impulse-editor` protocol).
 - **Editor/EditorWebViewPool.swift** — WebView pooling for editor instances.
 
-#### Sidebar data (AppKit, kept for data loading — not rendered)
+#### Sidebar data (headless, not rendered)
 
-- **Sidebar/FileTreeView.swift** — NSOutlineView-based file tree. Kept alive for `refreshTree()`, `showNameInputAlert()`, `rootNodes` data loading, but not displayed (SwiftUI `FileTreeListView` renders the tree).
+- **Sidebar/FileTreeDataController.swift** — Headless owner of the file tree data: root nodes, filesystem watchers (root + expanded subdirectories + `.git/index`), periodic git status polling (paused while the app is inactive), incremental tree patch application, and per-root expansion-state persistence in UserDefaults. Fires `onTreeRefreshed` so `MainWindowController` can sync nodes to `WindowModel`.
 - **Sidebar/FileTreeNode.swift** — `@Observable` tree node model. Lazy-loads children via `FileManager`, supports git status enrichment. `.DS_Store` files are always filtered out.
 - **Sidebar/FileIcons.swift** — `IconCache` class: loads SVG icons from bundle, recolors with theme colors, caches as `NSImage`. Used by both `FileTreeListView` and `TabManager` for file/folder/toolbar icons.
-- **Sidebar/SearchPanel.swift** — AppKit search panel (kept for `setRootPath()` data, not rendered).
 
 #### Other AppKit UI
 
@@ -159,7 +158,7 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **mac
 - **GTK UI pattern (Linux):** Rust owns the GTK widget tree directly. Keep shared state in `Rc<RefCell<T>>` context structs, wire GTK/libadwaita signals close to the widgets they affect, and push cross-platform behavior down into `impulse-core` or `impulse-editor`.
 - **GTK styling (Linux):** Visual styling is generated from `theme.rs` as CSS applied through `gtk4::CssProvider`; Monaco receives matching theme definitions through the WebKit editor bridge.
 - **SwiftUI/AppKit bridge (macOS):** `@Observable WindowModel` is the single source of truth for UI state. AppKit code (MainWindowController, TabManager) mutates it; SwiftUI views observe it for automatic re-rendering. Communication from SwiftUI back to AppKit uses callback closures on WindowModel (e.g., `onTabSelected`, `onOpenFile`, `onRefreshTree`). The NSToolbar uses `NSToolbarDelegate` with `.sidebarTrackingSeparator` to place items in the correct column. SwiftUI's `.toolbar {}` and `.searchable()` modifiers do NOT work inside `NSHostingView` — all toolbar items must be native `NSToolbarItem`.
-- **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with recursive `FileNodeView`, NOT `List` + `DisclosureGroup` (which has known click-handling conflicts with NSOutlineView). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. The old AppKit `FileTreeView` is kept alive (hidden) for its `showNameInputAlert()` dialog and data-loading methods but will be fully removed once those are migrated to SwiftUI.
+- **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with a flat virtualized row list (`FileTreeListView`), NOT `List` + `DisclosureGroup` (which has known click-handling conflicts). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. Data loading, watchers, and expansion persistence live in the headless `FileTreeDataController`; name-input dialogs use `UI/NameInputDialog.swift`.
 - **Error handling:** Public APIs in `impulse-core` return `Result<T, String>`. Non-fatal errors use `log::warn!`.
 - **Shell integration flow:** Shell scripts emit OSC escapes -> terminal emulator passes raw bytes -> `OscParser` in pty.rs strips and interprets them -> `PtyMessage` events sent to frontend via `PtyEventSender`. This flow is identical on both platforms.
 - **Settings schema:** Both platforms use the same `Settings` struct and JSON format. The `settings.rs` module in each frontend should share the same data model (or it should be moved to `impulse-core` if divergence becomes a problem).

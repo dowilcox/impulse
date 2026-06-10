@@ -11,24 +11,110 @@ struct FileTreeListView: View {
   @State private var isRootDropTarget = false
 
   var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 0) {
-        ForEach(model.flatFileTree) { entry in
-          FlatFileRowView(node: entry.node, depth: entry.depth, model: model)
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 0) {
+          ForEach(model.flatFileTree) { entry in
+            FlatFileRowView(node: entry.node, depth: entry.depth, model: model)
+              .id(entry.id)
+          }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
+      .focusable()
+      .onMoveCommand { direction in
+        handleMoveCommand(direction, proxy: proxy)
+      }
+      .onKeyPress(.return) {
+        activateSelection()
+        return .handled
+      }
+      .accessibilityLabel("Project files")
+      .onDrop(of: [.fileURL], isTargeted: $isRootDropTarget) { providers in
+        FileDropHelper.handleDrop(
+          providers: providers,
+          targetDir: model.fileTreeRootPath,
+          projectRoot: model.fileTreeRootPath,
+          onComplete: { model.onRefreshTree?() }
+        )
+        return true
+      }
+      .background(isRootDropTarget ? Color.accentColor.opacity(0.08) : Color.clear)
     }
-    .onDrop(of: [.fileURL], isTargeted: $isRootDropTarget) { providers in
-      FileDropHelper.handleDrop(
-        providers: providers,
-        targetDir: model.fileTreeRootPath,
-        projectRoot: model.fileTreeRootPath,
-        onComplete: { model.onRefreshTree?() }
-      )
-      return true
+  }
+
+  // MARK: - Keyboard Navigation
+
+  private var selectedIndex: Int? {
+    guard let selected = model.selectedFileTreePath else { return nil }
+    return model.flatFileTree.firstIndex { $0.node.path == selected }
+  }
+
+  private func handleMoveCommand(_ direction: MoveCommandDirection, proxy: ScrollViewProxy) {
+    switch direction {
+    case .down:
+      moveSelection(by: 1, proxy: proxy)
+    case .up:
+      moveSelection(by: -1, proxy: proxy)
+    case .right:
+      guard let index = selectedIndex else { return }
+      let node = model.flatFileTree[index].node
+      if node.isDirectory && !node.isExpanded {
+        model.expandDirectory(node)
+      } else if node.isDirectory {
+        // Already expanded — move into the first child, like Finder.
+        moveSelection(by: 1, proxy: proxy)
+      }
+    case .left:
+      handleLeftCommand(proxy: proxy)
+    @unknown default:
+      break
     }
-    .background(isRootDropTarget ? Color.accentColor.opacity(0.08) : Color.clear)
+  }
+
+  private func moveSelection(by delta: Int, proxy: ScrollViewProxy) {
+    let entries = model.flatFileTree
+    guard !entries.isEmpty else { return }
+    let newIndex: Int
+    if let current = selectedIndex {
+      newIndex = min(max(current + delta, 0), entries.count - 1)
+    } else {
+      newIndex = delta > 0 ? 0 : entries.count - 1
+    }
+    let entry = entries[newIndex]
+    model.selectedFileTreePath = entry.node.path
+    proxy.scrollTo(entry.id)
+  }
+
+  /// Left arrow: collapse an expanded directory, otherwise jump to the parent.
+  private func handleLeftCommand(proxy: ScrollViewProxy) {
+    guard let index = selectedIndex else { return }
+    let entries = model.flatFileTree
+    let entry = entries[index]
+    if entry.node.isDirectory && entry.node.isExpanded {
+      model.collapseDirectory(entry.node)
+      return
+    }
+    var i = index - 1
+    while i >= 0 {
+      if entries[i].depth < entry.depth {
+        model.selectedFileTreePath = entries[i].node.path
+        proxy.scrollTo(entries[i].id)
+        return
+      }
+      i -= 1
+    }
+  }
+
+  /// Return key: open the selected file, or toggle the selected directory.
+  private func activateSelection() {
+    guard let index = selectedIndex else { return }
+    let node = model.flatFileTree[index].node
+    if node.isDirectory {
+      node.isExpanded ? model.collapseDirectory(node) : model.expandDirectory(node)
+    } else {
+      model.onOpenFile?(node.path, nil)
+    }
   }
 }
 
@@ -111,42 +197,9 @@ private struct FlatFileRowView: View {
 
   private func handleDirectoryTap() {
     if node.isExpanded {
-      // Collapse — always immediate.
-      node.isExpanded = false
-      model.rebuildFlatTree()
-      model.onFileTreeExpansionChanged?()
-    } else if node.isLoaded {
-      // Already loaded — expand immediately.
-      node.isExpanded = true
-      model.rebuildFlatTree()
-      model.onFileTreeExpansionChanged?()
-      triggerGitStatusRefresh()
+      model.collapseDirectory(node)
     } else {
-      // Need to load children off main thread.
-      // Flip chevron immediately so the user knows their click registered.
-      node.isExpanded = true
-      let showHidden = model.showHiddenFiles
-      let path = node.path
-      DispatchQueue.global(qos: .userInitiated).async {
-        let children = FileTreeNode.buildChildren(path: path, showHidden: showHidden)
-        DispatchQueue.main.async {
-          node.children = children
-          model.rebuildFlatTree()
-          model.onFileTreeExpansionChanged?()
-          triggerGitStatusRefresh()
-        }
-      }
-    }
-  }
-
-  private func triggerGitStatusRefresh() {
-    guard let children = node.children, !children.isEmpty else { return }
-    let nodePath = node.path
-    let rootPath = model.fileTreeRootPath
-    DispatchQueue.global(qos: .utility).async {
-      FileTreeNode.refreshGitStatus(
-        nodes: children, repoPath: rootPath, dirPath: nodePath
-      )
+      model.expandDirectory(node)
     }
   }
 
