@@ -309,6 +309,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return true
   }
 
+  /// Pause the LSP event poll timer while the app is in the background —
+  /// no typing can happen, so there is nothing latency-sensitive to drain
+  /// and the 25 ms timer would just burn CPU/battery.
+  func applicationDidResignActive(_ notification: Notification) {
+    stopLspPolling()
+  }
+
+  func applicationDidBecomeActive(_ notification: Notification) {
+    startLspPolling()
+    // Drain anything that queued while inactive (e.g. diagnostics from a
+    // build that touched watched files).
+    pollLspEventsInBackground()
+  }
+
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
   }

@@ -595,7 +595,8 @@ private final class PaletteRowView: NSTableRowView {
     guard isSelected else { return }
     let inset = bounds.insetBy(dx: 8, dy: 2)
     let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
-    NSColor.white.withAlphaComponent(0.10).setFill()
+    // labelColor adapts to the palette's effective appearance (light/dark theme).
+    NSColor.labelColor.withAlphaComponent(0.10).setFill()
     path.fill()
   }
 }

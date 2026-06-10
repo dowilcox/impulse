@@ -57,8 +57,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// default directory in the save-as dialog.
     var untitledCwd: String?
 
-    /// The WKWebView hosting Monaco.
-    private(set) var webView: WKWebView!
+    /// The WKWebView hosting Monaco. Nil after `cleanup()` has run.
+    private(set) var webView: WKWebView?
 
     /// Whether the Monaco editor has fired its `Ready` event.
     private var isEditorReady: Bool = false
@@ -178,7 +178,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         case .success(let pathString):
             let monacoDir = URL(fileURLWithPath: pathString, isDirectory: true)
             let editorHTML = monacoDir.appendingPathComponent("editor.html")
-            webView.loadFileURL(editorHTML, allowingReadAccessTo: monacoDir)
+            webView?.loadFileURL(editorHTML, allowingReadAccessTo: monacoDir)
         }
     }
 
@@ -555,7 +555,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             return
         }
 
-        guard isEditorReady else {
+        guard isEditorReady, let webView else {
             // Editor not ready, save whatever we have
             completion(saveFile())
             return
@@ -565,6 +565,14 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             guard let self else { completion(false); return }
             if let latest = result as? String {
                 self.content = latest
+            } else {
+                // Monaco failed to return the buffer — fall back to the
+                // content accumulated from ContentChanged events, but make
+                // the failure visible in the log so a stale save is traceable.
+                os_log(
+                    .error, log: Self.log,
+                    "editor.getValue() failed for %{public}@ (error: %{public}@); saving last-known content",
+                    path, error?.localizedDescription ?? "non-string result")
             }
             let contentToSave = self.content
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in

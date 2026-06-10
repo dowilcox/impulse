@@ -179,7 +179,7 @@ struct TabBarView: View {
         if isSelected || isDragging {
           Capsule().fill(.thickMaterial)
         } else if isHovered {
-          Capsule().fill(Color.white.opacity(0.04))
+          Capsule().fill(Color.primary.opacity(0.04))
         }
       }
     )
@@ -187,8 +187,8 @@ struct TabBarView: View {
       Capsule()
         .strokeBorder(
           isSelected || isDragging
-            ? Color.white.opacity(0.2)
-            : isHovered ? Color.white.opacity(0.08) : .clear,
+            ? Color.primary.opacity(0.2)
+            : isHovered ? Color.primary.opacity(0.08) : .clear,
           lineWidth: 1
         )
     )
