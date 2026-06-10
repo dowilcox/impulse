@@ -15,7 +15,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
-use alacritty_terminal::term::{Term, TermMode};
+use alacritty_terminal::term::{Term, TermDamage, TermMode};
 use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite, Options as PtyOptions};
 use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
@@ -101,6 +101,22 @@ fn send_wakeup(event_tx: &Sender<TerminalEvent>, wakeup_pending: &AtomicBool) {
     {
         wakeup_pending.store(false, Ordering::Release);
     }
+}
+
+/// Read and reset the term's accumulated damage.
+///
+/// Returns `None` for full damage, or `Some(rows)` with the damaged viewport
+/// row indices (top = 0).
+fn collect_term_damage<T: EventListener>(term: &mut Term<T>) -> Option<Vec<u16>> {
+    let result = match term.damage() {
+        TermDamage::Full => None,
+        TermDamage::Partial(iter) => Some(
+            iter.map(|bounds| bounds.line.min(u16::MAX as usize) as u16)
+                .collect::<Vec<u16>>(),
+        ),
+    };
+    term.reset_damage();
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +358,10 @@ pub struct TerminalBackend {
     blocks: Arc<Mutex<CommandBlockTracker>>,
     history: Arc<Mutex<CommandHistoryStore>>,
     wakeup_pending: Arc<AtomicBool>,
+    /// Forces the next `take_damage()` to report full damage. Set by state
+    /// changes alacritty's damage tracker does not cover (selection, search
+    /// highlights, colors, focus). Starts true so the first frame paints fully.
+    force_full_damage: AtomicBool,
 }
 
 impl TerminalBackend {
@@ -430,6 +450,7 @@ impl TerminalBackend {
             blocks,
             history,
             wakeup_pending,
+            force_full_damage: AtomicBool::new(true),
         })
     }
 
@@ -699,6 +720,10 @@ impl TerminalBackend {
         self.rows = rows;
         self.cell_width = cell_width;
         self.cell_height = cell_height;
+        // The term itself is resized asynchronously on the read thread (which
+        // marks full damage); force full here too so a take_damage() in the
+        // window before that lands doesn't under-report.
+        self.mark_force_full_damage();
         let _ = self.cmd_tx.send(BackendMsg::Resize {
             cols,
             rows,
@@ -934,8 +959,32 @@ impl TerminalBackend {
         buffer::buffer_size(cols, lines, lines, search_ranges)
     }
 
+    /// Take the damage accumulated since the last call and reset tracking.
+    ///
+    /// Returns `None` when the entire viewport must be repainted, or
+    /// `Some(rows)` with the viewport row indices that changed. Selection,
+    /// search highlights, color, and focus changes are not covered by
+    /// alacritty's damage tracker, so the methods mutating that state set
+    /// `force_full_damage` and this method honours it.
+    pub fn take_damage(&self) -> Option<Vec<u16>> {
+        let force_full = self.force_full_damage.swap(false, Ordering::Relaxed);
+        let mut term = self.term.lock();
+        let result = collect_term_damage(&mut term);
+        if force_full {
+            None
+        } else {
+            result
+        }
+    }
+
+    /// Force the next `take_damage()` to report full damage.
+    fn mark_force_full_damage(&self) {
+        self.force_full_damage.store(true, Ordering::Relaxed);
+    }
+
     /// Start a text selection.
     pub fn start_selection(&self, col: usize, row: usize, kind: SelectionKind) {
+        self.mark_force_full_damage();
         let mut term = self.term.lock();
         let point = viewport_point(&term, col, row);
         let ty = match kind {
@@ -953,6 +1002,7 @@ impl TerminalBackend {
 
     /// Update the current selection endpoint.
     pub fn update_selection(&self, col: usize, row: usize) {
+        self.mark_force_full_damage();
         let mut term = self.term.lock();
         let point = viewport_point(&term, col, row);
         if let Some(ref mut sel) = term.selection {
@@ -962,11 +1012,13 @@ impl TerminalBackend {
 
     /// Clear the current selection.
     pub fn clear_selection(&self) {
+        self.mark_force_full_damage();
         self.term.lock().selection = None;
     }
 
     /// Select the entire terminal buffer, including scrollback.
     pub fn select_all(&self) {
+        self.mark_force_full_damage();
         let mut term = self.term.lock();
         let grid = term.grid();
         if grid.columns() == 0 || grid.total_lines() == 0 {
@@ -1027,6 +1079,7 @@ impl TerminalBackend {
 
     /// Update the terminal's color palette at runtime (for live theme changes).
     pub fn set_colors(&mut self, config: &TerminalConfig) {
+        self.mark_force_full_damage();
         self.colors = ConfiguredColors::from_config(config);
     }
 
@@ -1065,6 +1118,7 @@ impl TerminalBackend {
     /// corresponding `\x1b[I` / `\x1b[O` sequence so TUIs like neovim and tmux
     /// can react to the application gaining or losing focus.
     pub fn set_focus(&self, focused: bool) {
+        self.mark_force_full_damage();
         let emit = {
             let mut term = self.term.lock();
             term.is_focused = focused;
@@ -1108,6 +1162,7 @@ impl TerminalBackend {
 
     /// Search for a regex pattern in the terminal. Returns the first match.
     pub fn search(&self, pattern: &str) -> SearchResult {
+        self.mark_force_full_damage();
         let term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
@@ -1117,6 +1172,7 @@ impl TerminalBackend {
 
     /// Find the next search match after the current one.
     pub fn search_next(&self) -> SearchResult {
+        self.mark_force_full_damage();
         let term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
@@ -1126,6 +1182,7 @@ impl TerminalBackend {
 
     /// Find the previous search match before the current one.
     pub fn search_prev(&self) -> SearchResult {
+        self.mark_force_full_damage();
         let term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
@@ -1135,6 +1192,7 @@ impl TerminalBackend {
 
     /// Clear the current search state.
     pub fn search_clear(&self) {
+        self.mark_force_full_damage();
         if let Ok(mut search) = self.search.lock() {
             search.clear();
         }
@@ -1262,7 +1320,7 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{flush_pending_input, send_wakeup, ConfiguredColors};
+    use super::{collect_term_damage, flush_pending_input, send_wakeup, ConfiguredColors, TermSize};
     use crate::config::{TerminalColors, TerminalConfig};
     use crate::grid::RgbColor;
     use std::collections::VecDeque;
@@ -1375,5 +1433,33 @@ mod tests {
         assert_eq!(colors.palette[dim_red].r, 191);
         assert_eq!(colors.palette[dim_red].g, 180);
         assert_eq!(colors.palette[dim_red].b, 168);
+    }
+
+    #[test]
+    fn collect_term_damage_reports_written_rows_and_resets() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::{Config, Term};
+        use alacritty_terminal::vte::ansi::Processor;
+
+        let size = TermSize {
+            columns: 20,
+            screen_lines: 5,
+        };
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+
+        // A fresh term starts fully damaged.
+        assert!(collect_term_damage(&mut term).is_none());
+
+        // After a reset, plain output damages only the written row (plus the
+        // cursor row, which is the same here).
+        let mut processor: Processor = Processor::new();
+        processor.advance(&mut term, b"hello");
+        let rows = collect_term_damage(&mut term).expect("expected partial damage");
+        assert!(rows.contains(&0), "row 0 should be damaged, got {rows:?}");
+        assert!(rows.iter().all(|&r| r < 5));
+
+        // Damage was reset: with no changes, only the cursor row reports.
+        let rows = collect_term_damage(&mut term).expect("expected partial damage");
+        assert!(rows.iter().all(|&r| r < 5));
     }
 }

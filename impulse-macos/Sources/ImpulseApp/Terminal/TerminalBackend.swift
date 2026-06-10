@@ -292,6 +292,8 @@ final class TerminalBackend {
     private var handle: OpaquePointer?
     private var snapshotBuffer: UnsafeMutablePointer<UInt8>?
     private var snapshotBufferSize: Int = 0
+    private var damageBuffer: UnsafeMutablePointer<UInt16>?
+    private var damageBufferCap: Int = 0
     private(set) var isShutdown = false
 
     private let decoder = JSONDecoder()
@@ -311,11 +313,16 @@ final class TerminalBackend {
         let bufSize = ImpulseCore.terminalGridSnapshotSize(handle: h)
         self.snapshotBufferSize = bufSize
         self.snapshotBuffer = .allocate(capacity: bufSize)
+
+        // Damage rows buffer: one entry per viewport row.
+        self.damageBufferCap = Int(rows)
+        self.damageBuffer = .allocate(capacity: damageBufferCap)
     }
 
     deinit {
         shutdown()
         snapshotBuffer?.deallocate()
+        damageBuffer?.deallocate()
     }
 
     // MARK: - Input
@@ -347,6 +354,13 @@ final class TerminalBackend {
             snapshotBuffer = .allocate(capacity: newSize)
             snapshotBufferSize = newSize
         }
+
+        // Grow the damage buffer with the row count.
+        if Int(rows) > damageBufferCap {
+            damageBuffer?.deallocate()
+            damageBufferCap = Int(rows)
+            damageBuffer = .allocate(capacity: damageBufferCap)
+        }
     }
 
     // MARK: - Grid Snapshot
@@ -356,6 +370,23 @@ final class TerminalBackend {
         let written = ImpulseCore.terminalGridSnapshot(handle: handle, buffer: buf, bufferSize: snapshotBufferSize)
         guard written > 0 else { return nil }
         return GridBufferReader(pointer: UnsafePointer(buf), size: written)
+    }
+
+    /// Damage accumulated since the last call.
+    enum TerminalDamage {
+        /// The whole viewport must be repainted.
+        case full
+        /// Only these viewport rows changed (top row = 0).
+        case rows([Int])
+    }
+
+    /// Take and reset the damage tracked by the backend. Conservatively
+    /// returns `.full` whenever partial damage can't be guaranteed correct.
+    func takeDamage() -> TerminalDamage {
+        guard let handle, !isShutdown, let buf = damageBuffer else { return .full }
+        let count = ImpulseCore.terminalTakeDamage(handle: handle, buffer: buf, cap: damageBufferCap)
+        guard count >= 0 else { return .full }
+        return .rows((0..<count).map { Int(buf[$0]) })
     }
 
     // MARK: - Events

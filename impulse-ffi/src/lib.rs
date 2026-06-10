@@ -1876,6 +1876,40 @@ pub extern "C" fn impulse_terminal_grid_snapshot_size(handle: *mut TerminalHandl
     )
 }
 
+/// Take the terminal damage accumulated since the last call.
+///
+/// Returns -1 when the entire viewport must be repainted, otherwise the
+/// number of damaged viewport row indices written to `out_rows` (at most
+/// `cap`). When the damaged row count exceeds `cap`, degrades to -1.
+/// Resets the backend's damage tracking either way.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_take_damage(
+    handle: *mut TerminalHandle,
+    out_rows: *mut u16,
+    cap: usize,
+) -> i64 {
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            if handle.is_null() || out_rows.is_null() {
+                return -1;
+            }
+            let h = unsafe { &*handle };
+            match h.backend.take_damage() {
+                None => -1,
+                Some(rows) => {
+                    if rows.len() > cap {
+                        return -1;
+                    }
+                    let out = unsafe { std::slice::from_raw_parts_mut(out_rows, cap) };
+                    out[..rows.len()].copy_from_slice(&rows);
+                    rows.len() as i64
+                }
+            }
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_poll_events(handle: *mut TerminalHandle) -> *mut c_char {
     ffi_catch(

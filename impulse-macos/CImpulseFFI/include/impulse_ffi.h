@@ -94,6 +94,7 @@ void impulse_terminal_write(void *handle, const unsigned char *data, unsigned lo
 void impulse_terminal_resize(void *handle, unsigned short cols, unsigned short rows, unsigned short cell_width, unsigned short cell_height);
 unsigned long impulse_terminal_grid_snapshot(void *handle, unsigned char *out_buf, unsigned long buf_len);
 unsigned long impulse_terminal_grid_snapshot_size(void *handle);
+int64_t impulse_terminal_take_damage(void *handle, unsigned short *out_rows, unsigned long cap);
 char *impulse_terminal_poll_events(void *handle);
 char *impulse_terminal_command_blocks(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);

@@ -724,6 +724,13 @@ final class ImpulseCore {
         return Int(impulse_terminal_grid_snapshot_size(UnsafeMutableRawPointer(handle)))
     }
 
+    /// Takes the damage accumulated since the last call and resets tracking.
+    /// Returns -1 when a full repaint is required, otherwise the number of
+    /// damaged viewport row indices written to `buffer`.
+    static func terminalTakeDamage(handle: OpaquePointer, buffer: UnsafeMutablePointer<UInt16>, cap: Int) -> Int {
+        return Int(impulse_terminal_take_damage(UnsafeMutableRawPointer(handle), buffer, UInt(cap)))
+    }
+
     /// Polls for pending terminal events. Returns a JSON array string, or
     /// `nil` if no events are pending.
     static func terminalPollEvents(handle: OpaquePointer) -> String? {
@@ -1103,6 +1110,8 @@ final class ImpulseCore {
     }
 
     /// Return the current application version.
+    /// The returned pointer references a statically cached CString owned by
+    /// the Rust side (`OnceLock`) — it must NOT be freed.
     static func version() -> String {
         guard let ptr = CImpulseFFI.impulse_get_version() else { return "unknown" }
         return String(cString: ptr)

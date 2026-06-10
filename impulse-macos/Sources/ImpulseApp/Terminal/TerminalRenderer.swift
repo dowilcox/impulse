@@ -138,6 +138,9 @@ class TerminalRenderer: NSView {
     private var needsRedraw = false
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
+    /// Viewport row the cursor occupied at the last draw; used to invalidate
+    /// only that row when the blink phase toggles. -1 when unknown/hidden.
+    private var lastCursorRow: Int = -1
     private var colorCache: [UInt32: CGColor] = [:]
     private var textLineCache: [UInt64: CTLine] = [:]
     private let activeRefreshInterval: TimeInterval = 1.0 / 60.0
@@ -258,7 +261,11 @@ class TerminalRenderer: NSView {
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             self.cursorBlinkOn.toggle()
-            self.needsDisplay = true
+            if self.lastCursorRow >= 0 {
+                self.setNeedsDisplay(self.rectForRow(self.lastCursorRow))
+            } else {
+                self.needsDisplay = true
+            }
         }
         blinkTimer = timer
         timer.resume()
@@ -296,9 +303,45 @@ class TerminalRenderer: NSView {
             if scrollOnOutput {
                 backend.scrollToBottom()
             }
-            needsDisplay = true
+            // Invalidate only the damaged rows. Each row rect is expanded by
+            // one cell height on both sides so glyphs that overshoot their
+            // cell (emoji, tall scripts) repaint cleanly in neighbours.
+            switch backend.takeDamage() {
+            case .full:
+                needsDisplay = true
+            case .rows(let rows):
+                let ch = fontMetrics.cellHeight
+                for row in rows {
+                    setNeedsDisplay(rectForRow(row).insetBy(dx: 0, dy: -ch))
+                }
+            }
         }
         return !events.isEmpty || wakeup
+    }
+
+    // MARK: Dirty-Row Geometry
+
+    /// The full-width rect covering one viewport row.
+    func rectForRow(_ row: Int) -> NSRect {
+        NSRect(
+            x: 0,
+            y: padding + CGFloat(row) * fontMetrics.cellHeight,
+            width: bounds.width,
+            height: fontMetrics.cellHeight
+        )
+    }
+
+    /// The viewport rows whose cells intersect `rect` (clamped to 0..<lines).
+    /// Pure geometry so it stays unit-testable.
+    static func rowRange(
+        intersecting rect: NSRect, lines: Int, padding: CGFloat, cellHeight: CGFloat
+    ) -> Range<Int> {
+        guard lines > 0, cellHeight > 0 else { return 0..<max(0, lines) }
+        let first = Int(((rect.minY - padding) / cellHeight).rounded(.down))
+        let last = Int(((rect.maxY - padding) / cellHeight).rounded(.up))
+        let lower = min(max(0, first), lines)
+        let upper = min(max(lower, last), lines)
+        return lower..<upper
     }
 
     // MARK: Drawing
@@ -323,19 +366,26 @@ class TerminalRenderer: NSView {
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
 
+        // Only repaint rows that intersect the invalidated region. tick()
+        // invalidates per damaged row; full invalidations (theme, resize,
+        // scroll, …) arrive as the whole bounds and select every row.
+        let drawRows = Self.rowRange(
+            intersecting: dirtyRect, lines: lines, padding: padding, cellHeight: ch
+        )
+
         // 1. Fill background with the configured terminal background color.
         // Do not infer it from the top-left cell: TUIs like Codex/Claude can
         // place a colored block in the first visible cell, which would make
         // the entire viewport inherit that accent color.
         context.setFillColor(defaultBackgroundColor)
-        context.fill(bounds)
+        context.fill(dirtyRect)
 
         // 2. Draw non-default cell backgrounds.
         drawCellBackgrounds(
             context: context,
             grid: grid,
             cols: cols,
-            lines: lines,
+            rows: drawRows,
             cellWidth: cw,
             cellHeight: ch
         )
@@ -343,6 +393,7 @@ class TerminalRenderer: NSView {
         // 3. Draw selection highlights using the active theme color.
         for i in 0..<grid.selectionRangeCount {
             let range = grid.selectionRange(at: i)
+            guard drawRows.contains(Int(range.row)) else { continue }
             let rowY = padding + CGFloat(range.row) * ch
             let startX = padding + CGFloat(range.startCol) * cw
             let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
@@ -355,6 +406,7 @@ class TerminalRenderer: NSView {
         let searchColor = CGColor(srgbRed: 0.9, green: 0.7, blue: 0.1, alpha: 0.35)
         for i in 0..<grid.searchMatchRangeCount {
             let range = grid.searchMatchRange(at: i)
+            guard drawRows.contains(Int(range.row)) else { continue }
             let rowY = padding + CGFloat(range.row) * ch
             let startX = padding + CGFloat(range.startCol) * cw
             let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
@@ -367,7 +419,7 @@ class TerminalRenderer: NSView {
         // In a flipped NSView, CoreGraphics text still renders Y-up.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
 
-        for row in 0..<lines {
+        for row in drawRows {
             let rowY = padding + CGFloat(row) * ch
 
             // Run accumulation state.
@@ -532,10 +584,11 @@ class TerminalRenderer: NSView {
         }
 
         // 7. Draw cursor (respects blink phase and shape override from settings).
+        lastCursorRow = grid.cursorVisible ? Int(grid.cursorRow) : -1
         if grid.cursorVisible && cursorBlinkOn {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
-            if cursorRow < lines && cursorCol < cols {
+            if cursorRow < lines && cursorCol < cols && drawRows.contains(Int(cursorRow)) {
                 let cursorX = padding + CGFloat(cursorCol) * cw
                 let cursorY = padding + CGFloat(cursorRow) * ch
                 let cursorRect = CGRect(x: cursorX, y: cursorY, width: cw, height: ch)
@@ -639,7 +692,11 @@ class TerminalRenderer: NSView {
         }
 
         if colorCache.count > 4096 {
-            colorCache.removeAll(keepingCapacity: true)
+            // Evict half rather than clearing — a full clear forces every
+            // color on screen to be re-allocated on the next frame.
+            for staleKey in Array(colorCache.keys.prefix(colorCache.count / 2)) {
+                colorCache.removeValue(forKey: staleKey)
+            }
         }
 
         let color = CGColor(
@@ -671,11 +728,11 @@ class TerminalRenderer: NSView {
         context: CGContext,
         grid: GridBufferReader,
         cols: Int,
-        lines: Int,
+        rows: Range<Int>,
         cellWidth: CGFloat,
         cellHeight: CGFloat
     ) {
-        for row in 0..<lines {
+        for row in rows {
             let rowY = padding + CGFloat(row) * cellHeight
             var runStartCol: Int?
             var runEndCol = 0
@@ -809,7 +866,11 @@ class TerminalRenderer: NSView {
         }
 
         if textLineCache.count > 8192 {
-            textLineCache.removeAll(keepingCapacity: true)
+            // Evict half rather than clearing — a full clear forces a CoreText
+            // re-layout of every visible glyph on the next frame.
+            for staleKey in Array(textLineCache.keys.prefix(textLineCache.count / 2)) {
+                textLineCache.removeValue(forKey: staleKey)
+            }
         }
 
         let attrs: [CFString: Any] = [
