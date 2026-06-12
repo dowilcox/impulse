@@ -100,6 +100,9 @@ pub struct Settings {
     pub terminal_attention_on_long_command: bool,
     pub terminal_long_command_seconds: i32,
     pub terminal_bold_is_bright: bool,
+    /// Minimum WCAG contrast ratio (1.0–21.0) enforced between terminal cell
+    /// foreground and background at render time; 1.0 disables the adjustment.
+    pub terminal_minimum_contrast: f64,
 
     // ── Editor (additional) ──────────────────────────────────────────────
     pub editor_line_height: u32,
@@ -181,6 +184,7 @@ impl Default for Settings {
             terminal_attention_on_long_command: true,
             terminal_long_command_seconds: 30,
             terminal_bold_is_bright: true,
+            terminal_minimum_contrast: 3.0,
 
             // Editor (additional)
             editor_line_height: 0,

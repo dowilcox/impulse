@@ -103,6 +103,7 @@ struct TerminalState {
     scrollback_lines: Cell<usize>,
     cursor_shape: Cell<CursorShape>,
     cursor_blink: Cell<bool>,
+    minimum_contrast: Cell<f32>,
     cols: Cell<u16>,
     rows: Cell<u16>,
     current_directory: RefCell<Option<String>>,
@@ -131,6 +132,7 @@ impl TerminalState {
             scrollback_lines: Cell::new(10_000),
             cursor_shape: Cell::new(CursorShape::Block),
             cursor_blink: Cell::new(true),
+            minimum_contrast: Cell::new(3.0),
             cols: Cell::new(DEFAULT_COLS),
             rows: Cell::new(DEFAULT_ROWS),
             current_directory: RefCell::new(None),
@@ -209,6 +211,9 @@ pub fn apply_settings(
         .set(parse_cursor_shape(&settings.terminal_cursor_shape));
     state.cursor_blink.set(settings.terminal_cursor_blink);
     state
+        .minimum_contrast
+        .set(settings.terminal_minimum_contrast.clamp(1.0, 21.0) as f32);
+    state
         .scroll_on_output
         .set(settings.terminal_scroll_on_output);
     state.terminal_bell.set(settings.terminal_bell);
@@ -249,6 +254,7 @@ pub fn spawn_command(
         cursor_blink: state.cursor_blink.get(),
         env_vars: filtered_env_map(),
         colors: state_colors(&state),
+        minimum_contrast: state.minimum_contrast.get(),
     };
     config
         .env_vars
@@ -695,6 +701,7 @@ fn terminal_config(
         cursor_blink: settings.terminal_cursor_blink,
         working_directory,
         colors: terminal_colors(theme),
+        minimum_contrast: settings.terminal_minimum_contrast.clamp(1.0, 21.0) as f32,
         ..TerminalConfig::default()
     };
     if let Some(launch) = launch {
@@ -722,6 +729,7 @@ fn backend_config_from_launch(
         env_vars: launch.env_vars.clone(),
         working_directory,
         colors: state_colors(state),
+        minimum_contrast: state.minimum_contrast.get(),
     };
     config
         .env_vars

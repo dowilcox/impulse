@@ -143,6 +143,9 @@ struct Settings: Codable {
     var terminalAttentionOnLongCommand: Bool
     var terminalLongCommandSeconds: Int
     var terminalBoldIsBright: Bool
+    /// Minimum WCAG contrast ratio (1–21) enforced between terminal cell
+    /// foreground and background; 1 disables the adjustment.
+    var terminalMinimumContrast: Double
     var terminalAllowOsc52Write: Bool
     var terminalAllowOsc52Read: Bool
 
@@ -219,6 +222,7 @@ struct Settings: Codable {
         case terminalAttentionOnLongCommand = "terminal_attention_on_long_command"
         case terminalLongCommandSeconds = "terminal_long_command_seconds"
         case terminalBoldIsBright = "terminal_bold_is_bright"
+        case terminalMinimumContrast = "terminal_minimum_contrast"
         case terminalAllowOsc52Write = "terminal_allow_osc52_write"
         case terminalAllowOsc52Read = "terminal_allow_osc52_read"
         case editorLineHeight = "editor_line_height"
@@ -283,6 +287,7 @@ struct Settings: Codable {
             terminalAttentionOnLongCommand: true,
             terminalLongCommandSeconds: 30,
             terminalBoldIsBright: true,
+            terminalMinimumContrast: 3.0,
             terminalAllowOsc52Write: true,
             terminalAllowOsc52Read: false,
             editorLineHeight: 0,
@@ -351,6 +356,7 @@ struct Settings: Codable {
         terminalAttentionOnLongCommand = (try? c.decode(Bool.self, forKey: .terminalAttentionOnLongCommand)) ?? d.terminalAttentionOnLongCommand
         terminalLongCommandSeconds = (try? c.decode(Int.self, forKey: .terminalLongCommandSeconds)) ?? d.terminalLongCommandSeconds
         terminalBoldIsBright = (try? c.decode(Bool.self, forKey: .terminalBoldIsBright)) ?? d.terminalBoldIsBright
+        terminalMinimumContrast = (try? c.decode(Double.self, forKey: .terminalMinimumContrast)) ?? d.terminalMinimumContrast
         terminalAllowOsc52Write = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Write)) ?? d.terminalAllowOsc52Write
         terminalAllowOsc52Read = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Read)) ?? d.terminalAllowOsc52Read
         editorLineHeight = (try? c.decode(Int.self, forKey: .editorLineHeight)) ?? d.editorLineHeight
@@ -385,7 +391,7 @@ struct Settings: Codable {
          terminalCopyOnSelect: Bool, terminalScrollOnOutput: Bool,
          terminalAllowHyperlink: Bool, terminalAllowNotifications: Bool,
          terminalAttentionOnLongCommand: Bool, terminalLongCommandSeconds: Int,
-         terminalBoldIsBright: Bool,
+         terminalBoldIsBright: Bool, terminalMinimumContrast: Double = 3.0,
          terminalAllowOsc52Write: Bool, terminalAllowOsc52Read: Bool,
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
@@ -437,6 +443,7 @@ struct Settings: Codable {
         self.terminalAttentionOnLongCommand = terminalAttentionOnLongCommand
         self.terminalLongCommandSeconds = terminalLongCommandSeconds
         self.terminalBoldIsBright = terminalBoldIsBright
+        self.terminalMinimumContrast = terminalMinimumContrast
         self.terminalAllowOsc52Write = terminalAllowOsc52Write
         self.terminalAllowOsc52Read = terminalAllowOsc52Read
         self.editorLineHeight = editorLineHeight
@@ -493,6 +500,7 @@ extension Settings {
         terminalFontSize = max(6, min(72, terminalFontSize))
         terminalScrollback = max(100, min(1_000_000, terminalScrollback))
         terminalLongCommandSeconds = max(1, min(86_400, terminalLongCommandSeconds))
+        terminalMinimumContrast = max(1.0, min(21.0, terminalMinimumContrast))
         sidebarWidth = max(100, min(1000, sidebarWidth))
         rightMarginPosition = max(1, min(500, rightMarginPosition))
         editorLineHeight = max(0, min(100, editorLineHeight))
@@ -748,6 +756,7 @@ extension Settings {
             terminalAttentionOnLongCommand: terminalAttentionOnLongCommand,
             terminalLongCommandSeconds: terminalLongCommandSeconds,
             terminalBoldIsBright: terminalBoldIsBright,
+            terminalMinimumContrast: terminalMinimumContrast,
             terminalAllowOsc52Write: terminalAllowOsc52Write,
             terminalAllowOsc52Read: terminalAllowOsc52Read,
             keybindingOverrides: keybindingOverrides

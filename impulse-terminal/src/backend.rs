@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -19,7 +19,7 @@ use alacritty_terminal::term::{Term, TermDamage, TermMode};
 use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite, Options as PtyOptions};
 use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
-    Color as AlacColor, CursorShape as AlacCursorShape, NamedColor,
+    Color as AlacColor, CursorShape as AlacCursorShape, NamedColor, Rgb as AlacRgb,
 };
 use crossbeam_channel::{Receiver, Sender};
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
@@ -47,6 +47,12 @@ static CHILD_ENV_LOCK: Mutex<()> = Mutex::new(());
 struct EventProxy {
     event_tx: Sender<TerminalEvent>,
     wakeup_pending: Arc<AtomicBool>,
+    /// Snapshot of the configured palette for answering OSC 4/10/11/12 color
+    /// queries (TUI apps use these to detect light vs dark backgrounds).
+    /// Shared with the backend, which refreshes it on theme changes. Runtime
+    /// OSC 4 color overrides are not reflected here: this is called from the
+    /// PTY reader thread while the Term is locked, so it must not touch Term.
+    query_colors: Arc<RwLock<[RgbColor; 269]>>,
 }
 
 impl EventListener for EventProxy {
@@ -86,9 +92,19 @@ impl EventListener for EventProxy {
             AlacEvent::CursorBlinkingChange => {
                 let _ = self.event_tx.send(TerminalEvent::CursorBlinkingChange);
             }
-            AlacEvent::ColorRequest(_, _)
-            | AlacEvent::TextAreaSizeRequest(_)
-            | AlacEvent::MouseCursorDirty => {}
+            AlacEvent::ColorRequest(index, format) => {
+                let color = {
+                    let palette = self.query_colors.read().unwrap();
+                    palette[index.min(palette.len() - 1)]
+                };
+                let response = format(AlacRgb {
+                    r: color.r,
+                    g: color.g,
+                    b: color.b,
+                });
+                let _ = self.event_tx.send(TerminalEvent::PtyWrite(response));
+            }
+            AlacEvent::TextAreaSizeRequest(_) | AlacEvent::MouseCursorDirty => {}
         }
     }
 }
@@ -148,6 +164,8 @@ struct ConfiguredColors {
     foreground: RgbColor,
     background: RgbColor,
     palette: [RgbColor; 269],
+    /// Minimum WCAG contrast ratio enforced between cell fg and bg.
+    minimum_contrast: f32,
 }
 
 impl ConfiguredColors {
@@ -197,6 +215,7 @@ impl ConfiguredColors {
             foreground: config.colors.foreground,
             background: config.colors.background,
             palette,
+            minimum_contrast: config.minimum_contrast.clamp(1.0, 21.0),
         }
     }
 
@@ -222,6 +241,68 @@ impl ConfiguredColors {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Minimum contrast (accessibility)
+// ---------------------------------------------------------------------------
+
+/// WCAG 2.1 relative luminance of an sRGB color.
+fn relative_luminance(c: RgbColor) -> f32 {
+    fn channel(v: u8) -> f32 {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+}
+
+/// WCAG 2.1 contrast ratio between two colors (1.0–21.0).
+fn contrast_ratio(a: RgbColor, b: RgbColor) -> f32 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+fn mix(a: RgbColor, b: RgbColor, t: f32) -> RgbColor {
+    let lerp = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    RgbColor::new(lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b))
+}
+
+/// Nudge `fg` toward black or white (whichever moves away from `bg`) until it
+/// reaches `min_ratio` contrast against `bg`. Cells where fg == bg are left
+/// untouched: apps use identical colors to intentionally hide text.
+fn apply_minimum_contrast(fg: RgbColor, bg: RgbColor, min_ratio: f32) -> RgbColor {
+    if min_ratio <= 1.0 || fg == bg || contrast_ratio(fg, bg) >= min_ratio {
+        return fg;
+    }
+    let target = if relative_luminance(bg) > 0.179 {
+        RgbColor::new(0, 0, 0)
+    } else {
+        RgbColor::new(255, 255, 255)
+    };
+    // Binary search the smallest blend toward the target that satisfies the
+    // ratio, preserving as much of the original hue as possible.
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..7 {
+        let mid = (lo + hi) / 2.0;
+        if contrast_ratio(mix(fg, target, mid), bg) >= min_ratio {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let adjusted = mix(fg, target, hi);
+    if contrast_ratio(adjusted, bg) >= min_ratio {
+        adjusted
+    } else {
+        // Even a full blend can fall short (e.g. mid-gray backgrounds);
+        // return the extreme as the best achievable.
+        target
     }
 }
 
@@ -353,6 +434,8 @@ pub struct TerminalBackend {
     cell_width: u16,
     cell_height: u16,
     colors: ConfiguredColors,
+    /// Palette snapshot shared with the `EventProxy` for OSC color queries.
+    query_colors: Arc<RwLock<[RgbColor; 269]>>,
     child_pid: u32,
     search: Mutex<TerminalSearch>,
     blocks: Arc<Mutex<CommandBlockTracker>>,
@@ -376,14 +459,17 @@ impl TerminalBackend {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
         let wakeup_pending = Arc::new(AtomicBool::new(false));
+
+        let colors = ConfiguredColors::from_config(&config);
+        let query_colors = Arc::new(RwLock::new(colors.palette));
         let proxy = EventProxy {
             event_tx: event_tx.clone(),
             wakeup_pending: Arc::clone(&wakeup_pending),
+            query_colors: Arc::clone(&query_colors),
         };
 
         let alac_config = config.to_alacritty_config();
         let pty_options = config.to_pty_options();
-        let colors = ConfiguredColors::from_config(&config);
 
         let size = TermSize {
             columns: cols as usize,
@@ -445,6 +531,7 @@ impl TerminalBackend {
             cell_width,
             cell_height,
             colors,
+            query_colors,
             child_pid,
             search: Mutex::new(TerminalSearch::new()),
             blocks,
@@ -930,8 +1017,12 @@ impl TerminalBackend {
             if row_i32 >= 0 && (row_i32 as usize) < num_lines && col < num_cols {
                 let row = row_i32 as usize;
                 let offset = cell_offset + (row * num_cols + col) * buffer::CELL_STRIDE;
-                let fg = self.colors.resolve(indexed.cell.fg, term_colors);
                 let bg = self.colors.resolve(indexed.cell.bg, term_colors);
+                let fg = apply_minimum_contrast(
+                    self.colors.resolve(indexed.cell.fg, term_colors),
+                    bg,
+                    self.colors.minimum_contrast,
+                );
                 let mut flags = convert_flags(indexed.cell.flags);
                 if indexed.cell.hyperlink().is_some() {
                     flags |= CellFlags::HYPERLINK;
@@ -1081,6 +1172,9 @@ impl TerminalBackend {
     pub fn set_colors(&mut self, config: &TerminalConfig) {
         self.mark_force_full_damage();
         self.colors = ConfiguredColors::from_config(config);
+        if let Ok(mut palette) = self.query_colors.write() {
+            *palette = self.colors.palette;
+        }
     }
 
     /// Return the hyperlink URI at the given grid cell, if any.
@@ -1320,12 +1414,19 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_term_damage, flush_pending_input, send_wakeup, ConfiguredColors, TermSize};
+    use super::{
+        apply_minimum_contrast, collect_term_damage, contrast_ratio, flush_pending_input,
+        send_wakeup, ConfiguredColors, EventProxy, TermSize,
+    };
     use crate::config::{TerminalColors, TerminalConfig};
+    use crate::event::TerminalEvent;
     use crate::grid::RgbColor;
+    use alacritty_terminal::event::{Event as AlacEvent, EventListener};
+    use alacritty_terminal::vte::ansi::NamedColor;
     use std::collections::VecDeque;
     use std::io::{self, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, RwLock};
 
     struct FlakyWriter {
         output: Vec<u8>,
@@ -1414,6 +1515,64 @@ mod tests {
         send_wakeup(&tx, &pending);
 
         assert_eq!(rx.try_iter().count(), 1);
+    }
+
+    #[test]
+    fn contrast_ratio_extremes() {
+        let black = RgbColor::new(0, 0, 0);
+        let white = RgbColor::new(255, 255, 255);
+        assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
+        assert!((contrast_ratio(white, white) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn minimum_contrast_fixes_dark_on_dark() {
+        // The lazygit case: Harbor's dark green text on its indigo selection
+        // bar (~1.2:1) must be raised to at least the configured ratio.
+        let green = RgbColor::new(0x09, 0x5c, 0x34);
+        let indigo = RgbColor::new(0x39, 0x59, 0xa6);
+        let adjusted = apply_minimum_contrast(green, indigo, 3.0);
+        assert!(contrast_ratio(adjusted, indigo) >= 3.0);
+    }
+
+    #[test]
+    fn minimum_contrast_preserves_compliant_and_hidden_text() {
+        let ink = RgbColor::new(0x22, 0x29, 0x35);
+        let cream = RgbColor::new(0xf8, 0xfa, 0xfd);
+        // Already compliant — untouched.
+        assert_eq!(apply_minimum_contrast(ink, cream, 4.5), ink);
+        // fg == bg is intentional hiding — untouched.
+        assert_eq!(apply_minimum_contrast(cream, cream, 4.5), cream);
+        // Ratio 1.0 disables the feature.
+        let red = RgbColor::new(200, 60, 60);
+        assert_eq!(apply_minimum_contrast(red, cream, 1.0), red);
+    }
+
+    #[test]
+    fn color_request_replies_with_configured_palette() {
+        let config = TerminalConfig::default();
+        let colors = ConfiguredColors::from_config(&config);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let proxy = EventProxy {
+            event_tx: tx,
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+            query_colors: Arc::new(RwLock::new(colors.palette)),
+        };
+
+        // OSC 11 (background) arrives as a request for NamedColor::Background.
+        let index = NamedColor::Background as usize;
+        proxy.send_event(AlacEvent::ColorRequest(
+            index,
+            Arc::new(|rgb| format!("11;rgb:{:02x}/{:02x}/{:02x}", rgb.r, rgb.g, rgb.b)),
+        ));
+
+        let bg = config.colors.background;
+        match rx.try_recv() {
+            Ok(TerminalEvent::PtyWrite(s)) => {
+                assert_eq!(s, format!("11;rgb:{:02x}/{:02x}/{:02x}", bg.r, bg.g, bg.b));
+            }
+            other => panic!("expected PtyWrite, got {other:?}"),
+        }
     }
 
     #[test]

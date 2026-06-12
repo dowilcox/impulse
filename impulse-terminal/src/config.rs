@@ -23,6 +23,17 @@ pub struct TerminalConfig {
     pub working_directory: Option<String>,
     pub env_vars: HashMap<String, String>,
     pub colors: TerminalColors,
+    /// Minimum WCAG contrast ratio (1.0–21.0) enforced between every cell's
+    /// foreground and its background at render time. Foregrounds below it are
+    /// nudged toward black or white until they comply; 1.0 disables the
+    /// adjustment. This fixes app-chosen low-contrast pairs (e.g. dark text
+    /// on a dark selection bar) that no theme palette can prevent.
+    #[serde(default = "default_minimum_contrast")]
+    pub minimum_contrast: f32,
+}
+
+fn default_minimum_contrast() -> f32 {
+    1.0
 }
 
 impl Default for TerminalConfig {
@@ -36,6 +47,7 @@ impl Default for TerminalConfig {
             working_directory: None,
             env_vars: HashMap::new(),
             colors: TerminalColors::default(),
+            minimum_contrast: 1.0,
         }
     }
 }

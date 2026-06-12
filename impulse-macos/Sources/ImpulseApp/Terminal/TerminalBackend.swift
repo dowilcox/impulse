@@ -13,6 +13,8 @@ struct TerminalBackendConfig: Codable {
     var workingDirectory: String?
     var envVars: [String: String] = [:]
     var colors: TerminalBackendColors = TerminalBackendColors()
+    /// Minimum WCAG contrast ratio enforced between cell fg/bg (1.0 = off).
+    var minimumContrast: Double = 1.0
 
     enum CodingKeys: String, CodingKey {
         case scrollbackLines = "scrollback_lines"
@@ -23,6 +25,7 @@ struct TerminalBackendConfig: Codable {
         case workingDirectory = "working_directory"
         case envVars = "env_vars"
         case colors
+        case minimumContrast = "minimum_contrast"
     }
 }
 
@@ -659,6 +662,7 @@ extension TerminalBackendConfig {
         config.colors.foreground = hexToRgb(theme.fg)
         config.colors.background = hexToRgb(theme.bg)
         config.colors.palette = theme.terminalPalette.map { hexToRgb($0) }
+        config.minimumContrast = settings.terminalMinimumContrast
         return config
     }
 }

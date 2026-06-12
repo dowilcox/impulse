@@ -922,6 +922,7 @@ struct TerminalSettings {
   var terminalAttentionOnLongCommand: Bool = true
   var terminalLongCommandSeconds: Int = 30
   var terminalBoldIsBright: Bool = true
+  var terminalMinimumContrast: Double = 3.0
   var terminalAllowOsc52Write: Bool = true
   var terminalAllowOsc52Read: Bool = false
   var keybindingOverrides: [String: String] = [:]
