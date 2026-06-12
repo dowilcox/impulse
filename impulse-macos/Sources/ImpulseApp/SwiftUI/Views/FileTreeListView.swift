@@ -43,7 +43,7 @@ struct FileTreeListView: View {
         )
         return true
       }
-      .background(isRootDropTarget ? Color.accentColor.opacity(0.08) : Color.clear)
+      .background(isRootDropTarget ? model.theme.colorAccent.opacity(0.08) : Color.clear)
     }
   }
 
@@ -141,9 +141,9 @@ private struct FlatFileRowView: View {
 
   private var rowBackground: Color {
     if isDropTarget && node.isDirectory {
-      return Color.accentColor.opacity(0.3)
+      return model.theme.colorAccent.opacity(0.3)
     } else if isActiveFile {
-      return Color.accentColor.opacity(0.2)
+      return model.theme.colorAccent.opacity(0.2)
     } else if isSelectedTreeItem {
       return Color.primary.opacity(0.08)
     } else if isHovered {
@@ -162,13 +162,13 @@ private struct FlatFileRowView: View {
       if node.isDirectory {
         Image(systemName: node.isExpanded ? "chevron.down" : "chevron.right")
           .font(.system(size: 10, weight: .medium))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(model.theme.colorFgMuted.opacity(0.7))
           .frame(width: 16, height: 16)
       } else {
         Spacer().frame(width: 16)
       }
 
-      FileTreeRow(node: node, iconCache: model.iconCache)
+      FileTreeRow(node: node, theme: model.theme, iconCache: model.iconCache)
     }
     .padding(.vertical, 3)
     .padding(.horizontal, 8)
@@ -355,6 +355,7 @@ private struct FlatFileRowView: View {
 /// A single row: themed icon + file name + git status badge.
 struct FileTreeRow: View {
   let node: FileTreeNode
+  let theme: Theme
   var iconCache: IconCache?
 
   var body: some View {
@@ -391,30 +392,32 @@ struct FileTreeRow: View {
     } else if node.isDirectory {
       Image(systemName: "folder.fill")
         .font(.system(size: 13))
-        .foregroundStyle(Color.accentColor)
+        .foregroundStyle(theme.colorAccent)
     } else {
       Image(systemName: "doc.fill")
         .font(.system(size: 13))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.colorFgMuted)
     }
   }
 
   /// Git status display info: badge letter, color for both name and badge.
+  /// Uses the theme's audited git tones — system colors like `.yellow` are
+  /// unreadable on light sidebar canvases (e.g. Harbor).
   private var gitInfo: (letter: String, color: Color)? {
     switch node.gitStatus {
-    case .modified: return ("M", .yellow)
-    case .added: return ("A", .green)
-    case .untracked: return ("?", .green)
-    case .deleted: return ("D", .red)
-    case .renamed: return ("R", .blue)
-    case .conflict: return ("C", .orange)
+    case .modified: return ("M", theme.colorGitModified)
+    case .added: return ("A", theme.colorGitAdded)
+    case .untracked: return ("?", theme.colorGitAdded)
+    case .deleted: return ("D", theme.colorGitDeleted)
+    case .renamed: return ("R", theme.colorGitRenamed)
+    case .conflict: return ("C", theme.colorGitConflict)
     case .ignored: return nil
     case .none: return nil
     }
   }
 
   private var gitNameColor: Color {
-    gitInfo?.color ?? (node.gitStatus == .ignored ? .secondary : .primary)
+    gitInfo?.color ?? (node.gitStatus == .ignored ? theme.colorGitIgnored : theme.colorFg)
   }
 }
 

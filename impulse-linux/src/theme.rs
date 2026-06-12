@@ -693,6 +693,10 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             margin-right: 4px;
             min-width: 14px;
         }}
+        /* TODO: use the per-theme git_added/git_modified/... tones (as the
+           macOS FileTreeRow does via impulse-core's ResolvedTheme) once
+           ThemeColors carries them; the palette colors below are stand-ins
+           and are not contrast-audited for the sidebar canvas. */
         .git-modified {{
             color: {yellow};
         }}
