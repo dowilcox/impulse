@@ -52,8 +52,23 @@ struct TabBarView: View {
       .padding(.horizontal, 8)
       .padding(.vertical, 5)
       .frame(maxWidth: .infinity)
-      .overlay(alignment: .bottom) { Divider() }
+      .overlay(alignment: .bottom) {
+        // Card-surface themes (Harbor) keep the canvas hairline-free; the
+        // floating content card already separates the regions.
+        if !isCardSurface { Divider() }
+      }
     }
+  }
+
+  /// Card-surface themes (e.g. Harbor) style the selected tab as a raised
+  /// content-colored pill with a soft warm shadow instead of material + border.
+  private var isCardSurface: Bool {
+    windowModel.theme.surfaceStyle == "card"
+  }
+
+  /// Warm-hued shadow (#5c5142) per the Harbor spec — never pure black.
+  private var chipShadowColor: Color {
+    Color(red: 0.36, green: 0.32, blue: 0.26)
   }
 
   // MARK: - Drag Logic
@@ -177,22 +192,40 @@ struct TabBarView: View {
     .background(
       Group {
         if isSelected || isDragging {
-          Capsule().fill(.thickMaterial)
+          if isCardSurface {
+            Capsule()
+              .fill(windowModel.theme.colorBg)
+              .shadow(color: chipShadowColor.opacity(0.18), radius: 1.5, x: 0, y: 1)
+          } else {
+            Capsule().fill(.thickMaterial)
+          }
         } else if isHovered {
-          Capsule().fill(Color.primary.opacity(0.04))
+          if isCardSurface {
+            Capsule().fill(windowModel.theme.colorBgHighlight.opacity(0.7))
+          } else {
+            Capsule().fill(Color.primary.opacity(0.04))
+          }
         }
       }
     )
     .overlay(
       Capsule()
         .strokeBorder(
-          isSelected || isDragging
-            ? Color.primary.opacity(0.2)
-            : isHovered ? Color.primary.opacity(0.08) : .clear,
+          isCardSurface
+            ? .clear
+            : isSelected || isDragging
+              ? Color.primary.opacity(0.2)
+              : isHovered ? Color.primary.opacity(0.08) : .clear,
           lineWidth: 1
         )
     )
-    .foregroundStyle(isSelected || isDragging ? .primary : .secondary)
+    .foregroundStyle(
+      isCardSurface
+        ? AnyShapeStyle(
+          isSelected || isDragging
+            ? windowModel.theme.colorFg : windowModel.theme.colorFgMuted)
+        : AnyShapeStyle(isSelected || isDragging ? Color.primary : Color.secondary)
+    )
     .contentShape(Capsule())
     .simultaneousGesture(
       TapGesture().onEnded {

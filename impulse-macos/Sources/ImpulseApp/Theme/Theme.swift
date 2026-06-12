@@ -115,6 +115,10 @@ struct Theme: Codable {
     let terminalFg: String
     let terminalBg: String
     let terminalPalette: [String]
+    /// Content-surface presentation: `"flat"` (default) renders the
+    /// terminal/editor area edge-to-edge; `"card"` floats it as a rounded
+    /// card with a soft shadow on the `bgDark` canvas (Harbor style).
+    let surfaceStyle: String
 
     // Pre-resolved SwiftUI.Color values. Computed once at decode time so hot
     // SwiftUI bodies (e.g. the status bar) don't re-parse hex strings on every
@@ -201,6 +205,7 @@ struct Theme: Codable {
         case terminalFg = "terminal_fg"
         case terminalBg = "terminal_bg"
         case terminalPalette = "terminal_palette"
+        case surfaceStyle = "surface_style"
     }
 
     init(from decoder: Decoder) throws {
@@ -250,6 +255,8 @@ struct Theme: Codable {
         self.terminalFg = try c.decode(String.self, forKey: .terminalFg)
         self.terminalBg = try c.decode(String.self, forKey: .terminalBg)
         self.terminalPalette = try c.decode([String].self, forKey: .terminalPalette)
+        // Older FFI payloads / cached JSON may lack this key — default to flat.
+        self.surfaceStyle = (try? c.decodeIfPresent(String.self, forKey: .surfaceStyle)) ?? "flat"
 
         self.colorBg = Color(NSColor(hex: self.bg))
         self.colorBgDark = Color(NSColor(hex: self.bgDark))

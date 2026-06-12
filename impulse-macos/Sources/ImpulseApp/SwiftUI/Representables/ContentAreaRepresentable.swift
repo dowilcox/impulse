@@ -42,9 +42,15 @@ private class ContentContainer: NSView {
 /// Wraps TabManager's contentView in an NSViewRepresentable for SwiftUI.
 struct ContentAreaRepresentable: NSViewRepresentable {
     let contentView: NSView
+    /// Corner radius for "card" surface themes (e.g. Harbor). Clipping must
+    /// happen at the AppKit layer — SwiftUI's clipShape doesn't clip the
+    /// drawing of embedded NSViews.
+    var cornerRadius: CGFloat = 0
 
     func makeNSView(context: Context) -> NSView {
         let container = ContentContainer()
+        container.wantsLayer = true
+        applyCornerRadius(to: container)
         contentView.translatesAutoresizingMaskIntoConstraints = true
         contentView.autoresizingMask = [.width, .height]
         contentView.frame = container.bounds
@@ -53,5 +59,12 @@ struct ContentAreaRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        applyCornerRadius(to: nsView)
+    }
+
+    private func applyCornerRadius(to view: NSView) {
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = cornerRadius > 0
     }
 }

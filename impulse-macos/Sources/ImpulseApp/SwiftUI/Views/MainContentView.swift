@@ -30,8 +30,7 @@ struct MainContentView: View {
           )
         }
         TabBarView(windowModel: windowModel)
-        ContentAreaRepresentable(contentView: tabManagerContentView)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        contentArea
         StatusBarView(model: windowModel)
       }
     }
@@ -48,6 +47,35 @@ struct MainContentView: View {
         columnVisibility = desired
       }
     }
+  }
+
+  /// "card" surface themes (e.g. Harbor) float the terminal/editor area as a
+  /// rounded card with a soft warm shadow on the bgDark canvas; everything
+  /// else renders it edge-to-edge.
+  @ViewBuilder
+  private var contentArea: some View {
+    if windowModel.theme.surfaceStyle == "card" {
+      ContentAreaRepresentable(contentView: tabManagerContentView, cornerRadius: 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(windowModel.theme.colorBg)
+            .shadow(color: cardShadowColor.opacity(0.20), radius: 7, x: 0, y: 4)
+            .shadow(color: cardShadowColor.opacity(0.08), radius: 1, x: 0, y: 1)
+        )
+        .padding(.top, 10)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
+        .background(windowModel.theme.colorBgDark)
+    } else {
+      ContentAreaRepresentable(contentView: tabManagerContentView)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+
+  /// Warm-hued shadow (#5c5142) per the Harbor spec — never pure black.
+  private var cardShadowColor: Color {
+    Color(red: 0.36, green: 0.32, blue: 0.26)
   }
 }
 

@@ -63,6 +63,10 @@ pub struct SemanticUI {
     pub git_renamed: Option<String>,
     pub git_conflict: Option<String>,
     pub git_ignored: Option<String>,
+    /// Content-surface presentation: `"flat"` (default) renders the
+    /// terminal/editor area edge-to-edge; `"card"` floats it as a rounded
+    /// card with a soft shadow on the `bg_dark` canvas (Harbor style).
+    pub surface_style: Option<String>,
 }
 
 /// Semantic syntax color overrides. All fields optional — derived from palette.
@@ -166,6 +170,13 @@ pub struct ResolvedTheme {
     pub terminal_fg: String,
     pub terminal_bg: String,
     pub terminal_palette: [String; 16],
+    /// `"flat"` or `"card"` — see [`SemanticUI::surface_style`].
+    #[serde(default = "default_surface_style")]
+    pub surface_style: String,
+}
+
+fn default_surface_style() -> String {
+    "flat".to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +529,12 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
         terminal_fg,
         terminal_bg,
         terminal_palette,
+        surface_style: tf
+            .ui
+            .surface_style
+            .clone()
+            .filter(|s| s == "card" || s == "flat")
+            .unwrap_or_else(default_surface_style),
     }
 }
 
@@ -562,6 +579,7 @@ const BUILTIN_THEMES: &[(&str, &str)] = &[
         include_str!("../themes/catppuccin-latte.toml"),
     ),
     ("github-light", include_str!("../themes/github-light.toml")),
+    ("harbor", include_str!("../themes/harbor.toml")),
 ];
 
 /// Return the list of built-in theme IDs in display order.
@@ -805,6 +823,30 @@ mod tests {
         assert!(theme.is_light);
         let theme = get_theme("github-light");
         assert!(theme.is_light);
+        let theme = get_theme("harbor");
+        assert!(theme.is_light);
+    }
+
+    #[test]
+    fn harbor_values_match() {
+        let theme = get_theme("harbor");
+        assert_eq!(theme.name, "Harbor");
+        assert_eq!(theme.bg, "#f8fafd");
+        assert_eq!(theme.bg_dark, "#d2d8de");
+        assert_eq!(theme.accent, "#af5a21");
+        assert_eq!(theme.surface_style, "card");
+        // Every other theme stays flat
+        assert_eq!(get_theme("nord").surface_style, "flat");
+    }
+
+    #[test]
+    fn surface_style_default_and_json_compat() {
+        // Older serialized themes have no surface_style key — must default to flat.
+        let theme = get_theme("kanagawa");
+        let mut json: serde_json::Value = serde_json::from_str(&theme_to_json(&theme)).unwrap();
+        json.as_object_mut().unwrap().remove("surface_style");
+        let parsed = theme_from_json(&json.to_string()).expect("should parse without key");
+        assert_eq!(parsed.surface_style, "flat");
     }
 
     #[test]

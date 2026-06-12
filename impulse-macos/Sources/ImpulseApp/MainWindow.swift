@@ -472,6 +472,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private static let toolbarNewTab = NSToolbarItem.Identifier("newTab")
   private static let toolbarSearch = NSToolbarItem.Identifier("search")
 
+  /// Card-surface themes (Harbor) use flat stroke icons on the canvas instead
+  /// of the system's bordered glass toolbar buttons.
+  private var flatToolbarItems: Bool {
+    windowModel.theme.surfaceStyle == "card"
+  }
+
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
     [
       Self.toolbarSidebarToggle,
@@ -505,7 +511,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "Toggle Sidebar"
       item.target = self
       item.action = #selector(toolbarSidebarToggle(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarNewFile:
@@ -515,7 +521,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "New File"
       item.target = self
       item.action = #selector(newFileAction(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarNewFolder:
@@ -526,7 +532,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "New Folder"
       item.target = self
       item.action = #selector(newFolderAction(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarRefresh:
@@ -536,7 +542,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "Refresh File Tree"
       item.target = self
       item.action = #selector(refreshTreeAction(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarCollapseAll:
@@ -548,7 +554,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "Collapse All Folders"
       item.target = self
       item.action = #selector(collapseAllAction(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarToggleHidden:
@@ -560,7 +566,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = windowModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
       item.target = self
       item.action = #selector(toggleHiddenAction(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarNewTab:
@@ -570,7 +576,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.toolTip = "New Terminal Tab"
       item.target = self
       item.action = #selector(toolbarNewTabClicked(_:))
-      item.isBordered = true
+      item.isBordered = !flatToolbarItems
       return item
 
     case Self.toolbarSearch:
@@ -1024,6 +1030,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // Switch window chrome between light and dark appearance
     window?.appearance = NSAppearance(named: newTheme.isLight ? .aqua : .darkAqua)
+
+    // Toolbar buttons: flat icons for card-surface themes, bordered otherwise.
+    let bordered = newTheme.surfaceStyle != "card"
+    for item in window?.toolbar?.items ?? []
+    where !(item is NSSearchToolbarItem) && !(item is NSTrackingSeparatorToolbarItem) {
+      item.isBordered = bordered
+    }
 
     // Window background — use bgSurface so the titlebar blends with the tab bar
     window?.backgroundColor = newTheme.bgSurfaceColor

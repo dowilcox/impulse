@@ -789,6 +789,9 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     // Tab view in the end pane, wrapped with terminal search bar above
     let right_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     right_box.add_css_class("workspace-content");
+    // Clip children to the box's rounded corners when a "card" surface theme
+    // (e.g. Harbor) gives .workspace-content a border-radius; no-op otherwise.
+    right_box.set_overflow(gtk4::Overflow::Hidden);
     right_box.append(&search_revealer);
     right_box.append(&tab_view);
     tab_view.set_vexpand(true);

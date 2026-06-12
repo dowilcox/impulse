@@ -17,7 +17,16 @@ struct StatusBarView: View {
     }
     .padding(.horizontal, 12)
     .frame(height: 28)
-    .overlay(alignment: .top) { Divider() }
+    .overlay(alignment: .top) {
+      // Card-surface themes keep the canvas hairline-free.
+      if !isCard { Divider() }
+    }
+  }
+
+  /// Card-surface themes (Harbor) use a quiet ink/muted/faint hierarchy in
+  /// the status bar instead of per-item accent hues.
+  private var isCard: Bool {
+    model.theme.surfaceStyle == "card"
   }
 
   // MARK: - Left Group
@@ -26,7 +35,10 @@ struct StatusBarView: View {
   private var leftGroup: some View {
     // Shell name
     if !model.shellName.isEmpty {
-      label(model.shellName, color: model.theme.colorCyan)
+      label(
+        model.shellName,
+        color: isCard ? model.theme.colorFg : model.theme.colorCyan,
+        weight: isCard ? .bold : .regular)
     }
 
     // Git branch
@@ -35,14 +47,17 @@ struct StatusBarView: View {
       HStack(spacing: 3) {
         Image(systemName: "arrow.triangle.branch")
           .font(.system(size: 9))
-        label(branch, color: model.theme.colorMagenta)
+          .foregroundStyle(isCard ? model.theme.colorFgComment : model.theme.colorMagenta)
+        label(branch, color: isCard ? model.theme.colorFgMuted : model.theme.colorMagenta)
       }
     }
 
     // CWD
     if !model.currentCwd.isEmpty {
       separator
-      label(shortenHome(model.currentCwd), color: model.theme.colorFg)
+      label(
+        shortenHome(model.currentCwd),
+        color: isCard ? model.theme.colorFgComment : model.theme.colorFg)
     }
 
     // Blame
@@ -128,16 +143,17 @@ struct StatusBarView: View {
 
   // MARK: - Helpers
 
-  private func label(_ text: String, color: Color) -> some View {
+  private func label(_ text: String, color: Color, weight: Font.Weight = .regular) -> some View {
     Text(text)
-      .font(.system(size: 11))
+      .font(.system(size: 11, weight: weight))
       .foregroundStyle(color)
       .lineLimit(1)
   }
 
   private var separator: some View {
     Rectangle()
-      .fill(model.theme.colorBorder.opacity(0.3))
+      // Card-surface themes separate items with whitespace alone.
+      .fill(isCard ? Color.clear : model.theme.colorBorder.opacity(0.3))
       .frame(width: 1, height: 14)
       .padding(.horizontal, 8)
   }

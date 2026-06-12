@@ -22,6 +22,10 @@ struct FileTreeListView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .focusable()
+      // Keyboard focus is needed for arrow-key navigation, but the system
+      // focus ring around the whole tree is not standard sidebar behavior
+      // (Finder/Xcode draw none).
+      .focusEffectDisabled()
       .onMoveCommand { direction in
         handleMoveCommand(direction, proxy: proxy)
       }

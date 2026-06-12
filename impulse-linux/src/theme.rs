@@ -15,6 +15,11 @@ pub struct ThemeColors {
     pub comment: &'static str,
     /// Monaco base theme: `"vs-dark"` for dark themes, `"vs"` for light themes.
     pub base: &'static str,
+    /// Content-surface presentation: `"flat"` renders the terminal/editor area
+    /// edge-to-edge; `"card"` floats it as a rounded card with a soft shadow on
+    /// the `bg_dark` canvas (Harbor style). Mirrors
+    /// `impulse_core::theme::ResolvedTheme::surface_style`.
+    pub surface_style: &'static str,
     /// Editor selection background — a hex color with alpha (e.g. `"#7E9CD850"`).
     pub selection: &'static str,
     pub terminal_palette: [&'static str; 16],
@@ -40,6 +45,7 @@ pub static KANAGAWA: ThemeColors = ThemeColors {
     orange: "#FFA066",
     comment: "#727169",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#7E9CD850",
     terminal_palette: [
         "#090618", "#C34043", "#76946A", "#C0A36E", "#7E9CD8", "#957FB8", "#6A9589", "#C8C093",
@@ -63,6 +69,7 @@ pub static ROSE_PINE: ThemeColors = ThemeColors {
     orange: "#ebbcba",
     comment: "#6e6a86",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#c4a7e740",
     terminal_palette: [
         "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
@@ -86,6 +93,7 @@ pub static NORD: ThemeColors = ThemeColors {
     orange: "#D08770",
     comment: "#4C566A",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#81A1C150",
     terminal_palette: [
         "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
@@ -109,6 +117,7 @@ pub static GRUVBOX: ThemeColors = ThemeColors {
     orange: "#fe8019",
     comment: "#928374",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#83a59850",
     terminal_palette: [
         "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
@@ -132,6 +141,7 @@ pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
     orange: "#ff9e64",
     comment: "#565f89",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#7aa2f740",
     terminal_palette: [
         "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
@@ -155,6 +165,7 @@ pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
     orange: "#ff9e64",
     comment: "#565f89",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#7aa2f740",
     terminal_palette: [
         "#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
@@ -178,6 +189,7 @@ pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
     orange: "#fab387",
     comment: "#6c7086",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#89b4fa40",
     terminal_palette: [
         "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#bac2de",
@@ -201,6 +213,7 @@ pub static DRACULA: ThemeColors = ThemeColors {
     orange: "#ffb86c",
     comment: "#6272a4",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#bd93f940",
     terminal_palette: [
         "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
@@ -224,6 +237,7 @@ pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
     orange: "#cb4b16",
     comment: "#586e75",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#268bd240",
     terminal_palette: [
         "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
@@ -247,6 +261,7 @@ pub static ONE_DARK: ThemeColors = ThemeColors {
     orange: "#d19a66",
     comment: "#5c6370",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#61afef40",
     terminal_palette: [
         "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
@@ -270,6 +285,7 @@ pub static AYU_DARK: ThemeColors = ThemeColors {
     orange: "#ff8f40",
     comment: "#565b66",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#59c2ff30",
     terminal_palette: [
         "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
@@ -293,6 +309,7 @@ pub static EVERFOREST_DARK: ThemeColors = ThemeColors {
     orange: "#e69875",
     comment: "#7a8478",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#7fbbb340",
     terminal_palette: [
         "#272e33", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#9da9a0",
@@ -316,6 +333,7 @@ pub static GITHUB_DARK: ThemeColors = ThemeColors {
     orange: "#f0883e",
     comment: "#8b949e",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#79c0ff30",
     terminal_palette: [
         "#010409", "#ff7b72", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#8b949e",
@@ -339,6 +357,7 @@ pub static MONOKAI_PRO: ThemeColors = ThemeColors {
     orange: "#fc9867",
     comment: "#727072",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#ab9df240",
     terminal_palette: [
         "#221f22", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#939293",
@@ -362,6 +381,7 @@ pub static PALENIGHT: ThemeColors = ThemeColors {
     orange: "#f78c6c",
     comment: "#676e95",
     base: "vs-dark",
+    surface_style: "flat",
     selection: "#82aaff35",
     terminal_palette: [
         "#1b1e2b", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#676e95",
@@ -385,6 +405,7 @@ pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
     orange: "#cb4b16",
     comment: "#93a1a1",
     base: "vs",
+    surface_style: "flat",
     selection: "#268bd230",
     terminal_palette: [
         "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
@@ -408,6 +429,7 @@ pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
     orange: "#fe640b",
     comment: "#9ca0b0",
     base: "vs",
+    surface_style: "flat",
     selection: "#1e66f525",
     terminal_palette: [
         "#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#acb0be",
@@ -431,10 +453,37 @@ pub static GITHUB_LIGHT: ThemeColors = ThemeColors {
     orange: "#bc4c00",
     comment: "#6e7781",
     base: "vs",
+    surface_style: "flat",
     selection: "#0969da25",
     terminal_palette: [
         "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#0a3069", "#6e7781",
         "#57606a", "#a40e26", "#2da44e", "#bf8700", "#218bff", "#a475f9", "#0a3069", "#1f2328",
+    ],
+};
+
+/// Harbor — mid-tone light theme from the Impulse Harbor design handoff.
+/// Cream content card floating on a blue-slate canvas; copper accent,
+/// indigo for interactive/syntax, red only for danger, green only for success.
+pub static HARBOR: ThemeColors = ThemeColors {
+    bg: "#f8fafd",
+    bg_dark: "#d2d8de",
+    bg_highlight: "#dde4ea",
+    fg: "#222935",
+    fg_dark: "#4d5662",
+    cyan: "#005366",
+    blue: "#3959a6",
+    green: "#267b4c",
+    magenta: "#503975",
+    red: "#ba3535",
+    yellow: "#af5a21",
+    orange: "#9b4805",
+    comment: "#565f69",
+    base: "vs",
+    surface_style: "card",
+    selection: "#3959a640",
+    terminal_palette: [
+        "#222935", "#a5292b", "#095c34", "#af5a21", "#3959a6", "#503975", "#005366", "#6c7278",
+        "#565f69", "#ba3535", "#267b4c", "#af5a21", "#4e71c0", "#674f8d", "#006a7d", "#222935",
     ],
 };
 
@@ -463,6 +512,7 @@ pub fn get_theme(name: &str) -> &'static ThemeColors {
         "solarized-light" | "solarized_light" | "solarizedlight" => &SOLARIZED_LIGHT,
         "catppuccin-latte" | "catppuccin_latte" | "catppuccinlatte" => &CATPPUCCIN_LATTE,
         "github-light" | "github_light" | "githublight" => &GITHUB_LIGHT,
+        "harbor" => &HARBOR,
         _ => &NORD,
     }
 }
@@ -514,6 +564,7 @@ pub fn get_available_themes() -> Vec<&'static str> {
         "solarized-light",
         "catppuccin-latte",
         "github-light",
+        "harbor",
     ]
 }
 
@@ -526,7 +577,7 @@ pub fn get_available_themes() -> Vec<&'static str> {
 /// Returns the `CssProvider` so callers can hold onto it and later replace it
 /// when switching themes at runtime.
 pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
-    let css = format!(
+    let mut css = format!(
         r#"
         /* --- Global font --- */
         window, popover, menu {{
@@ -1036,6 +1087,74 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         orange = theme.orange,
         comment = theme.comment,
     );
+
+    if theme.surface_style == "card" {
+        // Harbor-style floating content card: the terminal/editor surface
+        // floats on the bg_dark canvas with rounded corners and a soft warm
+        // shadow. The window/mod.rs content box uses Overflow::Hidden so
+        // children are clipped to the rounded corners.
+        css.push_str(&format!(
+            r#"
+        .workspace-content {{
+            margin: 10px 16px 14px 16px;
+            background-color: {bg};
+            border-radius: 16px;
+            box-shadow: 0 4px 14px -6px alpha(#5c5142, 0.20),
+                        0 1px 2px alpha(#5c5142, 0.08);
+        }}
+        .impulse-tab-view {{
+            border-radius: 16px;
+        }}
+        .workspace-paned > separator {{
+            background-color: transparent;
+        }}
+        .sidebar {{
+            border-right: none;
+        }}
+        tabbar tab {{
+            border-radius: 999px;
+            margin: 3px 2px;
+        }}
+        tabbar tab:selected {{
+            background-color: {bg};
+            color: {fg};
+            box-shadow: 0 1px 2px alpha(#5c5142, 0.18);
+        }}
+        .status-bar {{
+            border-top: none;
+        }}
+        .status-bar .shell-name {{
+            color: {fg};
+            font-weight: 700;
+        }}
+        .status-bar .git-branch {{
+            color: {fg_dark};
+        }}
+        .status-bar .cwd {{
+            color: {comment};
+        }}
+        /* Git badges sit on the bg_dark canvas — audited Harbor text tones
+           (>=4.5:1 there) instead of the brighter palette hues. */
+        .git-modified, .file-entry-git-modified {{
+            color: #904100;
+        }}
+        .git-added, .git-untracked,
+        .file-entry-git-added, .file-entry-git-untracked {{
+            color: #095c34;
+        }}
+        .git-deleted, .file-entry-git-deleted {{
+            color: #a5292b;
+        }}
+        .git-conflict, .file-entry-git-conflict {{
+            color: #ba3535;
+        }}
+        "#,
+            bg = theme.bg,
+            fg = theme.fg,
+            fg_dark = theme.fg_dark,
+            comment = theme.comment,
+        ));
+    }
 
     let provider = gtk4::CssProvider::new();
     provider.load_from_string(&css);
