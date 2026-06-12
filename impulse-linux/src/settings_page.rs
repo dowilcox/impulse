@@ -433,7 +433,73 @@ pub fn show_settings_window(
 
     let on_changed: Rc<dyn Fn(&Settings)> = Rc::new(on_settings_changed);
 
-    // ── Page 1: Editor ───────────────────────────────────────────────────
+    // ── Page 1: General ──────────────────────────────────────────────────
+    let general_page = adw::PreferencesPage::new();
+    general_page.set_title("General");
+    general_page.set_icon_name(Some("preferences-system-symbolic"));
+
+    // -- Startup group --
+    let startup_group = adw::PreferencesGroup::new();
+    startup_group.set_title("Startup");
+
+    let restore_session_row = adw::SwitchRow::new();
+    restore_session_row.set_title("Restore Previous Session");
+    restore_session_row
+        .set_subtitle("Reopen saved editor tabs and terminal working directories on launch");
+    restore_session_row.set_active(settings.borrow().restore_session);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        restore_session_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.restore_session = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    startup_group.add(&restore_session_row);
+
+    let updates_row = adw::SwitchRow::new();
+    updates_row.set_title("Check for Updates on Launch");
+    updates_row.set_active(settings.borrow().check_for_updates);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        updates_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.check_for_updates = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    startup_group.add(&updates_row);
+    general_page.add(&startup_group);
+
+    // -- Window group --
+    let window_group = adw::PreferencesGroup::new();
+    window_group.set_title("Window");
+
+    let close_warnings_row = adw::SwitchRow::new();
+    close_warnings_row.set_title("Warn Before Closing Active Work");
+    close_warnings_row
+        .set_subtitle("Confirm before closing windows with unsaved files or running commands");
+    close_warnings_row.set_active(settings.borrow().confirm_close_warnings);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        close_warnings_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.confirm_close_warnings = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    window_group.add(&close_warnings_row);
+    general_page.add(&window_group);
+
+    preferences_window.add(&general_page);
+
+    // ── Page 2: Editor ───────────────────────────────────────────────────
     let editor_page = adw::PreferencesPage::new();
     editor_page.set_title("Editor");
     editor_page.set_icon_name(Some("text-editor-symbolic"));
@@ -478,6 +544,21 @@ pub fn show_settings_window(
         });
     }
     font_group.add(&font_size_row);
+
+    let font_ligatures_row = adw::SwitchRow::new();
+    font_ligatures_row.set_title("Font Ligatures");
+    font_ligatures_row.set_active(settings.borrow().font_ligatures);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        font_ligatures_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.font_ligatures = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    font_group.add(&font_ligatures_row);
     editor_page.add(&font_group);
 
     // -- Indentation group --
@@ -520,6 +601,21 @@ pub fn show_settings_window(
         });
     }
     indent_group.add(&use_spaces_row);
+
+    let indent_guides_row = adw::SwitchRow::new();
+    indent_guides_row.set_title("Indentation Guides");
+    indent_guides_row.set_active(settings.borrow().indent_guides);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        indent_guides_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.indent_guides = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    indent_group.add(&indent_guides_row);
     editor_page.add(&indent_group);
 
     // -- Display group --
@@ -623,21 +719,6 @@ pub fn show_settings_window(
     }
     display_group.add(&minimap_row);
 
-    let sticky_scroll_row = adw::SwitchRow::new();
-    sticky_scroll_row.set_title("Sticky Scroll");
-    sticky_scroll_row.set_active(settings.borrow().sticky_scroll);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        sticky_scroll_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.sticky_scroll = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&sticky_scroll_row);
-
     let bracket_color_row = adw::SwitchRow::new();
     bracket_color_row.set_title("Bracket Pair Colorization");
     bracket_color_row.set_active(settings.borrow().bracket_pair_colorization);
@@ -652,81 +733,6 @@ pub fn show_settings_window(
         });
     }
     display_group.add(&bracket_color_row);
-
-    let indent_guides_row = adw::SwitchRow::new();
-    indent_guides_row.set_title("Indentation Guides");
-    indent_guides_row.set_active(settings.borrow().indent_guides);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        indent_guides_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.indent_guides = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&indent_guides_row);
-
-    let font_ligatures_row = adw::SwitchRow::new();
-    font_ligatures_row.set_title("Font Ligatures");
-    font_ligatures_row.set_active(settings.borrow().font_ligatures);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        font_ligatures_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.font_ligatures = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&font_ligatures_row);
-
-    let folding_row = adw::SwitchRow::new();
-    folding_row.set_title("Code Folding");
-    folding_row.set_active(settings.borrow().folding);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        folding_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.folding = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&folding_row);
-
-    let scroll_beyond_row = adw::SwitchRow::new();
-    scroll_beyond_row.set_title("Scroll Beyond Last Line");
-    scroll_beyond_row.set_active(settings.borrow().scroll_beyond_last_line);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        scroll_beyond_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.scroll_beyond_last_line = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&scroll_beyond_row);
-
-    let smooth_scrolling_row = adw::SwitchRow::new();
-    smooth_scrolling_row.set_title("Smooth Scrolling");
-    smooth_scrolling_row.set_active(settings.borrow().smooth_scrolling);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        smooth_scrolling_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.smooth_scrolling = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    display_group.add(&smooth_scrolling_row);
 
     let whitespace_labels = ["None", "Boundary", "Selection", "Trailing", "All"];
     let whitespace_values = ["none", "boundary", "selection", "trailing", "all"];
@@ -781,6 +787,57 @@ pub fn show_settings_window(
     display_group.add(&line_height_row);
 
     editor_page.add(&display_group);
+
+    // -- Scrolling group --
+    let scrolling_group = adw::PreferencesGroup::new();
+    scrolling_group.set_title("Scrolling");
+
+    let sticky_scroll_row = adw::SwitchRow::new();
+    sticky_scroll_row.set_title("Sticky Scroll");
+    sticky_scroll_row.set_active(settings.borrow().sticky_scroll);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        sticky_scroll_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.sticky_scroll = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    scrolling_group.add(&sticky_scroll_row);
+
+    let scroll_beyond_row = adw::SwitchRow::new();
+    scroll_beyond_row.set_title("Scroll Beyond Last Line");
+    scroll_beyond_row.set_active(settings.borrow().scroll_beyond_last_line);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        scroll_beyond_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.scroll_beyond_last_line = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    scrolling_group.add(&scroll_beyond_row);
+
+    let smooth_scrolling_row = adw::SwitchRow::new();
+    smooth_scrolling_row.set_title("Smooth Scrolling");
+    smooth_scrolling_row.set_active(settings.borrow().smooth_scrolling);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        smooth_scrolling_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.smooth_scrolling = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    scrolling_group.add(&smooth_scrolling_row);
+
+    editor_page.add(&scrolling_group);
 
     // -- Cursor group --
     let cursor_group = adw::PreferencesGroup::new();
@@ -908,11 +965,26 @@ pub fn show_settings_window(
     }
     behavior_group.add(&auto_close_row);
 
+    let folding_row = adw::SwitchRow::new();
+    folding_row.set_title("Code Folding");
+    folding_row.set_active(settings.borrow().folding);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        folding_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.folding = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    behavior_group.add(&folding_row);
+
     editor_page.add(&behavior_group);
 
     preferences_window.add(&editor_page);
 
-    // ── Page 2: Terminal ─────────────────────────────────────────────────
+    // ── Page 3: Terminal ─────────────────────────────────────────────────
     let terminal_page = adw::PreferencesPage::new();
     terminal_page.set_title("Terminal");
     terminal_page.set_icon_name(Some("utilities-terminal-symbolic"));
@@ -959,9 +1031,9 @@ pub fn show_settings_window(
     term_font_group.add(&term_font_size_row);
     terminal_page.add(&term_font_group);
 
-    // -- Appearance group --
-    let term_appearance_group = adw::PreferencesGroup::new();
-    term_appearance_group.set_title("Appearance");
+    // -- Cursor group --
+    let term_cursor_group = adw::PreferencesGroup::new();
+    term_cursor_group.set_title("Cursor");
 
     let cursor_shape_labels = ["Block", "IBeam", "Underline"];
     let cursor_shape_values = ["block", "ibeam", "underline"];
@@ -990,7 +1062,7 @@ pub fn show_settings_window(
             }
         });
     }
-    term_appearance_group.add(&cursor_row);
+    term_cursor_group.add(&cursor_row);
 
     let cursor_blink_row = adw::SwitchRow::new();
     cursor_blink_row.set_title("Cursor Blink");
@@ -1005,23 +1077,8 @@ pub fn show_settings_window(
             on_changed(&s);
         });
     }
-    term_appearance_group.add(&cursor_blink_row);
-
-    let bell_row = adw::SwitchRow::new();
-    bell_row.set_title("Audible Bell");
-    bell_row.set_active(settings.borrow().terminal_bell);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        bell_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.terminal_bell = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    term_appearance_group.add(&bell_row);
-    terminal_page.add(&term_appearance_group);
+    term_cursor_group.add(&cursor_blink_row);
+    terminal_page.add(&term_cursor_group);
 
     // -- Behavior group --
     let term_behavior_group = adw::PreferencesGroup::new();
@@ -1075,40 +1132,6 @@ pub fn show_settings_window(
     }
     term_behavior_group.add(&allow_hyperlink_row);
 
-    let close_warnings_row = adw::SwitchRow::new();
-    close_warnings_row.set_title("Warn Before Closing Active Work");
-    close_warnings_row
-        .set_subtitle("Confirm before closing windows with unsaved files or running commands");
-    close_warnings_row.set_active(settings.borrow().confirm_close_warnings);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        close_warnings_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.confirm_close_warnings = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    term_behavior_group.add(&close_warnings_row);
-
-    let restore_session_row = adw::SwitchRow::new();
-    restore_session_row.set_title("Reopen Tabs on Launch");
-    restore_session_row
-        .set_subtitle("Reopen saved editor tabs and terminal working directories on launch");
-    restore_session_row.set_active(settings.borrow().restore_session);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        restore_session_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.restore_session = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    term_behavior_group.add(&restore_session_row);
-
     let bold_is_bright_row = adw::SwitchRow::new();
     bold_is_bright_row.set_title("Bold is Bright");
     bold_is_bright_row.set_subtitle("Map bold text to bright color variants");
@@ -1125,6 +1148,26 @@ pub fn show_settings_window(
     }
     term_behavior_group.add(&bold_is_bright_row);
     terminal_page.add(&term_behavior_group);
+
+    // -- Bell group --
+    let bell_group = adw::PreferencesGroup::new();
+    bell_group.set_title("Bell");
+
+    let bell_row = adw::SwitchRow::new();
+    bell_row.set_title("Audible Bell");
+    bell_row.set_active(settings.borrow().terminal_bell);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        bell_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_bell = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    bell_group.add(&bell_row);
+    terminal_page.add(&bell_group);
 
     // -- Scrollback group --
     let scrollback_group = adw::PreferencesGroup::new();
@@ -1155,7 +1198,7 @@ pub fn show_settings_window(
 
     preferences_window.add(&terminal_page);
 
-    // ── Page 3: Appearance ───────────────────────────────────────────────
+    // ── Page 4: Appearance ───────────────────────────────────────────────
     let appearance_page = adw::PreferencesPage::new();
     appearance_page.set_title("Appearance");
     appearance_page.set_icon_name(Some("applications-graphics-symbolic"));
@@ -1197,28 +1240,9 @@ pub fn show_settings_window(
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
 
-    let updates_group = adw::PreferencesGroup::new();
-    updates_group.set_title("Updates");
-
-    let updates_row = adw::SwitchRow::new();
-    updates_row.set_title("Check for updates on launch");
-    updates_row.set_active(settings.borrow().check_for_updates);
-    {
-        let settings = Rc::clone(settings);
-        let on_changed = Rc::clone(&on_changed);
-        updates_row.connect_active_notify(move |row| {
-            let mut s = settings.borrow_mut();
-            s.check_for_updates = row.is_active();
-            settings::save(&s);
-            on_changed(&s);
-        });
-    }
-    updates_group.add(&updates_row);
-    appearance_page.add(&updates_group);
-
     preferences_window.add(&appearance_page);
 
-    // ── Page 4: Automation ──────────────────────────────────────────────
+    // ── Page 5: Automation ──────────────────────────────────────────────
     let automation_page = adw::PreferencesPage::new();
     automation_page.set_title("Automation");
     automation_page.set_icon_name(Some("system-run-symbolic"));
@@ -1253,7 +1277,7 @@ pub fn show_settings_window(
 
     preferences_window.add(&automation_page);
 
-    // ── Page 5: Keybindings ────────────────────────────────────────────
+    // ── Page 6: Keybindings ────────────────────────────────────────────
     let keybindings_page = adw::PreferencesPage::new();
     keybindings_page.set_title("Keybindings");
     keybindings_page.set_icon_name(Some("preferences-desktop-keyboard-symbolic"));
@@ -1341,7 +1365,7 @@ pub fn show_settings_window(
 
     preferences_window.add(&keybindings_page);
 
-    // ── Page 6: Language Servers ────────────────────────────────────────
+    // ── Page 7: Language Servers ────────────────────────────────────────
     let lsp_page = adw::PreferencesPage::new();
     lsp_page.set_title("Language Servers");
     lsp_page.set_icon_name(Some("network-server-symbolic"));

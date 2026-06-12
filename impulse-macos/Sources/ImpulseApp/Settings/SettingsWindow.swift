@@ -3,6 +3,7 @@ import AppKit
 // MARK: - Toolbar Item Identifiers
 
 extension NSToolbarItem.Identifier {
+  fileprivate static let general = NSToolbarItem.Identifier("general")
   fileprivate static let editor = NSToolbarItem.Identifier("editor")
   fileprivate static let terminal = NSToolbarItem.Identifier("terminal")
   fileprivate static let appearance = NSToolbarItem.Identifier("appearance")
@@ -20,6 +21,7 @@ private struct PaneInfo {
 }
 
 private let allPanes: [PaneInfo] = [
+  PaneInfo(id: .general, label: "General", icon: "gearshape"),
   PaneInfo(id: .editor, label: "Editor", icon: "doc.plaintext"),
   PaneInfo(id: .terminal, label: "Terminal", icon: "terminal"),
   PaneInfo(id: .appearance, label: "Appearance", icon: "paintpalette"),
@@ -30,13 +32,13 @@ private let allPanes: [PaneInfo] = [
 
 // MARK: - Settings Window Controller
 
-/// NSToolbar-based preferences window with panes for Editor, Terminal,
+/// NSToolbar-based preferences window with panes for General, Editor, Terminal,
 /// Appearance, Automation, and Keybindings. Changes save immediately.
 final class SettingsWindowController: NSWindowController {
 
   private var settings: Settings
   private var paneCache: [String: NSView] = [:]
-  private var currentPaneId: String = "editor"
+  private var currentPaneId: String = "general"
   private var saveTimer: Timer?
   private var managedLspStatuses: [[String: Any]] = []
 
@@ -80,7 +82,7 @@ final class SettingsWindowController: NSWindowController {
     window.toolbar = toolbar
 
     // Restore last selected pane
-    let lastPane = UserDefaults.standard.string(forKey: "settingsSelectedPane") ?? "editor"
+    let lastPane = UserDefaults.standard.string(forKey: "settingsSelectedPane") ?? "general"
     switchToPane(lastPane, animated: false)
     toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(lastPane)
   }
@@ -112,13 +114,14 @@ final class SettingsWindowController: NSWindowController {
       paneView = cached
     } else {
       switch identifier {
+      case "general": paneView = makeGeneralPane()
       case "editor": paneView = makeEditorPane()
       case "terminal": paneView = makeTerminalPane()
       case "appearance": paneView = makeAppearancePane()
       case "automation": paneView = makeAutomationPane()
       case "keybindings": paneView = makeKeybindingsPane()
       case "languageServers": paneView = makeLanguageServersPane()
-      default: paneView = makeEditorPane()
+      default: paneView = makeGeneralPane()
       }
       paneCache[identifier] = paneView
     }
@@ -130,6 +133,64 @@ final class SettingsWindowController: NSWindowController {
 
   @objc private func toolbarPaneSelected(_ sender: NSToolbarItem) {
     switchToPane(sender.itemIdentifier.rawValue)
+  }
+
+  // MARK: - General Pane
+
+  private func makeGeneralPane() -> NSView {
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 10
+
+    // -- Startup Section --
+
+    let restoreSessionCheck = NSButton(
+      checkboxWithTitle: "Restore previous session on launch",
+      target: self, action: #selector(restoreSessionChanged(_:)))
+    restoreSessionCheck.state = settings.restoreSession ? .on : .off
+
+    let updatesCheck = NSButton(
+      checkboxWithTitle: "Check for updates on launch",
+      target: self, action: #selector(checkForUpdatesChanged(_:)))
+    updatesCheck.state = settings.checkForUpdates ? .on : .off
+
+    addSection(
+      to: stack, title: "Startup",
+      subtitle: "Restoring the session reopens editor tabs and terminal working directories",
+      rows: [
+        restoreSessionCheck,
+        updatesCheck,
+      ], addSeparator: false)
+
+    // -- Window Section --
+
+    let closeWarningsCheck = NSButton(
+      checkboxWithTitle: "Warn before closing active work",
+      target: self, action: #selector(closeWarningsChanged(_:)))
+    closeWarningsCheck.state = settings.confirmCloseWarnings ? .on : .off
+
+    addSection(
+      to: stack, title: "Window",
+      subtitle: "Confirm before closing windows with unsaved files or running commands",
+      rows: [
+        closeWarningsCheck
+      ])
+
+    // -- Sidebar Section --
+
+    let hiddenCheck = NSButton(
+      checkboxWithTitle: "Show hidden files in sidebar",
+      target: self, action: #selector(sidebarShowHiddenChanged(_:)))
+    hiddenCheck.state = settings.sidebarShowHidden ? .on : .off
+
+    addSection(
+      to: stack, title: "Sidebar",
+      rows: [
+        hiddenCheck
+      ])
+
+    return wrapInScrollView(stack)
   }
 
   // MARK: - Editor Pane
@@ -225,11 +286,6 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(bracketColorizationChanged(_:)))
     bracketCheck.state = settings.bracketPairColorization ? .on : .off
 
-    let stickyScrollCheck = NSButton(
-      checkboxWithTitle: "Sticky scroll",
-      target: self, action: #selector(stickyScrollChanged(_:)))
-    stickyScrollCheck.state = settings.stickyScroll ? .on : .off
-
     let whitespacePopup = NSPopUpButton(
       title: "", target: self, action: #selector(renderWhitespaceChanged(_:)))
     whitespacePopup.addItems(withTitles: ["none", "boundary", "selection", "trailing", "all"])
@@ -275,11 +331,35 @@ final class SettingsWindowController: NSWindowController {
         minimapCheck,
         highlightLineCheck,
         bracketCheck,
-        stickyScrollCheck,
         makeRow(label: "Render Whitespace:", control: whitespacePopup),
         rightMarginCheck,
         makeRow(label: "Right Margin Column:", control: marginRow),
         makeRow(label: "Line Height:", control: lineHeightRow),
+      ])
+
+    // -- Scrolling Section --
+
+    let stickyScrollCheck = NSButton(
+      checkboxWithTitle: "Sticky scroll",
+      target: self, action: #selector(stickyScrollChanged(_:)))
+    stickyScrollCheck.state = settings.stickyScroll ? .on : .off
+
+    let scrollBeyondCheck = NSButton(
+      checkboxWithTitle: "Scroll beyond last line",
+      target: self, action: #selector(scrollBeyondLastLineChanged(_:)))
+    scrollBeyondCheck.state = settings.scrollBeyondLastLine ? .on : .off
+
+    let smoothScrollCheck = NSButton(
+      checkboxWithTitle: "Smooth scrolling",
+      target: self, action: #selector(smoothScrollingChanged(_:)))
+    smoothScrollCheck.state = settings.smoothScrolling ? .on : .off
+
+    addSection(
+      to: stack, title: "Scrolling",
+      rows: [
+        stickyScrollCheck,
+        scrollBeyondCheck,
+        smoothScrollCheck,
       ])
 
     // -- Cursor Section --
@@ -320,24 +400,12 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(autoSaveChanged(_:)))
     autoSaveCheck.state = settings.autoSave ? .on : .off
 
-    let scrollBeyondCheck = NSButton(
-      checkboxWithTitle: "Scroll beyond last line",
-      target: self, action: #selector(scrollBeyondLastLineChanged(_:)))
-    scrollBeyondCheck.state = settings.scrollBeyondLastLine ? .on : .off
-
-    let smoothScrollCheck = NSButton(
-      checkboxWithTitle: "Smooth scrolling",
-      target: self, action: #selector(smoothScrollingChanged(_:)))
-    smoothScrollCheck.state = settings.smoothScrolling ? .on : .off
-
     addSection(
       to: stack, title: "Behavior",
       rows: [
         makeRow(label: "Auto-Close Brackets:", control: autoClosePopup),
         foldingCheck,
         autoSaveCheck,
-        scrollBeyondCheck,
-        smoothScrollCheck,
       ])
 
     return wrapInScrollView(stack)
@@ -403,16 +471,6 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(termCopyOnSelectChanged(_:)))
     copyOnSelectCheck.state = settings.terminalCopyOnSelect ? .on : .off
 
-    let bellCheck = NSButton(
-      checkboxWithTitle: "Audible bell",
-      target: self, action: #selector(termBellChanged(_:)))
-    bellCheck.state = settings.terminalBell ? .on : .off
-
-    let attentionBellCheck = NSButton(
-      checkboxWithTitle: "Request attention on bell",
-      target: self, action: #selector(termAttentionOnBellChanged(_:)))
-    attentionBellCheck.state = settings.terminalAttentionOnBell ? .on : .off
-
     let scrollOutputCheck = NSButton(
       checkboxWithTitle: "Scroll on output",
       target: self, action: #selector(termScrollOnOutputChanged(_:)))
@@ -422,6 +480,32 @@ final class SettingsWindowController: NSWindowController {
       checkboxWithTitle: "Allow hyperlinks",
       target: self, action: #selector(termHyperlinkChanged(_:)))
     hyperlinkCheck.state = settings.terminalAllowHyperlink ? .on : .off
+
+    let boldBrightCheck = NSButton(
+      checkboxWithTitle: "Bold is bright",
+      target: self, action: #selector(termBoldIsBrightChanged(_:)))
+    boldBrightCheck.state = settings.terminalBoldIsBright ? .on : .off
+
+    addSection(
+      to: stack, title: "Behavior",
+      rows: [
+        copyOnSelectCheck,
+        scrollOutputCheck,
+        hyperlinkCheck,
+        boldBrightCheck,
+      ])
+
+    // -- Bell & Notifications Section --
+
+    let bellCheck = NSButton(
+      checkboxWithTitle: "Audible bell",
+      target: self, action: #selector(termBellChanged(_:)))
+    bellCheck.state = settings.terminalBell ? .on : .off
+
+    let attentionBellCheck = NSButton(
+      checkboxWithTitle: "Request attention on bell",
+      target: self, action: #selector(termAttentionOnBellChanged(_:)))
+    attentionBellCheck.state = settings.terminalAttentionOnBell ? .on : .off
 
     let notificationsCheck = NSButton(
       checkboxWithTitle: "Allow terminal notifications",
@@ -433,39 +517,18 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(termLongCommandAttentionChanged(_:)))
     longCommandCheck.state = settings.terminalAttentionOnLongCommand ? .on : .off
 
-    let closeWarningsCheck = NSButton(
-      checkboxWithTitle: "Warn before closing active work",
-      target: self, action: #selector(closeWarningsChanged(_:)))
-    closeWarningsCheck.state = settings.confirmCloseWarnings ? .on : .off
-
-    let restoreSessionCheck = NSButton(
-      checkboxWithTitle: "Reopen tabs on app launch",
-      target: self, action: #selector(restoreSessionChanged(_:)))
-    restoreSessionCheck.state = settings.restoreSession ? .on : .off
-
     let longCommandThresholdField = NSTextField(string: "\(settings.terminalLongCommandSeconds)")
     longCommandThresholdField.target = self
     longCommandThresholdField.action = #selector(termLongCommandSecondsChanged(_:))
 
-    let boldBrightCheck = NSButton(
-      checkboxWithTitle: "Bold is bright",
-      target: self, action: #selector(termBoldIsBrightChanged(_:)))
-    boldBrightCheck.state = settings.terminalBoldIsBright ? .on : .off
-
     addSection(
-      to: stack, title: "Behavior",
+      to: stack, title: "Bell & Notifications",
       rows: [
-        copyOnSelectCheck,
         bellCheck,
         attentionBellCheck,
-        scrollOutputCheck,
-        hyperlinkCheck,
         notificationsCheck,
-        closeWarningsCheck,
-        restoreSessionCheck,
         longCommandCheck,
         makeRow(label: "Long Command Seconds:", control: longCommandThresholdField),
-        boldBrightCheck,
       ])
 
     // -- Scrollback Section --
@@ -520,32 +583,6 @@ final class SettingsWindowController: NSWindowController {
         makeRow(label: "Color Scheme:", control: schemePopup),
         previewBox,
       ], addSeparator: false)
-
-    // -- Sidebar Section --
-
-    let hiddenCheck = NSButton(
-      checkboxWithTitle: "Show hidden files in sidebar",
-      target: self, action: #selector(sidebarShowHiddenChanged(_:)))
-    hiddenCheck.state = settings.sidebarShowHidden ? .on : .off
-
-    addSection(
-      to: stack, title: "Sidebar",
-      rows: [
-        hiddenCheck
-      ])
-
-    // -- Updates Section --
-
-    let updatesCheck = NSButton(
-      checkboxWithTitle: "Check for updates on launch",
-      target: self, action: #selector(checkForUpdatesChanged(_:)))
-    updatesCheck.state = settings.checkForUpdates ? .on : .off
-
-    addSection(
-      to: stack, title: "Updates",
-      rows: [
-        updatesCheck
-      ])
 
     return wrapInScrollView(stack)
   }
