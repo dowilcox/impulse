@@ -472,7 +472,10 @@ final class TabManager: NSObject {
       break
     }
 
-    rebuildSegments()
+    // No rebuildSegments() here: selectTab() syncs to the WindowModel, and
+    // syncing before selection would push the transient (selectedIndex not
+    // yet updated) state to SwiftUI — and trip the consistency assert on the
+    // very first tab insert in debug builds.
     selectTab(index: insertionIndex)
   }
 

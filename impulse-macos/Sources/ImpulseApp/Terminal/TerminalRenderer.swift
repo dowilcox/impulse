@@ -312,7 +312,10 @@ class TerminalRenderer: NSView {
             case .rows(let rows):
                 let ch = fontMetrics.cellHeight
                 for row in rows {
-                    setNeedsDisplay(rectForRow(row).insetBy(dx: 0, dy: -ch))
+                    // Clamp to bounds: top/bottom rows would otherwise damage
+                    // the shared canvas outside the view (see draw(_:)).
+                    setNeedsDisplay(
+                        rectForRow(row).insetBy(dx: 0, dy: -ch).intersection(bounds))
                 }
             }
         }
@@ -348,6 +351,15 @@ class TerminalRenderer: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+        // AppKit can pass a dirty rect that extends beyond our bounds: inside
+        // an NSHostingView hierarchy the view draws into a canvas layer shared
+        // with SwiftUI content, and a relayout (e.g. the tab bar appearing)
+        // damages the whole canvas. Painting outside our bounds would stamp
+        // terminal background over sibling SwiftUI chrome like the tab bar,
+        // so clip everything to our own bounds.
+        context.clip(to: bounds)
+        let dirtyRect = dirtyRect.intersection(bounds)
+        guard !dirtyRect.isEmpty else { return }
         guard let backend, !backend.isShutdown else {
             // Draw default background when no backend is available.
             context.setFillColor(defaultBackgroundColor)
