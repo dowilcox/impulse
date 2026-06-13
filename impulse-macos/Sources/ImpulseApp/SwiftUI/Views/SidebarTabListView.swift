@@ -107,10 +107,11 @@ struct SidebarTabListView: View {
 
       VStack(alignment: .leading, spacing: 1) {
         Text(tab.title)
-          .font(.system(size: 12.5, weight: isSelected ? .medium : .regular))
+          .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
           .lineLimit(1)
           .truncationMode(.middle)
-          .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+          .foregroundStyle(
+            isSelected ? windowModel.theme.colorFg : windowModel.theme.colorFg.opacity(0.82))
 
         if let subtitle = subtitleContent(tab) {
           HStack(spacing: 3) {
@@ -121,7 +122,7 @@ struct SidebarTabListView: View {
               .lineLimit(1)
               .truncationMode(.middle)
           }
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(windowModel.theme.colorFgMuted)
         }
       }
 
@@ -202,6 +203,14 @@ struct SidebarTabListView: View {
   }
 
   private func subtitleContent(_ tab: TabDisplayInfo) -> (symbol: String, text: String)? {
+    // Open files (editor tabs): show the file's location path, not the branch.
+    if !tab.isTerminal {
+      if let directory = tab.directory, !directory.isEmpty {
+        return ("folder", directory)
+      }
+      return nil
+    }
+    // Terminal tabs: git branch, falling back to the working directory.
     if let branch = tab.gitBranch, !branch.isEmpty {
       return ("arrow.triangle.branch", branch)
     }

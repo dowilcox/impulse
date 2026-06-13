@@ -507,21 +507,31 @@ class TerminalRenderer: NSView {
         // -1 means "draw nothing" (a fresh shell with only an empty prompt).
         var lastContentRow = lines - 1
         if let overlay = blockOverlay {
-            let atIdlePrompt = overlay.promptRow != nil
-            if suppressPrompt && atIdlePrompt {
-                if let lastBlock = overlay.blocks.last {
-                    // Anchor on the last command's output; hide the prompt after it.
-                    lastContentRow = Int(lastBlock.endRow)
-                } else if overlay.hasBlocks {
-                    // Commands exist but none reach the viewport (scrolled or
-                    // filtered): only hide from the prompt mark, never output.
-                    lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
-                } else {
-                    // Genuinely fresh shell — blank the redundant empty prompt.
-                    lastContentRow = -1
+            // When content already fills (or exceeds) the viewport — a block
+            // extends above the top edge — the screen is full, so suppressing
+            // the prompt and bottom-anchoring would only insert a blank gap.
+            // The suppress/anchor treatment is for short sessions that need
+            // pushing down to meet the input bar.
+            let contentFillsViewport = overlay.blocks.contains { $0.startRow < 0 }
+            if !contentFillsViewport {
+                let atIdlePrompt = overlay.promptRow != nil
+                if suppressPrompt && atIdlePrompt {
+                    if let lastBlock = overlay.blocks.last {
+                        // Anchor on the last command's output; hide the prompt after it.
+                        lastContentRow = Int(lastBlock.endRow)
+                    } else if overlay.hasBlocks {
+                        // Commands exist but none reach the viewport: only hide
+                        // from the prompt mark, never output.
+                        lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
+                    } else {
+                        // Genuinely fresh shell — blank the redundant empty prompt.
+                        lastContentRow = -1
+                    }
+                } else if let cursorRow = overlay.cursorRow {
+                    // Running command (or prompt not suppressed): anchor the
+                    // live output to the bottom.
+                    lastContentRow = Int(cursorRow)
                 }
-            } else if let cursorRow = overlay.cursorRow {
-                lastContentRow = Int(cursorRow)
             }
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
@@ -1088,14 +1098,6 @@ class TerminalRenderer: NSView {
                 }
             }
 
-            // Exit/duration chip on the block's last line.
-            let chipRow = Int(block.endRow)
-            if !block.isRunning, chipRow >= 0, chipRow < lines, drawRows.contains(chipRow),
-               let text = Self.blockChipText(
-                   exitCode: block.exitCode, durationMs: block.durationMs
-               ) {
-                drawBlockChip(context: context, text: text, row: chipRow, failed: block.failed)
-            }
         }
 
         // Warp-style sticky header: when a block extends above the viewport,
@@ -1375,46 +1377,6 @@ class TerminalRenderer: NSView {
         return "\(minutes / 60)h \(minutes % 60)m"
     }
 
-    /// Right-aligned rounded chip over the block's first line.
-    private func drawBlockChip(context: CGContext, text: String, row: Int, failed: Bool) {
-        let ch = fontMetrics.cellHeight
-        let font = chipFont ?? fontMetrics.font
-        let color = failed ? blockFailedColor : blockMutedTextColor
-        let attrs: [CFString: Any] = [
-            kCTFontAttributeName: font,
-            kCTForegroundColorAttributeName: color,
-        ]
-        guard
-            let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)
-        else { return }
-        let line = CTLineCreateWithAttributedString(attrStr)
-        let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-
-        let chipPadding: CGFloat = 6
-        let chipHeight = ch - 2
-        let chipWidth = textWidth + chipPadding * 2
-        let x = bounds.width - padding - chipWidth
-        let y = padding + CGFloat(row) * ch + 1
-        let rect = CGRect(x: x, y: y, width: chipWidth, height: chipHeight)
-        let radius = min(chipHeight / 2, 6)
-
-        let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        if let fill = defaultBackgroundColor.copy(alpha: 0.92) {
-            context.setFillColor(fill)
-            context.addPath(path)
-            context.fillPath()
-        }
-        context.setStrokeColor(blockSeparatorColor)
-        context.setLineWidth(1)
-        context.addPath(path)
-        context.strokePath()
-
-        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(
-            x: x + chipPadding, y: padding + CGFloat(row) * ch + fontMetrics.ascent
-        )
-        CTLineDraw(line, context)
-    }
 
     /// Pinned command bar along the top edge for the block being scrolled.
     private func drawStickyBlockHeader(
