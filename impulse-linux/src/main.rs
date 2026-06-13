@@ -1,3 +1,4 @@
+mod context_bar;
 mod editor;
 mod editor_webview;
 mod file_icons;
@@ -13,6 +14,7 @@ mod status_bar;
 mod terminal;
 mod terminal_container;
 mod theme;
+mod vertical_tabs;
 mod window;
 
 use gtk4::gio;

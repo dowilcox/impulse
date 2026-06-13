@@ -118,6 +118,55 @@ struct TerminalCommandBlockFlags {
     let hasFailed: Bool
 }
 
+/// One command block mapped into current viewport row coordinates.
+struct TerminalBlockOverlayRegion: Codable, Equatable {
+    let id: UInt64
+    /// Viewport row of the block's first line (its prompt); may be negative.
+    let startRow: Int32
+    /// Viewport row of the block's last line, inclusive; may exceed the grid.
+    let endRow: Int32
+    let command: String?
+    let exitCode: Int32?
+    let isRunning: Bool
+    /// Non-zero exit excluding SIGINT (130) and SIGPIPE (141).
+    let failed: Bool
+    let durationMs: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case startRow = "start_row"
+        case endRow = "end_row"
+        case command
+        case exitCode = "exit_code"
+        case isRunning = "is_running"
+        case failed
+        case durationMs = "duration_ms"
+    }
+}
+
+/// Viewport-mapped snapshot of command blocks plus the live prompt region.
+struct TerminalBlockOverlay: Codable, Equatable {
+    let blocks: [TerminalBlockOverlayRegion]
+    /// Viewport row where the live input prompt begins, when the shell is idle.
+    let promptRow: Int32?
+    /// Viewport row of the cursor, when visible.
+    let cursorRow: Int32?
+    let rows: UInt16
+    /// True while the alternate screen (vim, htop, ...) is active.
+    let altScreen: Bool
+    /// Whether any command block exists this session (vs. a fresh shell).
+    let hasBlocks: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case blocks
+        case promptRow = "prompt_row"
+        case cursorRow = "cursor_row"
+        case rows
+        case altScreen = "alt_screen"
+        case hasBlocks = "has_blocks"
+    }
+}
+
 struct TerminalCommandHistoryRecord: Codable, Equatable {
     let id: UInt64
     let command: String
@@ -206,6 +255,7 @@ struct GridBufferReader {
 
     var modeFlags: UInt16 { readU16(at: 10) }
     var showCursor: Bool { modeFlags & (1 << 0) != 0 }
+    var altScreen: Bool { modeFlags & (1 << 9) != 0 }
     var appCursor: Bool { modeFlags & (1 << 1) != 0 }
     var mouseReportClick: Bool { modeFlags & (1 << 3) != 0 }
     var mouseMotion: Bool { modeFlags & (1 << 4) != 0 }
@@ -454,6 +504,19 @@ final class TerminalBackend {
             return []
         }
         return (try? decoder.decode([TerminalCommandBlock].self, from: data)) ?? []
+    }
+
+    /// Viewport-mapped block regions for Warp-style block decorations.
+    /// Cheap enough to call per frame: only blocks intersecting the
+    /// viewport are serialized.
+    func blockOverlay() -> TerminalBlockOverlay? {
+        guard let handle, !isShutdown,
+              let json = ImpulseCore.terminalBlockOverlay(handle: handle),
+              let data = json.data(using: .utf8)
+        else {
+            return nil
+        }
+        return try? decoder.decode(TerminalBlockOverlay.self, from: data)
     }
 
     func commandBlockFlags() -> TerminalCommandBlockFlags {

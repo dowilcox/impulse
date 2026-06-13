@@ -13,7 +13,9 @@ mod history;
 pub mod osc_scanner;
 mod search;
 
-pub use backend::{CommandBlockFlags, SelectionKind, TerminalBackend};
+pub use backend::{
+    BlockOverlay, BlockOverlayRegion, CommandBlockFlags, SelectionKind, TerminalBackend,
+};
 pub use blocks::{TerminalBlockId, TerminalCommandBlock};
 pub use buffer::{
     buffer_size, write_cell, write_header, HighlightRange, CELL_STRIDE, FIXED_HEADER_SIZE,

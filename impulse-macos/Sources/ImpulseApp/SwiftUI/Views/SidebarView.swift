@@ -1,16 +1,26 @@
 import AppKit
 import SwiftUI
 
-/// Sidebar showing the file tree or search results.
-/// Clean content only — action buttons live in the window toolbar (titlebar).
+/// Sidebar showing the file tree or search results, with the vertical tab
+/// list and a file-action bar stacked above it.
 struct SidebarView: View {
   var model: WindowModel
 
   var body: some View {
-    Group {
+    VStack(spacing: 0) {
+      // Warp-style vertical tab list above the file tree.
+      if model.tabBarPosition == "sidebar" {
+        SidebarTabListView(windowModel: model)
+        Divider()
+          .padding(.horizontal, 12)
+          .padding(.top, 4)
+      }
+
       if model.sidebarPanel == .search {
         SearchPanelView(model: model)
       } else {
+        // File-action bar sits between the tabs and the file tree.
+        SidebarActionBarView(model: model)
         FileTreeListView(model: model)
       }
     }

@@ -59,7 +59,7 @@ class TerminalRenderer: NSView {
 
     var backend: TerminalBackend?
     private(set) var fontMetrics: TerminalFontMetrics
-    let padding: CGFloat = 8
+    let padding: CGFloat = 12
 
     /// Called when the backend emits a non-wakeup event (title change, bell, exit, etc.).
     var onEvent: ((TerminalBackendEvent) -> Void)?
@@ -74,6 +74,13 @@ class TerminalRenderer: NSView {
     var onCopyLastCommand: (() -> Void)?
     var onCopyLastCommandOutput: (() -> Void)?
     var onRerunLastCommand: (() -> Void)?
+
+    /// Per-block context-menu actions (Warp-style: act on the block that
+    /// was right-clicked, not the most recent one).
+    var onCopyBlockCommand: ((UInt64) -> Void)?
+    var onCopyBlockOutput: ((UInt64) -> Void)?
+    var onRerunBlock: ((UInt64) -> Void)?
+    private var contextBlockId: UInt64?
     var onShowCommandHistory: (() -> Void)?
     var onJumpToPreviousCommandBlock: (() -> Void)?
     var onJumpToNextCommandBlock: (() -> Void)?
@@ -126,6 +133,65 @@ class TerminalRenderer: NSView {
     /// 16-color ANSI palette (RGB triplets). Set from the theme.
     /// Used to substitute bold text colors when `boldIsBright` is true.
     var paletteRgb: [(UInt8, UInt8, UInt8)] = []
+
+    // MARK: Block Decoration Properties (Warp-style)
+
+    /// Master switch for command-block decorations (driven by settings).
+    var blocksEnabled: Bool = true {
+        didSet { if blocksEnabled != oldValue { needsDisplay = true } }
+    }
+
+    /// Block emphasized by block navigation; drawn with an accent wash.
+    var highlightedBlockId: UInt64? = nil {
+        didSet { if highlightedBlockId != oldValue { needsDisplay = true } }
+    }
+
+    /// Hairline drawn between command blocks.
+    var blockSeparatorColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.10)
+    /// Status chip text for successful commands.
+    var blockMutedTextColor = CGColor(srgbRed: 0.62, green: 0.64, blue: 0.70, alpha: 1.0)
+    /// Failure stripe, wash, and chip text (theme red).
+    var blockFailedColor = CGColor(srgbRed: 0.75, green: 0.38, blue: 0.42, alpha: 1.0)
+    /// Running-command stripe and navigation highlight (theme accent).
+    var blockAccentColor = CGColor(srgbRed: 0.51, green: 0.63, blue: 0.76, alpha: 1.0)
+    /// Subtle wash behind the live input-prompt region.
+    var blockPromptFillColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.045)
+
+    /// Smaller font for block status chips, derived from the terminal font.
+    private var chipFont: CTFont?
+
+    /// Block currently under the pointer; washed like Warp's hover highlight.
+    private var hoveredBlockId: UInt64? = nil {
+        didSet { if hoveredBlockId != oldValue { needsDisplay = true } }
+    }
+
+    /// Fired (on the main queue) when the alternate screen toggles, so the
+    /// input bar can hide while TUIs own the grid.
+    var onAltScreenChanged: ((Bool) -> Void)?
+    private var lastAltScreen = false
+
+    /// Warp model: the grid only takes keyboard input while a full-screen TUI
+    /// owns the alternate screen. At the shell prompt and during line-based
+    /// commands, all typing goes through the pinned input bar instead, so the
+    /// scrollback reads as immutable command blocks.
+    private(set) var keyboardInteractive = false
+
+    /// Asked to move keyboard focus to the input bar (e.g. the user clicked
+    /// the read-only grid at a prompt).
+    var onRequestInputFocus: (() -> Void)?
+
+    /// Warp model: the input bar replaces the shell's in-grid prompt, so the
+    /// live prompt region is not rendered at all and the last output line is
+    /// anchored directly above the bar. Driven by the context-bar setting;
+    /// ignored on the alternate screen (TUIs own the full grid).
+    var suppressLivePrompt: Bool = true {
+        didSet { if suppressLivePrompt != oldValue { needsDisplay = true } }
+    }
+
+    /// Warp-style bottom anchoring: while the session is shorter than the
+    /// viewport, content is pushed to the bottom edge so the input bar sits
+    /// directly under the last block. 0 once the screen fills.
+    private(set) var contentYOffset: CGFloat = 0
 
     // MARK: Private Properties
 
@@ -199,7 +265,7 @@ class TerminalRenderer: NSView {
 
     // MARK: View Properties
 
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { keyboardInteractive }
     override var isFlipped: Bool { true }
 
     override func becomeFirstResponder() -> Bool {
@@ -310,6 +376,13 @@ class TerminalRenderer: NSView {
             case .full:
                 needsDisplay = true
             case .rows(let rows):
+                if contentYOffset > 0 {
+                    // Bottom-anchored: every new line shifts all rows.
+                    needsRedraw = false
+                    setNeedsDisplay(bounds)
+                    wakeup = true
+                    break
+                }
                 let ch = fontMetrics.cellHeight
                 for row in rows {
                     // Clamp to bounds: top/bottom rows would otherwise damage
@@ -328,7 +401,7 @@ class TerminalRenderer: NSView {
     func rectForRow(_ row: Int) -> NSRect {
         NSRect(
             x: 0,
-            y: padding + CGFloat(row) * fontMetrics.cellHeight,
+            y: contentYOffset + padding + CGFloat(row) * fontMetrics.cellHeight,
             width: bounds.width,
             height: fontMetrics.cellHeight
         )
@@ -378,12 +451,84 @@ class TerminalRenderer: NSView {
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
 
+        // Surface alternate-screen flips to the input bar without mutating
+        // observable state mid-render.
+        let altScreenNow = grid.altScreen
+        if altScreenNow != lastAltScreen {
+            lastAltScreen = altScreenNow
+            keyboardInteractive = altScreenNow
+            if let onAltScreenChanged {
+                DispatchQueue.main.async { onAltScreenChanged(altScreenNow) }
+            }
+        }
+
+        // Command-block decorations: viewport-mapped block regions from the
+        // backend, skipped on the alternate screen (TUIs own the grid there).
+        let blockOverlay: TerminalBlockOverlay? = {
+            guard blocksEnabled, let overlay = backend.blockOverlay(), !overlay.altScreen else {
+                return nil
+            }
+            return overlay
+        }()
+
+        // Warp model: the input bar IS the prompt, so the shell's own in-grid
+        // prompt is redundant. When the bar is active (not a TUI) and the shell
+        // is idle at a prompt, render only up to the last command's output and
+        // bottom-anchor it against the input bar — no empty gap, no redundant
+        // prompt. We key off the last block's output-end row (precise) rather
+        // than the OSC 133;A row, because shells print the cwd line *before*
+        // that mark, so the mark sits mid-prompt.
+        let suppressPrompt = suppressLivePrompt && !altScreenNow
+        // -1 means "draw nothing" (a fresh shell with only an empty prompt).
+        var lastContentRow = lines - 1
+        if let overlay = blockOverlay {
+            let atIdlePrompt = overlay.promptRow != nil
+            if suppressPrompt && atIdlePrompt {
+                if let lastBlock = overlay.blocks.last {
+                    // Anchor on the last command's output; hide the prompt after it.
+                    lastContentRow = Int(lastBlock.endRow)
+                } else if overlay.hasBlocks {
+                    // Commands exist but none reach the viewport (scrolled or
+                    // filtered): only hide from the prompt mark, never output.
+                    lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
+                } else {
+                    // Genuinely fresh shell — blank the redundant empty prompt.
+                    lastContentRow = -1
+                }
+            } else if let cursorRow = overlay.cursorRow {
+                lastContentRow = Int(cursorRow)
+            }
+        }
+        lastContentRow = max(-1, min(lastContentRow, lines - 1))
+
+        var yOffset: CGFloat = 0
+        let contentRows = lastContentRow + 1
+        if contentRows > 0 && contentRows < lines {
+            yOffset = CGFloat(lines - contentRows) * ch
+        }
+        let offsetChanged = yOffset != contentYOffset
+        contentYOffset = yOffset
+        if offsetChanged {
+            // Row positions moved; this pass may be clipped to a stale dirty
+            // region, so schedule a full repaint for the next frame.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.setNeedsDisplay(self.bounds)
+            }
+        }
+
         // Only repaint rows that intersect the invalidated region. tick()
         // invalidates per damaged row; full invalidations (theme, resize,
-        // scroll, …) arrive as the whole bounds and select every row.
-        let drawRows = Self.rowRange(
-            intersecting: dirtyRect, lines: lines, padding: padding, cellHeight: ch
-        )
+        // scroll, …) arrive as the whole bounds and select every row. Rows
+        // past lastContentRow (the suppressed prompt region) are never drawn.
+        let rowCeiling = max(0, lastContentRow + 1)
+        let rawDrawRows = offsetChanged
+            ? 0..<lines
+            : Self.rowRange(
+                intersecting: dirtyRect.offsetBy(dx: 0, dy: -yOffset),
+                lines: lines, padding: padding, cellHeight: ch
+            )
+        let drawRows = min(rawDrawRows.lowerBound, rowCeiling)..<min(rawDrawRows.upperBound, rowCeiling)
 
         // 1. Fill background with the configured terminal background color.
         // Do not infer it from the top-left cell: TUIs like Codex/Claude can
@@ -391,6 +536,18 @@ class TerminalRenderer: NSView {
         // the entire viewport inherit that accent color.
         context.setFillColor(defaultBackgroundColor)
         context.fill(dirtyRect)
+
+        // All content below draws in bottom-anchored coordinates.
+        context.translateBy(x: 0, y: yOffset)
+
+        // 1b. Washes under the text: failed/highlighted block tints and the
+        // live input-prompt region. Per-row fills so partial repaints stay
+        // consistent with the row-based damage model.
+        if let blockOverlay {
+            drawBlockWashes(
+                context: context, overlay: blockOverlay, drawRows: drawRows, lines: lines
+            )
+        }
 
         // 2. Draw non-default cell backgrounds.
         drawCellBackgrounds(
@@ -595,7 +752,16 @@ class TerminalRenderer: NSView {
             }
         }
 
-        // 7. Draw cursor (respects blink phase and shape override from settings).
+        // 6b. Block separators, stripes, and status chips above the text.
+        if let blockOverlay {
+            drawBlockDecorations(
+                context: context, overlay: blockOverlay, drawRows: drawRows, lines: lines
+            )
+        }
+
+        // 7. Draw cursor (respects blink phase and shape override from
+        // settings). When the live prompt is suppressed the cursor sits past
+        // lastContentRow, so drawRows naturally excludes it.
         lastCursorRow = grid.cursorVisible ? Int(grid.cursorRow) : -1
         if grid.cursorVisible && cursorBlinkOn {
             let cursorRow = grid.cursorRow
@@ -823,6 +989,227 @@ class TerminalRenderer: NSView {
         }
     }
 
+    // MARK: Block Decoration Drawing
+
+    /// Translucent row washes under the text: failure tint, navigation
+    /// highlight, and the live input-prompt region. Restricted to damaged
+    /// rows so partial repaints never double-tint a row.
+    private func drawBlockWashes(
+        context: CGContext, overlay: TerminalBlockOverlay, drawRows: Range<Int>, lines: Int
+    ) {
+        let ch = fontMetrics.cellHeight
+        let fullWidth = bounds.width
+
+        func fillRows(_ start: Int, _ end: Int, color: CGColor) {
+            let clampedStart = max(start, 0)
+            let clampedEnd = min(end, lines - 1)
+            guard clampedEnd >= clampedStart else { return }
+            context.setFillColor(color)
+            for row in clampedStart...clampedEnd where drawRows.contains(row) {
+                context.fill(
+                    CGRect(x: 0, y: padding + CGFloat(row) * ch, width: fullWidth, height: ch)
+                )
+            }
+        }
+
+        for block in overlay.blocks {
+            let isHighlighted = block.id == highlightedBlockId
+            let isHovered = block.id == hoveredBlockId
+            if isHovered, !isHighlighted,
+               let hover = blockPromptFillColor.copy(alpha: 0.05) {
+                fillRows(Int(block.startRow), Int(block.endRow), color: hover)
+            }
+            guard block.failed || isHighlighted else { continue }
+            let base = isHighlighted ? blockAccentColor : blockFailedColor
+            guard let wash = base.copy(alpha: isHighlighted ? 0.09 : 0.07) else { continue }
+            fillRows(Int(block.startRow), Int(block.endRow), color: wash)
+        }
+    }
+
+    /// Hairline separators between blocks, left-edge status stripes
+    /// (Warp's "flag pole"), and right-aligned exit/duration chips.
+    private func drawBlockDecorations(
+        context: CGContext, overlay: TerminalBlockOverlay, drawRows: Range<Int>, lines: Int
+    ) {
+        let ch = fontMetrics.cellHeight
+        let fullWidth = bounds.width
+
+        for block in overlay.blocks {
+            let startRow = Int(block.startRow)
+            let endRow = min(Int(block.endRow), lines - 1)
+
+            // Separator along the block's top edge (skip the viewport edge).
+            if startRow > 0, startRow < lines, drawRows.contains(startRow) {
+                let y = (padding + CGFloat(startRow) * ch).rounded() - 0.5
+                context.setStrokeColor(blockSeparatorColor)
+                context.setLineWidth(1)
+                context.move(to: CGPoint(x: padding, y: y))
+                context.addLine(to: CGPoint(x: fullWidth - padding, y: y))
+                context.strokePath()
+            }
+
+            // Left-edge stripe for failed, running, and highlighted blocks,
+            // drawn in the padding gutter so it never covers glyphs.
+            if block.failed || block.isRunning || block.id == highlightedBlockId {
+                let color = block.failed ? blockFailedColor : blockAccentColor
+                context.setFillColor(color)
+                let visibleStart = max(startRow, 0)
+                if endRow >= visibleStart {
+                    for row in visibleStart...endRow where drawRows.contains(row) {
+                        context.fill(
+                            CGRect(x: 3, y: padding + CGFloat(row) * ch, width: 3, height: ch)
+                        )
+                    }
+                }
+            }
+
+            // Exit/duration chip on the block's last line.
+            let chipRow = Int(block.endRow)
+            if !block.isRunning, chipRow >= 0, chipRow < lines, drawRows.contains(chipRow),
+               let text = Self.blockChipText(
+                   exitCode: block.exitCode, durationMs: block.durationMs
+               ) {
+                drawBlockChip(context: context, text: text, row: chipRow, failed: block.failed)
+            }
+        }
+
+        // Warp-style sticky header: when a block extends above the viewport,
+        // pin its command along the top edge so you always know whose output
+        // you're reading.
+        if drawRows.contains(0),
+           let pinned = overlay.blocks.first(where: { $0.startRow < 0 && $0.endRow >= 1 }),
+           let command = pinned.command, !command.isEmpty {
+            drawStickyBlockHeader(context: context, block: pinned, command: command)
+        }
+
+        // Hairline above the live prompt region, separating it from the last
+        // block's output.
+        if let promptRow = overlay.promptRow.map(Int.init),
+           promptRow > 0, promptRow < lines, drawRows.contains(promptRow) {
+            let y = (padding + CGFloat(promptRow) * ch).rounded() - 0.5
+            context.setStrokeColor(blockSeparatorColor)
+            context.setLineWidth(1)
+            context.move(to: CGPoint(x: padding, y: y))
+            context.addLine(to: CGPoint(x: fullWidth - padding, y: y))
+            context.strokePath()
+        }
+    }
+
+    /// "✓ · 1.2s" / "✗ 1 · 3.4s" summary for a completed block.
+    static func blockChipText(exitCode: Int32?, durationMs: UInt64?) -> String? {
+        guard let exitCode else { return nil }
+        let mark = exitCode == 0 ? "✓" : "✗ \(exitCode)"
+        guard let durationMs else { return mark }
+        return "\(mark) · \(formatBlockDuration(durationMs))"
+    }
+
+    static func formatBlockDuration(_ ms: UInt64) -> String {
+        if ms < 1000 { return "\(ms)ms" }
+        let seconds = Double(ms) / 1000.0
+        if seconds < 60 { return String(format: "%.1fs", seconds) }
+        let minutes = Int(seconds) / 60
+        if minutes < 60 { return "\(minutes)m \(Int(seconds) % 60)s" }
+        return "\(minutes / 60)h \(minutes % 60)m"
+    }
+
+    /// Right-aligned rounded chip over the block's first line.
+    private func drawBlockChip(context: CGContext, text: String, row: Int, failed: Bool) {
+        let ch = fontMetrics.cellHeight
+        let font = chipFont ?? fontMetrics.font
+        let color = failed ? blockFailedColor : blockMutedTextColor
+        let attrs: [CFString: Any] = [
+            kCTFontAttributeName: font,
+            kCTForegroundColorAttributeName: color,
+        ]
+        guard
+            let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)
+        else { return }
+        let line = CTLineCreateWithAttributedString(attrStr)
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+
+        let chipPadding: CGFloat = 6
+        let chipHeight = ch - 2
+        let chipWidth = textWidth + chipPadding * 2
+        let x = bounds.width - padding - chipWidth
+        let y = padding + CGFloat(row) * ch + 1
+        let rect = CGRect(x: x, y: y, width: chipWidth, height: chipHeight)
+        let radius = min(chipHeight / 2, 6)
+
+        let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        if let fill = defaultBackgroundColor.copy(alpha: 0.92) {
+            context.setFillColor(fill)
+            context.addPath(path)
+            context.fillPath()
+        }
+        context.setStrokeColor(blockSeparatorColor)
+        context.setLineWidth(1)
+        context.addPath(path)
+        context.strokePath()
+
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(
+            x: x + chipPadding, y: padding + CGFloat(row) * ch + fontMetrics.ascent
+        )
+        CTLineDraw(line, context)
+    }
+
+    /// Pinned command bar along the top edge for the block being scrolled.
+    private func drawStickyBlockHeader(
+        context: CGContext, block: TerminalBlockOverlayRegion, command: String
+    ) {
+        let ch = fontMetrics.cellHeight
+        let barHeight = ch + 6
+        let barRect = CGRect(x: 0, y: 0, width: bounds.width, height: barHeight)
+
+        context.setFillColor(defaultBackgroundColor)
+        context.fill(barRect)
+        context.setStrokeColor(blockSeparatorColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: 0, y: barHeight - 0.5))
+        context.addLine(to: CGPoint(x: bounds.width, y: barHeight - 0.5))
+        context.strokePath()
+
+        if block.failed || block.isRunning {
+            context.setFillColor(block.failed ? blockFailedColor : blockAccentColor)
+            context.fill(CGRect(x: 3, y: 0, width: 3, height: barHeight))
+        }
+
+        // Right-aligned status text.
+        var statusWidth: CGFloat = 0
+        if let status = Self.blockChipText(exitCode: block.exitCode, durationMs: block.durationMs) {
+            let color = block.failed ? blockFailedColor : blockMutedTextColor
+            let attrs: [CFString: Any] = [
+                kCTFontAttributeName: chipFont ?? fontMetrics.font,
+                kCTForegroundColorAttributeName: color,
+            ]
+            if let attrStr = CFAttributedStringCreate(nil, status as CFString, attrs as CFDictionary) {
+                let line = CTLineCreateWithAttributedString(attrStr)
+                statusWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+                context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+                context.textPosition = CGPoint(
+                    x: bounds.width - padding - statusWidth, y: 3 + fontMetrics.ascent
+                )
+                CTLineDraw(line, context)
+            }
+        }
+
+        // "❯ command", truncated to the space left of the status text.
+        let attrs: [CFString: Any] = [
+            kCTFontAttributeName: fontMetrics.font,
+            kCTForegroundColorAttributeName: blockMutedTextColor,
+        ]
+        guard
+            let attrStr = CFAttributedStringCreate(
+                nil, "❯ \(command)" as CFString, attrs as CFDictionary)
+        else { return }
+        let line = CTLineCreateWithAttributedString(attrStr)
+        let maxWidth = Double(bounds.width - padding * 2 - statusWidth - 16)
+        let drawn = CTLineCreateTruncatedLine(line, maxWidth, .end, nil) ?? line
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(x: padding, y: 3 + fontMetrics.ascent)
+        CTLineDraw(drawn, context)
+    }
+
     // MARK: Text Run Drawing
 
     /// Draw a run of text at the given grid position using CoreText.
@@ -923,6 +1310,8 @@ class TerminalRenderer: NSView {
         boldItalicFont = CTFontCreateCopyWithSymbolicTraits(
             base, size, nil, [.boldTrait, .italicTrait], [.boldTrait, .italicTrait]
         ) ?? base
+
+        chipFont = CTFontCreateCopyWithAttributes(base, (size * 0.85).rounded(), nil, nil)
     }
 
     private func fontForStyle(bold: Bool, italic: Bool) -> CTFont {
@@ -1227,6 +1616,8 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        updateHoveredBlock(with: event)
+
         guard allowHyperlinks else {
             clearHoverLink()
             return
@@ -1284,7 +1675,30 @@ class TerminalRenderer: NSView {
         }
     }
 
+    /// Track which command block the pointer is over (Warp-style hover wash).
+    private func updateHoveredBlock(with event: NSEvent) {
+        guard blocksEnabled else {
+            hoveredBlockId = nil
+            return
+        }
+        let (_, row) = gridPoint(from: event)
+        let rowI = Int32(row)
+        guard let overlay = backend?.blockOverlay(), !overlay.altScreen else {
+            hoveredBlockId = nil
+            return
+        }
+        // The live prompt region is not a block; don't highlight it.
+        if let promptRow = overlay.promptRow, rowI >= promptRow {
+            hoveredBlockId = nil
+            return
+        }
+        hoveredBlockId = overlay.blocks.first { block in
+            rowI >= block.startRow && rowI <= block.endRow
+        }?.id
+    }
+
     override func mouseExited(with event: NSEvent) {
+        hoveredBlockId = nil
         clearHoverLink()
     }
 
@@ -1365,7 +1779,13 @@ class TerminalRenderer: NSView {
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        if keyboardInteractive {
+            window?.makeFirstResponder(self)
+        } else {
+            // Read-only grid: selection still works through mouse events, but
+            // keyboard focus belongs to the input bar.
+            onRequestInputFocus?()
+        }
 
         // Cmd+Click on a hyperlink opens the URL. We first try the OSC 8
         // link at the cell, then fall back to an auto-detected URL in the row.
@@ -1513,6 +1933,50 @@ class TerminalRenderer: NSView {
         window?.makeFirstResponder(self)
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        // Block under the pointer: offer Warp-style per-block actions.
+        contextBlockId = nil
+        var contextBlock: TerminalBlockOverlayRegion?
+        if blocksEnabled, let overlay = backend?.blockOverlay(), !overlay.altScreen {
+            let (_, row) = gridPoint(from: event)
+            let rowI = Int32(row)
+            let inPromptRegion = overlay.promptRow.map { rowI >= $0 } ?? false
+            if !inPromptRegion {
+                contextBlock = overlay.blocks.first { rowI >= $0.startRow && rowI <= $0.endRow }
+            }
+        }
+        if let block = contextBlock {
+            contextBlockId = block.id
+            highlightedBlockId = block.id
+
+            let blockCopyCommand = NSMenuItem(
+                title: "Copy Command",
+                action: #selector(contextCopyBlockCommand(_:)),
+                keyEquivalent: ""
+            )
+            blockCopyCommand.target = self
+            blockCopyCommand.isEnabled = !(block.command?.isEmpty ?? true)
+            menu.addItem(blockCopyCommand)
+
+            let blockCopyOutput = NSMenuItem(
+                title: "Copy Output",
+                action: #selector(contextCopyBlockOutput(_:)),
+                keyEquivalent: ""
+            )
+            blockCopyOutput.target = self
+            menu.addItem(blockCopyOutput)
+
+            let blockRerun = NSMenuItem(
+                title: "Re-run Command",
+                action: #selector(contextRerunBlock(_:)),
+                keyEquivalent: ""
+            )
+            blockRerun.target = self
+            blockRerun.isEnabled = !(block.command?.isEmpty ?? true) && !block.isRunning
+            menu.addItem(blockRerun)
+
+            menu.addItem(NSMenuItem.separator())
+        }
         let commandFlags = backend?.commandBlockFlags()
             ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
         let hasCommand = commandFlags.hasCommand
@@ -1627,6 +2091,10 @@ class TerminalRenderer: NSView {
         menu.addItem(clearItem)
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+        // popUpContextMenu blocks until dismissal; drop the emphasis wash.
+        if contextBlockId != nil {
+            highlightedBlockId = nil
+        }
     }
 
     @objc private func contextCopy(_ sender: Any?) {
@@ -1639,6 +2107,18 @@ class TerminalRenderer: NSView {
 
     @objc private func contextCopyLastCommand(_ sender: Any?) {
         onCopyLastCommand?()
+    }
+
+    @objc private func contextCopyBlockCommand(_ sender: Any?) {
+        if let contextBlockId { onCopyBlockCommand?(contextBlockId) }
+    }
+
+    @objc private func contextCopyBlockOutput(_ sender: Any?) {
+        if let contextBlockId { onCopyBlockOutput?(contextBlockId) }
+    }
+
+    @objc private func contextRerunBlock(_ sender: Any?) {
+        if let contextBlockId { onRerunBlock?(contextBlockId) }
     }
 
     @objc private func contextCopyLastCommandOutput(_ sender: Any?) {
@@ -1734,10 +2214,11 @@ class TerminalRenderer: NSView {
         needsDisplay = true
     }
 
+    /// View point -> grid cell, accounting for the bottom-anchor offset.
     private func gridPoint(from event: NSEvent) -> (col: UInt16, row: UInt16) {
         let point = convert(event.locationInWindow, from: nil)
         var col = max(0, Int((point.x - padding) / fontMetrics.cellWidth))
-        var row = max(0, Int((point.y - padding) / fontMetrics.cellHeight))
+        var row = max(0, Int((point.y - contentYOffset - padding) / fontMetrics.cellHeight))
         if let grid = backend?.gridSnapshot() {
             col = min(col, max(0, grid.cols - 1))
             row = min(row, max(0, grid.lines - 1))

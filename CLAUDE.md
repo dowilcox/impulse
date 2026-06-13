@@ -6,9 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Impulse is a terminal-first development environment built with Rust. It combines a terminal emulator with a Monaco-powered code editor in a tabbed interface, with native frontends for Linux (GTK4/libadwaita) and macOS (AppKit/SwiftUI).
 
-## Cross-Platform Development Rule
+## Cross-Platform Development
 
-**IMPORTANT: When making any feature change, bug fix, or UI addition, the change MUST be implemented in BOTH the Linux (`impulse-linux`) and macOS (`impulse-macos`) frontends.** Shared logic belongs in `impulse-core` or `impulse-editor`. Platform-specific UI code goes in the respective frontend crate. If a feature cannot be implemented on one platform yet, add a TODO comment in that frontend's code referencing the feature and the other platform's implementation.
+Frontend changes do **not** need to land on both platforms at once. The Linux (`impulse-linux`) and macOS (`impulse-macos`) frontends can intentionally diverge — a feature may ship on one platform and never come to the other. Implement a change on whichever frontend the task targets; do not auto-port it to the other unless explicitly asked.
+
+Guidance:
+
+- Put logic that genuinely belongs to both platforms (PTY, shell detection, OSC parsing, filesystem, git, LSP, search, settings schema, terminal backend) in `impulse-core` / `impulse-editor` / `impulse-terminal` / `impulse-ffi` so either frontend _can_ use it — but adding it to one frontend's UI does not obligate the other.
+- Platform-specific UI code lives in the respective frontend crate.
+- When a feature exists on one platform but not the other, that's fine and does not require a TODO. Only add a TODO if you started parity work and left it unfinished.
 
 ## Build & Development Commands
 
@@ -73,13 +79,13 @@ Bundles the vendored Monaco editor and defines the WebView communication protoco
 
 ### impulse-linux (binary, GTK4/libadwaita frontend)
 
-Uses GTK4/libadwaita for application chrome, VTE4 for terminal tabs, and WebKitGTK for the Monaco editor WebView. Keep Linux UI work in Rust GTK modules under `impulse-linux/src`; do not reintroduce QML/CXX-Qt for this frontend.
+Uses GTK4/libadwaita for application chrome, the in-tree `impulse-terminal` backend (alacritty_terminal) rendered via cairo for terminal tabs, and WebKitGTK for the Monaco editor WebView. Keep Linux UI work in Rust GTK modules under `impulse-linux/src`; do not reintroduce QML/CXX-Qt for this frontend.
 
 - **main.rs** — `adw::Application` setup with app ID `dev.impulse.Impulse`, CLI flags (`--install-lsp-servers`, `--check-lsp-servers`).
 - **window/** — Main window module split into context structs, tab management, keybinding setup, sidebar signals, and dialogs.
 - **keybindings.rs** — Built-in keybinding registry, accel parsing, and override resolution.
-- **terminal.rs** — Creates configured VTE terminals with shell integration and drag-and-drop support.
-- **terminal_container.rs** — Wraps VTE terminals and handles horizontal/vertical splitting via `gtk4::Paned`.
+- **terminal.rs** — Terminal widget backed by `impulse_terminal::TerminalBackend`, drawn with cairo (grid cells plus Warp-style command-block decorations: separators, status chips, failure stripes).
+- **terminal_container.rs** — Wraps terminals and handles horizontal/vertical splitting via `gtk4::Paned`.
 - **editor.rs** — GtkSourceView editor fallback with auto-detected language and indentation.
 - **editor_webview.rs** — Monaco editor via WebKitGTK WebView. Handles bidirectional JSON messaging with the embedded Monaco instance.
 - **sidebar.rs** — File tree with lazy-loaded directory expansion plus a search panel.
@@ -159,6 +165,9 @@ The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **mac
 - **GTK styling (Linux):** Visual styling is generated from `theme.rs` as CSS applied through `gtk4::CssProvider`; Monaco receives matching theme definitions through the WebKit editor bridge.
 - **SwiftUI/AppKit bridge (macOS):** `@Observable WindowModel` is the single source of truth for UI state. AppKit code (MainWindowController, TabManager) mutates it; SwiftUI views observe it for automatic re-rendering. Communication from SwiftUI back to AppKit uses callback closures on WindowModel (e.g., `onTabSelected`, `onOpenFile`, `onRefreshTree`). The NSToolbar uses `NSToolbarDelegate` with `.sidebarTrackingSeparator` to place items in the correct column. SwiftUI's `.toolbar {}` and `.searchable()` modifiers do NOT work inside `NSHostingView` — all toolbar items must be native `NSToolbarItem`.
 - **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with a flat virtualized row list (`FileTreeListView`), NOT `List` + `DisclosureGroup` (which has known click-handling conflicts). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. Data loading, watchers, and expansion persistence live in the headless `FileTreeDataController`; name-input dialogs use `UI/NameInputDialog.swift`.
+- **Command blocks (Warp-style):** `impulse-terminal` records exact grid rows for OSC 133 prompt/command marks (interleaving the OSC scanner with alacritty's processor) in `blocks.rs`/`backend.rs`. `TerminalBackend::block_overlay()` returns viewport-mapped block regions (prompt row, end row, exit code, duration, running/failed flags) plus the live prompt region; both frontends draw the same decorations from it (separators, right-aligned status chips, failure stripe + wash, hover highlight on macOS). Suppressed on the alternate screen. Failure excludes exit 130/141 (SIGINT/SIGPIPE), following Warp.
+- **Terminal input bar:** a Warp-style command input pinned under the terminal (chips for shell/cwd/branch/last status + a command entry). macOS adds history ghost suggestions, ↑/↓ cycling, and dims the in-grid prompt while the bar has focus. Gated by the `terminal_context_bar` setting.
+- **Vertical tabs:** tabs render as a Warp-style vertical list at the top of the sidebar by default (`tab_bar_position` = "sidebar"); the classic horizontal bar remains available via "top".
 - **Error handling:** Public APIs in `impulse-core` return `Result<T, String>`. Non-fatal errors use `log::warn!`.
 - **Shell integration flow:** Shell scripts emit OSC escapes -> terminal emulator passes raw bytes -> `OscParser` in pty.rs strips and interprets them -> `PtyMessage` events sent to frontend via `PtyEventSender`. This flow is identical on both platforms.
 - **Settings schema:** Both platforms use the same `Settings` struct and JSON format. The `settings.rs` module in each frontend should share the same data model (or it should be moved to `impulse-core` if divergence becomes a problem).

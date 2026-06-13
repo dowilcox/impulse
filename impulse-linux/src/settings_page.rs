@@ -1147,6 +1147,38 @@ pub fn show_settings_window(
         });
     }
     term_behavior_group.add(&bold_is_bright_row);
+
+    let blocks_row = adw::SwitchRow::new();
+    blocks_row.set_title("Command Block Decorations");
+    blocks_row.set_subtitle("Highlight command blocks with status stripes and exit chips");
+    blocks_row.set_active(settings.borrow().terminal_blocks);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        blocks_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_blocks = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&blocks_row);
+
+    let context_bar_row = adw::SwitchRow::new();
+    context_bar_row.set_title("Show Context Bar Below Terminal");
+    context_bar_row.set_subtitle("Command input with shell, directory, and git status chips");
+    context_bar_row.set_active(settings.borrow().terminal_context_bar);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        context_bar_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.terminal_context_bar = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    term_behavior_group.add(&context_bar_row);
     terminal_page.add(&term_behavior_group);
 
     // -- Bell group --
@@ -1239,6 +1271,41 @@ pub fn show_settings_window(
     }
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
+
+    // -- Layout group --
+    let layout_group = adw::PreferencesGroup::new();
+    layout_group.set_title("Layout");
+
+    let tab_bar_labels = ["Sidebar (vertical)", "Top"];
+    let tab_bar_values = ["sidebar", "top"];
+    let tab_bar_model = gtk4::StringList::new(&tab_bar_labels);
+
+    let current_tab_bar = settings.borrow().tab_bar_position.clone();
+    let tab_bar_index = tab_bar_values
+        .iter()
+        .position(|v| *v == current_tab_bar)
+        .unwrap_or(0) as u32;
+
+    let tab_bar_row = adw::ComboRow::new();
+    tab_bar_row.set_title("Tab Bar Position");
+    tab_bar_row.set_subtitle("Show tabs vertically in the sidebar or in the title bar");
+    tab_bar_row.set_model(Some(&tab_bar_model));
+    tab_bar_row.set_selected(tab_bar_index);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        tab_bar_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(&val) = tab_bar_values.get(idx) {
+                let mut s = settings.borrow_mut();
+                s.tab_bar_position = val.to_string();
+                settings::save(&s);
+                on_changed(&s);
+            }
+        });
+    }
+    layout_group.add(&tab_bar_row);
+    appearance_page.add(&layout_group);
 
     preferences_window.add(&appearance_page);
 

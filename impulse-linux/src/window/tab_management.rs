@@ -51,10 +51,12 @@ pub(super) fn make_setup_terminal_signals(
     tab_view: &adw::TabView,
     status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
     sidebar_state: &Rc<sidebar::SidebarState>,
+    context_bar: &Rc<crate::context_bar::ContextBar>,
 ) -> Rc<dyn Fn(&terminal::Terminal)> {
     let tab_view = tab_view.clone();
     let status_bar = status_bar.clone();
     let sidebar_state = sidebar_state.clone();
+    let context_bar = context_bar.clone();
     let project_search_root = sidebar_state.project_search.current_root.clone();
     // Self-populating cache: first lookup per terminal is O(n), subsequent are O(1).
     let page_cache: Rc<RefCell<HashMap<usize, adw::TabPage>>> =
@@ -67,6 +69,7 @@ pub(super) fn make_setup_terminal_signals(
             let sidebar_state = sidebar_state.clone();
             let tab_view = tab_view.clone();
             let page_cache = page_cache.clone();
+            let context_bar = context_bar.clone();
             terminal::connect_current_directory_changed(term, move |terminal| {
                 run_guarded_ui("terminal-cwd-notify", || {
                     if let Some(path) = terminal::current_directory(terminal) {
@@ -78,6 +81,7 @@ pub(super) fn make_setup_terminal_signals(
                             status_bar.borrow().update_cwd(&path);
                             sidebar_state.load_directory(&path);
                             *project_search_root.borrow_mut() = path.to_string();
+                            context_bar.refresh();
                         }
 
                         // Find the terminal's page (cached) and update tree state + title
@@ -103,6 +107,23 @@ pub(super) fn make_setup_terminal_signals(
                 run_guarded_ui("terminal-title-changed", || {
                     if let Some(page) = find_terminal_page(terminal, &tab_view, &page_cache) {
                         page.set_title(&terminal::title(terminal));
+                    }
+                });
+            });
+        }
+
+        // Keep the context bar's status chip and input state in sync with
+        // command starts/ends (OSC 133) on the active terminal.
+        {
+            let tab_view = tab_view.clone();
+            let context_bar = context_bar.clone();
+            terminal::connect_command_block_changed(term, move |terminal| {
+                run_guarded_ui("terminal-command-block-changed", || {
+                    let is_active = tab_view
+                        .selected_page()
+                        .is_some_and(|p| terminal.is_ancestor(&p.child()));
+                    if is_active {
+                        context_bar.refresh();
                     }
                 });
             });

@@ -25,6 +25,14 @@ class TerminalTab: NSView {
   /// Called when the terminal becomes the focused split pane.
   var onFocused: ((TerminalTab) -> Void)?
 
+  /// Whether a command is currently executing (between OSC 133;C and ;D).
+  private(set) var isCommandRunning: Bool = false
+
+  /// Exit code and duration of the most recently completed command, shown
+  /// in the terminal context bar.
+  private(set) var lastCommandExitCode: Int32?
+  private(set) var lastCommandDurationMs: UInt64?
+
   // MARK: Private Properties
 
   private var backend: TerminalBackend?
@@ -91,6 +99,24 @@ class TerminalTab: NSView {
   // MARK: Renderer Callbacks
 
   private func wireRendererCallbacks() {
+    renderer.onAltScreenChanged = { [weak self] altScreen in
+      guard let self else { return }
+      // Entering a full-screen TUI: hand keyboard control to the grid so vim
+      // etc. receive raw keys. Leaving it: the input bar reclaims focus (via
+      // MainWindowController observing this notification).
+      if altScreen {
+        self.window?.makeFirstResponder(self.renderer)
+      }
+      NotificationCenter.default.post(
+        name: .terminalAltScreenChanged,
+        object: self,
+        userInfo: ["altScreen": altScreen]
+      )
+    }
+    renderer.onRequestInputFocus = { [weak self] in
+      guard let self else { return }
+      NotificationCenter.default.post(name: .terminalRequestInputFocus, object: self)
+    }
     renderer.onEvent = { [weak self] event in
       guard let self else { return }
       self.handleBackendEvent(event)
@@ -191,16 +217,37 @@ class TerminalTab: NSView {
         userInfo: ["directory": path]
       )
     case .promptStart:
-      // TODO: scroll-to-prompt navigation. Needs alacritty absolute-line
-      // tracking exposed through FFI so prompt positions survive scrollback.
-      break
+      // The live prompt region moved; chips/separators may sit on rows the
+      // damage tracker doesn't cover, so repaint fully.
+      renderer.needsDisplay = true
     case .commandStart:
       commandStartDate = Date()
     case .commandEnd(let code):
       handleCommandEnd(exitCode: code)
-    case .commandBlockStarted, .commandBlockEnded:
+    case .commandBlockStarted(let block):
+      isCommandRunning = true
       selectedCommandBlockId = nil
-      break
+      renderer.highlightedBlockId = nil
+      renderer.needsDisplay = true
+      NotificationCenter.default.post(
+        name: .terminalCommandBlockChanged,
+        object: self,
+        userInfo: ["block": block]
+      )
+    case .commandBlockEnded(let block):
+      isCommandRunning = false
+      lastCommandExitCode = block.exitCode
+      lastCommandDurationMs = block.endedAtMs.map { ended in
+        ended >= block.startedAtMs ? ended - block.startedAtMs : 0
+      }
+      selectedCommandBlockId = nil
+      renderer.highlightedBlockId = nil
+      renderer.needsDisplay = true
+      NotificationCenter.default.post(
+        name: .terminalCommandBlockChanged,
+        object: self,
+        userInfo: ["block": block]
+      )
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
@@ -491,6 +538,54 @@ class TerminalTab: NSView {
     _ = backend?.rerunCommand(command)
   }
 
+  /// Open the command-history picker (context-bar History button).
+  func presentCommandHistory() {
+    showCommandHistory()
+  }
+
+  /// Send SIGINT (Ctrl+C) to the foreground process.
+  func sendInterrupt() {
+    backend?.write(bytes: [0x03])
+  }
+
+  /// Run a command typed in the input bar: write it to the PTY with a
+  /// newline so the shell echoes it into the current block.
+  func runCommand(_ command: String) {
+    let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    backend?.write(trimmed + "\n")
+  }
+
+  /// First history command starting with `text` (input-bar ghost text).
+  func historySuggestion(for text: String) -> String? {
+    guard !text.isEmpty, let backend else { return nil }
+    let results = backend.commandHistorySearch(
+      text: text, cwd: currentWorkingDirectory, limit: 8
+    )
+    return results.first { result in
+      result.kind == .prefix && result.record.command != text
+    }?.record.command
+  }
+
+  /// Most recent commands, newest first (input-bar ↑/↓ cycling).
+  func recentCommands(limit: Int) -> [String] {
+    guard let backend else { return [] }
+    var seen = Set<String>()
+    return backend.commandHistorySearch(text: "", cwd: nil, limit: limit)
+      .map { $0.record.command }
+      .filter { seen.insert($0).inserted }
+  }
+
+  /// Whether the alternate screen (vim, htop, ...) is active.
+  var isAltScreen: Bool {
+    backend?.mode()?.altScreen ?? false
+  }
+
+  /// Ask the shell to clear the screen (context-bar Clear button).
+  func clearScreen() {
+    backend?.write(bytes: [0x0C])
+  }
+
   private func showCommandHistory() {
     guard backend != nil else { return }
     if historyPicker == nil {
@@ -533,6 +628,7 @@ class TerminalTab: NSView {
     }
 
     selectedCommandBlockId = target.id
+    renderer.highlightedBlockId = target.id
     if backend?.scrollToCommandBlock(id: target.id) == true {
       renderer.needsDisplay = true
     }
@@ -547,6 +643,7 @@ class TerminalTab: NSView {
     else {
       let target = blocks[0]
       self.selectedCommandBlockId = target.id
+      renderer.highlightedBlockId = target.id
       if backend?.scrollToCommandBlock(id: target.id) == true {
         renderer.needsDisplay = true
       }
@@ -555,6 +652,7 @@ class TerminalTab: NSView {
 
     guard index + 1 < blocks.count else {
       self.selectedCommandBlockId = nil
+      renderer.highlightedBlockId = nil
       backend?.scrollToBottom()
       renderer.needsDisplay = true
       return
@@ -562,6 +660,7 @@ class TerminalTab: NSView {
 
     let target = blocks[index + 1]
     self.selectedCommandBlockId = target.id
+    renderer.highlightedBlockId = target.id
     if backend?.scrollToCommandBlock(id: target.id) == true {
       renderer.needsDisplay = true
     }
@@ -573,6 +672,7 @@ class TerminalTab: NSView {
     }
 
     selectedCommandBlockId = target.id
+    renderer.highlightedBlockId = target.id
     if backend?.scrollToCommandBlock(id: target.id) == true {
       renderer.needsDisplay = true
     }
@@ -676,6 +776,7 @@ class TerminalTab: NSView {
     renderer.defaultBackgroundRgb = hexToRgbBytes(theme.bg)
     renderer.selectionColor = cgColorFromHex(theme.selection)
     renderer.cursorColor = cgColorFromHex(theme.cursor)
+    applyBlockDecorationStyle(settings: settings, theme: theme)
 
     // Palette (used for bold-is-bright substitution)
     renderer.paletteRgb = theme.terminalPalette.map { hex in
@@ -713,7 +814,23 @@ class TerminalTab: NSView {
     renderer.defaultBackgroundRgb = hexToRgbBytes(theme.bg)
     renderer.selectionColor = cgColorFromHex(theme.selection)
     renderer.cursorColor = cgColorFromHex(theme.cursor)
+    applyBlockDecorationStyle(settings: settings, theme: theme)
     renderer.needsDisplay = true
+  }
+
+  /// Push block-decoration colors and the blocks setting into the renderer.
+  private func applyBlockDecorationStyle(settings: TerminalSettings, theme: TerminalTheme) {
+    renderer.blocksEnabled = settings.terminalBlocks
+    // When the input bar is present it stands in for the shell's prompt, so
+    // the renderer suppresses the in-grid prompt region.
+    renderer.suppressLivePrompt = settings.terminalContextBar
+    renderer.blockSeparatorColor =
+      cgColorFromHex(theme.border).copy(alpha: 0.6) ?? cgColorFromHex(theme.border)
+    renderer.blockMutedTextColor = cgColorFromHex(theme.fgMuted)
+    renderer.blockFailedColor = cgColorFromHex(theme.red)
+    renderer.blockAccentColor = cgColorFromHex(theme.accent)
+    renderer.blockPromptFillColor =
+      cgColorFromHex(theme.fg).copy(alpha: 0.035) ?? cgColorFromHex(theme.fg)
   }
 
   // MARK: Shell Spawning
@@ -925,6 +1042,8 @@ struct TerminalSettings {
   var terminalMinimumContrast: Double = 3.0
   var terminalAllowOsc52Write: Bool = true
   var terminalAllowOsc52Read: Bool = false
+  var terminalBlocks: Bool = true
+  var terminalContextBar: Bool = true
   var keybindingOverrides: [String: String] = [:]
 }
 
@@ -957,6 +1076,11 @@ struct TerminalTheme {
   var fg: String = "#DCD7BA"
   var selection: String = "#7AA2F740"
   var cursor: String = "#DCD7BA"
+  /// Chrome colors for command-block decorations.
+  var border: String = "#3A3A4A"
+  var fgMuted: String = "#9E9DA6"
+  var accent: String = "#7E9CD8"
+  var red: String = "#C34043"
   /// 16-color ANSI palette as hex strings. Order: black, red, green, yellow,
   /// blue, magenta, cyan, white, then bright variants.
   var terminalPalette: [String] = [

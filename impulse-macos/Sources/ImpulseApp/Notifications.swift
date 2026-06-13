@@ -107,6 +107,15 @@ extension Notification.Name {
     static let terminalProcessTerminated = Notification.Name("impulse.terminalProcessTerminated")
     /// Posted when a terminal tab's attention state changes.
     static let terminalAttentionChanged = Notification.Name("impulse.terminalAttentionChanged")
+    /// Posted when a command block starts or ends in a terminal
+    /// (userInfo["block"]: TerminalCommandBlock).
+    static let terminalCommandBlockChanged = Notification.Name("impulse.terminalCommandBlockChanged")
+    /// Posted when a terminal's alternate screen toggles
+    /// (userInfo["altScreen"]: Bool).
+    static let terminalAltScreenChanged = Notification.Name("impulse.terminalAltScreenChanged")
+    /// Posted when the read-only terminal grid is clicked and keyboard focus
+    /// should move to the input bar.
+    static let terminalRequestInputFocus = Notification.Name("impulse.terminalRequestInputFocus")
 
     // MARK: Terminal Commands
 

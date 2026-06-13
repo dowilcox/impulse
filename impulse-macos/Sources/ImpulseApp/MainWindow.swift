@@ -219,6 +219,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     self.windowModel.showHiddenFiles = settings.sidebarShowHidden
     self.windowModel.sidebarVisible = settings.sidebarVisible
     self.windowModel.sidebarWidth = CGFloat(settings.sidebarWidth)
+    self.windowModel.tabBarPosition = settings.tabBarPosition
+    self.windowModel.contextBarEnabled = settings.terminalContextBar
     self.fileTreeData = FileTreeDataController()
 
     let window = ImpulseWindow(
@@ -326,6 +328,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
     windowModel.onNewTab = { [weak self] in
       self?.tabManager.addTerminalTab()
+    }
+    windowModel.onShowCommandHistory = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.presentCommandHistory()
+    }
+    windowModel.onClearTerminal = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.clearScreen()
+    }
+    windowModel.onRunCommand = { [weak self] command in
+      self?.tabManager.selectedTerminal?.activeTerminal?.runCommand(command)
+    }
+    windowModel.onInputSuggestion = { [weak self] text in
+      self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
+    }
+    windowModel.onRecentCommands = { [weak self] limit in
+      self?.tabManager.selectedTerminal?.activeTerminal?.recentCommands(limit: limit) ?? []
+    }
+    windowModel.onSendInterrupt = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.sendInterrupt()
+    }
+    windowModel.onFocusTerminal = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.focus()
     }
     windowModel.onTabMoved = { [weak self] from, to in
       self?.tabManager.moveTab(from: from, to: to)
@@ -441,6 +464,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.windowModel.onRefreshTree?()
       }
     }
+    // Sidebar action-bar shortcuts: create in the selected tree dir (or root).
+    windowModel.onCreateFile = { [weak self] in self?.newFileAction(nil) }
+    windowModel.onCreateFolder = { [weak self] in self?.newFolderAction(nil) }
 
     // Single NSHostingView replaces ALL AppKit chrome
     let rootView = MainContentView(
@@ -479,16 +505,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   }
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+    // File-tree actions now live in a SwiftUI bar inside the sidebar (below the
+    // vertical tabs); the new-tab "+" lives in the tab list header. The toolbar
+    // keeps only the sidebar toggle and the search field.
     [
       Self.toolbarSidebarToggle,
       .sidebarTrackingSeparator,
-      Self.toolbarNewFile,
-      Self.toolbarNewFolder,
-      Self.toolbarRefresh,
-      Self.toolbarCollapseAll,
-      Self.toolbarToggleHidden,
       .flexibleSpace,
-      Self.toolbarNewTab,
       Self.toolbarSearch,
     ]
   }
@@ -616,9 +639,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   // MARK: - Toolbar Validation
 
   /// Toolbar item identifiers that are only shown when sidebar is visible.
-  private static let sidebarOnlyItems: [NSToolbarItem.Identifier] = [
-    toolbarNewFile, toolbarNewFolder, toolbarRefresh, toolbarCollapseAll, toolbarToggleHidden,
-  ]
+  /// Now empty — file-tree actions moved into the SwiftUI sidebar bar.
+  private static let sidebarOnlyItems: [NSToolbarItem.Identifier] = []
 
   /// Inserts or removes file-tree toolbar items based on sidebar visibility.
   private func updateSidebarToolbarItems() {
@@ -995,6 +1017,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       windowModel.isPreviewable = false
       windowModel.isPreviewing = false
       windowModel.blameInfo = nil
+      let active = tabManager.selectedTerminal?.activeTerminal
+      windowModel.commandRunning = active?.isCommandRunning ?? false
+      windowModel.lastCommandExitCode = active?.lastCommandExitCode
+      windowModel.lastCommandDurationMs = active?.lastCommandDurationMs
+      windowModel.terminalAltScreen = active?.isAltScreen ?? false
     } else if let language = tabInfo.language {
       let cwd = tabInfo.cwd ?? ""
       let branch = cwd.isEmpty ? nil : gitBranch(forDirectory: cwd)
@@ -1510,6 +1537,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.showSearchSidebarAndFocus()
       }
     )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalCommandBlockChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self,
+          let tab = notification.object as? TerminalTab,
+          self.tabManager.selectedTerminal?.activeTerminal === tab
+        else { return }
+        self.updateStatusBar()
+        self.tabManager.syncToWindowModel()
+      })
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalAltScreenChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self,
+          let tab = notification.object as? TerminalTab,
+          self.tabManager.selectedTerminal?.activeTerminal === tab,
+          let altScreen = notification.userInfo?["altScreen"] as? Bool
+        else { return }
+        self.windowModel.terminalAltScreen = altScreen
+        // Leaving a TUI: the input bar reappears and should reclaim focus.
+        if !altScreen {
+          self.windowModel.inputBarFocusToken += 1
+        }
+      })
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalRequestInputFocus, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self,
+          let tab = notification.object as? TerminalTab,
+          self.tabManager.selectedTerminal?.activeTerminal === tab
+        else { return }
+        self.windowModel.inputBarFocusToken += 1
+      })
     notificationObservers.append(
       nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) {
         [weak self] notification in
@@ -2399,6 +2459,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       case .imagePreview:
         break
       }
+    }
+
+    // Re-apply tab strip placement (sidebar vertical list vs top bar).
+    if windowModel.tabBarPosition != settings.tabBarPosition {
+      windowModel.tabBarPosition = settings.tabBarPosition
+    }
+    if windowModel.contextBarEnabled != settings.terminalContextBar {
+      windowModel.contextBarEnabled = settings.terminalContextBar
     }
 
     // Re-apply sidebar show-hidden preference.

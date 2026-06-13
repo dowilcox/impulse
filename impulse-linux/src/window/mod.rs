@@ -795,6 +795,13 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     right_box.append(&search_revealer);
     right_box.append(&tab_view);
     tab_view.set_vexpand(true);
+
+    // Warp-style context/input bar between the terminal area and the status
+    // bar. Visible only for terminal tabs when settings.terminal_context_bar
+    // is enabled.
+    let context_bar = crate::context_bar::build_context_bar(&tab_view, &settings);
+    right_box.append(&context_bar.widget);
+
     paned.set_end_child(Some(&right_box));
 
     main_box.append(&paned);
@@ -861,8 +868,12 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     sidebar_signals::wire_sidebar_signals(&ctx);
 
-    let setup_terminal_signals =
-        tab_management::make_setup_terminal_signals(&tab_view, &status_bar, &sidebar_state);
+    let setup_terminal_signals = tab_management::make_setup_terminal_signals(
+        &tab_view,
+        &status_bar,
+        &sidebar_state,
+        &context_bar,
+    );
 
     let create_tab = tab_management::make_create_tab(
         &tab_view,
@@ -872,6 +883,22 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         &shell_cache,
         &sidebar_state.icon_cache,
     );
+
+    // Vertical tab list at the top of the sidebar (Warp-style). Shown when
+    // tab_bar_position is "sidebar"; the header tab bar is hidden then.
+    let vertical_tabs = {
+        let new_tab: Rc<dyn Fn()> = Rc::new({
+            let create_tab = create_tab.clone();
+            move || create_tab()
+        });
+        crate::vertical_tabs::build_vertical_tabs(&tab_view, new_tab)
+    };
+    sidebar_widget.prepend(&vertical_tabs);
+    {
+        let sidebar_tabs = settings.borrow().tab_bar_position == "sidebar";
+        vertical_tabs.set_visible(sidebar_tabs);
+        tab_bar.set_visible(!sidebar_tabs);
+    }
 
     // Open files passed via CLI / file manager "Open With"
     let has_initial_files = initial_files.as_ref().is_some_and(|f| !f.is_empty());
@@ -1057,12 +1084,18 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let copy_on_select_flag = copy_on_select_flag.clone();
         let font_size = font_size.clone();
         let sidebar_state = sidebar_state.clone();
+        let vertical_tabs = vertical_tabs.clone();
+        let tab_bar = tab_bar.clone();
+        let context_bar = context_bar.clone();
         Rc::new(move || {
             let tab_view = tab_view.clone();
             let css_provider = css_provider.clone();
             let copy_on_select_flag = copy_on_select_flag.clone();
             let font_size = font_size.clone();
             let sidebar_state = sidebar_state.clone();
+            let vertical_tabs = vertical_tabs.clone();
+            let tab_bar = tab_bar.clone();
+            let context_bar = context_bar.clone();
             crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
                 // Keep the font_size Cell in sync so the close handler
                 // doesn't overwrite the user's settings-page changes.
@@ -1084,6 +1117,14 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
                 // Update sidebar file icons for the new theme
                 sidebar_state.update_theme(new_theme);
+
+                // Re-evaluate tab bar position and context bar visibility.
+                // NOTE: set_enabled (not refresh) — this callback may run
+                // while the settings RefCell is mutably borrowed.
+                let sidebar_tabs = s.tab_bar_position == "sidebar";
+                vertical_tabs.set_visible(sidebar_tabs);
+                tab_bar.set_visible(!sidebar_tabs);
+                context_bar.set_enabled(s.terminal_context_bar);
 
                 // Apply to all open tabs
                 for i in 0..tab_view.n_pages() {
@@ -1484,6 +1525,17 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         });
     }
 
+    // Refresh the terminal context bar when switching tabs (visibility and
+    // chips depend on the selected tab's terminal).
+    {
+        let context_bar = context_bar.clone();
+        tab_view.connect_selected_page_notify(move |_| {
+            run_guarded_ui("context-bar-tab-switch", || {
+                context_bar.refresh();
+            });
+        });
+    }
+
     // Set the initial active tab for tree state tracking
     if let Some(page) = tab_view.selected_page() {
         sidebar_state.set_active_tab(&page.child());
@@ -1492,6 +1544,10 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     tab_management::setup_tab_switch_handler(&tab_view, &status_bar, &sidebar_state);
 
     tab_management::setup_tab_close_handler(&ctx, &create_tab, &closed_tabs);
+
+    // Initial tabs were created before the context bar's tab-switch handler
+    // was connected, so evaluate its state once now.
+    context_bar.refresh();
 
     // Save settings when window is closed
     {

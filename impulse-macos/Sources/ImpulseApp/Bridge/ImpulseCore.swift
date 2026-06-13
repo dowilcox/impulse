@@ -749,6 +749,12 @@ final class ImpulseCore {
         return impulse_terminal_command_block_flags(UnsafeMutableRawPointer(handle))
     }
 
+    /// Returns viewport-mapped block regions for block decorations as a JSON string.
+    static func terminalBlockOverlay(handle: OpaquePointer) -> String? {
+        guard let ptr = impulse_terminal_block_overlay(UnsafeMutableRawPointer(handle)) else { return nil }
+        return consumeCString(ptr)
+    }
+
     /// Searches completed terminal command history and returns a JSON array string.
     static func terminalCommandHistorySearch(handle: OpaquePointer, queryJson: String) -> String? {
         let ptr = queryJson.withCString { queryPtr in

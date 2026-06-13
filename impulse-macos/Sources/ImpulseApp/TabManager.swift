@@ -140,6 +140,10 @@ enum TabEntry {
         fg: theme.terminalFg,
         selection: theme.selection,
         cursor: theme.cursor,
+        border: theme.border,
+        fgMuted: theme.fgMuted,
+        accent: theme.accent,
+        red: theme.red,
         terminalPalette: theme.terminalPalette
       )
       container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
@@ -204,6 +208,11 @@ final class TabManager: NSObject {
   /// Icon cache for themed file icons in tab bar.
   private(set) var iconCache: IconCache?
 
+  /// Short-lived git branch cache for vertical tab subtitles, keyed by
+  /// directory. Entries expire after 15 seconds so branch switches show up.
+  private var tabBranchCache: [String: (branch: String, at: Date)] = [:]
+  private var tabBranchPending: Set<String> = []
+
   /// The container view that hosts the active tab's view.
   let contentView: NSView
 
@@ -252,6 +261,10 @@ final class TabManager: NSObject {
       fg: theme.terminalFg,
       selection: theme.selection,
       cursor: theme.cursor,
+      border: theme.border,
+      fgMuted: theme.fgMuted,
+      accent: theme.accent,
+      red: theme.red,
       terminalPalette: theme.terminalPalette
     )
     let container = TerminalContainer(
@@ -273,6 +286,10 @@ final class TabManager: NSObject {
       fg: theme.terminalFg,
       selection: theme.selection,
       cursor: theme.cursor,
+      border: theme.border,
+      fgMuted: theme.fgMuted,
+      accent: theme.accent,
+      red: theme.red,
       terminalPalette: theme.terminalPalette
     )
     let container = TerminalContainer(
@@ -854,14 +871,17 @@ final class TabManager: NSObject {
     )
 
     let infos = tabs.enumerated().map { (i, tab) in
-      TabDisplayInfo(
+      let directory = tabDirectory(for: tab)
+      return TabDisplayInfo(
         id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
         index: i,
         title: tab.title,
         icon: tabIcon(for: tab),
         isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
         isTerminal: { if case .terminal = tab { return true } else { return false } }(),
-        needsAttention: tab.needsAttention
+        needsAttention: tab.needsAttention,
+        gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },
+        directory: directory.map(Self.abbreviateHomePath)
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)
@@ -878,6 +898,61 @@ final class TabManager: NSObject {
   /// terminal title change or editor save).
   func refreshSegmentLabels() {
     syncToWindowModel()
+  }
+
+  // MARK: - Vertical Tab Subtitles
+
+  /// Working directory used for a tab's sidebar subtitle.
+  private func tabDirectory(for tab: TabEntry) -> String? {
+    switch tab {
+    case .terminal(let container):
+      let cwd = container.activeTerminal?.currentWorkingDirectory
+      return (cwd?.isEmpty ?? true) ? nil : cwd
+    case .editor(let editor):
+      return editor.projectDirectory
+        ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent }
+    case .imagePreview(let path, _):
+      return (path as NSString).deletingLastPathComponent
+    }
+  }
+
+  /// Git branch for a directory, resolved off the main thread and cached
+  /// briefly. Returns nil on cache miss and re-syncs once resolved, so the
+  /// sidebar updates without ever blocking tab switching.
+  private func cachedGitBranch(forDirectory dir: String) -> String? {
+    if let entry = tabBranchCache[dir], Date().timeIntervalSince(entry.at) < 15 {
+      return entry.branch.isEmpty ? nil : entry.branch
+    }
+    guard !tabBranchPending.contains(dir) else {
+      return tabBranchCache[dir].flatMap { $0.branch.isEmpty ? nil : $0.branch }
+    }
+    tabBranchPending.insert(dir)
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let branch = ImpulseCore.gitBranch(path: dir) ?? ""
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.tabBranchPending.remove(dir)
+        let previous = self.tabBranchCache[dir]?.branch
+        if self.tabBranchCache.count > 128 {
+          self.tabBranchCache.removeAll(keepingCapacity: true)
+        }
+        self.tabBranchCache[dir] = (branch: branch, at: Date())
+        if previous != branch {
+          self.syncToWindowModel()
+        }
+      }
+    }
+    return tabBranchCache[dir].flatMap { $0.branch.isEmpty ? nil : $0.branch }
+  }
+
+  /// "/Users/me/Code/x" → "~/Code/x" for compact sidebar subtitles.
+  static func abbreviateHomePath(_ path: String) -> String {
+    let home = NSHomeDirectory()
+    if path == home { return "~" }
+    if path.hasPrefix(home + "/") {
+      return "~" + path.dropFirst(home.count)
+    }
+    return path
   }
 
   /// Returns the appropriate icon for a tab entry.

@@ -114,7 +114,13 @@ struct TerminalState {
     scroll_on_output: Cell<bool>,
     terminal_bell: Cell<bool>,
     selected_command_block_id: Cell<Option<u64>>,
+    blocks_enabled: Cell<bool>,
+    block_style: Cell<BlockStyle>,
+    is_command_running: Cell<bool>,
+    last_command_exit: Cell<Option<i32>>,
+    last_command_duration_ms: Cell<Option<u64>>,
     cwd_callbacks: RefCell<Vec<TerminalCallback>>,
+    command_block_callbacks: RefCell<Vec<TerminalCallback>>,
     title_callbacks: RefCell<Vec<TerminalCallback>>,
     child_exited_callbacks: RefCell<Vec<TerminalCallback>>,
 }
@@ -143,10 +149,37 @@ impl TerminalState {
             scroll_on_output: Cell::new(true),
             terminal_bell: Cell::new(false),
             selected_command_block_id: Cell::new(None),
+            blocks_enabled: Cell::new(true),
+            block_style: Cell::new(block_style_from_theme(&crate::theme::KANAGAWA)),
+            is_command_running: Cell::new(false),
+            last_command_exit: Cell::new(None),
+            last_command_duration_ms: Cell::new(None),
             cwd_callbacks: RefCell::new(Vec::new()),
+            command_block_callbacks: RefCell::new(Vec::new()),
             title_callbacks: RefCell::new(Vec::new()),
             child_exited_callbacks: RefCell::new(Vec::new()),
         }
+    }
+}
+
+/// Chrome colors for Warp-style command-block decorations, derived from the
+/// active theme in `apply_settings`.
+#[derive(Clone, Copy)]
+struct BlockStyle {
+    separator: RgbColor,
+    muted_text: RgbColor,
+    failed: RgbColor,
+    accent: RgbColor,
+    prompt_fill: RgbColor,
+}
+
+fn block_style_from_theme(theme: &ThemeColors) -> BlockStyle {
+    BlockStyle {
+        separator: hex_to_rgb(theme.bg_highlight),
+        muted_text: hex_to_rgb(theme.comment),
+        failed: hex_to_rgb(theme.red),
+        accent: hex_to_rgb(theme.blue),
+        prompt_fill: hex_to_rgb(theme.fg),
     }
 }
 
@@ -218,6 +251,8 @@ pub fn apply_settings(
         .set(settings.terminal_scroll_on_output);
     state.terminal_bell.set(settings.terminal_bell);
     copy_on_select_flag.set(settings.terminal_copy_on_select);
+    state.blocks_enabled.set(settings.terminal_blocks);
+    state.block_style.set(block_style_from_theme(theme));
     *state.colors.borrow_mut() = terminal_colors(theme);
 
     if let Some(backend) = state.backend.borrow_mut().as_mut() {
@@ -362,6 +397,44 @@ pub fn title(terminal: &Terminal) -> String {
     state(terminal)
         .map(|s| s.title.borrow().clone())
         .unwrap_or_else(|| "Terminal".to_string())
+}
+
+/// Whether a command is currently executing (between OSC 133;C and ;D).
+pub fn is_command_running(terminal: &Terminal) -> bool {
+    state(terminal).map_or(false, |state| state.is_command_running.get())
+}
+
+/// Exit code and duration of the most recently completed command.
+pub fn last_command_status(terminal: &Terminal) -> Option<(i32, Option<u64>)> {
+    let state = state(terminal)?;
+    let exit = state.last_command_exit.get()?;
+    Some((exit, state.last_command_duration_ms.get()))
+}
+
+/// "✓ · 1.2s" / "✗ 1 · 3.4s" text for the context bar's status chip.
+/// Shares the formatting used by the in-terminal block chips.
+pub fn command_status_chip_text(exit_code: i32, duration_ms: Option<u64>) -> String {
+    block_chip_text(Some(exit_code), duration_ms).unwrap_or_default()
+}
+
+/// Ask the shell to clear the screen (context-bar Clear button).
+pub fn clear_screen(terminal: &Terminal) {
+    write(terminal, &[0x0C]);
+}
+
+/// Open the command-history picker (context-bar History button).
+pub fn show_history(terminal: &Terminal) {
+    show_command_history_picker(terminal);
+}
+
+/// Invoke `f` whenever a command block starts or ends (for the context bar).
+pub fn connect_command_block_changed(terminal: &Terminal, f: impl Fn(&Terminal) + 'static) {
+    if let Some(state) = state(terminal) {
+        state
+            .command_block_callbacks
+            .borrow_mut()
+            .push(Box::new(f));
+    }
 }
 
 pub fn connect_current_directory_changed(terminal: &Terminal, f: impl Fn(&Terminal) + 'static) {
@@ -1376,14 +1449,36 @@ fn poll_events(terminal: &Terminal) -> bool {
             TerminalEvent::ClipboardStore(text) => terminal.clipboard().set_text(&text),
             TerminalEvent::ClipboardLoad
             | TerminalEvent::CursorBlinkingChange
-            | TerminalEvent::PromptStart
             | TerminalEvent::CommandStart
             | TerminalEvent::CommandEnd(_)
             | TerminalEvent::AttentionRequest(_)
             | TerminalEvent::Notification { .. }
             | TerminalEvent::PtyWrite(_) => {}
-            TerminalEvent::CommandBlockStarted(_) | TerminalEvent::CommandBlockEnded(_) => {
+            TerminalEvent::PromptStart => {
+                // The live prompt region moved; repaint block decorations.
+                needs_draw = true;
+            }
+            TerminalEvent::CommandBlockStarted(_) => {
                 state.selected_command_block_id.set(None);
+                state.is_command_running.set(true);
+                needs_draw = true;
+                for callback in state.command_block_callbacks.borrow().iter() {
+                    callback(terminal);
+                }
+            }
+            TerminalEvent::CommandBlockEnded(block) => {
+                state.selected_command_block_id.set(None);
+                state.is_command_running.set(false);
+                state.last_command_exit.set(block.exit_code);
+                state.last_command_duration_ms.set(
+                    block
+                        .ended_at_ms
+                        .map(|ended| ended.saturating_sub(block.started_at_ms)),
+                );
+                needs_draw = true;
+                for callback in state.command_block_callbacks.borrow().iter() {
+                    callback(terminal);
+                }
             }
         }
     }
@@ -1484,6 +1579,31 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         &mut searched_cells,
     );
 
+    // Command-block decorations: viewport-mapped regions from the backend,
+    // skipped on the alternate screen (TUIs own the grid there).
+    let block_overlay = if state.blocks_enabled.get() {
+        state
+            .backend
+            .borrow()
+            .as_ref()
+            .map(|backend| backend.block_overlay())
+            .filter(|overlay| !overlay.alt_screen)
+    } else {
+        None
+    };
+
+    if let Some(overlay) = &block_overlay {
+        draw_block_washes(
+            cr,
+            overlay,
+            &state.block_style.get(),
+            state.selected_command_block_id.get(),
+            width as f64,
+            cell_height,
+            snapshot_rows as i32,
+        );
+    }
+
     let default_bg = current_background(state);
     let mut active_font: Option<(FontSlant, FontWeight)> =
         Some((FontSlant::Normal, FontWeight::Normal));
@@ -1551,6 +1671,26 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         }
     }
 
+    if let Some(overlay) = &block_overlay {
+        draw_block_decorations(
+            cr,
+            overlay,
+            &state.block_style.get(),
+            state.selected_command_block_id.get(),
+            default_bg,
+            width as f64,
+            cell_width,
+            cell_height,
+            font_size,
+            ascent,
+            snapshot_rows as i32,
+            &font_family,
+        );
+        // Restore the cell font face after chip text rendering.
+        cr.select_font_face(&font_family, FontSlant::Normal, FontWeight::Normal);
+        cr.set_font_size(font_size);
+    }
+
     if cursor_visible && cursor_row < snapshot_rows && cursor_col < snapshot_cols {
         let x = TERMINAL_PADDING + cursor_col as f64 * cell_width;
         let y = TERMINAL_PADDING + cursor_row as f64 * cell_height;
@@ -1567,6 +1707,247 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         }
         let _ = cr.fill();
     }
+}
+
+fn set_rgba(cr: &Context, color: RgbColor, alpha: f64) {
+    cr.set_source_rgba(
+        color.r as f64 / 255.0,
+        color.g as f64 / 255.0,
+        color.b as f64 / 255.0,
+        alpha,
+    );
+}
+
+/// Translucent row washes under the text: failure tint, navigation
+/// highlight, and the live input-prompt region.
+fn draw_block_washes(
+    cr: &Context,
+    overlay: &impulse_terminal::BlockOverlay,
+    style: &BlockStyle,
+    highlighted_block: Option<u64>,
+    width: f64,
+    cell_height: f64,
+    rows: i32,
+) {
+    let fill_rows = |color: RgbColor, alpha: f64, start: i32, end: i32| {
+        let start = start.max(0);
+        let end = end.min(rows - 1);
+        if end < start {
+            return;
+        }
+        set_rgba(cr, color, alpha);
+        cr.rectangle(
+            0.0,
+            TERMINAL_PADDING + start as f64 * cell_height,
+            width,
+            (end - start + 1) as f64 * cell_height,
+        );
+        let _ = cr.fill();
+    };
+
+    // Live prompt region: a quiet, distinct surface for the input area.
+    if let Some(prompt_row) = overlay.prompt_row {
+        let end = overlay.cursor_row.unwrap_or(rows - 1);
+        fill_rows(style.prompt_fill, 0.035, prompt_row, end);
+    }
+
+    for block in &overlay.blocks {
+        let is_highlighted = Some(block.id) == highlighted_block;
+        if !block.failed && !is_highlighted {
+            continue;
+        }
+        let (color, alpha) = if is_highlighted {
+            (style.accent, 0.09)
+        } else {
+            (style.failed, 0.07)
+        };
+        fill_rows(color, alpha, block.start_row, block.end_row);
+    }
+}
+
+/// Hairline separators between blocks, left-edge status stripes (Warp's
+/// "flag pole"), and right-aligned exit/duration chips.
+#[allow(clippy::too_many_arguments)]
+fn draw_block_decorations(
+    cr: &Context,
+    overlay: &impulse_terminal::BlockOverlay,
+    style: &BlockStyle,
+    highlighted_block: Option<u64>,
+    default_bg: RgbColor,
+    width: f64,
+    _cell_width: f64,
+    cell_height: f64,
+    font_size: f64,
+    ascent: f64,
+    rows: i32,
+    font_family: &str,
+) {
+    let draw_separator = |row: i32| {
+        if row <= 0 || row >= rows {
+            return;
+        }
+        let y = (TERMINAL_PADDING + row as f64 * cell_height).round() - 0.5;
+        set_rgba(cr, style.separator, 0.6);
+        cr.set_line_width(1.0);
+        cr.move_to(TERMINAL_PADDING, y);
+        cr.line_to(width - TERMINAL_PADDING, y);
+        let _ = cr.stroke();
+    };
+
+    for block in &overlay.blocks {
+        let start_row = block.start_row;
+        let end_row = block.end_row.min(rows - 1);
+
+        draw_separator(start_row);
+
+        // Left-edge stripe for failed, running, and highlighted blocks,
+        // drawn in the padding gutter so it never covers glyphs.
+        let is_highlighted = Some(block.id) == highlighted_block;
+        if block.failed || block.is_running || is_highlighted {
+            let color = if block.failed { style.failed } else { style.accent };
+            let visible_start = start_row.max(0);
+            if end_row >= visible_start {
+                set_rgba(cr, color, 1.0);
+                cr.rectangle(
+                    1.5,
+                    TERMINAL_PADDING + visible_start as f64 * cell_height,
+                    2.5,
+                    (end_row - visible_start + 1) as f64 * cell_height,
+                );
+                let _ = cr.fill();
+            }
+        }
+
+        // Exit/duration chip on the block's first line.
+        if !block.is_running && start_row >= 0 && start_row < rows {
+            if let Some(text) = block_chip_text(block.exit_code, block.duration_ms) {
+                draw_block_chip(
+                    cr,
+                    &text,
+                    block.failed,
+                    style,
+                    default_bg,
+                    width,
+                    cell_height,
+                    font_size,
+                    ascent,
+                    start_row,
+                    font_family,
+                );
+            }
+        }
+    }
+
+    // Hairline above the live prompt region.
+    if let Some(prompt_row) = overlay.prompt_row {
+        draw_separator(prompt_row);
+    }
+}
+
+/// "✓ · 1.2s" / "✗ 1 · 3.4s" summary for a completed block.
+fn block_chip_text(exit_code: Option<i32>, duration_ms: Option<u64>) -> Option<String> {
+    let exit_code = exit_code?;
+    let mark = if exit_code == 0 {
+        "✓".to_string()
+    } else {
+        format!("✗ {exit_code}")
+    };
+    match duration_ms {
+        Some(ms) => Some(format!("{mark} · {}", format_block_duration(ms))),
+        None => Some(mark),
+    }
+}
+
+fn format_block_duration(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else if ms < 3_600_000 {
+        format!("{}m {}s", ms / 60_000, (ms % 60_000) / 1000)
+    } else {
+        format!("{}h {}m", ms / 3_600_000, (ms % 3_600_000) / 60_000)
+    }
+}
+
+/// Right-aligned rounded chip over the block's first line.
+#[allow(clippy::too_many_arguments)]
+fn draw_block_chip(
+    cr: &Context,
+    text: &str,
+    failed: bool,
+    style: &BlockStyle,
+    default_bg: RgbColor,
+    width: f64,
+    cell_height: f64,
+    font_size: f64,
+    ascent: f64,
+    row: i32,
+    font_family: &str,
+) {
+    cr.select_font_face(font_family, FontSlant::Normal, FontWeight::Normal);
+    cr.set_font_size((font_size * 0.85).round());
+    let Ok(extents) = cr.text_extents(text) else {
+        return;
+    };
+
+    let chip_padding = 6.0;
+    let chip_height = cell_height - 2.0;
+    let chip_width = extents.x_advance() + chip_padding * 2.0;
+    let x = width - TERMINAL_PADDING - chip_width;
+    let y = TERMINAL_PADDING + row as f64 * cell_height + 1.0;
+    let radius = (chip_height / 2.0).min(6.0);
+
+    // Rounded-rect pill.
+    let path = |cr: &Context| {
+        cr.new_sub_path();
+        cr.arc(
+            x + chip_width - radius,
+            y + radius,
+            radius,
+            -std::f64::consts::FRAC_PI_2,
+            0.0,
+        );
+        cr.arc(
+            x + chip_width - radius,
+            y + chip_height - radius,
+            radius,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+        );
+        cr.arc(
+            x + radius,
+            y + chip_height - radius,
+            radius,
+            std::f64::consts::FRAC_PI_2,
+            std::f64::consts::PI,
+        );
+        cr.arc(
+            x + radius,
+            y + radius,
+            radius,
+            std::f64::consts::PI,
+            1.5 * std::f64::consts::PI,
+        );
+        cr.close_path();
+    };
+
+    path(cr);
+    set_rgba(cr, default_bg, 0.92);
+    let _ = cr.fill();
+    path(cr);
+    set_rgba(cr, style.separator, 0.6);
+    cr.set_line_width(1.0);
+    let _ = cr.stroke();
+
+    let text_color = if failed { style.failed } else { style.muted_text };
+    set_rgba(cr, text_color, 1.0);
+    // Baseline-align with the row's cell text.
+    cr.move_to(
+        x + chip_padding,
+        TERMINAL_PADDING + row as f64 * cell_height + ascent,
+    );
+    let _ = cr.show_text(text);
 }
 
 fn resize_backend_if_needed(state: &Rc<TerminalState>, cols: u16, rows: u16) {

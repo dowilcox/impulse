@@ -11,7 +11,8 @@ struct TabBarView: View {
   @State private var tabFrames: [Int: CGRect] = [:]
 
   var body: some View {
-    if windowModel.tabDisplayInfos.count > 1 {
+    // Hidden entirely when tabs live in the sidebar (Warp-style layout).
+    if windowModel.tabBarPosition == "top", windowModel.tabDisplayInfos.count > 1 {
       HStack(spacing: 2) {
         ForEach(windowModel.tabDisplayInfos) { tab in
           singleTab(tab)

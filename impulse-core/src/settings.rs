@@ -103,6 +103,17 @@ pub struct Settings {
     /// Minimum WCAG contrast ratio (1.0–21.0) enforced between terminal cell
     /// foreground and background at render time; 1.0 disables the adjustment.
     pub terminal_minimum_contrast: f64,
+    /// Draw Warp-style command block decorations (separators, status chips,
+    /// failure stripes) in the terminal.
+    pub terminal_blocks: bool,
+    /// Show the context bar (shell, cwd, git branch, last command status)
+    /// below the terminal.
+    pub terminal_context_bar: bool,
+
+    // ── Tabs ─────────────────────────────────────────────────────────────
+    /// Where the tab strip lives: "sidebar" (Warp-style vertical list) or
+    /// "top" (classic horizontal bar).
+    pub tab_bar_position: String,
 
     // ── Editor (additional) ──────────────────────────────────────────────
     pub editor_line_height: u32,
@@ -185,6 +196,11 @@ impl Default for Settings {
             terminal_long_command_seconds: 30,
             terminal_bold_is_bright: true,
             terminal_minimum_contrast: 3.0,
+            terminal_blocks: true,
+            terminal_context_bar: true,
+
+            // Tabs
+            tab_bar_position: String::from("sidebar"),
 
             // Editor (additional)
             editor_line_height: 0,
@@ -257,6 +273,9 @@ impl Settings {
         self.editor_line_height = self.editor_line_height.min(100);
         self.window_width = self.window_width.clamp(400, 10000);
         self.window_height = self.window_height.clamp(300, 10000);
+        if self.tab_bar_position != "top" && self.tab_bar_position != "sidebar" {
+            self.tab_bar_position = String::from("sidebar");
+        }
     }
 
     /// Run all pending migrations.

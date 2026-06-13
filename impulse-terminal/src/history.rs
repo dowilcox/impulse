@@ -321,6 +321,9 @@ mod tests {
             output_start_line: 3,
             output_end_line: Some(7),
             output: "ok\n".to_string(),
+            prompt_row: None,
+            output_row: None,
+            end_row: None,
         }
     }
 

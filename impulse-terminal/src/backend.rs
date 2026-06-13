@@ -119,6 +119,13 @@ fn send_wakeup(event_tx: &Sender<TerminalEvent>, wakeup_pending: &AtomicBool) {
     }
 }
 
+/// Absolute grid row of the cursor: eviction estimate + history depth +
+/// on-screen line. Stable across scrolling, exact under line wrapping.
+fn absolute_cursor_row<T: EventListener>(term: &Term<T>, row_base: i64) -> i64 {
+    let grid = term.grid();
+    row_base + grid.history_size() as i64 + i64::from(grid.cursor.point.line.0)
+}
+
 /// Read and reset the term's accumulated damage.
 ///
 /// Returns `None` for full damage, or `Some(rows)` with the damaged viewport
@@ -327,6 +334,53 @@ pub struct CommandBlockFlags {
     pub has_failed: bool,
 }
 
+/// Exit codes that don't count as failures for block decoration:
+/// 130 (SIGINT, user pressed Ctrl+C) and 141 (SIGPIPE, e.g. `cmd | head`).
+const NON_FAILURE_EXIT_CODES: [i32; 2] = [130, 141];
+
+/// One command block mapped into current viewport row coordinates.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct BlockOverlayRegion {
+    pub id: u64,
+    /// Viewport row of the block's first line (its prompt). May be negative
+    /// when the block starts above the visible area.
+    pub start_row: i32,
+    /// Viewport row of the block's last line, inclusive. May extend past the
+    /// bottom of the visible area.
+    pub end_row: i32,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+    pub is_running: bool,
+    /// Failed by Warp's rule: non-zero exit excluding SIGINT/SIGPIPE.
+    pub failed: bool,
+    pub duration_ms: Option<u64>,
+}
+
+/// Viewport-mapped snapshot of command blocks plus the live prompt region,
+/// for Warp-style block decorations. Frontends fetch this per frame and only
+/// receive blocks intersecting the viewport.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct BlockOverlay {
+    pub blocks: Vec<BlockOverlayRegion>,
+    /// Viewport row where the live input prompt begins (shell idle at a
+    /// prompt). `None` while a command is running or when unknown.
+    pub prompt_row: Option<i32>,
+    /// Viewport row of the cursor, `None` when scrolled out of view.
+    pub cursor_row: Option<i32>,
+    pub rows: u16,
+    /// True while the alternate screen (vim, htop, ...) is active; block
+    /// decorations should not be drawn.
+    pub alt_screen: bool,
+    /// Whether any command block has been tracked at all this session. Lets
+    /// the frontend tell a genuinely fresh shell (safe to blank the redundant
+    /// prompt) from one where blocks merely scrolled out of view.
+    pub has_blocks: bool,
+}
+
+/// Longest command text included in overlay regions; headers only need a
+/// summary line, not multi-kilobyte scripts.
+const OVERLAY_COMMAND_MAX_LEN: usize = 200;
+
 impl SelectionKind {
     pub fn from_u8(v: u8) -> Self {
         match v {
@@ -503,6 +557,7 @@ impl TerminalBackend {
         let history_clone = Arc::clone(&history);
         let wakeup_pending_clone = Arc::clone(&wakeup_pending);
         let poller_clone = Arc::clone(&poller);
+        let max_scrollback = config.scrollback_lines;
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
@@ -516,6 +571,7 @@ impl TerminalBackend {
                     history_clone,
                     history_context,
                     wakeup_pending_clone,
+                    max_scrollback,
                 );
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
@@ -546,6 +602,7 @@ impl TerminalBackend {
     /// Reads bytes from the PTY, scans for OSC sequences, feeds data to
     /// alacritty's terminal state machine, and processes commands from the
     /// main thread (input, resize, shutdown).
+    #[allow(clippy::too_many_arguments)]
     fn read_loop(
         mut pty: tty::Pty,
         term: Arc<FairMutex<Term<EventProxy>>>,
@@ -556,6 +613,7 @@ impl TerminalBackend {
         history: Arc<Mutex<CommandHistoryStore>>,
         history_context: CommandHistoryContext,
         wakeup_pending: Arc<AtomicBool>,
+        max_scrollback: usize,
     ) {
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
@@ -689,77 +747,140 @@ impl TerminalBackend {
                             scanner.scan(&buf[..n]);
                             let osc_events = scanner.drain_event_spans();
                             let mut output_cursor = 0usize;
-                            for osc_event in osc_events {
-                                if let Some(start_offset) = osc_event.start_offset {
-                                    let start_offset = start_offset.min(n);
-                                    if start_offset > output_cursor {
-                                        if let Ok(mut blocks) = blocks.lock() {
-                                            blocks
-                                                .observe_output(&buf[output_cursor..start_offset]);
-                                        }
-                                    }
-                                }
+                            let mut advance_cursor = 0usize;
+                            {
+                                // Hold the term lock across the chunk so block row
+                                // marks are recorded against the exact grid state at
+                                // each shell-integration mark.
+                                let mut term_locked = term.lock();
+                                let hs_before = term_locked.grid().history_size();
+                                let nl_before = blocks
+                                    .lock()
+                                    .map(|blocks| blocks.current_output_line())
+                                    .unwrap_or(0);
 
-                                match osc_event.event {
-                                    crate::osc_scanner::OscEvent::CwdChanged(path) => {
-                                        if let Ok(mut blocks) = blocks.lock() {
-                                            blocks.set_cwd(path.clone());
-                                        }
-                                        let _ = event_tx.send(TerminalEvent::CwdChanged(path));
-                                    }
-                                    crate::osc_scanner::OscEvent::CommandText(command) => {
-                                        if let Ok(mut blocks) = blocks.lock() {
-                                            blocks.set_pending_command(command);
-                                        }
-                                    }
-                                    crate::osc_scanner::OscEvent::PromptStart => {
-                                        let _ = event_tx.send(TerminalEvent::PromptStart);
-                                    }
-                                    crate::osc_scanner::OscEvent::CommandStart => {
-                                        if let Ok(mut blocks) = blocks.lock() {
-                                            let block = blocks.command_started();
-                                            let _ = event_tx
-                                                .send(TerminalEvent::CommandBlockStarted(block));
-                                        }
-                                        let _ = event_tx.send(TerminalEvent::CommandStart);
-                                    }
-                                    crate::osc_scanner::OscEvent::CommandEnd(code) => {
-                                        if let Ok(mut blocks) = blocks.lock() {
-                                            if let Some(block) = blocks.command_ended(code) {
-                                                if let Ok(mut history) = history.lock() {
-                                                    history.record_completed_block(
-                                                        &block,
-                                                        history_context.clone(),
-                                                    );
-                                                }
-                                                let _ = event_tx
-                                                    .send(TerminalEvent::CommandBlockEnded(block));
+                                for osc_event in osc_events {
+                                    if let Some(start_offset) = osc_event.start_offset {
+                                        let start_offset = start_offset.min(n);
+                                        if start_offset > output_cursor {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                blocks.observe_output(
+                                                    &buf[output_cursor..start_offset],
+                                                );
                                             }
                                         }
-                                        let _ = event_tx.send(TerminalEvent::CommandEnd(code));
+                                        // Advance the parser up to the mark so the
+                                        // cursor row reflects the bytes preceding it.
+                                        if start_offset > advance_cursor {
+                                            processor.advance(
+                                                &mut *term_locked,
+                                                &buf[advance_cursor..start_offset],
+                                            );
+                                            advance_cursor = start_offset;
+                                        }
                                     }
-                                    crate::osc_scanner::OscEvent::AttentionRequest(value) => {
-                                        let _ =
-                                            event_tx.send(TerminalEvent::AttentionRequest(value));
+
+                                    match osc_event.event {
+                                        crate::osc_scanner::OscEvent::CwdChanged(path) => {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                blocks.set_cwd(path.clone());
+                                            }
+                                            let _ = event_tx.send(TerminalEvent::CwdChanged(path));
+                                        }
+                                        crate::osc_scanner::OscEvent::CommandText(command) => {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                blocks.set_pending_command(command);
+                                            }
+                                        }
+                                        crate::osc_scanner::OscEvent::PromptStart => {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                let row = absolute_cursor_row(
+                                                    &term_locked,
+                                                    blocks.row_base(),
+                                                );
+                                                blocks.prompt_marked(row);
+                                            }
+                                            let _ = event_tx.send(TerminalEvent::PromptStart);
+                                        }
+                                        crate::osc_scanner::OscEvent::CommandStart => {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                let row = absolute_cursor_row(
+                                                    &term_locked,
+                                                    blocks.row_base(),
+                                                );
+                                                let block = blocks.command_started(Some(row));
+                                                let _ = event_tx.send(
+                                                    TerminalEvent::CommandBlockStarted(block),
+                                                );
+                                            }
+                                            let _ = event_tx.send(TerminalEvent::CommandStart);
+                                        }
+                                        crate::osc_scanner::OscEvent::CommandEnd(code) => {
+                                            if let Ok(mut blocks) = blocks.lock() {
+                                                let row = absolute_cursor_row(
+                                                    &term_locked,
+                                                    blocks.row_base(),
+                                                );
+                                                if let Some(block) =
+                                                    blocks.command_ended(code, Some(row))
+                                                {
+                                                    if let Ok(mut history) = history.lock() {
+                                                        history.record_completed_block(
+                                                            &block,
+                                                            history_context.clone(),
+                                                        );
+                                                    }
+                                                    let _ = event_tx.send(
+                                                        TerminalEvent::CommandBlockEnded(block),
+                                                    );
+                                                }
+                                            }
+                                            let _ = event_tx.send(TerminalEvent::CommandEnd(code));
+                                        }
+                                        crate::osc_scanner::OscEvent::AttentionRequest(value) => {
+                                            let _ = event_tx
+                                                .send(TerminalEvent::AttentionRequest(value));
+                                        }
+                                        crate::osc_scanner::OscEvent::Notification {
+                                            title,
+                                            body,
+                                        } => {
+                                            let _ = event_tx
+                                                .send(TerminalEvent::Notification { title, body });
+                                        }
                                     }
-                                    crate::osc_scanner::OscEvent::Notification { title, body } => {
-                                        let _ = event_tx
-                                            .send(TerminalEvent::Notification { title, body });
+
+                                    output_cursor = output_cursor.max(osc_event.end_offset.min(n));
+                                }
+                                if output_cursor < n {
+                                    if let Ok(mut blocks) = blocks.lock() {
+                                        blocks.observe_output(&buf[output_cursor..n]);
                                     }
                                 }
-
-                                output_cursor = output_cursor.max(osc_event.end_offset.min(n));
-                            }
-                            if output_cursor < n {
-                                if let Ok(mut blocks) = blocks.lock() {
-                                    blocks.observe_output(&buf[output_cursor..n]);
+                                // Feed the remaining bytes to alacritty's state machine.
+                                if advance_cursor < n {
+                                    processor.advance(&mut *term_locked, &buf[advance_cursor..n]);
                                 }
-                            }
 
-                            // Feed bytes to alacritty's terminal state machine.
-                            {
-                                let mut term_locked = term.lock();
-                                processor.advance(&mut *term_locked, &buf[..n]);
+                                // At the scrollback cap alacritty evicts one history
+                                // line per scrolled line and history_size() stops
+                                // growing; estimate evictions from observed newlines
+                                // so absolute block rows keep tracking the grid. The
+                                // alternate screen never scrolls into history.
+                                let hs_after = term_locked.grid().history_size();
+                                if hs_after >= max_scrollback
+                                    && !term_locked.mode().contains(TermMode::ALT_SCREEN)
+                                {
+                                    if let Ok(mut blocks) = blocks.lock() {
+                                        let newlines =
+                                            blocks.current_output_line().saturating_sub(nl_before);
+                                        let grown = hs_after.saturating_sub(hs_before) as u64;
+                                        let evicted = newlines.saturating_sub(grown);
+                                        if evicted > 0 {
+                                            blocks.bump_row_base(evicted);
+                                        }
+                                    }
+                                }
                             }
 
                             // Notify frontend of content change.
@@ -852,6 +973,145 @@ impl TerminalBackend {
             .lock()
             .map(|blocks| blocks.blocks())
             .unwrap_or_default()
+    }
+
+    /// Map command blocks into viewport rows for block-decoration rendering.
+    ///
+    /// Only blocks intersecting the viewport are returned. Returns an empty,
+    /// `alt_screen = true` snapshot while the alternate screen is active.
+    pub fn block_overlay(&self) -> BlockOverlay {
+        let (mode, rows, display_offset, history_size, cursor_line) = {
+            let term = self.term.lock();
+            let grid = term.grid();
+            (
+                *term.mode(),
+                term.screen_lines(),
+                grid.display_offset() as i64,
+                grid.history_size() as i64,
+                i64::from(grid.cursor.point.line.0),
+            )
+        };
+
+        let mut overlay = BlockOverlay {
+            rows: rows.min(u16::MAX as usize) as u16,
+            ..Default::default()
+        };
+        if mode.contains(TermMode::ALT_SCREEN) {
+            overlay.alt_screen = true;
+            return overlay;
+        }
+
+        let Ok(blocks) = self.blocks.lock() else {
+            return overlay;
+        };
+        let base = blocks.row_base();
+        let rows_i = rows as i64;
+        // Viewport row of an absolute grid row, mirroring the cell mapping in
+        // write_grid_to_buffer (grid line + display_offset).
+        let to_viewport = |abs: i64| abs - base - history_size + display_offset;
+        let cursor_abs = base + history_size + cursor_line;
+
+        let cursor_row = cursor_line + display_offset;
+        if (0..rows_i).contains(&cursor_row) {
+            overlay.cursor_row = Some(cursor_row as i32);
+        }
+        if let Some(prompt_abs) = blocks.pending_prompt_row() {
+            let row = to_viewport(prompt_abs);
+            if row < rows_i {
+                overlay.prompt_row = Some(row.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            }
+        }
+
+        let all: Vec<&TerminalCommandBlock> = blocks.iter_blocks().collect();
+        overlay.has_blocks = !all.is_empty();
+
+        // `clear` (and other full-screen erases) reset the cursor to the top
+        // without growing scrollback, so a post-clear block can be assigned an
+        // absolute row that collides with a stale, now-erased earlier block.
+        // Block tops normally increase monotonically (each command sits below
+        // the previous one); a non-increasing step marks a screen reset. Only
+        // decorate the contiguous run since the last such reset — earlier
+        // blocks are no longer on screen and would otherwise paint chips and
+        // separators over unrelated output.
+        let tops: Vec<Option<i64>> = all
+            .iter()
+            .map(|block| block.prompt_row.or(block.output_row))
+            .collect();
+        let mut decorate_from = 0usize;
+        let mut last_top: Option<i64> = None;
+        for (i, top) in tops.iter().enumerate() {
+            if let Some(top) = top {
+                if let Some(prev) = last_top {
+                    if *top <= prev {
+                        decorate_from = i;
+                    }
+                }
+                last_top = Some(*top);
+            }
+        }
+
+        for (i, block) in all.iter().enumerate().skip(decorate_from) {
+            let Some(top_abs) = block.prompt_row.or(block.output_row) else {
+                continue;
+            };
+            let next_top = all[i + 1..]
+                .iter()
+                .find_map(|next| next.prompt_row.or(next.output_row));
+            let is_running = block.exit_code.is_none() && block.ended_at_ms.is_none();
+            // The OSC 133;D mark lands on the fresh line after the output, so
+            // a completed block's content ends one row above its end mark —
+            // without this, no-output commands tint the blank line after them.
+            let own_end = block.end_row.map(|end| end - 1);
+            let end_abs = if is_running {
+                cursor_abs
+            } else if let Some(next_top) = next_top {
+                own_end.unwrap_or(next_top - 1).min(next_top - 1)
+            } else {
+                // Last completed block: it also ends where the live prompt begins.
+                let bound = match blocks.pending_prompt_row() {
+                    Some(prompt_abs) if prompt_abs > top_abs => prompt_abs - 1,
+                    _ => cursor_abs,
+                };
+                own_end.unwrap_or(bound).min(bound)
+            };
+
+            let start_row = to_viewport(top_abs);
+            let end_row = to_viewport(end_abs.max(top_abs));
+            if end_row < 0 || start_row >= rows_i {
+                continue;
+            }
+
+            let failed = block
+                .exit_code
+                .is_some_and(|code| code != 0 && !NON_FAILURE_EXIT_CODES.contains(&code));
+            let command = block.command.as_ref().map(|command| {
+                let command = command.trim();
+                if command.len() <= OVERLAY_COMMAND_MAX_LEN {
+                    command.to_string()
+                } else {
+                    let mut end = OVERLAY_COMMAND_MAX_LEN;
+                    while end > 0 && !command.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &command[..end])
+                }
+            });
+
+            overlay.blocks.push(BlockOverlayRegion {
+                id: block.id.0,
+                start_row: start_row.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                end_row: end_row.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                command,
+                exit_code: block.exit_code,
+                is_running,
+                failed,
+                duration_ms: block
+                    .ended_at_ms
+                    .map(|ended| ended.saturating_sub(block.started_at_ms)),
+            });
+        }
+
+        overlay
     }
 
     /// Return lightweight command-block availability flags without cloning block output.
@@ -1149,18 +1409,39 @@ impl TerminalBackend {
             .scroll_display(alacritty_terminal::grid::Scroll::Bottom);
     }
 
-    /// Scroll the viewport to the approximate start of a command block.
+    /// Scroll the viewport to the start of a command block.
+    ///
+    /// Uses the exact absolute-row mark recorded at the shell-integration
+    /// prompt when available, falling back to the newline-counted estimate
+    /// for blocks recorded without marks.
     pub fn scroll_to_command_block(&self, id: TerminalBlockId) -> bool {
-        let Some((current_line, start_line)) = self.blocks.lock().ok().and_then(|blocks| {
-            blocks
-                .block_start_line(id)
-                .map(|start_line| (blocks.current_output_line(), start_line))
-        }) else {
-            return false;
+        let (top_row, row_base, fallback) = match self.blocks.lock() {
+            Ok(blocks) => (
+                blocks.block_top_row(id),
+                blocks.row_base(),
+                blocks
+                    .block_start_line(id)
+                    .map(|start_line| (blocks.current_output_line(), start_line)),
+            ),
+            Err(_) => return false,
         };
 
-        let delta = current_line.saturating_sub(start_line).min(i32::MAX as u64) as i32;
         let mut term = self.term.lock();
+        if let Some(abs) = top_row {
+            // Viewport row 0 == abs requires display_offset = base + hs - abs.
+            let history_size = term.grid().history_size() as i64;
+            let delta = (row_base + history_size - abs).clamp(0, i32::MAX as i64) as i32;
+            term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+            if delta > 0 {
+                term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+            }
+            return true;
+        }
+
+        let Some((current_line, start_line)) = fallback else {
+            return false;
+        };
+        let delta = current_line.saturating_sub(start_line).min(i32::MAX as u64) as i32;
         term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
         if delta > 0 {
             term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));

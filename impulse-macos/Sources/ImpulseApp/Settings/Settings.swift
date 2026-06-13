@@ -148,6 +148,17 @@ struct Settings: Codable {
     var terminalMinimumContrast: Double
     var terminalAllowOsc52Write: Bool
     var terminalAllowOsc52Read: Bool
+    /// Draw Warp-style command block decorations (separators, status chips,
+    /// failure stripes) in the terminal.
+    var terminalBlocks: Bool
+    /// Show the context bar (shell, cwd, git branch, last command status)
+    /// below the terminal.
+    var terminalContextBar: Bool
+
+    // -- Tabs --
+    /// Where the tab strip lives: "sidebar" (Warp-style vertical list) or
+    /// "top" (classic horizontal bar).
+    var tabBarPosition: String
 
     // -- Editor (additional) --
     var editorLineHeight: Int
@@ -225,6 +236,9 @@ struct Settings: Codable {
         case terminalMinimumContrast = "terminal_minimum_contrast"
         case terminalAllowOsc52Write = "terminal_allow_osc52_write"
         case terminalAllowOsc52Read = "terminal_allow_osc52_read"
+        case terminalBlocks = "terminal_blocks"
+        case terminalContextBar = "terminal_context_bar"
+        case tabBarPosition = "tab_bar_position"
         case editorLineHeight = "editor_line_height"
         case editorAutoClosingBrackets = "editor_auto_closing_brackets"
         case editorCursorSurroundingLines = "editor_cursor_surrounding_lines"
@@ -359,6 +373,9 @@ struct Settings: Codable {
         terminalMinimumContrast = (try? c.decode(Double.self, forKey: .terminalMinimumContrast)) ?? d.terminalMinimumContrast
         terminalAllowOsc52Write = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Write)) ?? d.terminalAllowOsc52Write
         terminalAllowOsc52Read = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Read)) ?? d.terminalAllowOsc52Read
+        terminalBlocks = (try? c.decode(Bool.self, forKey: .terminalBlocks)) ?? d.terminalBlocks
+        terminalContextBar = (try? c.decode(Bool.self, forKey: .terminalContextBar)) ?? d.terminalContextBar
+        tabBarPosition = (try? c.decode(String.self, forKey: .tabBarPosition)) ?? d.tabBarPosition
         editorLineHeight = (try? c.decode(Int.self, forKey: .editorLineHeight)) ?? d.editorLineHeight
         editorAutoClosingBrackets = (try? c.decode(String.self, forKey: .editorAutoClosingBrackets)) ?? d.editorAutoClosingBrackets
         editorCursorSurroundingLines = (try? c.decode(Int.self, forKey: .editorCursorSurroundingLines)) ?? d.editorCursorSurroundingLines
@@ -393,6 +410,8 @@ struct Settings: Codable {
          terminalAttentionOnLongCommand: Bool, terminalLongCommandSeconds: Int,
          terminalBoldIsBright: Bool, terminalMinimumContrast: Double = 3.0,
          terminalAllowOsc52Write: Bool, terminalAllowOsc52Read: Bool,
+         terminalBlocks: Bool = true, terminalContextBar: Bool = true,
+         tabBarPosition: String = "sidebar",
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
          editorOccurrencesHighlight: Bool, editorWordBasedSuggestions: String,
@@ -446,6 +465,9 @@ struct Settings: Codable {
         self.terminalMinimumContrast = terminalMinimumContrast
         self.terminalAllowOsc52Write = terminalAllowOsc52Write
         self.terminalAllowOsc52Read = terminalAllowOsc52Read
+        self.terminalBlocks = terminalBlocks
+        self.terminalContextBar = terminalContextBar
+        self.tabBarPosition = tabBarPosition
         self.editorLineHeight = editorLineHeight
         self.editorAutoClosingBrackets = editorAutoClosingBrackets
         self.editorCursorSurroundingLines = editorCursorSurroundingLines
@@ -504,6 +526,9 @@ extension Settings {
         sidebarWidth = max(100, min(1000, sidebarWidth))
         rightMarginPosition = max(1, min(500, rightMarginPosition))
         editorLineHeight = max(0, min(100, editorLineHeight))
+        if tabBarPosition != "top" && tabBarPosition != "sidebar" {
+            tabBarPosition = "sidebar"
+        }
         windowWidth = max(400, min(10000, windowWidth))
         windowHeight = max(300, min(10000, windowHeight))
     }
@@ -759,6 +784,8 @@ extension Settings {
             terminalMinimumContrast: terminalMinimumContrast,
             terminalAllowOsc52Write: terminalAllowOsc52Write,
             terminalAllowOsc52Read: terminalAllowOsc52Read,
+            terminalBlocks: terminalBlocks,
+            terminalContextBar: terminalContextBar,
             keybindingOverrides: keybindingOverrides
         )
     }

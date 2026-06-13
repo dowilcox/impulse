@@ -1076,6 +1076,96 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-size: 12px;
             font-family: 'JetBrains Mono', monospace;
         }}
+        /* --- Vertical tab list (sidebar) --- */
+        .vertical-tabs-header {{
+            padding: 8px 12px 4px 12px;
+        }}
+        .vertical-tabs-header label {{
+            font-size: 11px;
+            font-weight: 600;
+            color: {fg_dark};
+        }}
+        .vertical-tabs-header button {{
+            min-width: 20px;
+            min-height: 20px;
+            padding: 1px;
+            border-radius: 6px;
+            color: {fg_dark};
+        }}
+        .vertical-tabs-header button:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.08);
+        }}
+        .vertical-tabs-list {{
+            background-color: transparent;
+            padding: 0 8px 6px 8px;
+        }}
+        .vertical-tabs-list row {{
+            border-radius: 6px;
+            padding: 4px 8px;
+            margin: 1px 0;
+        }}
+        .vertical-tabs-list row:hover {{
+            background-color: alpha({fg}, 0.06);
+        }}
+        .vertical-tabs-list row:selected {{
+            background-color: alpha({cyan}, 0.16);
+        }}
+        .vertical-tab-title {{
+            font-size: 12px;
+            color: {fg};
+        }}
+        .vertical-tab-subtitle {{
+            font-size: 10px;
+            color: {fg_dark};
+        }}
+        .vertical-tab-close {{
+            opacity: 0;
+            min-width: 18px;
+            min-height: 18px;
+            padding: 1px;
+            border-radius: 999px;
+        }}
+        .vertical-tabs-list row:hover .vertical-tab-close,
+        .vertical-tabs-list row:selected .vertical-tab-close {{
+            opacity: 1;
+        }}
+        /* --- Terminal context bar --- */
+        .context-bar {{
+            background-color: {bg};
+            border-top: 1px solid alpha({fg}, 0.10);
+            padding: 6px 10px;
+        }}
+        .context-chip {{
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {fg_dark};
+            background-color: {bg_highlight};
+            border-radius: 999px;
+            padding: 2px 10px;
+        }}
+        .context-chip-ok {{
+            color: {green};
+        }}
+        .context-chip-error {{
+            color: {red};
+        }}
+        .context-input {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            min-height: 28px;
+        }}
+        .context-bar button.flat {{
+            min-width: 24px;
+            min-height: 24px;
+            padding: 2px;
+            border-radius: 6px;
+            color: {fg_dark};
+        }}
+        .context-bar button.flat:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.08);
+        }}
         "#,
         bg_dark = theme.bg_dark,
         bg = theme.bg,

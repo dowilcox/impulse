@@ -1948,6 +1948,26 @@ pub extern "C" fn impulse_terminal_command_blocks(handle: *mut TerminalHandle) -
     )
 }
 
+/// Viewport-mapped command block regions plus the live prompt region as JSON
+/// (see `impulse_terminal::BlockOverlay`). Used for Warp-style block
+/// decorations. Caller frees with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_block_overlay(handle: *mut TerminalHandle) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
+            }
+            let h = unsafe { &*handle };
+            match serde_json::to_string(&h.backend.block_overlay()) {
+                Ok(json) => to_c_string(&json),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_command_block_flags(handle: *mut TerminalHandle) -> u32 {
     ffi_catch(

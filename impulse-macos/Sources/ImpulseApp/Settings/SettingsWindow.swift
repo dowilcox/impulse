@@ -184,10 +184,16 @@ final class SettingsWindowController: NSWindowController {
       target: self, action: #selector(sidebarShowHiddenChanged(_:)))
     hiddenCheck.state = settings.sidebarShowHidden ? .on : .off
 
+    let tabPositionPopup = NSPopUpButton(
+      title: "", target: self, action: #selector(tabBarPositionChanged(_:)))
+    tabPositionPopup.addItems(withTitles: ["Sidebar (vertical)", "Top"])
+    tabPositionPopup.selectItem(at: settings.tabBarPosition == "top" ? 1 : 0)
+
     addSection(
       to: stack, title: "Sidebar",
       rows: [
-        hiddenCheck
+        hiddenCheck,
+        makeRow(label: "Tab Bar Position:", control: tabPositionPopup),
       ])
 
     return wrapInScrollView(stack)
@@ -493,6 +499,26 @@ final class SettingsWindowController: NSWindowController {
         scrollOutputCheck,
         hyperlinkCheck,
         boldBrightCheck,
+      ])
+
+    // -- Command Blocks Section --
+
+    let blocksCheck = NSButton(
+      checkboxWithTitle: "Command block decorations",
+      target: self, action: #selector(termBlocksChanged(_:)))
+    blocksCheck.state = settings.terminalBlocks ? .on : .off
+
+    let contextBarCheck = NSButton(
+      checkboxWithTitle: "Show context bar below terminal",
+      target: self, action: #selector(termContextBarChanged(_:)))
+    contextBarCheck.state = settings.terminalContextBar ? .on : .off
+
+    addSection(
+      to: stack, title: "Command Blocks",
+      subtitle: "Warp-style separators, status chips, and the shell context bar",
+      rows: [
+        blocksCheck,
+        contextBarCheck,
       ])
 
     // -- Bell & Notifications Section --
@@ -1404,6 +1430,21 @@ final class SettingsWindowController: NSWindowController {
 
   @objc private func termBoldIsBrightChanged(_ sender: NSButton) {
     settings.terminalBoldIsBright = sender.state == .on
+    persistSettings()
+  }
+
+  @objc private func termBlocksChanged(_ sender: NSButton) {
+    settings.terminalBlocks = sender.state == .on
+    persistSettings()
+  }
+
+  @objc private func termContextBarChanged(_ sender: NSButton) {
+    settings.terminalContextBar = sender.state == .on
+    persistSettings()
+  }
+
+  @objc private func tabBarPositionChanged(_ sender: NSPopUpButton) {
+    settings.tabBarPosition = sender.indexOfSelectedItem == 1 ? "top" : "sidebar"
     persistSettings()
   }
 

@@ -31,7 +31,13 @@ struct MainContentView: View {
         }
         TabBarView(windowModel: windowModel)
         contentArea
-        StatusBarView(model: windowModel)
+        if showContextBar {
+          // Warp-style: the input bar replaces the status bar for terminals —
+          // its chips already carry the shell, cwd, branch, and last status.
+          TerminalContextBarView(model: windowModel)
+        } else {
+          StatusBarView(model: windowModel)
+        }
       }
     }
     .navigationSplitViewStyle(.balanced)
@@ -49,12 +55,28 @@ struct MainContentView: View {
     }
   }
 
-  /// "card" surface themes (e.g. Harbor) float the terminal/editor area as a
-  /// rounded card with a soft warm shadow on the bgDark canvas; everything
-  /// else renders it edge-to-edge.
+  /// Show the Warp-style input bar only for terminal tabs, and never while
+  /// the alternate screen (vim, htop, ...) owns the keyboard.
+  private var showContextBar: Bool {
+    guard windowModel.contextBarEnabled, !windowModel.terminalAltScreen else { return false }
+    let index = windowModel.selectedTabIndex
+    guard index >= 0, index < windowModel.tabDisplayInfos.count else { return false }
+    return windowModel.tabDisplayInfos[index].isTerminal
+  }
+
+  /// True when the selected tab is a terminal.
+  private var selectedTabIsTerminal: Bool {
+    let index = windowModel.selectedTabIndex
+    guard index >= 0, index < windowModel.tabDisplayInfos.count else { return false }
+    return windowModel.tabDisplayInfos[index].isTerminal
+  }
+
+  /// "card" surface themes (e.g. Harbor) float the editor area as a rounded
+  /// card with a soft warm shadow. Terminals always render edge-to-edge
+  /// (Warp-style) — the floating card reads as chrome the terminal doesn't want.
   @ViewBuilder
   private var contentArea: some View {
-    if windowModel.theme.surfaceStyle == "card" {
+    if windowModel.theme.surfaceStyle == "card" && !selectedTabIsTerminal {
       ContentAreaRepresentable(contentView: tabManagerContentView, cornerRadius: 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(

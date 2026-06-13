@@ -19,6 +19,10 @@ struct TabDisplayInfo: Identifiable {
   let isPinned: Bool
   let isTerminal: Bool
   let needsAttention: Bool
+  /// Git branch of the tab's working directory (vertical tab subtitle).
+  var gitBranch: String? = nil
+  /// Abbreviated working directory, shown when no branch is available.
+  var directory: String? = nil
 }
 
 // MARK: - Window Model
@@ -33,6 +37,8 @@ final class WindowModel {
 
   var tabDisplayInfos: [TabDisplayInfo] = []
   var selectedTabIndex: Int = -1
+  /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
+  var tabBarPosition: String = "sidebar"
 
   // MARK: Sidebar
 
@@ -75,6 +81,21 @@ final class WindowModel {
   var currentCwd: String = ""
   var blameInfo: String? = nil
 
+  // MARK: Terminal input bar
+
+  /// Whether the input bar is enabled in settings.
+  var contextBarEnabled: Bool = true
+  /// True while the active terminal is executing a command.
+  var commandRunning: Bool = false
+  /// Exit code and duration of the active terminal's last command.
+  var lastCommandExitCode: Int32? = nil
+  var lastCommandDurationMs: UInt64? = nil
+  /// True while the active terminal shows the alternate screen (vim, htop);
+  /// the input bar hides so all keystrokes go to the TUI.
+  var terminalAltScreen: Bool = false
+  /// Bumped whenever the input bar should grab keyboard focus.
+  var inputBarFocusToken: Int = 0
+
   // MARK: Status bar — right group
 
   var cursorLine: Int? = nil
@@ -112,11 +133,27 @@ final class WindowModel {
   var onTabMoved: ((Int, Int) -> Void)?
   var onTabPinToggled: ((Int) -> Void)?
   var onNewTab: (() -> Void)?
+  var onShowCommandHistory: (() -> Void)?
+  var onClearTerminal: (() -> Void)?
+  /// Run a command from the input bar in the active terminal.
+  var onRunCommand: ((String) -> Void)?
+  /// Synchronously resolve a history ghost suggestion for the typed prefix.
+  var onInputSuggestion: ((String) -> String?)?
+  /// Most recent commands, newest first, for ↑/↓ cycling in the input bar.
+  var onRecentCommands: ((Int) -> [String])?
+  /// Send SIGINT to the active terminal (input-bar Stop button / ⌃C).
+  var onSendInterrupt: (() -> Void)?
+  /// Move keyboard focus into the terminal grid (Esc from the input bar).
+  var onFocusTerminal: (() -> Void)?
   var onSidebarVisibilityChanged: ((Bool) -> Void)?
   var onPreviewToggle: (() -> Void)?
   var onOpenFile: ((String, Int?) -> Void)?
   var onNewFile: ((String) -> Void)?
   var onNewFolder: ((String) -> Void)?
+  /// Sidebar action-bar buttons (act on the selected tree dir, or the root):
+  /// new file, new folder.
+  var onCreateFile: (() -> Void)?
+  var onCreateFolder: (() -> Void)?
   var onRefreshTree: (() -> Void)?
   var onCollapseAll: (() -> Void)?
   var onFileTreeExpansionChanged: (() -> Void)?
