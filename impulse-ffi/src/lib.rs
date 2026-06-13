@@ -936,6 +936,26 @@ pub extern "C" fn impulse_git_branch(path: *const c_char) -> *mut c_char {
     )
 }
 
+/// Returns the repository's local branch names as a JSON array string for the
+/// given directory path. Empty array if not in a repo. Caller frees with
+/// `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_branches(path: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let Some(path) = to_rust_str(path) else {
+                return to_c_string("[]");
+            };
+            let branches = impulse_core::git::list_git_branches(&path).unwrap_or_default();
+            match serde_json::to_string(&branches) {
+                Ok(json) => to_c_string(&json),
+                Err(_) => to_c_string("[]"),
+            }
+        }),
+    )
+}
+
 /// Returns git blame info for a specific line in a file.
 ///
 /// Returns a JSON object with `author`, `date`, `commitHash`, and `summary`

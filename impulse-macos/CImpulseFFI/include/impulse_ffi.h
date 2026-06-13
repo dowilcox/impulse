@@ -56,6 +56,7 @@ bool impulse_is_previewable_file(const char *path);
 
 // Git
 char *impulse_git_branch(const char *path);
+char *impulse_git_branches(const char *path);
 char *impulse_git_status_for_directory(const char *path);
 char *impulse_get_all_git_statuses(const char *path);
 char *impulse_read_directory_with_git_status(const char *path, bool show_hidden);

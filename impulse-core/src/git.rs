@@ -381,6 +381,27 @@ pub fn get_git_branch(path: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// List local branch names for the repository containing `path`, sorted
+/// alphabetically. Returns an empty list if the path is not in a git repo.
+pub fn list_git_branches(path: &str) -> Result<Vec<String>, String> {
+    let repo = match open_repo(Path::new(path)) {
+        Ok(repo) => repo,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let branches = repo
+        .branches(Some(git2::BranchType::Local))
+        .map_err(|e| e.to_string())?;
+    let mut names = Vec::new();
+    for branch in branches {
+        let (branch, _) = branch.map_err(|e| e.to_string())?;
+        if let Ok(Some(name)) = branch.name() {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// Return the git working directory root for the given path, or `None` if
 /// the path is not inside a git repository.
 pub fn get_git_root(path: &str) -> Option<String> {

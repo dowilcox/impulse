@@ -15,6 +15,7 @@ struct TerminalContextBarView: View {
   /// Index into the recent-history list while cycling with ↑/↓; nil = live draft.
   @State private var historyIndex: Int? = nil
   @State private var savedDraft: String = ""
+  @State private var showBranchPicker = false
   @FocusState private var inputFocused: Bool
 
   private var monoFont: Font { .system(size: 13, design: .monospaced) }
@@ -51,7 +52,23 @@ struct TerminalContextBarView: View {
         chip(symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd))
       }
       if let branch = model.gitBranch, !branch.isEmpty {
-        chip(symbol: "arrow.triangle.branch", text: branch)
+        Button {
+          showBranchPicker.toggle()
+        } label: {
+          chip(symbol: "arrow.triangle.branch", text: branch, showsChevron: true)
+        }
+        .buttonStyle(.plain)
+        .help("Switch branch")
+        .popover(isPresented: $showBranchPicker, arrowEdge: .top) {
+          BranchPickerView(
+            currentBranch: branch,
+            cwd: model.currentCwd
+          ) { selected in
+            showBranchPicker = false
+            guard selected != branch else { return }
+            model.onRunCommand?("git checkout \(shellQuoted(selected))")
+          }
+        }
       }
       statusChip
       Spacer(minLength: 8)
@@ -89,7 +106,7 @@ struct TerminalContextBarView: View {
     return parts.isEmpty ? "ok" : parts.joined(separator: " · ")
   }
 
-  private func chip(symbol: String, text: String) -> some View {
+  private func chip(symbol: String, text: String, showsChevron: Bool = false) -> some View {
     HStack(spacing: 4) {
       Image(systemName: symbol)
         .font(.system(size: 9.5, weight: .medium))
@@ -99,12 +116,25 @@ struct TerminalContextBarView: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .truncationMode(.middle)
+      if showsChevron {
+        Image(systemName: "chevron.up.chevron.down")
+          .font(.system(size: 7, weight: .semibold))
+          .foregroundStyle(.tertiary)
+      }
     }
     .padding(.horizontal, 8)
     .padding(.vertical, 3)
     .background(Capsule().fill(Color.primary.opacity(0.05)))
     .frame(maxWidth: 280, alignment: .leading)
     .fixedSize()
+  }
+
+  /// Minimal POSIX single-quote escaping for a branch name.
+  private func shellQuoted(_ value: String) -> String {
+    if value.allSatisfy({ $0.isLetter || $0.isNumber || "._-/".contains($0) }) {
+      return value
+    }
+    return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
 
   private func actionButton(

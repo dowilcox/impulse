@@ -284,6 +284,15 @@ final class ImpulseCore {
         return consumeCString(impulse_git_branch(path))
     }
 
+    /// Returns the repository's local branch names for the directory at `path`.
+    static func gitBranches(path: String) -> [String] {
+        guard let json = consumeCString(impulse_git_branches(path)),
+            let data = json.data(using: .utf8),
+            let names = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else { return [] }
+        return names
+    }
+
     /// Returns git status for files in a directory as a dictionary mapping
     /// filenames to status codes (e.g. `["file.rs": "M", "new.txt": "?"]`).
     ///
