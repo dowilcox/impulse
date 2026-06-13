@@ -598,6 +598,9 @@ class TerminalTab: NSView {
   func runCommand(_ command: String) {
     let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    // The view may be tucked up (prompt hidden below the fold) or scrolled into
+    // history; snap to the bottom so the command's output is visible.
+    backend?.scrollToBottom()
     backend?.write(trimmed + "\n")
   }
 

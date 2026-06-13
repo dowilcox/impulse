@@ -217,6 +217,10 @@ class TerminalRenderer: NSView {
     /// directly under the last block. 0 once the screen fills.
     private(set) var contentYOffset: CGFloat = 0
 
+    /// Guards the async "tuck" scroll that hides the in-grid prompt below a
+    /// full screen, so it isn't dispatched repeatedly before it lands.
+    private var pendingPromptTuck = false
+
     // MARK: Private Properties
 
     private var refreshTimer: DispatchSourceTimer?
@@ -524,6 +528,23 @@ class TerminalRenderer: NSView {
                     lastContentRow = -1
                 }
                 allowAnchor = !contentFillsViewport
+                // A full screen can't be pushed (it would gap at the top), so
+                // instead scroll the grid up just enough to tuck the prompt off
+                // the bottom — the last output then sits flush against the input
+                // bar, with scrollback filling the rows above. Self-limiting:
+                // once tucked, the prompt is off-screen and this stops firing.
+                if contentFillsViewport {
+                    let hidden = (lines - 1) - lastContentRow
+                    if hidden > 0 && !pendingPromptTuck {
+                        pendingPromptTuck = true
+                        let backend = self.backend
+                        DispatchQueue.main.async { [weak self] in
+                            backend?.scroll(delta: Int32(hidden))
+                            self?.pendingPromptTuck = false
+                            self?.needsDisplay = true
+                        }
+                    }
+                }
             } else if let cursorRow = overlay.cursorRow {
                 // Running command (or prompt not suppressed): the live output
                 // anchors to the bottom while it fits.
