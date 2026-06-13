@@ -64,40 +64,13 @@ struct MainContentView: View {
     return windowModel.tabDisplayInfos[index].isTerminal
   }
 
-  /// True when the selected tab is a terminal.
-  private var selectedTabIsTerminal: Bool {
-    let index = windowModel.selectedTabIndex
-    guard index >= 0, index < windowModel.tabDisplayInfos.count else { return false }
-    return windowModel.tabDisplayInfos[index].isTerminal
-  }
-
-  /// "card" surface themes (e.g. Harbor) float the editor area as a rounded
-  /// card with a soft warm shadow. Terminals always render edge-to-edge
-  /// (Warp-style) — the floating card reads as chrome the terminal doesn't want.
+  /// The content area (terminal or editor) always renders edge-to-edge to
+  /// match the Warp-style terminal — no floating "card" surface, even on
+  /// card-surface themes like Harbor.
   @ViewBuilder
   private var contentArea: some View {
-    if windowModel.theme.surfaceStyle == "card" && !selectedTabIsTerminal {
-      ContentAreaRepresentable(contentView: tabManagerContentView, cornerRadius: 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-          RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(windowModel.theme.colorBg)
-            .shadow(color: cardShadowColor.opacity(0.20), radius: 7, x: 0, y: 4)
-            .shadow(color: cardShadowColor.opacity(0.08), radius: 1, x: 0, y: 1)
-        )
-        .padding(.top, 10)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
-        .background(windowModel.theme.colorBgDark)
-    } else {
-      ContentAreaRepresentable(contentView: tabManagerContentView)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-  }
-
-  /// Warm-hued shadow (#5c5142) per the Harbor spec — never pure black.
-  private var cardShadowColor: Color {
-    Color(red: 0.36, green: 0.32, blue: 0.26)
+    ContentAreaRepresentable(contentView: tabManagerContentView)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
