@@ -704,6 +704,14 @@ final class TabManager: NSObject {
     ])
     entry.focus()
 
+    // Terminal tabs are driven by the input bar (the read-only grid refuses
+    // first-responder), so move keyboard focus there. Async so it lands after
+    // the new terminal's own focus attempt during spawn.
+    if case .terminal = entry {
+      let model = windowModel
+      DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
+    }
+
     NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
   }
 

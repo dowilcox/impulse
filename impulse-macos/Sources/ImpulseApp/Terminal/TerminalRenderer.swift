@@ -795,10 +795,11 @@ class TerminalRenderer: NSView {
         }
 
         // 7. Draw cursor (respects blink phase and shape override from
-        // settings). When the live prompt is suppressed the cursor sits past
-        // lastContentRow, so drawRows naturally excludes it.
+        // settings). When the input bar is the prompt (not a TUI), the input
+        // bar owns the cursor — never blink a redundant grid cursor, even when
+        // the in-grid prompt is shown (a screenful of scrollback).
         lastCursorRow = grid.cursorVisible ? Int(grid.cursorRow) : -1
-        if grid.cursorVisible && cursorBlinkOn {
+        if grid.cursorVisible && cursorBlinkOn && !suppressPrompt {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
             if cursorRow < lines && cursorCol < cols && drawRows.contains(Int(cursorRow)) {
