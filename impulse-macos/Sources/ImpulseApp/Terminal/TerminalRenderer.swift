@@ -221,6 +221,14 @@ class TerminalRenderer: NSView {
     /// full screen, so it isn't dispatched repeatedly before it lands.
     private var pendingPromptTuck = false
 
+    /// Set when a command finishes so the prompt is tucked off-screen once, on
+    /// the next idle frame. Not re-armed by manual scrolling, so scrolling back
+    /// to the true bottom reveals the prompt instead of bouncing.
+    private var shouldTuckPrompt = false
+
+    /// Arm a one-shot prompt tuck (called when a command completes).
+    func scheduleTuck() { shouldTuckPrompt = true }
+
     // MARK: Private Properties
 
     private var refreshTimer: DispatchSourceTimer?
@@ -533,10 +541,11 @@ class TerminalRenderer: NSView {
                 // the bottom — the last output then sits flush against the input
                 // bar, with scrollback filling the rows above. Self-limiting:
                 // once tucked, the prompt is off-screen and this stops firing.
-                if contentFillsViewport {
+                if contentFillsViewport && shouldTuckPrompt {
                     let hidden = (lines - 1) - lastContentRow
                     if hidden > 0 && !pendingPromptTuck {
                         pendingPromptTuck = true
+                        shouldTuckPrompt = false
                         let backend = self.backend
                         DispatchQueue.main.async { [weak self] in
                             backend?.scroll(delta: Int32(hidden))

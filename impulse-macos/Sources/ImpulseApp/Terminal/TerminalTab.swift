@@ -254,6 +254,9 @@ class TerminalTab: NSView {
       }
       selectedCommandBlockId = nil
       renderer.highlightedBlockId = nil
+      // Tuck the redundant prompt off-screen once, when it appears after this
+      // command — not on every scroll-to-bottom (that bounces).
+      renderer.scheduleTuck()
       renderer.needsDisplay = true
       NotificationCenter.default.post(
         name: .terminalCommandBlockChanged,
