@@ -274,6 +274,7 @@ final class TabManager: NSObject {
       initialCommand: initialCommand
     )
     container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+    container.onSplitStateChanged = { [weak self] in self?.syncToWindowModel() }
     let entry = TabEntry.terminal(container)
     insertTab(entry)
   }
@@ -299,6 +300,7 @@ final class TabManager: NSObject {
       sessionTab: tab
     )
     container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+    container.onSplitStateChanged = { [weak self] in self?.syncToWindowModel() }
     let entry = TabEntry.terminal(container)
     insertTab(entry)
   }
@@ -885,6 +887,7 @@ final class TabManager: NSObject {
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)
+    ws.activeTerminalSplit = selectedTerminal?.isSplit ?? false
 
     // Update the active file path for sidebar highlighting.
     if let editor = selectedEditor {

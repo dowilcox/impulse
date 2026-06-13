@@ -93,6 +93,9 @@ final class WindowModel {
   /// True while the active terminal shows the alternate screen (vim, htop);
   /// the input bar hides so all keystrokes go to the TUI.
   var terminalAltScreen: Bool = false
+  /// True when the active terminal tab is split into multiple panes; the
+  /// shared input bar hides and panes act as classic typeable terminals.
+  var activeTerminalSplit: Bool = false
   /// Bumped whenever the input bar should grab keyboard focus.
   var inputBarFocusToken: Int = 0
 

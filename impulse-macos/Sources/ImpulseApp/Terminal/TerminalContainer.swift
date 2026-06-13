@@ -14,6 +14,14 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
   private(set) var activeTerminalIndex: Int = 0
 
   /// The computed active terminal, or nil if the container is empty.
+  /// True when more than one pane is open (a split). Split panes share the
+  /// single window input bar, so they fall back to classic terminal behavior.
+  var isSplit: Bool { terminals.count > 1 }
+
+  /// Fired after the split/pane count changes so the window can show or hide
+  /// the input bar accordingly.
+  var onSplitStateChanged: (() -> Void)?
+
   var activeTerminal: TerminalTab? {
     guard terminals.indices.contains(activeTerminalIndex) else { return nil }
     return terminals[activeTerminalIndex]
@@ -83,6 +91,8 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         fallbackTerminal.focus()
       }
     }
+    // A restored session may have rebuilt multiple panes.
+    refreshInputBarManagement()
   }
 
   @available(*, unavailable)
@@ -182,8 +192,20 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
       newTerminal.spawnShell(initialDirectory: inheritedCwd)
     }
     newTerminal.focus()
+    refreshInputBarManagement()
 
     return newTerminal
+  }
+
+  /// Split panes share one window input bar, so they behave as classic
+  /// terminals (typeable grid, in-grid prompt); a sole pane is input-bar
+  /// managed (Warp model). Keep every pane's renderer in sync.
+  private func refreshInputBarManagement() {
+    let managed = !isSplit
+    for terminal in terminals {
+      terminal.renderer.inputBarManaged = managed
+    }
+    onSplitStateChanged?()
   }
 
   // MARK: Removing Terminals
@@ -440,6 +462,8 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
         t.renderer.needsDisplay = true
       }
     }
+    // Collapsing back to a single pane restores the Warp input-bar model.
+    refreshInputBarManagement()
   }
 
   private func collapseSplitView() {
