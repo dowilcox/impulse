@@ -506,39 +506,36 @@ class TerminalRenderer: NSView {
         let suppressPrompt = suppressLivePrompt && !altScreenNow
         // -1 means "draw nothing" (a fresh shell with only an empty prompt).
         var lastContentRow = lines - 1
+        // Push content to the bottom edge (to meet the input bar) only for a
+        // short session that fits in the viewport. A screenful of scrollback
+        // is already full — pushing it would only open a blank gap at the top.
+        var allowAnchor = false
         if let overlay = blockOverlay {
-            // When content already fills (or exceeds) the viewport — a block
-            // extends above the top edge — the screen is full, so suppressing
-            // the prompt and bottom-anchoring would only insert a blank gap.
-            // The suppress/anchor treatment is for short sessions that need
-            // pushing down to meet the input bar.
             let contentFillsViewport = overlay.blocks.contains { $0.startRow < 0 }
-            if !contentFillsViewport {
-                let atIdlePrompt = overlay.promptRow != nil
-                if suppressPrompt && atIdlePrompt {
-                    if let lastBlock = overlay.blocks.last {
-                        // Anchor on the last command's output; hide the prompt after it.
-                        lastContentRow = Int(lastBlock.endRow)
-                    } else if overlay.hasBlocks {
-                        // Commands exist but none reach the viewport: only hide
-                        // from the prompt mark, never output.
-                        lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
-                    } else {
-                        // Genuinely fresh shell — blank the redundant empty prompt.
-                        lastContentRow = -1
-                    }
-                } else if let cursorRow = overlay.cursorRow {
-                    // Running command (or prompt not suppressed): anchor the
-                    // live output to the bottom.
-                    lastContentRow = Int(cursorRow)
+            let atIdlePrompt = overlay.promptRow != nil
+            if suppressPrompt && atIdlePrompt {
+                // Always hide the redundant in-grid prompt (the input bar is
+                // the prompt), whether or not the screen is full.
+                if let lastBlock = overlay.blocks.last {
+                    lastContentRow = Int(lastBlock.endRow)
+                } else if overlay.hasBlocks {
+                    lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
+                } else {
+                    lastContentRow = -1
                 }
+                allowAnchor = !contentFillsViewport
+            } else if let cursorRow = overlay.cursorRow {
+                // Running command (or prompt not suppressed): the live output
+                // anchors to the bottom while it fits.
+                lastContentRow = Int(cursorRow)
+                allowAnchor = !contentFillsViewport
             }
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
 
         var yOffset: CGFloat = 0
         let contentRows = lastContentRow + 1
-        if contentRows > 0 && contentRows < lines {
+        if allowAnchor && contentRows > 0 && contentRows < lines {
             yOffset = CGFloat(lines - contentRows) * ch
         }
         let offsetChanged = yOffset != contentYOffset
