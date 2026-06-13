@@ -75,12 +75,32 @@ class TerminalRenderer: NSView {
     var onCopyLastCommandOutput: (() -> Void)?
     var onRerunLastCommand: (() -> Void)?
 
-    /// Per-block context-menu actions (Warp-style: act on the block that
-    /// was right-clicked, not the most recent one).
+    /// Per-block actions (Warp-style: act on the block that was clicked, not
+    /// the most recent one), driven by the right-click menu and the hover
+    /// toolbar.
     var onCopyBlockCommand: ((UInt64) -> Void)?
     var onCopyBlockOutput: ((UInt64) -> Void)?
+    var onCopyBlockCommandAndOutput: ((UInt64) -> Void)?
     var onRerunBlock: ((UInt64) -> Void)?
     private var contextBlockId: UInt64?
+
+    // MARK: Block Hover Toolbar
+
+    private enum BlockToolbarButton: Equatable {
+        case copyOutput
+        case menu
+    }
+    private struct BlockToolbarTarget {
+        let rect: CGRect  // in view coordinates (includes the bottom-anchor offset)
+        let button: BlockToolbarButton
+        let blockId: UInt64
+    }
+    /// Hit targets for the hover toolbar buttons, rebuilt every frame.
+    private var hoverToolbarTargets: [BlockToolbarTarget] = []
+    /// The toolbar button currently under the pointer (for hover highlight).
+    private var hoveredToolbarButton: BlockToolbarButton? = nil {
+        didSet { if hoveredToolbarButton != oldValue { needsDisplay = true } }
+    }
     var onShowCommandHistory: (() -> Void)?
     var onJumpToPreviousCommandBlock: (() -> Void)?
     var onJumpToNextCommandBlock: (() -> Void)?
@@ -162,7 +182,12 @@ class TerminalRenderer: NSView {
 
     /// Block currently under the pointer; washed like Warp's hover highlight.
     private var hoveredBlockId: UInt64? = nil {
-        didSet { if hoveredBlockId != oldValue { needsDisplay = true } }
+        didSet {
+            if hoveredBlockId != oldValue {
+                needsDisplay = true
+                window?.invalidateCursorRects(for: self)
+            }
+        }
     }
 
     /// Fired (on the main queue) when the alternate screen toggles, so the
@@ -468,6 +493,8 @@ class TerminalRenderer: NSView {
             }
             return overlay
         }()
+        // Rebuilt while drawing the hovered block's toolbar below.
+        hoverToolbarTargets = []
 
         // Warp model: the input bar IS the prompt, so the shell's own in-grid
         // prompt is redundant. When the bar is active (not a TUI) and the shell
@@ -1091,6 +1118,244 @@ class TerminalRenderer: NSView {
             context.addLine(to: CGPoint(x: fullWidth - padding, y: y))
             context.strokePath()
         }
+
+        // Warp-style hover toolbar at the hovered block's top-right.
+        if let hoveredBlockId,
+           let block = overlay.blocks.first(where: { $0.id == hoveredBlockId }) {
+            drawBlockToolbar(context: context, block: block, lines: lines)
+        }
+    }
+
+    /// Floating action toolbar at a hovered block's top-right: a quick
+    /// copy-output button and a "⋯" options menu (Warp-style).
+    private func drawBlockToolbar(
+        context: CGContext, block: TerminalBlockOverlayRegion, lines: Int
+    ) {
+        let ch = fontMetrics.cellHeight
+        // Pin to the block's first visible row (top edge when scrolled past).
+        let row = max(Int(block.startRow), 0)
+        guard row < lines else { return }
+
+        let buttonW: CGFloat = 26
+        let inset: CGFloat = 4
+        let buttons: [BlockToolbarButton] = [.copyOutput, .menu]
+        let toolbarH = ch
+        let toolbarW = inset * 2 + buttonW * CGFloat(buttons.count)
+        let x = bounds.width - padding - toolbarW
+        // Nudge the toolbar down from the block's top edge so it floats clear
+        // of the separator and reads as part of the command row.
+        let y = padding + CGFloat(row) * ch + ch * 0.55
+        let toolbarRect = CGRect(x: x, y: y, width: toolbarW, height: toolbarH)
+        let radius = min(toolbarH / 2, 7)
+
+        // Pill background + border.
+        let pill = CGPath(
+            roundedRect: toolbarRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        if let fill = defaultBackgroundColor.copy(alpha: 0.96) {
+            context.setFillColor(fill)
+            context.addPath(pill)
+            context.fillPath()
+        }
+        context.setStrokeColor(blockSeparatorColor)
+        context.setLineWidth(1)
+        context.addPath(pill)
+        context.strokePath()
+
+        for (index, button) in buttons.enumerated() {
+            let bx = x + inset + CGFloat(index) * buttonW
+            let buttonRect = CGRect(x: bx, y: y, width: buttonW, height: toolbarH)
+
+            if hoveredToolbarButton == button {
+                let hl = CGRect(x: bx + 1, y: y + 2, width: buttonW - 2, height: toolbarH - 4)
+                context.setFillColor(blockMutedTextColor.copy(alpha: 0.15) ?? blockMutedTextColor)
+                context.addPath(
+                    CGPath(roundedRect: hl, cornerWidth: 4, cornerHeight: 4, transform: nil))
+                context.fillPath()
+            }
+
+            let iconColor =
+                hoveredToolbarButton == button
+                ? (blockMutedTextColor.copy(alpha: 1.0) ?? blockMutedTextColor)
+                : (blockMutedTextColor.copy(alpha: 0.8) ?? blockMutedTextColor)
+            let iconBox = CGRect(x: bx, y: y, width: buttonW, height: toolbarH)
+                .insetBy(dx: buttonW / 2 - 6, dy: toolbarH / 2 - 6)
+            switch button {
+            case .copyOutput:
+                drawCopyGlyph(context: context, in: iconBox, color: iconColor)
+            case .menu:
+                drawKebabGlyph(context: context, in: iconBox, color: iconColor)
+            }
+
+            hoverToolbarTargets.append(
+                BlockToolbarTarget(
+                    rect: buttonRect.offsetBy(dx: 0, dy: contentYOffset),
+                    button: button,
+                    blockId: block.id))
+        }
+    }
+
+    /// Two overlapping rounded rectangles — the universal "copy" glyph.
+    private func drawCopyGlyph(context: CGContext, in box: CGRect, color: CGColor) {
+        let w = box.width * 0.66
+        let h = box.height * 0.78
+        let front = CGRect(x: box.maxX - w, y: box.maxY - h, width: w, height: h)
+        let back = CGRect(x: box.minX, y: box.minY, width: w, height: h)
+        context.setStrokeColor(color)
+        context.setLineWidth(1.3)
+        // Back sheet.
+        context.addPath(CGPath(roundedRect: back, cornerWidth: 2, cornerHeight: 2, transform: nil))
+        context.strokePath()
+        // Front sheet, filled with the background so it visually overlaps.
+        context.setFillColor(defaultBackgroundColor)
+        let frontPath = CGPath(roundedRect: front, cornerWidth: 2, cornerHeight: 2, transform: nil)
+        context.addPath(frontPath)
+        context.fillPath()
+        context.setStrokeColor(color)
+        context.addPath(frontPath)
+        context.strokePath()
+    }
+
+    /// Three vertical dots — the "more options" kebab glyph.
+    private func drawKebabGlyph(context: CGContext, in box: CGRect, color: CGColor) {
+        let dotSize: CGFloat = 2.2
+        let cx = box.midX - dotSize / 2
+        let spacing = (box.height - dotSize) / 2
+        context.setFillColor(color)
+        for i in 0..<3 {
+            let dot = CGRect(
+                x: cx, y: box.minY + CGFloat(i) * spacing, width: dotSize, height: dotSize)
+            context.fillEllipse(in: dot)
+        }
+    }
+
+    /// Build the full terminal context menu — the same menu shown by
+    /// right-click and by the hover toolbar's "⋯" button. When `blockId` is
+    /// set, the per-block actions (copy command/output, re-run) are included
+    /// at the top, scoped to that block.
+    private func buildTerminalContextMenu(blockId: UInt64?) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        if let blockId,
+           let block = backend?.blockOverlay()?.blocks.first(where: { $0.id == blockId }) {
+            let hasCommand = !(block.command?.isEmpty ?? true)
+
+            let copyCommand = NSMenuItem(
+                title: "Copy Command", action: #selector(contextCopyBlockCommand(_:)),
+                keyEquivalent: "")
+            copyCommand.target = self
+            copyCommand.isEnabled = hasCommand
+            menu.addItem(copyCommand)
+
+            let copyOutput = NSMenuItem(
+                title: "Copy Output", action: #selector(contextCopyBlockOutput(_:)),
+                keyEquivalent: "")
+            copyOutput.target = self
+            menu.addItem(copyOutput)
+
+            let copyBoth = NSMenuItem(
+                title: "Copy Command & Output", action: #selector(contextCopyBlockBoth(_:)),
+                keyEquivalent: "")
+            copyBoth.target = self
+            menu.addItem(copyBoth)
+
+            let rerun = NSMenuItem(
+                title: "Re-run Command", action: #selector(contextRerunBlock(_:)), keyEquivalent: "")
+            rerun.target = self
+            rerun.isEnabled = hasCommand && !block.isRunning
+            menu.addItem(rerun)
+
+            menu.addItem(.separator())
+        }
+
+        let commandFlags = backend?.commandBlockFlags()
+            ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
+        let hasCommand = commandFlags.hasCommand
+        let hasOutput = commandFlags.hasOutput
+        let hasBlock = hasCommand || hasOutput
+        let hasFailedBlock = commandFlags.hasFailed
+        let hasHistory = !(backend?.commandHistorySearch(text: "", cwd: nil, limit: 1).isEmpty ?? true)
+
+        let copyItem = NSMenuItem(
+            title: "Copy", action: #selector(contextCopy(_:)), keyEquivalent: "")
+        copyItem.target = self
+        copyItem.isEnabled = backend?.selectedText() != nil
+        menu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(
+            title: "Paste", action: #selector(contextPaste(_:)), keyEquivalent: "")
+        pasteItem.target = self
+        let pasteboard = NSPasteboard.general
+        pasteItem.isEnabled = pasteboard.string(forType: .string) != nil
+            || pasteboard.canReadObject(forClasses: [NSImage.self], options: nil)
+        menu.addItem(pasteItem)
+
+        menu.addItem(.separator())
+
+        let copyCommandItem = NSMenuItem(
+            title: "Copy Last Command", action: #selector(contextCopyLastCommand(_:)),
+            keyEquivalent: "")
+        copyCommandItem.target = self
+        copyCommandItem.isEnabled = hasCommand
+        menu.addItem(copyCommandItem)
+
+        let copyOutputItem = NSMenuItem(
+            title: "Copy Last Command Output", action: #selector(contextCopyLastCommandOutput(_:)),
+            keyEquivalent: "")
+        copyOutputItem.target = self
+        copyOutputItem.isEnabled = hasOutput
+        menu.addItem(copyOutputItem)
+
+        let rerunItem = NSMenuItem(
+            title: "Rerun Last Command", action: #selector(contextRerunLastCommand(_:)),
+            keyEquivalent: "")
+        rerunItem.target = self
+        rerunItem.isEnabled = hasCommand
+        menu.addItem(rerunItem)
+
+        let historyItem = NSMenuItem(
+            title: "Command History...", action: #selector(contextCommandHistory(_:)),
+            keyEquivalent: "")
+        historyItem.target = self
+        historyItem.isEnabled = hasHistory
+        menu.addItem(historyItem)
+
+        menu.addItem(.separator())
+
+        let previousBlockItem = NSMenuItem(
+            title: "Previous Command Block", action: #selector(contextPreviousCommandBlock(_:)),
+            keyEquivalent: "")
+        previousBlockItem.target = self
+        previousBlockItem.isEnabled = hasBlock
+        menu.addItem(previousBlockItem)
+
+        let nextBlockItem = NSMenuItem(
+            title: "Next Command Block", action: #selector(contextNextCommandBlock(_:)),
+            keyEquivalent: "")
+        nextBlockItem.target = self
+        nextBlockItem.isEnabled = hasBlock
+        menu.addItem(nextBlockItem)
+
+        let failedBlockItem = NSMenuItem(
+            title: "Last Failed Command", action: #selector(contextLastFailedCommandBlock(_:)),
+            keyEquivalent: "")
+        failedBlockItem.target = self
+        failedBlockItem.isEnabled = hasFailedBlock
+        menu.addItem(failedBlockItem)
+
+        menu.addItem(.separator())
+
+        let selectAllItem = NSMenuItem(
+            title: "Select All", action: #selector(contextSelectAll(_:)), keyEquivalent: "")
+        selectAllItem.target = self
+        menu.addItem(selectAllItem)
+
+        let clearItem = NSMenuItem(
+            title: "Clear", action: #selector(contextClear(_:)), keyEquivalent: "")
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        return menu
     }
 
     /// "✓ · 1.2s" / "✗ 1 · 3.4s" summary for a completed block.
@@ -1616,6 +1881,12 @@ class TerminalRenderer: NSView {
     override func mouseMoved(with event: NSEvent) {
         updateHoveredBlock(with: event)
 
+        // Highlight the hover-toolbar button under the pointer.
+        let toolbarPoint = convert(event.locationInWindow, from: nil)
+        hoveredToolbarButton = hoverToolbarTargets.first {
+            $0.rect.contains(toolbarPoint)
+        }?.button
+
         guard allowHyperlinks else {
             clearHoverLink()
             return
@@ -1697,6 +1968,7 @@ class TerminalRenderer: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoveredBlockId = nil
+        hoveredToolbarButton = nil
         clearHoverLink()
     }
 
@@ -1772,11 +2044,33 @@ class TerminalRenderer: NSView {
             // Whole view uses pointing-hand cursor while hovering a link.
             addCursorRect(bounds, cursor: .pointingHand)
         }
+        for target in hoverToolbarTargets {
+            addCursorRect(target.rect, cursor: .pointingHand)
+        }
     }
 
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
+        // Hover-toolbar buttons take priority over selection.
+        let point = convert(event.locationInWindow, from: nil)
+        if let target = hoverToolbarTargets.first(where: { $0.rect.contains(point) }) {
+            contextBlockId = target.blockId
+            switch target.button {
+            case .copyOutput:
+                onCopyBlockOutput?(target.blockId)
+            case .menu:
+                highlightedBlockId = target.blockId
+                let menu = buildTerminalContextMenu(blockId: target.blockId)
+                menu.popUp(
+                    positioning: nil,
+                    at: NSPoint(x: target.rect.minX, y: target.rect.maxY),
+                    in: self)
+                highlightedBlockId = nil
+            }
+            return
+        }
+
         if keyboardInteractive {
             window?.makeFirstResponder(self)
         } else {
@@ -1929,165 +2223,21 @@ class TerminalRenderer: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        let menu = NSMenu()
-        menu.autoenablesItems = false
 
-        // Block under the pointer: offer Warp-style per-block actions.
+        // Block under the pointer scopes the per-block actions.
         contextBlockId = nil
-        var contextBlock: TerminalBlockOverlayRegion?
         if blocksEnabled, let overlay = backend?.blockOverlay(), !overlay.altScreen {
             let (_, row) = gridPoint(from: event)
             let rowI = Int32(row)
             let inPromptRegion = overlay.promptRow.map { rowI >= $0 } ?? false
-            if !inPromptRegion {
-                contextBlock = overlay.blocks.first { rowI >= $0.startRow && rowI <= $0.endRow }
+            if !inPromptRegion,
+               let block = overlay.blocks.first(where: { rowI >= $0.startRow && rowI <= $0.endRow }) {
+                contextBlockId = block.id
+                highlightedBlockId = block.id
             }
         }
-        if let block = contextBlock {
-            contextBlockId = block.id
-            highlightedBlockId = block.id
 
-            let blockCopyCommand = NSMenuItem(
-                title: "Copy Command",
-                action: #selector(contextCopyBlockCommand(_:)),
-                keyEquivalent: ""
-            )
-            blockCopyCommand.target = self
-            blockCopyCommand.isEnabled = !(block.command?.isEmpty ?? true)
-            menu.addItem(blockCopyCommand)
-
-            let blockCopyOutput = NSMenuItem(
-                title: "Copy Output",
-                action: #selector(contextCopyBlockOutput(_:)),
-                keyEquivalent: ""
-            )
-            blockCopyOutput.target = self
-            menu.addItem(blockCopyOutput)
-
-            let blockRerun = NSMenuItem(
-                title: "Re-run Command",
-                action: #selector(contextRerunBlock(_:)),
-                keyEquivalent: ""
-            )
-            blockRerun.target = self
-            blockRerun.isEnabled = !(block.command?.isEmpty ?? true) && !block.isRunning
-            menu.addItem(blockRerun)
-
-            menu.addItem(NSMenuItem.separator())
-        }
-        let commandFlags = backend?.commandBlockFlags()
-            ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
-        let hasCommand = commandFlags.hasCommand
-        let hasOutput = commandFlags.hasOutput
-        let hasBlock = hasCommand || hasOutput
-        let hasFailedBlock = commandFlags.hasFailed
-        let hasHistory = !(backend?.commandHistorySearch(text: "", cwd: nil, limit: 1).isEmpty ?? true)
-
-        let copyItem = NSMenuItem(
-            title: "Copy",
-            action: #selector(contextCopy(_:)),
-            keyEquivalent: ""
-        )
-        copyItem.target = self
-        copyItem.isEnabled = backend?.selectedText() != nil
-        menu.addItem(copyItem)
-
-        let pasteItem = NSMenuItem(
-            title: "Paste",
-            action: #selector(contextPaste(_:)),
-            keyEquivalent: ""
-        )
-        pasteItem.target = self
-        let pasteboard = NSPasteboard.general
-        pasteItem.isEnabled = pasteboard.string(forType: .string) != nil
-            || pasteboard.canReadObject(forClasses: [NSImage.self], options: nil)
-        menu.addItem(pasteItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let copyCommandItem = NSMenuItem(
-            title: "Copy Last Command",
-            action: #selector(contextCopyLastCommand(_:)),
-            keyEquivalent: ""
-        )
-        copyCommandItem.target = self
-        copyCommandItem.isEnabled = hasCommand
-        menu.addItem(copyCommandItem)
-
-        let copyOutputItem = NSMenuItem(
-            title: "Copy Last Command Output",
-            action: #selector(contextCopyLastCommandOutput(_:)),
-            keyEquivalent: ""
-        )
-        copyOutputItem.target = self
-        copyOutputItem.isEnabled = hasOutput
-        menu.addItem(copyOutputItem)
-
-        let rerunItem = NSMenuItem(
-            title: "Rerun Last Command",
-            action: #selector(contextRerunLastCommand(_:)),
-            keyEquivalent: ""
-        )
-        rerunItem.target = self
-        rerunItem.isEnabled = hasCommand
-        menu.addItem(rerunItem)
-
-        let historyItem = NSMenuItem(
-            title: "Command History...",
-            action: #selector(contextCommandHistory(_:)),
-            keyEquivalent: ""
-        )
-        historyItem.target = self
-        historyItem.isEnabled = hasHistory
-        menu.addItem(historyItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let previousBlockItem = NSMenuItem(
-            title: "Previous Command Block",
-            action: #selector(contextPreviousCommandBlock(_:)),
-            keyEquivalent: ""
-        )
-        previousBlockItem.target = self
-        previousBlockItem.isEnabled = hasBlock
-        menu.addItem(previousBlockItem)
-
-        let nextBlockItem = NSMenuItem(
-            title: "Next Command Block",
-            action: #selector(contextNextCommandBlock(_:)),
-            keyEquivalent: ""
-        )
-        nextBlockItem.target = self
-        nextBlockItem.isEnabled = hasBlock
-        menu.addItem(nextBlockItem)
-
-        let failedBlockItem = NSMenuItem(
-            title: "Last Failed Command",
-            action: #selector(contextLastFailedCommandBlock(_:)),
-            keyEquivalent: ""
-        )
-        failedBlockItem.target = self
-        failedBlockItem.isEnabled = hasFailedBlock
-        menu.addItem(failedBlockItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let selectAllItem = NSMenuItem(
-            title: "Select All",
-            action: #selector(contextSelectAll(_:)),
-            keyEquivalent: ""
-        )
-        selectAllItem.target = self
-        menu.addItem(selectAllItem)
-
-        let clearItem = NSMenuItem(
-            title: "Clear",
-            action: #selector(contextClear(_:)),
-            keyEquivalent: ""
-        )
-        clearItem.target = self
-        menu.addItem(clearItem)
-
+        let menu = buildTerminalContextMenu(blockId: contextBlockId)
         NSMenu.popUpContextMenu(menu, with: event, for: self)
         // popUpContextMenu blocks until dismissal; drop the emphasis wash.
         if contextBlockId != nil {
@@ -2113,6 +2263,10 @@ class TerminalRenderer: NSView {
 
     @objc private func contextCopyBlockOutput(_ sender: Any?) {
         if let contextBlockId { onCopyBlockOutput?(contextBlockId) }
+    }
+
+    @objc private func contextCopyBlockBoth(_ sender: Any?) {
+        if let contextBlockId { onCopyBlockCommandAndOutput?(contextBlockId) }
     }
 
     @objc private func contextRerunBlock(_ sender: Any?) {

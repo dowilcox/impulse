@@ -103,10 +103,24 @@ impl CommandBlockTracker {
         abs_row: Option<i64>,
     ) -> TerminalCommandBlock {
         if let Some(mut current) = self.current.take() {
-            current.ended_at_ms = Some(started_at_ms);
-            current.output_end_line = Some(self.output_line);
-            current.end_row = abs_row;
-            self.push_completed(current);
+            // Shells repaint the prompt (re-emitting OSC 133;A/C) before the
+            // real command's marks arrive, producing an empty stub block with
+            // no command and no output. Absorb its prompt row into the new
+            // block instead of orphaning it, so command + output stay one block.
+            let is_empty_stub = current.command.is_none()
+                && current.output.is_empty()
+                && current.output_end_line.is_none()
+                && self.output_line == current.output_start_line;
+            if is_empty_stub {
+                if self.pending_prompt_row.is_none() {
+                    self.pending_prompt_row = current.prompt_row;
+                }
+            } else {
+                current.ended_at_ms = Some(started_at_ms);
+                current.output_end_line = Some(self.output_line);
+                current.end_row = abs_row;
+                self.push_completed(current);
+            }
         }
 
         self.next_id += 1;
@@ -322,6 +336,34 @@ fn plain_text_from_terminal_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absorbs_empty_prompt_stub_into_the_real_command_block() {
+        // Shells repaint the prompt, emitting a bare OSC 133;C with no command
+        // before the real one. The stub must not orphan the prompt row.
+        let mut tracker = CommandBlockTracker::new();
+        tracker.prompt_marked(0);
+
+        // Phantom command-start: no pending command, consumes the prompt row.
+        let stub = tracker.command_started_at(10, Some(2));
+        assert_eq!(stub.command, None);
+        assert_eq!(stub.prompt_row, Some(0));
+
+        // Real command-start (after the OSC 6973 command text arrived).
+        tracker.set_pending_command("echo hello".to_string());
+        let real = tracker.command_started_at(20, Some(2));
+
+        // One block, spanning the prompt through the output.
+        let blocks = tracker.blocks();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(real.command.as_deref(), Some("echo hello"));
+        assert_eq!(
+            real.prompt_row,
+            Some(0),
+            "prompt row absorbed from the stub"
+        );
+        assert_eq!(real.output_row, Some(2));
+    }
 
     #[test]
     fn records_completed_command_block_with_command_cwd_exit_and_lines() {

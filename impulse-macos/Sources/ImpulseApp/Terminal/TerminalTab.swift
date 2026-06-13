@@ -136,6 +136,18 @@ class TerminalTab: NSView {
     renderer.onRerunLastCommand = { [weak self] in
       self?.rerunLastCommand()
     }
+    renderer.onCopyBlockCommand = { [weak self] id in
+      self?.copyBlock(id: id, includeCommand: true, includeOutput: false)
+    }
+    renderer.onCopyBlockOutput = { [weak self] id in
+      self?.copyBlock(id: id, includeCommand: false, includeOutput: true)
+    }
+    renderer.onCopyBlockCommandAndOutput = { [weak self] id in
+      self?.copyBlock(id: id, includeCommand: true, includeOutput: true)
+    }
+    renderer.onRerunBlock = { [weak self] id in
+      self?.rerunBlock(id: id)
+    }
     renderer.onShowCommandHistory = { [weak self] in
       self?.showCommandHistory()
     }
@@ -533,6 +545,39 @@ class TerminalTab: NSView {
 
   private func rerunLastCommand() {
     guard let command = latestCommandBlock()?.command,
+      !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return }
+    _ = backend?.rerunCommand(command)
+  }
+
+  // MARK: Per-Block Actions (right-click menu + hover toolbar)
+
+  private func block(withId id: UInt64) -> TerminalCommandBlock? {
+    backend?.commandBlocks().first { $0.id == id }
+  }
+
+  /// Copy a specific block's command and/or output to the clipboard.
+  private func copyBlock(id: UInt64, includeCommand: Bool, includeOutput: Bool) {
+    guard let block = block(withId: id) else { return }
+    var parts: [String] = []
+    if includeCommand,
+      let command = block.command?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !command.isEmpty
+    {
+      parts.append(command)
+    }
+    if includeOutput {
+      let output = block.output.trimmingCharacters(in: .newlines)
+      if !output.isEmpty { parts.append(output) }
+    }
+    guard !parts.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(parts.joined(separator: "\n\n"), forType: .string)
+  }
+
+  /// Re-run a specific block's command in the terminal.
+  private func rerunBlock(id: UInt64) {
+    guard let command = block(withId: id)?.command,
       !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return }
     _ = backend?.rerunCommand(command)
