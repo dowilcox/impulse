@@ -2010,6 +2010,43 @@ pub extern "C" fn impulse_terminal_command_history_search(
     )
 }
 
+/// Warm the input-completion caches (PATH executable scan) off the hot path.
+/// Safe to call from a background thread at startup.
+#[no_mangle]
+pub extern "C" fn impulse_completion_warm_cache() {
+    ffi_catch((), AssertUnwindSafe(impulse_core::completion::warm_cache));
+}
+
+/// Best inline completion for the input bar. `input` is the current text,
+/// `cwd` the terminal's working directory (may be NULL). Returns the full
+/// completed line (always starts with `input`), or NULL when there's none.
+/// Caller frees with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_complete_input(
+    handle: *mut TerminalHandle,
+    input: *const c_char,
+    cwd: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
+            }
+            let Some(input) = to_rust_str(input) else {
+                return std::ptr::null_mut();
+            };
+            let cwd = to_rust_str(cwd);
+            let h = unsafe { &*handle };
+            let history = h.backend.recent_command_strings(500);
+            match impulse_core::completion::complete(&input, cwd.as_deref(), &history) {
+                Some(completed) => to_c_string(&completed),
+                None => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_rerun_command(
     handle: *mut TerminalHandle,

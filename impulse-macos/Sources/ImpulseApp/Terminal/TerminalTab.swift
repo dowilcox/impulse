@@ -556,15 +556,13 @@ class TerminalTab: NSView {
     backend?.write(trimmed + "\n")
   }
 
-  /// First history command starting with `text` (input-bar ghost text).
+  /// Best inline completion for `text` (input-bar ghost text): history
+  /// continuation, then PATH executables / subcommands / flags / filesystem
+  /// paths. Returns the full completed line.
   func historySuggestion(for text: String) -> String? {
     guard !text.isEmpty, let backend else { return nil }
-    let results = backend.commandHistorySearch(
-      text: text, cwd: currentWorkingDirectory, limit: 8
-    )
-    return results.first { result in
-      result.kind == .prefix && result.record.command != text
-    }?.record.command
+    let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
+    return backend.completeInput(text, cwd: cwd)
   }
 
   /// Most recent commands, newest first (input-bar ↑/↓ cycling).

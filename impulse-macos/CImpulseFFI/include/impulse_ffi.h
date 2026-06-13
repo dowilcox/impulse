@@ -11,6 +11,9 @@ typedef struct LspRegistryHandle LspRegistryHandle;
 // Memory management
 void impulse_free_string(char *s);
 
+// Input completion
+void impulse_completion_warm_cache(void);
+
 // Monaco assets
 char *impulse_ensure_monaco_extracted(void);
 const char *impulse_get_editor_html(void);
@@ -100,6 +103,7 @@ char *impulse_terminal_command_blocks(void *handle);
 char *impulse_terminal_block_overlay(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);
 char *impulse_terminal_command_history_search(void *handle, const char *query_json);
+char *impulse_terminal_complete_input(void *handle, const char *input, const char *cwd);
 _Bool impulse_terminal_rerun_command(void *handle, const char *command);
 void impulse_terminal_start_selection(void *handle, unsigned short col, unsigned short row, unsigned char kind);
 void impulse_terminal_update_selection(void *handle, unsigned short col, unsigned short row);

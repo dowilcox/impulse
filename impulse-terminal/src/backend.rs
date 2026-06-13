@@ -1134,6 +1134,25 @@ impl TerminalBackend {
             .unwrap_or_default()
     }
 
+    /// Recent command strings, newest-first and de-duplicated. Used by the
+    /// input-bar completion engine (which lives in `impulse-core`).
+    pub fn recent_command_strings(&self, limit: usize) -> Vec<String> {
+        self.history
+            .lock()
+            .map(|history| {
+                let mut seen = std::collections::HashSet::new();
+                history
+                    .records()
+                    .into_iter()
+                    .rev()
+                    .filter(|record| seen.insert(record.command.clone()))
+                    .map(|record| record.command)
+                    .take(limit)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Return whether this terminal has any completed command history records.
     pub fn has_command_history(&self) -> bool {
         self.history

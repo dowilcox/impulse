@@ -755,6 +755,25 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    /// Pre-scan PATH so the first input-bar completion is instant.
+    static func warmCompletionCache() {
+        impulse_completion_warm_cache()
+    }
+
+    /// Returns the best inline completion for the input bar, or nil.
+    static func terminalCompleteInput(handle: OpaquePointer, input: String, cwd: String?) -> String? {
+        let ptr = input.withCString { inputPtr in
+            if let cwd {
+                return cwd.withCString { cwdPtr in
+                    impulse_terminal_complete_input(UnsafeMutableRawPointer(handle), inputPtr, cwdPtr)
+                }
+            }
+            return impulse_terminal_complete_input(UnsafeMutableRawPointer(handle), inputPtr, nil)
+        }
+        guard let ptr else { return nil }
+        return consumeCString(ptr)
+    }
+
     /// Searches completed terminal command history and returns a JSON array string.
     static func terminalCommandHistorySearch(handle: OpaquePointer, queryJson: String) -> String? {
         let ptr = queryJson.withCString { queryPtr in

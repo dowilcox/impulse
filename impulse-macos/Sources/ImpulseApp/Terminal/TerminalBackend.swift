@@ -559,6 +559,13 @@ final class TerminalBackend {
         return ImpulseCore.terminalRerunCommand(handle: handle, command: command)
     }
 
+    /// Best inline completion for the input bar (history continuation, then
+    /// PATH executables / subcommands / flags / filesystem paths), or nil.
+    func completeInput(_ input: String, cwd: String?) -> String? {
+        guard let handle, !isShutdown, !input.isEmpty else { return nil }
+        return ImpulseCore.terminalCompleteInput(handle: handle, input: input, cwd: cwd)
+    }
+
     private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload)

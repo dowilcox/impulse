@@ -1,5 +1,6 @@
 pub mod close_risk;
 pub mod command_palette;
+pub mod completion;
 pub mod file_tree;
 pub mod filesystem;
 pub mod git;

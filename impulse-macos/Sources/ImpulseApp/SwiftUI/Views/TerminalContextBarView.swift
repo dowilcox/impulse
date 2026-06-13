@@ -170,6 +170,7 @@ struct TerminalContextBarView: View {
           .onKeyPress(.upArrow) { cycleHistory(direction: 1) }
           .onKeyPress(.downArrow) { cycleHistory(direction: -1) }
           .onKeyPress(.tab) { acceptSuggestion() }
+          .onKeyPress(.rightArrow) { acceptSuggestionWord() }
           .onKeyPress(.escape) {
             model.onFocusTerminal?()
             return .handled
@@ -235,6 +236,29 @@ struct TerminalContextBarView: View {
       return .ignored
     }
     text = suggestion
+    return .handled
+  }
+
+  /// → accepts the next word of the suggestion (up to and including the next
+  /// space or `/`). When no suggestion is showing, → moves the cursor normally.
+  private func acceptSuggestionWord() -> KeyPress.Result {
+    guard let suggestion, suggestion.hasPrefix(text), suggestion != text, !text.isEmpty else {
+      return .ignored
+    }
+    let remainder = Array(suggestion.dropFirst(text.count))
+    guard !remainder.isEmpty else { return .ignored }
+
+    let isBoundary: (Character) -> Bool = { $0 == " " || $0 == "/" }
+    var end = 0
+    if isBoundary(remainder[0]) {
+      // Leading boundary: take just it.
+      end = 1
+    } else {
+      while end < remainder.count, !isBoundary(remainder[end]) { end += 1 }
+      // Include the trailing boundary so the next press starts a fresh word.
+      if end < remainder.count, isBoundary(remainder[end]) { end += 1 }
+    }
+    text += String(remainder[0..<end])
     return .handled
   }
 

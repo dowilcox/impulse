@@ -49,6 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
     EditorWebViewPool.shared.warmUp()
 
+    // Pre-scan PATH so the first input-bar completion keystroke is instant.
+    DispatchQueue.global(qos: .utility).async {
+      ImpulseCore.warmCompletionCache()
+    }
+
     // Initialize LSP with the last known directory, or home.
     let rootDir: String
     if !settings.lastDirectory.isEmpty,
