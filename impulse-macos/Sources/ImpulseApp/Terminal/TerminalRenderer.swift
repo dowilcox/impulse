@@ -1784,13 +1784,19 @@ class TerminalRenderer: NSView {
 
     // Prevent the system beep for unhandled key events.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if eventMatchesKeybinding(event, id: "paste") {
-            paste(event)
-            return true
-        }
-        if eventMatchesKeybinding(event, id: "copy") {
-            copy(event)
-            return true
+        // performKeyEquivalent is offered to every view in the key window, not
+        // just the first responder. Only claim terminal copy/paste when this
+        // grid actually has focus — otherwise we'd steal Cmd+V/Cmd+C from a
+        // focused text field (e.g. the command input bar).
+        if window?.firstResponder === self {
+            if eventMatchesKeybinding(event, id: "paste") {
+                paste(event)
+                return true
+            }
+            if eventMatchesKeybinding(event, id: "copy") {
+                copy(event)
+                return true
+            }
         }
 
         if event.modifierFlags.contains(.command) {
