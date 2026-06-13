@@ -2,20 +2,6 @@ import AppKit
 import SwiftUI
 import os.log
 
-// MARK: - Themed Split View
-
-/// NSSplitView subclass that allows a custom divider color to match the app theme.
-/// Used by TerminalContainer for split terminal panes.
-final class ThemedSplitView: NSSplitView {
-  var customDividerColor: NSColor? {
-    didSet { needsDisplay = true }
-  }
-
-  override var dividerColor: NSColor {
-    customDividerColor ?? super.dividerColor
-  }
-}
-
 // MARK: - Double-Click-to-Zoom Window
 
 /// NSWindow subclass that restores double-click-to-zoom/minimize behavior
@@ -1506,32 +1492,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       }
     )
     notificationObservers.append(
-      nc.addObserver(forName: .impulseSplitHorizontal, object: nil, queue: .main) { [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true else { return }
-        self.tabManager.splitTerminalHorizontally()
-      }
-    )
-    notificationObservers.append(
-      nc.addObserver(forName: .impulseSplitVertical, object: nil, queue: .main) { [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true else { return }
-        self.tabManager.splitTerminalVertically()
-      }
-    )
-    notificationObservers.append(
-      nc.addObserver(forName: .impulseFocusPrevSplit, object: nil, queue: .main) { [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true else { return }
-        guard let container = self.tabManager.selectedTerminal else { return }
-        container.focusPreviousSplit()
-      }
-    )
-    notificationObservers.append(
-      nc.addObserver(forName: .impulseFocusNextSplit, object: nil, queue: .main) { [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true else { return }
-        guard let container = self.tabManager.selectedTerminal else { return }
-        container.focusNextSplit()
-      }
-    )
-    notificationObservers.append(
       nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showSearchSidebarAndFocus()
@@ -1755,7 +1715,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       }
     )
 
-    // Terminal process terminated — close the tab or remove the split pane
+    // Terminal process terminated — close the tab.
     notificationObservers.append(
       nc.addObserver(forName: .terminalProcessTerminated, object: nil, queue: .main) {
         [weak self] notification in
@@ -1764,25 +1724,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           self.tabManager.ownsTerminal(terminalTab)
         else { return }
         for (index, tab) in self.tabManager.tabs.enumerated() {
-          if case .terminal(let container) = tab {
-            guard let termIndex = container.terminals.firstIndex(where: { $0 === terminalTab })
-            else {
-              continue
-            }
-            if container.terminals.count == 1 {
-              self.tabManager.closeTab(index: index)
-            } else {
-              container.removeTerminal(at: termIndex)
-              self.tabManager.refreshSegmentLabels()
-              // Update sidebar/status bar to the surviving terminal's CWD
-              if container.activeTerminalIndex < container.terminals.count {
-                let activeTerminal = container.terminals[container.activeTerminalIndex]
-                let dir = activeTerminal.currentWorkingDirectory
-                if !dir.isEmpty {
-                  self.switchFileTreeRoot(dir)
-                }
-              }
-            }
+          if case .terminal(let container) = tab,
+            container.terminals.contains(where: { $0 === terminalTab })
+          {
+            self.tabManager.closeTab(index: index)
             break
           }
         }

@@ -274,7 +274,6 @@ final class TabManager: NSObject {
       initialCommand: initialCommand
     )
     container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-    container.onSplitStateChanged = { [weak self] in self?.syncToWindowModel() }
     let entry = TabEntry.terminal(container)
     insertTab(entry)
   }
@@ -300,7 +299,6 @@ final class TabManager: NSObject {
       sessionTab: tab
     )
     container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-    container.onSplitStateChanged = { [weak self] in self?.syncToWindowModel() }
     let entry = TabEntry.terminal(container)
     insertTab(entry)
   }
@@ -816,23 +814,6 @@ final class TabManager: NSObject {
     }
   }
 
-  // MARK: - Terminal Splitting
-
-  /// Splits the active terminal tab horizontally (top/bottom).
-  func splitTerminalHorizontally() {
-    guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
-    if case .terminal(let container) = tabs[selectedIndex] {
-      container.splitHorizontally()
-    }
-  }
-
-  /// Splits the active terminal tab vertically (left/right).
-  func splitTerminalVertically() {
-    guard selectedIndex >= 0, selectedIndex < tabs.count else { return }
-    if case .terminal(let container) = tabs[selectedIndex] {
-      container.splitVertically()
-    }
-  }
 
   // MARK: - Theming
 
@@ -887,7 +868,6 @@ final class TabManager: NSObject {
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)
-    ws.activeTerminalSplit = selectedTerminal?.isSplit ?? false
 
     // Update the active file path for sidebar highlighting.
     if let editor = selectedEditor {

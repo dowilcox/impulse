@@ -81,38 +81,6 @@ enum Keybindings {
             keyEquivalent: "v",
             modifierFlags: [.command]
         ),
-        BuiltinKeybinding(
-            id: "split_horizontal",
-            description: "Split Horizontally",
-            category: "Terminal",
-            defaultShortcut: "Cmd+Shift+E",
-            keyEquivalent: "E",
-            modifierFlags: [.command, .shift]
-        ),
-        BuiltinKeybinding(
-            id: "split_vertical",
-            description: "Split Vertically",
-            category: "Terminal",
-            defaultShortcut: "Cmd+Shift+O",
-            keyEquivalent: "O",
-            modifierFlags: [.command, .shift]
-        ),
-        BuiltinKeybinding(
-            id: "focus_prev_split",
-            description: "Focus Previous Split",
-            category: "Terminal",
-            defaultShortcut: "Alt+Left",
-            keyEquivalent: String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)),
-            modifierFlags: [.option]
-        ),
-        BuiltinKeybinding(
-            id: "focus_next_split",
-            description: "Focus Next Split",
-            category: "Terminal",
-            defaultShortcut: "Alt+Right",
-            keyEquivalent: String(Character(UnicodeScalar(NSRightArrowFunctionKey)!)),
-            modifierFlags: [.option]
-        ),
         // -- Editor --
         BuiltinKeybinding(
             id: "new_file",

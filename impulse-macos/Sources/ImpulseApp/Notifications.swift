@@ -117,17 +117,6 @@ extension Notification.Name {
     /// should move to the input bar.
     static let terminalRequestInputFocus = Notification.Name("impulse.terminalRequestInputFocus")
 
-    // MARK: Terminal Commands
-
-    /// Requests splitting the terminal horizontally.
-    static let impulseSplitHorizontal = Notification.Name("impulseSplitHorizontal")
-    /// Requests splitting the terminal vertically.
-    static let impulseSplitVertical = Notification.Name("impulseSplitVertical")
-    /// Requests moving focus to the previous terminal split pane.
-    static let impulseFocusPrevSplit = Notification.Name("impulseFocusPrevSplit")
-    /// Requests moving focus to the next terminal split pane.
-    static let impulseFocusNextSplit = Notification.Name("impulseFocusNextSplit")
-
     // MARK: UI Commands
 
     /// Requests toggling the sidebar.

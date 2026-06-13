@@ -1,45 +1,27 @@
 import AppKit
 
-/// A container that supports splitting terminals horizontally or vertically
-/// using `NSSplitView`. Starts with a single `TerminalTab` and can split
-/// into an arbitrary number of panes.
-class TerminalContainer: NSView, NSSplitViewDelegate {
+/// Wraps a single `TerminalTab` as the content of a terminal tab. (Split
+/// panes were removed; this stays a one-terminal container so the surrounding
+/// tab/session code keeps a stable shape.)
+class TerminalContainer: NSView {
 
   // MARK: Public Properties
 
-  /// All terminal tabs currently in this container, in display order.
+  /// The terminals in this container — always exactly one. Kept as an array so
+  /// call sites that iterate panes continue to work unchanged.
   private(set) var terminals: [TerminalTab] = []
 
-  /// Index of the currently active (focused) terminal within `terminals`.
+  /// Always 0; retained for call-site compatibility.
   private(set) var activeTerminalIndex: Int = 0
 
-  /// The computed active terminal, or nil if the container is empty.
-  /// True when more than one pane is open (a split). Split panes share the
-  /// single window input bar, so they fall back to classic terminal behavior.
-  var isSplit: Bool { terminals.count > 1 }
+  /// The container's terminal, or nil if it hasn't been created yet.
+  var activeTerminal: TerminalTab? { terminals.first }
 
-  /// Fired after the split/pane count changes so the window can show or hide
-  /// the input bar accordingly.
-  var onSplitStateChanged: (() -> Void)?
-
-  var activeTerminal: TerminalTab? {
-    guard terminals.indices.contains(activeTerminalIndex) else { return nil }
-    return terminals[activeTerminalIndex]
-  }
-
-  /// Whether any split pane in this terminal tab is requesting attention.
-  var needsAttention: Bool {
-    terminals.contains { $0.needsAttention }
-  }
+  /// Whether the terminal is requesting attention.
+  var needsAttention: Bool { terminals.contains { $0.needsAttention } }
 
   // MARK: Private Properties
 
-  private var splitView: ThemedSplitView?
-
-  /// Color used for the split view divider, matching the status bar border.
-  private var dividerColor: NSColor?
-
-  /// Settings and theme for creating new terminals when splitting.
   private var currentSettings: TerminalSettings
   private var currentTheme: TerminalTheme
 
@@ -53,11 +35,10 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     self.currentTheme = theme
     super.init(frame: frameRect)
 
-    let initialTerminal = createTerminal()
-    terminals.append(initialTerminal)
-
-    addSubview(initialTerminal)
-    constrainChildToFill(initialTerminal)
+    let terminal = createTerminal()
+    terminals.append(terminal)
+    addSubview(terminal)
+    constrainChildToFill(terminal)
 
     // Defer shell spawning until after Auto Layout has resolved the
     // terminal view's frame, ensuring the PTY starts with the correct
@@ -66,7 +47,7 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     // COLUMNS mismatch that breaks line wrapping and cursor navigation.
     let dir = settings.lastDirectory.isEmpty ? nil : settings.lastDirectory
     DispatchQueue.main.async {
-      initialTerminal.spawnShell(initialDirectory: dir, initialCommand: initialCommand)
+      terminal.spawnShell(initialDirectory: dir, initialCommand: initialCommand)
     }
   }
 
@@ -80,19 +61,18 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     self.currentTheme = theme
     super.init(frame: frameRect)
 
-    if !restoreSessionTab(sessionTab) {
-      let fallbackTerminal = createTerminal()
-      terminals.append(fallbackTerminal)
-      addSubview(fallbackTerminal)
-      constrainChildToFill(fallbackTerminal)
-      let dir = settings.lastDirectory.isEmpty ? NSHomeDirectory() : settings.lastDirectory
-      DispatchQueue.main.async {
-        fallbackTerminal.spawnShell(initialDirectory: dir)
-        fallbackTerminal.focus()
-      }
+    let terminal = createTerminal()
+    terminals.append(terminal)
+    addSubview(terminal)
+    constrainChildToFill(terminal)
+
+    // Restore the active pane's working directory (older sessions may have
+    // stored multiple split panes; only the active one is restored now).
+    let cwd = restoredCwd(for: sessionTab)
+    DispatchQueue.main.async {
+      terminal.spawnShell(initialDirectory: cwd)
+      terminal.focus()
     }
-    // A restored session may have rebuilt multiple panes.
-    refreshInputBarManagement()
   }
 
   @available(*, unavailable)
@@ -100,119 +80,10 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     fatalError("init(coder:) is not supported")
   }
 
-  // MARK: Splitting
+  // MARK: Process Lifecycle
 
-  /// Split with a vertical divider, placing terminals side by side.
-  @discardableResult
-  func splitVertically() -> TerminalTab {
-    return performSplit(isVertical: true)
-  }
-
-  /// Split with a horizontal divider, stacking terminals top and bottom.
-  @discardableResult
-  func splitHorizontally() -> TerminalTab {
-    return performSplit(isVertical: false)
-  }
-
-  private func performSplit(isVertical: Bool) -> TerminalTab {
-    let newTerminal = createTerminal()
-    // Capture the active terminal's CWD before we change the active index.
-    let inheritedCwd = activeTerminal?.currentWorkingDirectory
-
-    if splitView == nil {
-      // Currently showing a single terminal. Replace it with a split view.
-      guard let existingTerminal = terminals.first else {
-        // Should never happen; add and return the new terminal directly.
-        terminals.append(newTerminal)
-        addSubview(newTerminal)
-        constrainChildToFill(newTerminal)
-        DispatchQueue.main.async {
-          newTerminal.spawnShell(initialDirectory: inheritedCwd)
-        }
-        return newTerminal
-      }
-
-      existingTerminal.removeFromSuperview()
-      removeAllConstraints()
-
-      let split = ThemedSplitView()
-      split.isVertical = isVertical
-      split.dividerStyle = .thin
-      split.delegate = self
-      split.customDividerColor = dividerColor
-
-      split.addArrangedSubview(existingTerminal)
-      split.addArrangedSubview(newTerminal)
-
-      addSubview(split)
-      constrainChildToFill(split)
-
-      splitView = split
-    } else if let split = splitView {
-      // Already split. If the orientation matches, add another pane.
-      // If the orientation differs, wrap the active pane in a nested split.
-      if split.isVertical == isVertical {
-        // Same orientation: insert after the active terminal.
-        let insertIndex = min(activeTerminalIndex + 1, split.arrangedSubviews.count)
-        split.insertArrangedSubview(newTerminal, at: insertIndex)
-      } else {
-        // Different orientation: wrap the active terminal in a nested split.
-        guard let activeView = activeTerminal else {
-          split.addArrangedSubview(newTerminal)
-          terminals.append(newTerminal)
-          DispatchQueue.main.async {
-            newTerminal.spawnShell(initialDirectory: inheritedCwd)
-          }
-          return newTerminal
-        }
-
-        let nestedSplit = ThemedSplitView()
-        nestedSplit.isVertical = isVertical
-        nestedSplit.dividerStyle = .thin
-        nestedSplit.delegate = self
-        nestedSplit.customDividerColor = dividerColor
-
-        let activeIndex = split.arrangedSubviews.firstIndex(of: activeView)
-        activeView.removeFromSuperview()
-
-        nestedSplit.addArrangedSubview(activeView)
-        nestedSplit.addArrangedSubview(newTerminal)
-
-        if let idx = activeIndex {
-          split.insertArrangedSubview(nestedSplit, at: idx)
-        } else {
-          split.addArrangedSubview(nestedSplit)
-        }
-      }
-    }
-
-    terminals.append(newTerminal)
-    activeTerminalIndex = terminals.count - 1
-    DispatchQueue.main.async {
-      newTerminal.spawnShell(initialDirectory: inheritedCwd)
-    }
-    newTerminal.focus()
-    refreshInputBarManagement()
-
-    return newTerminal
-  }
-
-  /// Split panes share one window input bar, so they behave as classic
-  /// terminals (typeable grid, in-grid prompt); a sole pane is input-bar
-  /// managed (Warp model). Keep every pane's renderer in sync.
-  private func refreshInputBarManagement() {
-    let managed = !isSplit
-    for terminal in terminals {
-      terminal.renderer.inputBarManaged = managed
-    }
-    onSplitStateChanged?()
-  }
-
-  // MARK: Removing Terminals
-
-  /// Terminate all shell processes in this container. Must be called before
-  /// the container is removed from the tab list to ensure child processes
-  /// are cleaned up.
+  /// Terminate the shell process. Must be called before the container is
+  /// removed from the tab list so the child process is cleaned up.
   func terminateAllProcesses() {
     for terminal in terminals {
       terminal.terminateProcess()
@@ -220,121 +91,39 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
   }
 
   func runningDescendantProcessCount() -> Int {
-    terminals.reduce(0) { count, terminal in
-      count + terminal.runningDescendantProcessCount()
-    }
+    terminals.reduce(0) { $0 + $1.runningDescendantProcessCount() }
   }
 
   func runningCloseRiskCommands() -> [CloseRiskCommand] {
     terminals.compactMap { $0.runningCloseRiskCommand() }
   }
 
+  // MARK: Session State
+
   func sessionSnapshot(shellName: String) -> TerminalSessionSnapshot? {
-    var panes: [SessionTerminalPaneState] = []
-    var activePaneIndex: Int?
-
-    let layout: SessionTerminalPaneLayoutState?
-    if let splitView {
-      layout = sessionLayout(
-        in: splitView,
-        shellName: shellName,
-        panes: &panes,
-        activePaneIndex: &activePaneIndex
-      )
-    } else if let terminal = terminals.first {
-      layout = sessionLayout(
-        in: terminal,
-        shellName: shellName,
-        panes: &panes,
-        activePaneIndex: &activePaneIndex
-      )
-    } else {
-      layout = nil
-    }
-
-    guard let layout, !panes.isEmpty else { return nil }
+    guard let terminal = terminals.first else { return nil }
+    let cwd = terminal.currentWorkingDirectory.isEmpty
+      ? NSHomeDirectory()
+      : terminal.currentWorkingDirectory
+    let pane = SessionTerminalPaneState(
+      cwd: cwd,
+      title: nonEmptySessionText(terminal.tabTitle),
+      shell: nonEmptySessionText(shellName)
+    )
     return TerminalSessionSnapshot(
-      panes: panes,
-      activePaneIndex: activePaneIndex ?? 0,
-      paneLayout: layout
+      panes: [pane],
+      activePaneIndex: 0,
+      paneLayout: .pane(paneIndex: 0)
     )
   }
 
-  private func sessionLayout(
-    in view: NSView,
-    shellName: String,
-    panes: inout [SessionTerminalPaneState],
-    activePaneIndex: inout Int?
-  ) -> SessionTerminalPaneLayoutState? {
-    if let terminal = view as? TerminalTab {
-      let paneIndex = panes.count
-      if terminal === activeTerminal {
-        activePaneIndex = paneIndex
-      }
-      let cwd = terminal.currentWorkingDirectory.isEmpty
-        ? NSHomeDirectory()
-        : terminal.currentWorkingDirectory
-      panes.append(SessionTerminalPaneState(
-        cwd: cwd,
-        title: nonEmptySessionText(terminal.tabTitle),
-        shell: nonEmptySessionText(shellName)
-      ))
-      return .pane(paneIndex: paneIndex)
+  private func restoredCwd(for tab: SessionTabState) -> String {
+    if let panes = tab.panes, !panes.isEmpty {
+      let index = tab.activePaneIndex ?? 0
+      let pane = panes.indices.contains(index) ? panes[index] : panes[0]
+      if !pane.cwd.isEmpty { return pane.cwd }
     }
-
-    if let split = view as? NSSplitView {
-      let axis = split.isVertical ? "horizontal" : "vertical"
-      let children = split.arrangedSubviews.compactMap {
-        child -> (layout: SessionTerminalPaneLayoutState, size: Double)? in
-        guard let layout = sessionLayout(
-          in: child,
-          shellName: shellName,
-          panes: &panes,
-          activePaneIndex: &activePaneIndex
-        ) else {
-          return nil
-        }
-        return (layout, splitDimension(for: child, in: split))
-      }
-      return combineSplitLayouts(children, axis: axis)?.layout
-    }
-
-    for child in view.subviews {
-      if let layout = sessionLayout(
-        in: child,
-        shellName: shellName,
-        panes: &panes,
-        activePaneIndex: &activePaneIndex
-      ) {
-        return layout
-      }
-    }
-    return nil
-  }
-
-  private func combineSplitLayouts(
-    _ children: [(layout: SessionTerminalPaneLayoutState, size: Double)],
-    axis: String
-  ) -> (layout: SessionTerminalPaneLayoutState, size: Double)? {
-    guard let first = children.first else { return nil }
-    if children.count == 1 {
-      return first
-    }
-
-    guard let rest = combineSplitLayouts(Array(children.dropFirst()), axis: axis) else {
-      return first
-    }
-    let total = max(first.size + rest.size, 1.0)
-    let ratio = min(max(first.size / total, 0.1), 0.9)
-    return (
-      .split(axis: axis, ratio: ratio, first: first.layout, second: rest.layout),
-      total
-    )
-  }
-
-  private func splitDimension(for child: NSView, in split: NSSplitView) -> Double {
-    let raw = split.isVertical ? child.frame.width : child.frame.height
-    return max(Double(raw), 1.0)
+    return nonEmptySessionText(tab.cwd) ?? NSHomeDirectory()
   }
 
   private func nonEmptySessionText(_ value: String?) -> String? {
@@ -343,213 +132,17 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     return trimmed.isEmpty ? nil : trimmed
   }
 
-  private func restoreSessionTab(_ tab: SessionTabState) -> Bool {
-    let panes = sessionPanes(for: tab)
-    guard !panes.isEmpty else { return false }
-
-    let layout = tab.paneLayout ?? .pane(paneIndex: 0)
-    let activePaneIndex = tab.activePaneIndex ?? 0
-    guard let restored = restoreSessionLayout(
-      layout,
-      panes: panes,
-      activePaneIndex: activePaneIndex
-    ) else {
-      return false
-    }
-
-    addSubview(restored)
-    constrainChildToFill(restored)
-    splitView = restored as? ThemedSplitView
-
-    DispatchQueue.main.async { [weak self] in
-      self?.activeTerminal?.focus()
-    }
-    return true
-  }
-
-  private func sessionPanes(for tab: SessionTabState) -> [SessionTerminalPaneState] {
-    if let panes = tab.panes, !panes.isEmpty {
-      return panes
-    }
-    return [SessionTerminalPaneState(
-      cwd: nonEmptySessionText(tab.cwd) ?? NSHomeDirectory(),
-      title: tab.title,
-      shell: tab.shell
-    )]
-  }
-
-  private func restoreSessionLayout(
-    _ layout: SessionTerminalPaneLayoutState,
-    panes: [SessionTerminalPaneState],
-    activePaneIndex: Int
-  ) -> NSView? {
-    switch layout {
-    case .pane(let paneIndex):
-      guard panes.indices.contains(paneIndex) else { return nil }
-      let pane = panes[paneIndex]
-      let terminal = createTerminal()
-      let terminalIndex = terminals.count
-      terminals.append(terminal)
-      if paneIndex == activePaneIndex {
-        activeTerminalIndex = terminalIndex
-      }
-      let cwd = pane.cwd.isEmpty ? NSHomeDirectory() : pane.cwd
-      DispatchQueue.main.async {
-        terminal.spawnShell(initialDirectory: cwd)
-      }
-      return terminal
-
-    case .split(let axis, let ratio, let first, let second):
-      let split = ThemedSplitView()
-      split.isVertical = axis == "horizontal"
-      split.dividerStyle = .thin
-      split.delegate = self
-      split.customDividerColor = dividerColor
-
-      let firstView = restoreSessionLayout(first, panes: panes, activePaneIndex: activePaneIndex)
-      let secondView = restoreSessionLayout(second, panes: panes, activePaneIndex: activePaneIndex)
-
-      switch (firstView, secondView) {
-      case let (firstView?, secondView?):
-        split.addArrangedSubview(firstView)
-        split.addArrangedSubview(secondView)
-        DispatchQueue.main.async {
-          let dimension = split.isVertical ? split.bounds.width : split.bounds.height
-          if dimension > 0 {
-            split.setPosition(dimension * CGFloat(ratio), ofDividerAt: 0)
-          }
-        }
-        return split
-      case let (firstView?, nil):
-        return firstView
-      case let (nil, secondView?):
-        return secondView
-      case (nil, nil):
-        return nil
-      }
-    }
-  }
-
-  /// Remove the terminal at the given index. If only one terminal remains
-  /// after removal, collapse the split view back to a single terminal.
-  func removeTerminal(at index: Int) {
-    guard terminals.indices.contains(index) else { return }
-    let terminal = terminals[index]
-    terminal.terminateProcess()
-    terminals.remove(at: index)
-
-    // Remove the terminal view from whatever parent it sits in.
-    terminal.removeFromSuperview()
-
-    if terminals.count <= 1 {
-      // Collapse back to single view.
-      collapseSplitView()
-    } else {
-      // Clean up empty nested split views.
-      cleanUpEmptySplitViews()
-    }
-
-    // Adjust the active index.
-    if terminals.isEmpty {
-      activeTerminalIndex = 0
-    } else {
-      activeTerminalIndex = min(index, terminals.count - 1)
-      terminals[activeTerminalIndex].focus()
-      // Force a redraw on all remaining terminals. When the split
-      // view rearranges after pane removal, child views don't
-      // automatically get needsDisplay and stay black until resized.
-      for t in terminals {
-        t.renderer.needsDisplay = true
-      }
-    }
-    // Collapsing back to a single pane restores the Warp input-bar model.
-    refreshInputBarManagement()
-  }
-
-  private func collapseSplitView() {
-    splitView?.removeFromSuperview()
-    splitView = nil
-    removeAllConstraints()
-
-    guard let remaining = terminals.first else { return }
-    // The remaining terminal may be inside a nested split; pull it out.
-    remaining.removeFromSuperview()
-    addSubview(remaining)
-    constrainChildToFill(remaining)
-    remaining.renderer.needsDisplay = true
-  }
-
-  private func cleanUpEmptySplitViews() {
-    guard let split = splitView else { return }
-    pruneEmptySplits(in: split)
-  }
-
-  /// Recursively remove NSSplitViews that have fewer than 2 arranged subviews,
-  /// promoting the sole child up to the parent.
-  private func pruneEmptySplits(in split: NSSplitView) {
-    for subview in split.arrangedSubviews {
-      if let nested = subview as? NSSplitView {
-        pruneEmptySplits(in: nested)
-        if nested.arrangedSubviews.count == 1, let sole = nested.arrangedSubviews.first {
-          let idx = split.arrangedSubviews.firstIndex(of: nested)
-          sole.removeFromSuperview()
-          nested.removeFromSuperview()
-          if let idx = idx {
-            split.insertArrangedSubview(sole, at: idx)
-          } else {
-            split.addArrangedSubview(sole)
-          }
-        } else if nested.arrangedSubviews.isEmpty {
-          nested.removeFromSuperview()
-        }
-      }
-    }
-  }
-
-  // MARK: Focus Navigation
-
-  /// Move focus to the next terminal in the list, wrapping around.
-  func focusNextSplit() {
-    guard terminals.count > 1 else { return }
-    activeTerminalIndex = (activeTerminalIndex + 1) % terminals.count
-    terminals[activeTerminalIndex].focus()
-  }
-
-  /// Move focus to the previous terminal in the list, wrapping around.
-  func focusPreviousSplit() {
-    guard terminals.count > 1 else { return }
-    activeTerminalIndex = (activeTerminalIndex - 1 + terminals.count) % terminals.count
-    terminals[activeTerminalIndex].focus()
-  }
-
   // MARK: Propagating Settings
 
-  /// Apply a theme to all child terminals and update split divider colors.
+  /// Apply a theme to the terminal. `dividerColor` is unused (no splits) but
+  /// kept so existing call sites compile unchanged.
   func applyTheme(theme: TerminalTheme, dividerColor: NSColor? = nil) {
     currentTheme = theme
-    if let color = dividerColor {
-      self.dividerColor = color
-    }
     for terminal in terminals {
       terminal.applyTheme(theme: theme)
     }
-    // Update divider color on all split views.
-    if let color = self.dividerColor {
-      applyDividerColor(color, in: self)
-    }
   }
 
-  /// Recursively set the divider color on all ThemedSplitViews.
-  private func applyDividerColor(_ color: NSColor, in view: NSView) {
-    for subview in view.subviews {
-      if let split = subview as? ThemedSplitView {
-        split.customDividerColor = color
-      }
-      applyDividerColor(color, in: subview)
-    }
-  }
-
-  /// Apply settings to all child terminals.
   func applySettings(settings: TerminalSettings) {
     currentSettings = settings
     for terminal in terminals {
@@ -557,36 +150,12 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
     }
   }
 
-  // MARK: NSSplitViewDelegate
-
-  func splitView(
-    _ splitView: NSSplitView,
-    constrainMinCoordinate proposedMinimumPosition: CGFloat,
-    ofSubviewAt dividerIndex: Int
-  ) -> CGFloat {
-    return max(proposedMinimumPosition, 100)
-  }
-
-  func splitView(
-    _ splitView: NSSplitView,
-    constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-    ofSubviewAt dividerIndex: Int
-  ) -> CGFloat {
-    let dimension = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
-    return min(proposedMaximumPosition, dimension - 100)
-  }
-
   // MARK: Helpers
 
   private func createTerminal() -> TerminalTab {
     let terminal = TerminalTab(frame: bounds)
-    terminal.onFocused = { [weak self] focusedTerminal in
-      guard let self,
-        let index = self.terminals.firstIndex(where: { $0 === focusedTerminal })
-      else {
-        return
-      }
-      self.activeTerminalIndex = index
+    terminal.onFocused = { [weak self] _ in
+      self?.activeTerminalIndex = 0
     }
     terminal.configureTerminal(settings: currentSettings, theme: currentTheme)
     return terminal
@@ -600,11 +169,5 @@ class TerminalContainer: NSView, NSSplitViewDelegate {
       child.trailingAnchor.constraint(equalTo: trailingAnchor),
       child.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
-  }
-
-  private func removeAllConstraints() {
-    for constraint in constraints {
-      removeConstraint(constraint)
-    }
   }
 }

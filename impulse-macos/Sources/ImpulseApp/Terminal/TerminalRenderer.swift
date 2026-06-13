@@ -170,23 +170,10 @@ class TerminalRenderer: NSView {
     var onAltScreenChanged: ((Bool) -> Void)?
     private var lastAltScreen = false
 
-    /// Whether the pinned input bar drives this terminal (Warp model). True for
-    /// a sole terminal pane; set false for split panes, which share one window
-    /// input bar and so behave as classic terminals — typeable grid, in-grid
-    /// prompt shown, no prompt suppression or bottom-anchoring.
-    var inputBarManaged: Bool = true {
-        didSet {
-            if inputBarManaged != oldValue {
-                contentYOffset = 0
-                needsDisplay = true
-            }
-        }
-    }
-
     /// Warp model: the grid only takes keyboard input while a full-screen TUI
-    /// owns the alternate screen — otherwise typing flows through the input
-    /// bar. Classic (split) panes are always directly typeable.
-    var keyboardInteractive: Bool { !inputBarManaged || lastAltScreen }
+    /// owns the alternate screen — otherwise all typing flows through the
+    /// pinned input bar, so the scrollback reads as immutable command blocks.
+    var keyboardInteractive: Bool { lastAltScreen }
 
     /// Asked to move keyboard focus to the input bar (e.g. the user clicked
     /// the read-only grid at a prompt).
@@ -468,7 +455,7 @@ class TerminalRenderer: NSView {
         let altScreenNow = grid.altScreen
         if altScreenNow != lastAltScreen {
             lastAltScreen = altScreenNow
-            if inputBarManaged, let onAltScreenChanged {
+            if let onAltScreenChanged {
                 DispatchQueue.main.async { onAltScreenChanged(altScreenNow) }
             }
         }
@@ -489,12 +476,10 @@ class TerminalRenderer: NSView {
         // prompt. We key off the last block's output-end row (precise) rather
         // than the OSC 133;A row, because shells print the cwd line *before*
         // that mark, so the mark sits mid-prompt.
-        // Classic (split) panes show the in-grid prompt and don't anchor;
-        // only an input-bar-managed terminal suppresses the prompt.
-        let suppressPrompt = suppressLivePrompt && inputBarManaged && !altScreenNow
+        let suppressPrompt = suppressLivePrompt && !altScreenNow
         // -1 means "draw nothing" (a fresh shell with only an empty prompt).
         var lastContentRow = lines - 1
-        if inputBarManaged, let overlay = blockOverlay {
+        if let overlay = blockOverlay {
             let atIdlePrompt = overlay.promptRow != nil
             if suppressPrompt && atIdlePrompt {
                 if let lastBlock = overlay.blocks.last {

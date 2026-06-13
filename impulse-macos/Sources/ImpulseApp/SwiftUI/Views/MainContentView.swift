@@ -55,14 +55,10 @@ struct MainContentView: View {
     }
   }
 
-  /// Show the Warp-style input bar only for a single terminal pane, and never
-  /// while the alternate screen (vim, htop, ...) owns the keyboard or the tab
-  /// is split (split panes are classic typeable terminals).
+  /// Show the Warp-style input bar only for terminal tabs, and never while
+  /// the alternate screen (vim, htop, ...) owns the keyboard.
   private var showContextBar: Bool {
-    guard windowModel.contextBarEnabled,
-      !windowModel.terminalAltScreen,
-      !windowModel.activeTerminalSplit
-    else { return false }
+    guard windowModel.contextBarEnabled, !windowModel.terminalAltScreen else { return false }
     let index = windowModel.selectedTabIndex
     guard index >= 0, index < windowModel.tabDisplayInfos.count else { return false }
     return windowModel.tabDisplayInfos[index].isTerminal

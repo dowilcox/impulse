@@ -17,7 +17,6 @@ enum MenuBuilder {
         mainMenu.addItem(buildFileMenu(overrides: overrides))
         mainMenu.addItem(buildEditMenu(overrides: overrides))
         mainMenu.addItem(buildViewMenu(overrides: overrides))
-        mainMenu.addItem(buildTerminalMenu(overrides: overrides))
         mainMenu.addItem(buildWindowMenu(overrides: overrides))
         mainMenu.addItem(buildHelpMenu())
 
@@ -294,44 +293,6 @@ enum MenuBuilder {
 
     // MARK: - Terminal Menu
 
-    private static func buildTerminalMenu(overrides: [String: String]) -> NSMenuItem {
-        let menu = NSMenu(title: "Terminal")
-        let item = NSMenuItem()
-        item.submenu = menu
-
-        let splitHItem = NSMenuItem(title: "Split Horizontal",
-                                    action: #selector(MenuActions.menuSplitHorizontal(_:)),
-                                    keyEquivalent: "E")
-        splitHItem.target = MenuActions.shared
-        applyKeybinding("split_horizontal", overrides: overrides, to: splitHItem)
-        menu.addItem(splitHItem)
-
-        let splitVItem = NSMenuItem(title: "Split Vertical",
-                                    action: #selector(MenuActions.menuSplitVertical(_:)),
-                                    keyEquivalent: "O")
-        splitVItem.target = MenuActions.shared
-        applyKeybinding("split_vertical", overrides: overrides, to: splitVItem)
-        menu.addItem(splitVItem)
-
-        menu.addItem(.separator())
-
-        let focusPrevItem = NSMenuItem(title: "Focus Previous Split",
-                                       action: #selector(MenuActions.menuFocusPrevSplit(_:)),
-                                       keyEquivalent: String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)))
-        focusPrevItem.target = MenuActions.shared
-        applyKeybinding("focus_prev_split", overrides: overrides, to: focusPrevItem)
-        menu.addItem(focusPrevItem)
-
-        let focusNextItem = NSMenuItem(title: "Focus Next Split",
-                                       action: #selector(MenuActions.menuFocusNextSplit(_:)),
-                                       keyEquivalent: String(Character(UnicodeScalar(NSRightArrowFunctionKey)!)))
-        focusNextItem.target = MenuActions.shared
-        applyKeybinding("focus_next_split", overrides: overrides, to: focusNextItem)
-        menu.addItem(focusNextItem)
-
-        return item
-    }
-
     // MARK: - Window Menu
 
     private static func buildWindowMenu(overrides: [String: String]) -> NSMenuItem {
@@ -473,22 +434,6 @@ final class MenuActions: NSObject {
 
     @objc func menuToggleMarkdownPreview(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseToggleMarkdownPreview, object: nil)
-    }
-
-    @objc func menuSplitHorizontal(_ sender: Any?) {
-        NotificationCenter.default.post(name: .impulseSplitHorizontal, object: nil)
-    }
-
-    @objc func menuSplitVertical(_ sender: Any?) {
-        NotificationCenter.default.post(name: .impulseSplitVertical, object: nil)
-    }
-
-    @objc func menuFocusPrevSplit(_ sender: Any?) {
-        NotificationCenter.default.post(name: .impulseFocusPrevSplit, object: nil)
-    }
-
-    @objc func menuFocusNextSplit(_ sender: Any?) {
-        NotificationCenter.default.post(name: .impulseFocusNextSplit, object: nil)
     }
 
     @objc func menuGoToLine(_ sender: Any?) {
