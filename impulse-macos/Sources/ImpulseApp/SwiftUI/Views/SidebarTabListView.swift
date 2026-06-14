@@ -16,8 +16,6 @@ struct SidebarTabListView: View {
 
   var body: some View {
     VStack(spacing: 2) {
-      header
-
       ScrollView(.vertical) {
         VStack(spacing: 1) {
           ForEach(windowModel.tabDisplayInfos) { tab in
@@ -64,29 +62,6 @@ struct SidebarTabListView: View {
   /// Grow with content up to a cap so the file tree keeps most of the sidebar.
   private var listMaxHeight: CGFloat {
     min(CGFloat(windowModel.tabDisplayInfos.count) * (rowHeight + 1) + 8, 320)
-  }
-
-  // MARK: - Header
-
-  private var header: some View {
-    HStack {
-      Text("Tabs")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
-      Spacer()
-      Button(action: { windowModel.onNewTab?() }) {
-        Image(systemName: "plus")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.secondary)
-          .frame(width: 20, height: 20)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help("New Terminal Tab")
-      .accessibilityLabel("New Tab")
-    }
-    .padding(.horizontal, 16)
-    .padding(.bottom, 2)
   }
 
   // MARK: - Row

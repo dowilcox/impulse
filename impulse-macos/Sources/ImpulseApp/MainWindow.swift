@@ -491,11 +491,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   }
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    // File-tree actions now live in a SwiftUI bar inside the sidebar (below the
-    // vertical tabs); the new-tab "+" lives in the tab list header. The toolbar
-    // keeps only the sidebar toggle and the search field.
+    // File-tree actions live in a SwiftUI bar inside the sidebar (below the
+    // vertical tabs). In the toolbar, the sidebar toggle sits at the left of
+    // the sidebar column and the new-tab "+" is pushed to its right edge (just
+    // before the tracking separator); the search field sits in the content
+    // column.
     [
       Self.toolbarSidebarToggle,
+      .flexibleSpace,
+      Self.toolbarNewTab,
       .sidebarTrackingSeparator,
       .flexibleSpace,
       Self.toolbarSearch,
