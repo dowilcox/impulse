@@ -156,6 +156,9 @@ struct TerminalBlockOverlay: Codable, Equatable {
     let altScreen: Bool
     /// Whether any command block exists this session (vs. a fresh shell).
     let hasBlocks: Bool
+    /// Current scrollback display offset (0 = live bottom). Used to clamp
+    /// scroll-down so the tucked-away prompt can't be revealed.
+    let displayOffset: Int32
 
     enum CodingKeys: String, CodingKey {
         case blocks
@@ -164,6 +167,7 @@ struct TerminalBlockOverlay: Codable, Equatable {
         case rows
         case altScreen = "alt_screen"
         case hasBlocks = "has_blocks"
+        case displayOffset = "display_offset"
     }
 }
 

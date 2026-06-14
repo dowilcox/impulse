@@ -231,10 +231,20 @@ class TerminalRenderer: NSView {
     /// drawn yet" (both report no visible prompt) so we disarm at the right time.
     private var tuckScrolled = false
 
+    /// Display offset captured the moment the prompt finished tucking off the
+    /// bottom. Manual scroll-down is clamped so the offset can't drop below it,
+    /// which keeps the prompt hidden — the last command output stays the true
+    /// scroll bottom. `nil` while a command runs or before any tuck lands.
+    private var scrollFloorOffset: Int?
+
+    /// Latest display offset reported by the overlay; used by the scroll clamp.
+    private var currentDisplayOffset: Int32 = 0
+
     /// Arm a one-shot prompt tuck (called when a command completes).
     func scheduleTuck() {
         shouldTuckPrompt = true
         tuckScrolled = false
+        scrollFloorOffset = nil
     }
 
     // MARK: Private Properties
@@ -599,18 +609,25 @@ class TerminalRenderer: NSView {
                 }
             } else if let cursorRow = overlay.cursorRow {
                 // Running command (or prompt not suppressed): the live output
-                // anchors to the bottom while it fits.
+                // anchors to the bottom while it fits. Drop the scroll floor so
+                // output isn't clamped while it streams in.
                 lastContentRow = Int(cursorRow)
                 allowAnchor = !contentFillsViewport
+                scrollFloorOffset = nil
             }
             // Once a tuck has scrolled the prompt off the bottom, the prompt is
             // no longer visible (promptRow == nil) — that is the signal that
             // convergence is done. Disarm so a later manual scroll-to-bottom
             // can't re-fire the tuck and bounce. We require tuckScrolled so a
-            // not-yet-drawn prompt (also nil) doesn't disarm us prematurely.
+            // not-yet-drawn prompt (also nil) doesn't disarm us prematurely. The
+            // offset at this moment becomes the scroll floor: scrolling back down
+            // can't pass it, so the prompt stays tucked and the last output stays
+            // the bottom.
             if shouldTuckPrompt && tuckScrolled && !pendingPromptTuck && !atIdlePrompt {
                 shouldTuckPrompt = false
+                scrollFloorOffset = Int(overlay.displayOffset)
             }
+            currentDisplayOffset = overlay.displayOffset
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
 
@@ -2405,9 +2422,17 @@ class TerminalRenderer: NSView {
             return
         }
 
-        let lines = Int(scrollAccumulator)
+        var lines = Int(scrollAccumulator)
         guard lines != 0 else { return }
         scrollAccumulator -= CGFloat(lines)
+        // Clamp scroll-down (negative) so the offset can't drop below the floor
+        // captured when the prompt was tucked away — the last command output is
+        // the true bottom, and the redundant prompt below it stays hidden.
+        if lines < 0, let floor = scrollFloorOffset {
+            let available = Int(currentDisplayOffset) - floor
+            if available <= 0 { return }
+            lines = max(lines, -available)
+        }
         backend.scroll(delta: Int32(lines))
         isScrolledBack = true
         needsDisplay = true
