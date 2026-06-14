@@ -883,11 +883,13 @@ class TerminalRenderer: NSView {
                 let isBold = flags & GridBufferReader.flagBold != 0
                 let isItalic = flags & GridBufferReader.flagItalic != 0
                 let isDim = flags & GridBufferReader.flagDim != 0
-                // Keep custom rendering limited to line/box glyphs. Block and
-                // shade glyphs (0x2580...) are common in TUIs for fills and
-                // scroll indicators; the font renderer handles those more
-                // reliably than our snapped-rect path.
+                // Draw line/box glyphs AND block/shade elements geometrically.
+                // The font's block glyphs (█ ▀ ▄ ▌ quadrants, shades) don't
+                // fill the leading-inclusive cell, so TUI fills and sprites
+                // (e.g. Claude Code's logo) show seams between cells; snapped
+                // rects tile exactly and remove the gaps.
                 let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x257F
+                let isBlockElement = codepoint >= 0x2580 && codepoint <= 0x259F
                 let isWideChar = flags & GridBufferReader.flagWideChar != 0
 
                 // Bold-is-bright: if bold and the foreground matches one of
@@ -908,7 +910,8 @@ class TerminalRenderer: NSView {
                 let styleChanged = hasRun && (fgR != runFgR || fgG != runFgG || fgB != runFgB
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
 
-                if (styleChanged || isBoxDrawing || isWideChar) && hasRun && !runString.isEmpty {
+                if (styleChanged || isBoxDrawing || isBlockElement || isWideChar)
+                    && hasRun && !runString.isEmpty {
                     drawTextRun(
                         context: context, text: runString, col: runStartCol, rowY: rowY,
                         fgR: runFgR, fgG: runFgG, fgB: runFgB,
@@ -935,6 +938,15 @@ class TerminalRenderer: NSView {
                     // Draw box-drawing character programmatically.
                     let cellX = padding + CGFloat(col) * cw
                     drawBoxDrawing(
+                        context: context, codepoint: codepoint,
+                        x: cellX, y: rowY, width: cw, height: ch,
+                        fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
+                    )
+                } else if isBlockElement {
+                    // Draw block/shade element as snapped fills so adjacent
+                    // cells tile seamlessly (no seams in solid TUI fills).
+                    let cellX = padding + CGFloat(col) * cw
+                    drawBlockElement(
                         context: context, codepoint: codepoint,
                         x: cellX, y: rowY, width: cw, height: ch,
                         fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
@@ -1987,6 +1999,96 @@ class TerminalRenderer: NSView {
             // drawTextRun positions each glyph at an exact cell column so
             // alignment with the grid is preserved regardless of the glyph's
             // natural advance width.
+            drawTextRun(
+                context: context, text: String(UnicodeScalar(codepoint)!),
+                col: Int((x - padding) / width), rowY: y,
+                fgR: fgR, fgG: fgG, fgB: fgB,
+                bold: false, italic: false, dim: dim
+            )
+        }
+    }
+
+    /// Draw a block/shade element (U+2580...U+259F) as pixel-snapped fills.
+    /// The font's glyphs for these don't cover the full (leading-inclusive)
+    /// cell, so contiguous TUI fills and sprites show seams; snapping every
+    /// edge to the backing pixel grid makes adjacent cells share an exact edge
+    /// and tile without gaps. Solid blocks/quadrants paint at full opacity;
+    /// shades blend the foreground over the already-drawn cell background.
+    private func drawBlockElement(
+        context: CGContext, codepoint: UInt32,
+        x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat,
+        fgR: UInt8, fgG: UInt8, fgB: UInt8, dim: Bool
+    ) {
+        let dimAlpha: CGFloat = dim ? 0.5 : 1.0
+
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        func snap(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+        func rect(_ rx: CGFloat, _ ry: CGFloat, _ rw: CGFloat, _ rh: CGFloat) -> CGRect {
+            let minX = snap(rx), minY = snap(ry)
+            let maxX = snap(rx + rw), maxY = snap(ry + rh)
+            return CGRect(x: minX, y: minY, width: max(0, maxX - minX), height: max(0, maxY - minY))
+        }
+
+        context.saveGState()
+        context.setShouldAntialias(false)
+        defer { context.restoreGState() }
+
+        func fill(_ rects: [CGRect], alpha: CGFloat = 1.0) {
+            context.setFillColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha * dimAlpha))
+            for r in rects { context.fill(r) }
+        }
+
+        // Quadrant rects (computed lazily by the quadrant cases below).
+        func ul() -> CGRect { rect(x, y, width / 2, height / 2) }
+        func ur() -> CGRect { rect(x + width / 2, y, width / 2, height / 2) }
+        func ll() -> CGRect { rect(x, y + height / 2, width / 2, height / 2) }
+        func lr() -> CGRect { rect(x + width / 2, y + height / 2, width / 2, height / 2) }
+
+        switch codepoint {
+        case 0x2580:  // ▀ upper half
+            fill([rect(x, y, width, height / 2)])
+        case 0x2581...0x2587:  // ▁▂▃▄▅▆▇ lower n eighths (incl. lower half ▄)
+            let h = height * CGFloat(codepoint - 0x2580) / 8
+            fill([rect(x, y + height - h, width, h)])
+        case 0x2588:  // █ full block
+            fill([rect(x, y, width, height)])
+        case 0x2589...0x258F:  // ▉▊▋▌▍▎▏ left n eighths (incl. left half ▌)
+            let w = width * CGFloat(8 - (codepoint - 0x2588)) / 8
+            fill([rect(x, y, w, height)])
+        case 0x2590:  // ▐ right half
+            fill([rect(x + width / 2, y, width / 2, height)])
+        case 0x2591:  // ░ light shade
+            fill([rect(x, y, width, height)], alpha: 0.25)
+        case 0x2592:  // ▒ medium shade
+            fill([rect(x, y, width, height)], alpha: 0.5)
+        case 0x2593:  // ▓ dark shade
+            fill([rect(x, y, width, height)], alpha: 0.75)
+        case 0x2594:  // ▔ upper one eighth
+            fill([rect(x, y, width, height / 8)])
+        case 0x2595:  // ▕ right one eighth
+            fill([rect(x + width * 7 / 8, y, width / 8, height)])
+        case 0x2596:  // ▖ lower left
+            fill([ll()])
+        case 0x2597:  // ▗ lower right
+            fill([lr()])
+        case 0x2598:  // ▘ upper left
+            fill([ul()])
+        case 0x2599:  // ▙ upper left + lower left + lower right
+            fill([ul(), ll(), lr()])
+        case 0x259A:  // ▚ upper left + lower right
+            fill([ul(), lr()])
+        case 0x259B:  // ▛ upper left + upper right + lower left
+            fill([ul(), ur(), ll()])
+        case 0x259C:  // ▜ upper left + upper right + lower right
+            fill([ul(), ur(), lr()])
+        case 0x259D:  // ▝ upper right
+            fill([ur()])
+        case 0x259E:  // ▞ upper right + lower left
+            fill([ur(), ll()])
+        case 0x259F:  // ▟ upper right + lower left + lower right
+            fill([ur(), ll(), lr()])
+        default:
+            // Unrecognized — fall back to the font glyph.
             drawTextRun(
                 context: context, text: String(UnicodeScalar(codepoint)!),
                 col: Int((x - padding) / width), rowY: y,
