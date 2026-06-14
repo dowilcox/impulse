@@ -274,6 +274,18 @@ class TerminalRenderer: NSView {
         return rowTopY(row)
     }
 
+    /// Y of the bottom edge of a block whose last row is `row` — the mirror of
+    /// `blockBorderY`. Extends into the center of the collapsed prompt-padding
+    /// gap below the block (when present) so a block's wash meets the next
+    /// block's top separator with no unfilled strip.
+    private func blockBottomY(_ row: Int) -> CGFloat {
+        let base = rowTopY(row) + fontMetrics.cellHeight
+        if frameCollapsedRows.contains(row + 1) {
+            return base + blockPadPixels / 2
+        }
+        return base
+    }
+
     /// Inverse of `rowTopY`: the grid row drawn at content-space Y `py`. A point
     /// in a collapsed gap resolves to the block-start row just below it — the
     /// desired hover/selection target.
@@ -1267,20 +1279,26 @@ class TerminalRenderer: NSView {
     private func drawBlockWashes(
         context: CGContext, overlay: TerminalBlockOverlay, drawRows: Range<Int>, lines: Int
     ) {
-        let ch = fontMetrics.cellHeight
         let fullWidth = bounds.width
 
-        func fillRows(_ start: Int, _ end: Int, color: CGColor) {
-            let clampedStart = max(start, 0)
-            let clampedEnd = min(end, lines - 1)
-            guard clampedEnd >= clampedStart else { return }
+        // Damaged content-space Y-span, so a wash never paints outside the
+        // region `draw()` cleared (which would stack translucent tints).
+        guard let firstDamaged = drawRows.first, let lastDamaged = drawRows.last else { return }
+        let damageTop = rowTopY(firstDamaged)
+        let damageBottom = rowTopY(lastDamaged) + fontMetrics.cellHeight
+
+        // Fill the block's full visual extent — top separator to bottom
+        // separator, including the half-pad tiling gaps — so the wash meets the
+        // separators with no unfilled strip. Clipped to the damaged span.
+        func fillBlock(_ start: Int, _ end: Int, color: CGColor) {
+            let s = max(start, 0)
+            let e = min(end, lines - 1)
+            guard e >= s else { return }
+            let top = max(blockBorderY(s), damageTop)
+            let bottom = min(blockBottomY(e), damageBottom)
+            guard bottom > top else { return }
             context.setFillColor(color)
-            for row in clampedStart...clampedEnd
-            where drawRows.contains(row) && !frameCollapsedRows.contains(row) {
-                context.fill(
-                    CGRect(x: 0, y: rowTopY(row), width: fullWidth, height: ch)
-                )
-            }
+            context.fill(CGRect(x: 0, y: top, width: fullWidth, height: bottom - top))
         }
 
         for block in overlay.blocks {
@@ -1291,12 +1309,12 @@ class TerminalRenderer: NSView {
             let isHovered = block.id == hoveredBlockId
             if isHovered, !isHighlighted,
                let hover = blockPromptFillColor.copy(alpha: 0.05) {
-                fillRows(start, Int(block.endRow), color: hover)
+                fillBlock(start, Int(block.endRow), color: hover)
             }
             guard block.failed || isHighlighted else { continue }
             let base = isHighlighted ? blockAccentColor : blockFailedColor
             guard let wash = base.copy(alpha: isHighlighted ? 0.09 : 0.07) else { continue }
-            fillRows(start, Int(block.endRow), color: wash)
+            fillBlock(start, Int(block.endRow), color: wash)
         }
     }
 
@@ -1321,8 +1339,8 @@ class TerminalRenderer: NSView {
                 let y = blockBorderY(startRow).rounded() - 0.5
                 context.setStrokeColor(blockSeparatorColor)
                 context.setLineWidth(1)
-                context.move(to: CGPoint(x: padding, y: y))
-                context.addLine(to: CGPoint(x: fullWidth - padding, y: y))
+                context.move(to: CGPoint(x: 0, y: y))
+                context.addLine(to: CGPoint(x: fullWidth, y: y))
                 context.strokePath()
             }
 
@@ -1361,8 +1379,8 @@ class TerminalRenderer: NSView {
             let y = blockBorderY(promptRow).rounded() - 0.5
             context.setStrokeColor(blockSeparatorColor)
             context.setLineWidth(1)
-            context.move(to: CGPoint(x: padding, y: y))
-            context.addLine(to: CGPoint(x: fullWidth - padding, y: y))
+            context.move(to: CGPoint(x: 0, y: y))
+            context.addLine(to: CGPoint(x: fullWidth, y: y))
             context.strokePath()
         }
 
