@@ -24,14 +24,14 @@ struct SearchPanelView: View {
                     Text("Aa")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(
-                            model.searchCaseSensitive ? Color.accentColor : .secondary
+                            model.searchCaseSensitive ? model.theme.colorAccent : .secondary
                         )
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(model.searchCaseSensitive
-                                    ? Color.accentColor.opacity(0.15)
+                                    ? model.theme.colorAccent.opacity(0.15)
                                     : .clear)
                         )
                 }

@@ -6,6 +6,9 @@ import SwiftUI
 struct BranchPickerView: View {
   let currentBranch: String
   let cwd: String
+  /// Theme accent so the picker matches the app's theme rather than the macOS
+  /// system accent (which is unrelated to the chosen color scheme).
+  var accent: Color = .accentColor
   let onSelect: (String) -> Void
 
   @State private var query: String = ""
@@ -82,7 +85,7 @@ struct BranchPickerView: View {
       HStack(spacing: 8) {
         Image(systemName: "arrow.triangle.branch")
           .font(.system(size: 11))
-          .foregroundStyle(branch == currentBranch ? Color.accentColor : .secondary)
+          .foregroundStyle(branch == currentBranch ? accent : .secondary)
         Text(branch)
           .font(.system(size: 12.5))
           .foregroundStyle(.primary)
@@ -92,7 +95,7 @@ struct BranchPickerView: View {
         if branch == currentBranch {
           Image(systemName: "checkmark")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(accent)
         }
       }
       .padding(.horizontal, 8)
@@ -100,7 +103,7 @@ struct BranchPickerView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(
         RoundedRectangle(cornerRadius: 5, style: .continuous)
-          .fill(isHighlighted ? Color.accentColor.opacity(0.18) : Color.clear)
+          .fill(isHighlighted ? accent.opacity(0.18) : Color.clear)
       )
       .contentShape(Rectangle())
     }

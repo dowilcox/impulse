@@ -105,7 +105,7 @@ struct SidebarTabListView: View {
 
       if tab.needsAttention && !isSelected {
         Circle()
-          .fill(Color.accentColor)
+          .fill(windowModel.theme.colorAccent)
           .frame(width: 6, height: 6)
           .accessibilityHidden(true)
       }

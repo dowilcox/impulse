@@ -43,7 +43,7 @@ struct SidebarActionBarView: View {
     Button(action: action) {
       Image(systemName: symbol)
         .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+        .foregroundStyle(isActive ? model.theme.colorAccent : Color.secondary)
         .frame(width: 24, height: 22)
         .contentShape(Rectangle())
     }

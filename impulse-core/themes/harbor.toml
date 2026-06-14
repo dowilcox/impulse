@@ -2,18 +2,20 @@
 # Cream content card floating on a blue-slate canvas; hue carries meaning:
 # copper = accent/time-pressure, indigo = interactive/syntax, red only for
 # danger, green only for success. Colors converted from the design's oklch
-# tokens to sRGB hex. Contrast is audited — don't lighten fg_comment, copper,
-# or the danger/success text tones.
+# tokens to sRGB hex. Every text tone is audited to WCAG AA (>=4.5:1) against
+# BOTH the cream card and the slate canvas — the copper accent was deepened
+# from oklch(56%) so it also clears 4.5:1 as text on the canvas. Don't lighten
+# any text tone.
 name = "Harbor"
 variant = "light"
 
 [palette]
 bg = "#f8fafd"      # card    oklch(98.5% 0.004 240)
 fg = "#222935"      # ink     oklch(28% 0.025 260)
-accent = "#af5a21"  # copper  oklch(56% 0.13 50)
-red = "#ba3535"     # danger  oklch(53% 0.17 25)
+accent = "#924b1c"  # copper  oklch(~48% 0.12 52) — AA on card + canvas
+red = "#ac3131"     # danger  oklch(51% 0.16 25) — AA on card + canvas
 orange = "#9b4805"  # copper-deep oklch(50% 0.13 50)
-yellow = "#af5a21"  # copper  oklch(56% 0.13 50)
+yellow = "#924b1c"  # copper  oklch(~48% 0.12 52)
 green = "#267b4c"   # success oklch(52% 0.11 155)
 cyan = "#005366"    # teal    oklch(40% 0.09 215)
 blue = "#3959a6"    # indigo  oklch(48% 0.13 265)
@@ -27,28 +29,28 @@ border = "#c8cfd5"       # oklch(85% 0.012 245)
 fg_muted = "#4d5662"     # sub    oklch(45% 0.022 255)
 fg_comment = "#565f69"   # faint  oklch(48% 0.02 252)
 selection = "#3959a640"  # indigo @ 25%
-cursor = "#af5a21"       # copper
+cursor = "#924b1c"       # copper
 # Badges render on the bg_dark canvas (sidebar) — these are the text-tone
 # variants audited to >=4.5:1 there, not the brighter pill hues.
 git_added = "#095c34"    # success-text
 git_modified = "#904100" # copper-deep oklch(47% 0.125 50)
 git_deleted = "#a5292b"  # danger-text
 git_renamed = "#3959a6"
-git_conflict = "#ba3535"
+git_conflict = "#ac3131"
 git_ignored = "#565f69"
 surface_style = "card"
 
 [syntax]
 keyword = "#503975"   # purple
 function = "#3959a6"  # indigo
-type = "#af5a21"      # copper
+type = "#924b1c"      # copper
 string = "#095c34"    # success-text oklch(42% 0.1 155)
 number = "#9b4805"
 constant = "#9b4805"
 comment = "#565f69"
 operator = "#005366"  # teal
 tag = "#a5292b"       # danger-text
-attribute = "#af5a21"
+attribute = "#924b1c"
 variable = "#222935"
 delimiter = "#4d5662"
 escape = "#9b4805"
@@ -59,15 +61,15 @@ link = "#3959a6"
 black = "#222935"
 red = "#a5292b"          # danger-text — readable on the cream card
 green = "#095c34"        # success-text
-yellow = "#af5a21"       # copper
+yellow = "#924b1c"       # copper
 blue = "#3959a6"         # indigo
 magenta = "#503975"      # purple
 cyan = "#005366"         # teal
 white = "#6c7278"        # oklch(55% 0.012 248) — 4.65:1 on the cream card
 bright_black = "#565f69" # faint
-bright_red = "#ba3535"
+bright_red = "#ac3131"
 bright_green = "#267b4c"
-bright_yellow = "#af5a21"  # same as yellow — the lighter copper fails 4.5:1
+bright_yellow = "#924b1c"  # same as yellow — the lighter copper fails 4.5:1
 bright_blue = "#4e71c0"    # oklch(56% 0.13 265)
 bright_magenta = "#674f8d" # oklch(48% 0.1 300)
 bright_cyan = "#006a7d"    # oklch(48% 0.09 215)

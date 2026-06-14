@@ -17,8 +17,10 @@ struct StatusBarView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 5)
-    .background(.bar)
-    .overlay(alignment: .top) { Divider() }
+    .background(model.theme.colorBgDark)
+    .overlay(alignment: .top) {
+      Rectangle().fill(model.theme.colorBorder).frame(height: 1)
+    }
   }
 
   // MARK: - Left Group
@@ -26,10 +28,12 @@ struct StatusBarView: View {
   @ViewBuilder
   private var leftGroup: some View {
     if !model.shellName.isEmpty {
-      ContextChip(symbol: "terminal", text: model.shellName)
+      ContextChip(symbol: "terminal", text: model.shellName, theme: model.theme)
     }
     if !model.currentCwd.isEmpty {
-      ContextChip(symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd))
+      ContextChip(
+        symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd),
+        theme: model.theme)
     }
     if let branch = model.gitBranch, !branch.isEmpty {
       // Inert while a TUI owns the grid — a checkout would type into the program.
@@ -58,22 +62,23 @@ struct StatusBarView: View {
 
     // Language
     if let lang = model.currentLanguage {
-      ContextChip(symbol: "chevron.left.forwardslash.chevron.right", text: lang)
+      ContextChip(
+        symbol: "chevron.left.forwardslash.chevron.right", text: lang, theme: model.theme)
     }
 
     // Encoding (editor tabs only)
     if model.cursorLine != nil {
-      ContextChip(text: model.currentEncoding)
+      ContextChip(text: model.currentEncoding, theme: model.theme)
     }
 
     // Indent info
     if let indent = model.currentIndent {
-      ContextChip(text: indent)
+      ContextChip(text: indent, theme: model.theme)
     }
 
     // Cursor position
     if let line = model.cursorLine, let col = model.cursorCol {
-      ContextChip(text: "Ln \(line + 1), Col \(col + 1)")
+      ContextChip(text: "Ln \(line + 1), Col \(col + 1)", theme: model.theme)
     }
 
     // Preview toggle

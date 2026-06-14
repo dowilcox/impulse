@@ -26,8 +26,10 @@ struct TerminalContextBarView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
-    .background(.bar)
-    .overlay(alignment: .top) { Divider() }
+    .background(model.theme.colorBgDark)
+    .overlay(alignment: .top) {
+      Rectangle().fill(model.theme.colorBorder).frame(height: 1)
+    }
     .onChange(of: model.commandRunning) { _, running in
       if !running {
         // Shell returned to the prompt — reclaim focus for the next command.
@@ -45,10 +47,12 @@ struct TerminalContextBarView: View {
   private var chipRow: some View {
     HStack(spacing: 6) {
       if !model.shellName.isEmpty {
-        ContextChip(symbol: "terminal", text: model.shellName)
+        ContextChip(symbol: "terminal", text: model.shellName, theme: model.theme)
       }
       if !model.currentCwd.isEmpty {
-        ContextChip(symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd))
+        ContextChip(
+          symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd),
+          theme: model.theme)
       }
       if let branch = model.gitBranch, !branch.isEmpty {
         BranchChip(model: model, branch: branch)
@@ -68,14 +72,14 @@ struct TerminalContextBarView: View {
       HStack(spacing: 4) {
         Image(systemName: failed ? "xmark.circle.fill" : "checkmark.circle.fill")
           .font(.system(size: 10))
-          .foregroundStyle(failed ? Color(nsColor: .systemRed) : Color(nsColor: .systemGreen))
+          .foregroundStyle(failed ? model.theme.colorRed : model.theme.colorGreen)
         Text(statusText(exitCode: exitCode))
           .font(.system(size: 11, design: .monospaced))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(model.theme.colorFgMuted)
       }
       .padding(.horizontal, 8)
       .padding(.vertical, 3)
-      .background(Capsule().fill(Color.primary.opacity(0.05)))
+      .background(Capsule().fill(model.theme.colorFg.opacity(0.07)))
       .help(failed ? "Last command failed with exit code \(exitCode)" : "Last command succeeded")
     }
   }
@@ -95,7 +99,7 @@ struct TerminalContextBarView: View {
     Button(action: action) {
       Image(systemName: symbol)
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(model.theme.colorFgMuted)
         .frame(width: 22, height: 22)
         .contentShape(Rectangle())
     }
@@ -130,7 +134,7 @@ struct TerminalContextBarView: View {
           suggestion != text, !text.isEmpty {
           (Text(text).foregroundColor(.clear)
             + Text(suggestion.dropFirst(text.count))
-            .foregroundColor(.secondary.opacity(0.55)))
+            .foregroundColor(model.theme.colorFgComment))
             .font(monoFont)
             .lineLimit(1)
             .allowsHitTesting(false)
@@ -139,6 +143,8 @@ struct TerminalContextBarView: View {
         TextField(inputPlaceholder, text: $text)
           .textFieldStyle(.plain)
           .font(monoFont)
+          .foregroundStyle(model.theme.colorFg)
+          .tint(model.theme.colorAccent)
           .focused($inputFocused)
           .onSubmit(runCurrentCommand)
           .onChange(of: text) { _, newValue in
@@ -174,24 +180,24 @@ struct TerminalContextBarView: View {
             .font(.system(size: 11, weight: .medium))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color(nsColor: .systemRed))
+        .foregroundStyle(model.theme.colorRed)
         .help("Stop (Ctrl+C)")
       } else if !text.isEmpty {
         Text("⏎ run")
           .font(.system(size: 10))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(model.theme.colorFgComment)
       }
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 7)
     .background(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(Color.primary.opacity(0.04))
+        .fill(model.theme.colorBg)
     )
     .overlay(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .strokeBorder(
-          inputFocused ? model.theme.colorAccent.opacity(0.5) : Color.primary.opacity(0.1),
+          inputFocused ? model.theme.colorAccent.opacity(0.6) : model.theme.colorBorder,
           lineWidth: 1
         )
     )

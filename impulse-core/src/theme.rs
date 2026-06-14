@@ -833,7 +833,9 @@ mod tests {
         assert_eq!(theme.name, "Harbor");
         assert_eq!(theme.bg, "#f8fafd");
         assert_eq!(theme.bg_dark, "#d2d8de");
-        assert_eq!(theme.accent, "#af5a21");
+        // Copper accent deepened from #af5a21 so it clears WCAG AA (>=4.5:1) as
+        // text on the slate canvas (bg_dark), not just the cream card.
+        assert_eq!(theme.accent, "#924b1c");
         assert_eq!(theme.surface_style, "card");
         // Every other theme stays flat
         assert_eq!(get_theme("nord").surface_style, "flat");
@@ -886,6 +888,100 @@ mod tests {
         assert_eq!(theme_display_name("rose-pine"), "Rosé Pine");
         assert_eq!(theme_display_name("github-dark"), "GitHub Dark");
         assert_eq!(theme_display_name("nord"), "Nord");
+    }
+
+    // -- WCAG AA contrast regression guard --------------------------------
+    //
+    // Every readable text tone in every built-in theme must clear WCAG 2.1 AA
+    // (4.5:1) against the surfaces it actually renders on. Decorative borders
+    // and the background-ish ANSI slots (black/bright-black on dark themes,
+    // white/bright-white on light themes) are exempt. See
+    // `examples/contrast_audit.rs` for the full report + suggester.
+
+    fn lum_channel(c: f64) -> f64 {
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn rel_luminance(hex: &str) -> f64 {
+        let (r, g, b) = hex_to_rgb(hex);
+        0.2126 * lum_channel(r as f64 / 255.0)
+            + 0.7152 * lum_channel(g as f64 / 255.0)
+            + 0.0722 * lum_channel(b as f64 / 255.0)
+    }
+
+    fn contrast_ratio(fg: &str, bg: &str) -> f64 {
+        // fg is opaque for every checked role; ignore any alpha suffix.
+        let l1 = rel_luminance(&fg[..7.min(fg.len())]);
+        let l2 = rel_luminance(bg);
+        let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    #[test]
+    fn all_themes_meet_wcag_aa_for_text() {
+        const AA: f64 = 4.5;
+        let mut failures = Vec::new();
+        for id in builtin_theme_names() {
+            let t = builtin_theme(id).expect("builtin resolves");
+            let mut check = |label: &str, fg: &str, bg: &str| {
+                let r = contrast_ratio(fg, bg);
+                if r < AA {
+                    failures.push(format!("{id}: {label} {fg} on {bg} = {r:.2}:1"));
+                }
+            };
+            // Core text on every surface.
+            for (bn, bg) in [("bg", &t.bg), ("bg_dark", &t.bg_dark), ("bg_surface", &t.bg_surface)] {
+                check(&format!("fg/{bn}"), &t.fg, bg);
+                check(&format!("fg_muted/{bn}"), &t.fg_muted, bg);
+            }
+            check("fg_comment/bg", &t.fg_comment, &t.bg);
+            check("fg_comment/bg_dark", &t.fg_comment, &t.bg_dark);
+            for (bn, bg) in [("bg", &t.bg), ("bg_dark", &t.bg_dark), ("bg_surface", &t.bg_surface)] {
+                check(&format!("accent/{bn}"), &t.accent, bg);
+            }
+            // Git tones render as sidebar file names / badges on bg_dark.
+            for (gn, g) in [
+                ("git_added", &t.git_added),
+                ("git_modified", &t.git_modified),
+                ("git_deleted", &t.git_deleted),
+                ("git_renamed", &t.git_renamed),
+                ("git_conflict", &t.git_conflict),
+            ] {
+                check(&format!("{gn}/bg_dark"), g, &t.bg_dark);
+            }
+            // Syntax tokens on the editor bg.
+            for (sn, s) in [
+                ("keyword", &t.syntax_keyword),
+                ("function", &t.syntax_function),
+                ("type", &t.syntax_type),
+                ("string", &t.syntax_string),
+                ("number", &t.syntax_number),
+                ("constant", &t.syntax_constant),
+                ("comment", &t.syntax_comment),
+                ("operator", &t.syntax_operator),
+                ("variable", &t.syntax_variable),
+            ] {
+                check(&format!("syntax.{sn}/bg"), s, &t.bg);
+            }
+            // ANSI palette on the terminal bg, minus the background-ish slots.
+            let exempt: [usize; 2] = if t.is_light { [7, 15] } else { [0, 8] };
+            for (i, c) in t.terminal_palette.iter().enumerate() {
+                if exempt.contains(&i) {
+                    continue;
+                }
+                check(&format!("term[{i}]"), c, &t.terminal_bg);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "WCAG AA contrast failures ({}):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     #[test]

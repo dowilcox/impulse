@@ -8,28 +8,32 @@ struct ContextChip: View {
   var symbol: String? = nil
   let text: String
   var showsChevron: Bool = false
+  /// Theme so the chip is tinted to the active color scheme rather than the
+  /// neutral system grays — keeps the bar reading as part of the themed
+  /// terminal surface instead of a separate macOS material strip.
+  let theme: Theme
 
   var body: some View {
     HStack(spacing: 4) {
       if let symbol {
         Image(systemName: symbol)
           .font(.system(size: 9.5, weight: .medium))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(theme.colorFgComment)
       }
       Text(text)
         .font(.system(size: 11, design: .monospaced))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.colorFgMuted)
         .lineLimit(1)
         .truncationMode(.middle)
       if showsChevron {
         Image(systemName: "chevron.up.chevron.down")
           .font(.system(size: 7, weight: .semibold))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(theme.colorFgComment)
       }
     }
     .padding(.horizontal, 8)
     .padding(.vertical, 3)
-    .background(Capsule().fill(Color.primary.opacity(0.05)))
+    .background(Capsule().fill(theme.colorFg.opacity(0.07)))
     .frame(maxWidth: 280, alignment: .leading)
     .fixedSize()
   }
@@ -50,7 +54,8 @@ struct BranchChip: View {
   @State private var showPicker = false
 
   private var chip: some View {
-    ContextChip(symbol: "arrow.triangle.branch", text: branch, showsChevron: true)
+    ContextChip(
+      symbol: "arrow.triangle.branch", text: branch, showsChevron: true, theme: model.theme)
   }
 
   var body: some View {
@@ -65,7 +70,8 @@ struct BranchChip: View {
       .popover(isPresented: $showPicker, arrowEdge: .top) {
         BranchPickerView(
           currentBranch: branch,
-          cwd: model.currentCwd
+          cwd: model.currentCwd,
+          accent: model.theme.colorAccent
         ) { selected in
           showPicker = false
           guard selected != branch else { return }
