@@ -1,69 +1,39 @@
 import AppKit
 import SwiftUI
 
-/// Status bar at the bottom of the window showing context-sensitive info.
+/// Status bar at the bottom of the window. Shown when the Warp-style input bar
+/// is hidden (editor tabs, or a terminal running a full-screen/raw TUI). Its
+/// context pills are the exact same `ContextChip`/`BranchChip` components the
+/// input bar uses, so the two read as the same chrome — just without the
+/// command field.
 struct StatusBarView: View {
   var model: WindowModel
 
   var body: some View {
-    HStack(spacing: 0) {
-      // Left group
+    HStack(spacing: 6) {
       leftGroup
-
-      Spacer()
-
-      // Right group
+      Spacer(minLength: 8)
       rightGroup
     }
     .padding(.horizontal, 12)
-    .frame(height: 28)
-    .overlay(alignment: .top) {
-      // Card-surface themes keep the canvas hairline-free.
-      if !isCard { Divider() }
-    }
-  }
-
-  /// Card-surface themes (Harbor) use a quiet ink/muted/faint hierarchy in
-  /// the status bar instead of per-item accent hues.
-  private var isCard: Bool {
-    model.theme.surfaceStyle == "card"
+    .padding(.vertical, 5)
+    .background(.bar)
+    .overlay(alignment: .top) { Divider() }
   }
 
   // MARK: - Left Group
 
   @ViewBuilder
   private var leftGroup: some View {
-    // Shell name
     if !model.shellName.isEmpty {
-      label(
-        model.shellName,
-        color: isCard ? model.theme.colorFg : model.theme.colorCyan,
-        weight: isCard ? .bold : .regular)
+      ContextChip(symbol: "terminal", text: model.shellName)
     }
-
-    // Git branch
-    if let branch = model.gitBranch {
-      separator
-      HStack(spacing: 3) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.system(size: 9))
-          .foregroundStyle(isCard ? model.theme.colorFgComment : model.theme.colorMagenta)
-        label(branch, color: isCard ? model.theme.colorFgMuted : model.theme.colorMagenta)
-      }
-    }
-
-    // CWD
     if !model.currentCwd.isEmpty {
-      separator
-      label(
-        shortenHome(model.currentCwd),
-        color: isCard ? model.theme.colorFgComment : model.theme.colorFg)
+      ContextChip(symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd))
     }
-
-    // Blame
-    if let blame = model.blameInfo {
-      separator
-      label(blame, color: model.theme.colorFgMuted)
+    if let branch = model.gitBranch, !branch.isEmpty {
+      // Inert while a TUI owns the grid — a checkout would type into the program.
+      BranchChip(model: model, branch: branch, interactive: !model.terminalDirectInteraction)
     }
   }
 
@@ -75,96 +45,85 @@ struct StatusBarView: View {
     if let updateVersion = model.updateAvailableVersion,
       let updateURL = model.updateURL
     {
-      Button {
+      actionChip(
+        symbol: "arrow.down.circle",
+        text: "Update \(updateVersion)",
+        tint: model.theme.colorGreen,
+        filled: true,
+        help: updateHelpText(version: updateVersion)
+      ) {
         NSWorkspace.shared.open(updateURL)
-      } label: {
-        Text("Update \(updateVersion)")
-          .font(.system(size: 10, weight: .medium))
-          .foregroundStyle(model.theme.colorGreen)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 2)
-          .background(
-            RoundedRectangle(cornerRadius: 3)
-              .fill(model.theme.colorGreen.opacity(0.12))
-              .strokeBorder(model.theme.colorGreen, lineWidth: 1)
-          )
       }
-      .buttonStyle(.plain)
-      .help(updateHelpText(version: updateVersion))
-      .padding(.trailing, 4)
-
-      separator
-    }
-
-    // Encoding
-    if model.cursorLine != nil {
-      label(model.currentEncoding, color: model.theme.colorFgMuted)
-      separator
-    }
-
-    // Indent info
-    if let indent = model.currentIndent {
-      label(indent, color: model.theme.colorFgMuted)
-      separator
     }
 
     // Language
     if let lang = model.currentLanguage {
-      label(lang, color: model.theme.colorBlue)
-      separator
+      ContextChip(symbol: "chevron.left.forwardslash.chevron.right", text: lang)
+    }
+
+    // Encoding (editor tabs only)
+    if model.cursorLine != nil {
+      ContextChip(text: model.currentEncoding)
+    }
+
+    // Indent info
+    if let indent = model.currentIndent {
+      ContextChip(text: indent)
     }
 
     // Cursor position
     if let line = model.cursorLine, let col = model.cursorCol {
-      label("Ln \(line + 1), Col \(col + 1)", color: model.theme.colorFgMuted)
+      ContextChip(text: "Ln \(line + 1), Col \(col + 1)")
     }
 
     // Preview toggle
     if model.isPreviewable {
-      separator
-      Button {
+      actionChip(
+        symbol: model.isPreviewing ? "eye.fill" : "eye",
+        text: "Preview",
+        tint: model.theme.colorGreen,
+        filled: model.isPreviewing,
+        help: model.isPreviewing ? "Hide preview" : "Show preview"
+      ) {
         model.onPreviewToggle?()
-      } label: {
-        Text("Preview")
-          .font(.system(size: 10, weight: .medium))
-          .foregroundStyle(model.isPreviewing ? model.theme.colorBgSurface : model.theme.colorGreen)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 2)
-          .background(
-            RoundedRectangle(cornerRadius: 3)
-              .fill(model.isPreviewing ? model.theme.colorGreen : .clear)
-              .strokeBorder(model.theme.colorGreen, lineWidth: 1)
-          )
       }
-      .buttonStyle(.plain)
-      .padding(.trailing, 4)
     }
+  }
+
+  // MARK: - Action chip
+
+  /// A tappable chip for actions (Update, Preview), styled like a `ContextChip`
+  /// but tinted to read as interactive. `filled` paints the tint as the capsule
+  /// fill; otherwise the tint colors the text on a soft capsule.
+  private func actionChip(
+    symbol: String,
+    text: String,
+    tint: Color,
+    filled: Bool,
+    help: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        Image(systemName: symbol)
+          .font(.system(size: 9.5, weight: .semibold))
+        Text(text)
+          .font(.system(size: 11, weight: .medium))
+          .lineLimit(1)
+      }
+      .foregroundStyle(filled ? model.theme.colorBgSurface : tint)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 3)
+      .background(
+        Capsule().fill(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.12)))
+      )
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .help(help)
   }
 
   // MARK: - Helpers
-
-  private func label(_ text: String, color: Color, weight: Font.Weight = .regular) -> some View {
-    Text(text)
-      .font(.system(size: 11, weight: weight))
-      .foregroundStyle(color)
-      .lineLimit(1)
-  }
-
-  private var separator: some View {
-    Rectangle()
-      // Card-surface themes separate items with whitespace alone.
-      .fill(isCard ? Color.clear : model.theme.colorBorder.opacity(0.3))
-      .frame(width: 1, height: 14)
-      .padding(.horizontal, 8)
-  }
-
-  private func shortenHome(_ path: String) -> String {
-    let home = NSHomeDirectory()
-    if path.hasPrefix(home) {
-      return "~" + String(path.dropFirst(home.count))
-    }
-    return path
-  }
 
   private func updateHelpText(version: String) -> String {
     if let current = model.updateCurrentVersion, !current.isEmpty {

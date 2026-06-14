@@ -190,15 +190,21 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Fired (on the main queue) when the alternate screen toggles, so the
-    /// input bar can hide while TUIs own the grid.
-    var onAltScreenChanged: ((Bool) -> Void)?
-    private var lastAltScreen = false
+    /// Fired (on the main queue) when direct-interaction mode toggles, so the
+    /// input bar can hide while a TUI owns the grid.
+    var onInteractionModeChanged: ((Bool) -> Void)?
+    private var lastInteractive = false
 
-    /// Warp model: the grid only takes keyboard input while a full-screen TUI
-    /// owns the alternate screen — otherwise all typing flows through the
+    /// Set by the owning tab from the OSC 133 command lifecycle: true while a
+    /// foreground command is executing. Combined with the raw terminal modes to
+    /// decide direct interaction (see the draw loop).
+    var commandRunning: Bool = false
+
+    /// Warp model: the grid only takes keyboard input while a full-screen/raw
+    /// TUI is active (alternate screen, or a running command that turned on
+    /// bracketed-paste/mouse reporting) — otherwise all typing flows through the
     /// pinned input bar, so the scrollback reads as immutable command blocks.
-    var keyboardInteractive: Bool { lastAltScreen }
+    var keyboardInteractive: Bool { lastInteractive }
 
     /// Asked to move keyboard focus to the input bar (e.g. the user clicked
     /// the read-only grid at a prompt).
@@ -604,20 +610,30 @@ class TerminalRenderer: NSView {
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
 
-        // Surface alternate-screen flips to the input bar without mutating
-        // observable state mid-render.
+        // Surface direct-interaction flips to the input bar without mutating
+        // observable state mid-render. Direct interaction means a full-screen or
+        // raw TUI owns the grid: the alternate screen (vim, htop), or a running
+        // command that turned on bracketed-paste or mouse reporting (Claude
+        // Code, fzf). A bare prompt has bracketed paste on too, so the running
+        // gate is what keeps the bar visible at the prompt.
         let altScreenNow = grid.altScreen
-        if altScreenNow != lastAltScreen {
-            lastAltScreen = altScreenNow
-            if let onAltScreenChanged {
-                DispatchQueue.main.async { onAltScreenChanged(altScreenNow) }
+        let rawMode =
+            grid.bracketedPaste || grid.mouseReportClick || grid.mouseMotion || grid.mouseDrag
+        let interactiveNow = altScreenNow || (commandRunning && rawMode)
+        if interactiveNow != lastInteractive {
+            lastInteractive = interactiveNow
+            if let onInteractionModeChanged {
+                DispatchQueue.main.async { onInteractionModeChanged(interactiveNow) }
             }
         }
 
         // Command-block decorations: viewport-mapped block regions from the
-        // backend, skipped on the alternate screen (TUIs own the grid there).
+        // backend, skipped while a TUI owns the grid — the alternate screen, or
+        // an inline raw-mode program like Claude Code (direct interaction).
         let blockOverlay: TerminalBlockOverlay? = {
-            guard blocksEnabled, let overlay = backend.blockOverlay(), !overlay.altScreen else {
+            guard blocksEnabled, !interactiveNow, let overlay = backend.blockOverlay(),
+                !overlay.altScreen
+            else {
                 return nil
             }
             return overlay
@@ -632,7 +648,10 @@ class TerminalRenderer: NSView {
         // prompt. We key off the last block's output-end row (precise) rather
         // than the OSC 133;A row, because shells print the cwd line *before*
         // that mark, so the mark sits mid-prompt.
-        let suppressPrompt = suppressLivePrompt && !altScreenNow
+        // Don't suppress the in-grid prompt while a TUI owns the grid: in
+        // direct-interaction mode the input bar is hidden, so the live region
+        // (e.g. Claude Code's input box and cursor) must render in full.
+        let suppressPrompt = suppressLivePrompt && !interactiveNow
         // -1 means "draw nothing" (a fresh shell with only an empty prompt).
         var lastContentRow = lines - 1
         // Push content to the bottom edge (to meet the input bar) only for a
@@ -1444,43 +1463,98 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Build the full terminal context menu — the same menu shown by
-    /// right-click and by the hover toolbar's "⋯" button. When `blockId` is
-    /// set, the per-block actions (copy command/output, re-run) are included
-    /// at the top, scoped to that block.
+    /// Append the per-block copy / re-run actions, scoped to `block`. Shared by
+    /// the right-click menu (when a block is under the pointer) and the hover
+    /// toolbar's block menu.
+    private func appendBlockActions(to menu: NSMenu, block: TerminalBlockOverlayRegion) {
+        let hasCommand = !(block.command?.isEmpty ?? true)
+
+        let copyCommand = NSMenuItem(
+            title: "Copy Command", action: #selector(contextCopyBlockCommand(_:)),
+            keyEquivalent: "")
+        copyCommand.target = self
+        copyCommand.isEnabled = hasCommand
+        menu.addItem(copyCommand)
+
+        let copyOutput = NSMenuItem(
+            title: "Copy Output", action: #selector(contextCopyBlockOutput(_:)),
+            keyEquivalent: "")
+        copyOutput.target = self
+        menu.addItem(copyOutput)
+
+        let copyBoth = NSMenuItem(
+            title: "Copy Command & Output", action: #selector(contextCopyBlockBoth(_:)),
+            keyEquivalent: "")
+        copyBoth.target = self
+        menu.addItem(copyBoth)
+
+        let rerun = NSMenuItem(
+            title: "Re-run Command", action: #selector(contextRerunBlock(_:)), keyEquivalent: "")
+        rerun.target = self
+        rerun.isEnabled = hasCommand && !block.isRunning
+        menu.addItem(rerun)
+    }
+
+    /// Append block-to-block navigation items (previous / next / last failed).
+    /// Shared by the right-click menu and the hover toolbar's block menu.
+    private func appendBlockNavigation(to menu: NSMenu, flags: TerminalCommandBlockFlags) {
+        let hasBlock = flags.hasCommand || flags.hasOutput
+
+        let previousBlockItem = NSMenuItem(
+            title: "Previous Command Block", action: #selector(contextPreviousCommandBlock(_:)),
+            keyEquivalent: "")
+        previousBlockItem.target = self
+        previousBlockItem.isEnabled = hasBlock
+        menu.addItem(previousBlockItem)
+
+        let nextBlockItem = NSMenuItem(
+            title: "Next Command Block", action: #selector(contextNextCommandBlock(_:)),
+            keyEquivalent: "")
+        nextBlockItem.target = self
+        nextBlockItem.isEnabled = hasBlock
+        menu.addItem(nextBlockItem)
+
+        let failedBlockItem = NSMenuItem(
+            title: "Last Failed Command", action: #selector(contextLastFailedCommandBlock(_:)),
+            keyEquivalent: "")
+        failedBlockItem.target = self
+        failedBlockItem.isEnabled = flags.hasFailed
+        menu.addItem(failedBlockItem)
+    }
+
+    /// Block-focused menu shown by the hover toolbar's "⋯" button. Unlike the
+    /// right-click menu, it omits terminal-wide editing actions (copy selection,
+    /// paste, select all, clear), the global command-history picker, and the
+    /// "last command" items — all redundant or irrelevant once the menu is
+    /// already scoped to a single command block.
+    private func buildBlockActionMenu(blockId: UInt64) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        guard let block = backend?.blockOverlay()?.blocks.first(where: { $0.id == blockId })
+        else { return menu }
+
+        appendBlockActions(to: menu, block: block)
+
+        let flags = backend?.commandBlockFlags()
+            ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
+        menu.addItem(.separator())
+        appendBlockNavigation(to: menu, flags: flags)
+
+        return menu
+    }
+
+    /// Build the full right-click context menu. When `blockId` is set, the
+    /// per-block actions (copy command/output, re-run) are included at the top,
+    /// scoped to that block. The hover toolbar's "⋯" button uses the leaner
+    /// `buildBlockActionMenu` instead.
     private func buildTerminalContextMenu(blockId: UInt64?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
         if let blockId,
            let block = backend?.blockOverlay()?.blocks.first(where: { $0.id == blockId }) {
-            let hasCommand = !(block.command?.isEmpty ?? true)
-
-            let copyCommand = NSMenuItem(
-                title: "Copy Command", action: #selector(contextCopyBlockCommand(_:)),
-                keyEquivalent: "")
-            copyCommand.target = self
-            copyCommand.isEnabled = hasCommand
-            menu.addItem(copyCommand)
-
-            let copyOutput = NSMenuItem(
-                title: "Copy Output", action: #selector(contextCopyBlockOutput(_:)),
-                keyEquivalent: "")
-            copyOutput.target = self
-            menu.addItem(copyOutput)
-
-            let copyBoth = NSMenuItem(
-                title: "Copy Command & Output", action: #selector(contextCopyBlockBoth(_:)),
-                keyEquivalent: "")
-            copyBoth.target = self
-            menu.addItem(copyBoth)
-
-            let rerun = NSMenuItem(
-                title: "Re-run Command", action: #selector(contextRerunBlock(_:)), keyEquivalent: "")
-            rerun.target = self
-            rerun.isEnabled = hasCommand && !block.isRunning
-            menu.addItem(rerun)
-
+            appendBlockActions(to: menu, block: block)
             menu.addItem(.separator())
         }
 
@@ -1488,8 +1562,6 @@ class TerminalRenderer: NSView {
             ?? TerminalCommandBlockFlags(hasCommand: false, hasOutput: false, hasFailed: false)
         let hasCommand = commandFlags.hasCommand
         let hasOutput = commandFlags.hasOutput
-        let hasBlock = hasCommand || hasOutput
-        let hasFailedBlock = commandFlags.hasFailed
         let hasHistory = !(backend?.commandHistorySearch(text: "", cwd: nil, limit: 1).isEmpty ?? true)
 
         let copyItem = NSMenuItem(
@@ -1538,26 +1610,7 @@ class TerminalRenderer: NSView {
 
         menu.addItem(.separator())
 
-        let previousBlockItem = NSMenuItem(
-            title: "Previous Command Block", action: #selector(contextPreviousCommandBlock(_:)),
-            keyEquivalent: "")
-        previousBlockItem.target = self
-        previousBlockItem.isEnabled = hasBlock
-        menu.addItem(previousBlockItem)
-
-        let nextBlockItem = NSMenuItem(
-            title: "Next Command Block", action: #selector(contextNextCommandBlock(_:)),
-            keyEquivalent: "")
-        nextBlockItem.target = self
-        nextBlockItem.isEnabled = hasBlock
-        menu.addItem(nextBlockItem)
-
-        let failedBlockItem = NSMenuItem(
-            title: "Last Failed Command", action: #selector(contextLastFailedCommandBlock(_:)),
-            keyEquivalent: "")
-        failedBlockItem.target = self
-        failedBlockItem.isEnabled = hasFailedBlock
-        menu.addItem(failedBlockItem)
+        appendBlockNavigation(to: menu, flags: commandFlags)
 
         menu.addItem(.separator())
 
@@ -2243,7 +2296,7 @@ class TerminalRenderer: NSView {
                 onCopyBlockOutput?(target.blockId)
             case .menu:
                 highlightedBlockId = target.blockId
-                let menu = buildTerminalContextMenu(blockId: target.blockId)
+                let menu = buildBlockActionMenu(blockId: target.blockId)
                 menu.popUp(
                     positioning: nil,
                     at: NSPoint(x: target.rect.minX, y: target.rect.maxY),

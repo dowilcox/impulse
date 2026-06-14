@@ -79,7 +79,6 @@ final class WindowModel {
   var shellName: String = ""
   var gitBranch: String? = nil
   var currentCwd: String = ""
-  var blameInfo: String? = nil
 
   // MARK: Terminal input bar
 
@@ -90,9 +89,11 @@ final class WindowModel {
   /// Exit code and duration of the active terminal's last command.
   var lastCommandExitCode: Int32? = nil
   var lastCommandDurationMs: UInt64? = nil
-  /// True while the active terminal shows the alternate screen (vim, htop);
-  /// the input bar hides so all keystrokes go to the TUI.
-  var terminalAltScreen: Bool = false
+  /// True while the active terminal is in a full-screen/raw TUI — the
+  /// alternate screen (vim, htop) or a running command that turned on
+  /// bracketed-paste/mouse reporting (Claude Code, fzf). The input bar hides so
+  /// every keystroke (and image paste) goes straight to the program.
+  var terminalDirectInteraction: Bool = false
   /// Bumped whenever the input bar should grab keyboard focus.
   var inputBarFocusToken: Int = 0
 

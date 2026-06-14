@@ -110,9 +110,11 @@ extension Notification.Name {
     /// Posted when a command block starts or ends in a terminal
     /// (userInfo["block"]: TerminalCommandBlock).
     static let terminalCommandBlockChanged = Notification.Name("impulse.terminalCommandBlockChanged")
-    /// Posted when a terminal's alternate screen toggles
-    /// (userInfo["altScreen"]: Bool).
-    static let terminalAltScreenChanged = Notification.Name("impulse.terminalAltScreenChanged")
+    /// Posted when a terminal enters or leaves direct-interaction mode — a
+    /// full-screen/raw TUI (alternate screen, or a running command that turned
+    /// on bracketed-paste/mouse reporting) (userInfo["interactive"]: Bool).
+    static let terminalInteractionModeChanged = Notification.Name(
+      "impulse.terminalInteractionModeChanged")
     /// Posted when the read-only terminal grid is clicked and keyboard focus
     /// should move to the input bar.
     static let terminalRequestInputFocus = Notification.Name("impulse.terminalRequestInputFocus")

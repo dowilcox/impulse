@@ -704,12 +704,20 @@ final class TabManager: NSObject {
     ])
     entry.focus()
 
-    // Terminal tabs are driven by the input bar (the read-only grid refuses
-    // first-responder), so move keyboard focus there. Async so it lands after
-    // the new terminal's own focus attempt during spawn.
-    if case .terminal = entry {
+    // Terminal tabs are normally driven by the input bar (the read-only grid
+    // refuses first-responder), so move keyboard focus there. But when the tab
+    // is already running a TUI (vim, Claude Code), the input bar is hidden and
+    // the grid owns the keyboard — keep focus on the grid instead, or the
+    // token bump would steal the first keystrokes (and image paste) into the
+    // about-to-disappear bar. Async either way so it lands after the new
+    // terminal's own focus attempt during spawn.
+    if case .terminal(let container) = entry {
       let model = windowModel
-      DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
+      if container.activeTerminal?.isDirectInteraction == true {
+        DispatchQueue.main.async { container.activeTerminal?.focus() }
+      } else {
+        DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
+      }
     }
 
     NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)

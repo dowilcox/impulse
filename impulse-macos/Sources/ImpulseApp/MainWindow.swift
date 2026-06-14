@@ -1002,17 +1002,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       windowModel.currentIndent = nil
       windowModel.isPreviewable = false
       windowModel.isPreviewing = false
-      windowModel.blameInfo = nil
       let active = tabManager.selectedTerminal?.activeTerminal
       windowModel.commandRunning = active?.isCommandRunning ?? false
       windowModel.lastCommandExitCode = active?.lastCommandExitCode
       windowModel.lastCommandDurationMs = active?.lastCommandDurationMs
-      windowModel.terminalAltScreen = active?.isAltScreen ?? false
+      windowModel.terminalDirectInteraction = active?.isDirectInteraction ?? false
     } else if let language = tabInfo.language {
       let cwd = tabInfo.cwd ?? ""
       let branch = cwd.isEmpty ? nil : gitBranch(forDirectory: cwd)
       // Sync to SwiftUI
       windowModel.shellName = ""
+      // An editor tab never owns a TUI — keep the status-bar pills interactive.
+      windowModel.terminalDirectInteraction = false
       windowModel.currentCwd = cwd
       windowModel.gitBranch = branch
       windowModel.cursorLine = tabInfo.cursorLine
@@ -1508,16 +1509,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.tabManager.syncToWindowModel()
       })
     notificationObservers.append(
-      nc.addObserver(forName: .terminalAltScreenChanged, object: nil, queue: .main) {
+      nc.addObserver(forName: .terminalInteractionModeChanged, object: nil, queue: .main) {
         [weak self] notification in
         guard let self,
           let tab = notification.object as? TerminalTab,
           self.tabManager.selectedTerminal?.activeTerminal === tab,
-          let altScreen = notification.userInfo?["altScreen"] as? Bool
+          let interactive = notification.userInfo?["interactive"] as? Bool
         else { return }
-        self.windowModel.terminalAltScreen = altScreen
+        self.windowModel.terminalDirectInteraction = interactive
         // Leaving a TUI: the input bar reappears and should reclaim focus.
-        if !altScreen {
+        if !interactive {
           self.windowModel.inputBarFocusToken += 1
         }
       })
@@ -1662,7 +1663,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       }
     )
 
-    // Editor cursor position tracking for status bar + blame
+    // Editor cursor position tracking for the status bar
     notificationObservers.append(
       nc.addObserver(forName: .editorCursorMoved, object: nil, queue: .main) {
         [weak self] notification in
@@ -1679,15 +1680,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           editor.projectDirectory
           ?? (filePath as NSString).deletingLastPathComponent
         let branch = cwd.isEmpty ? nil : self.gitBranch(forDirectory: cwd)
-        let displayLine = Int(line) + 1
         // Sync to SwiftUI
         self.windowModel.cursorLine = Int(line)
         self.windowModel.cursorCol = Int(col)
         self.windowModel.currentCwd = cwd
         self.windowModel.gitBranch = branch
         self.windowModel.currentLanguage = editor.language
-        // Fetch blame asynchronously for the current line.
-        self.fetchBlame(filePath: filePath, line: UInt32(displayLine))
       }
     )
 
@@ -2536,32 +2534,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private func invalidateGitBranchCache() {
     cachedGitBranchDir = ""
     cachedGitBranch = nil
-  }
-
-  // MARK: - Git Blame
-
-  /// Fetches blame info for a line asynchronously and updates the status bar.
-  private func fetchBlame(filePath: String, line: UInt32) {
-    guard !filePath.isEmpty else {
-      windowModel.blameInfo = nil
-      return
-    }
-    DispatchQueue.global(qos: .utility).async {
-      let blame = ImpulseCore.gitBlame(filePath: filePath, line: line)
-      DispatchQueue.main.async { [weak self] in
-        guard let self else { return }
-        if let blame = blame,
-          let author = blame["author"],
-          let date = blame["date"],
-          let summary = blame["summary"]
-        {
-          let text = "\(author) \u{2022} \(date) \u{2022} \(summary)"
-          self.windowModel.blameInfo = text
-        } else {
-          self.windowModel.blameInfo = nil
-        }
-      }
-    }
   }
 
   // MARK: - Git Diff Decorations

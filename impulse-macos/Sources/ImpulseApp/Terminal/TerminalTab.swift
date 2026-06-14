@@ -99,18 +99,19 @@ class TerminalTab: NSView {
   // MARK: Renderer Callbacks
 
   private func wireRendererCallbacks() {
-    renderer.onAltScreenChanged = { [weak self] altScreen in
+    renderer.onInteractionModeChanged = { [weak self] interactive in
       guard let self else { return }
-      // Entering a full-screen TUI: hand keyboard control to the grid so vim
-      // etc. receive raw keys. Leaving it: the input bar reclaims focus (via
-      // MainWindowController observing this notification).
-      if altScreen {
+      // Entering a full-screen/raw TUI (vim, htop, Claude Code): hand keyboard
+      // control to the grid so it receives raw keys and image paste. Leaving it:
+      // the input bar reclaims focus (via MainWindowController observing this
+      // notification).
+      if interactive {
         self.window?.makeFirstResponder(self.renderer)
       }
       NotificationCenter.default.post(
-        name: .terminalAltScreenChanged,
+        name: .terminalInteractionModeChanged,
         object: self,
-        userInfo: ["altScreen": altScreen]
+        userInfo: ["interactive": interactive]
       )
     }
     renderer.onRequestInputFocus = { [weak self] in
@@ -229,6 +230,13 @@ class TerminalTab: NSView {
         userInfo: ["directory": path]
       )
     case .promptStart:
+      // A fresh prompt means no foreground command is running. Defensively
+      // clear the running flag so direct-interaction can't latch on (hiding the
+      // input bar at a bare prompt) if a command-end mark (OSC 133;D) was ever
+      // dropped — the bracketed paste a shell re-enables at the prompt would
+      // otherwise keep the gate stuck true.
+      isCommandRunning = false
+      renderer.commandRunning = false
       // The live prompt region moved; chips/separators may sit on rows the
       // damage tracker doesn't cover, so repaint fully.
       renderer.needsDisplay = true
@@ -238,6 +246,9 @@ class TerminalTab: NSView {
       handleCommandEnd(exitCode: code)
     case .commandBlockStarted(let block):
       isCommandRunning = true
+      // Lets the renderer combine "command running" with the raw terminal modes
+      // to decide direct interaction (e.g. Claude Code, which runs inline).
+      renderer.commandRunning = true
       selectedCommandBlockId = nil
       renderer.highlightedBlockId = nil
       renderer.needsDisplay = true
@@ -248,6 +259,7 @@ class TerminalTab: NSView {
       )
     case .commandBlockEnded(let block):
       isCommandRunning = false
+      renderer.commandRunning = false
       lastCommandExitCode = block.exitCode
       lastCommandDurationMs = block.endedAtMs.map { ended in
         ended >= block.startedAtMs ? ended - block.startedAtMs : 0
@@ -628,6 +640,19 @@ class TerminalTab: NSView {
   /// Whether the alternate screen (vim, htop, ...) is active.
   var isAltScreen: Bool {
     backend?.mode()?.altScreen ?? false
+  }
+
+  /// Whether a full-screen/raw TUI currently owns the grid — the alternate
+  /// screen, or a running command that turned on bracketed-paste/mouse
+  /// reporting (Claude Code, fzf). Mirrors the renderer's per-frame decision so
+  /// the input bar can hide and keystrokes/paste reach the program directly.
+  /// Used when syncing the active tab's state after a tab switch.
+  var isDirectInteraction: Bool {
+    guard let mode = backend?.mode() else { return false }
+    if mode.altScreen { return true }
+    let rawMode =
+      mode.bracketedPaste || mode.mouseReportClick || mode.mouseMotion || mode.mouseDrag
+    return isCommandRunning && rawMode
   }
 
   /// Ask the shell to clear the screen (context-bar Clear button).
