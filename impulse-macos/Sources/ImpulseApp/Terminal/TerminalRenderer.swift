@@ -226,8 +226,16 @@ class TerminalRenderer: NSView {
     /// to the true bottom reveals the prompt instead of bouncing.
     private var shouldTuckPrompt = false
 
+    /// True once a tuck scroll has actually been issued for the armed command.
+    /// Lets us tell "prompt scrolled off-screen" (done) apart from "prompt not
+    /// drawn yet" (both report no visible prompt) so we disarm at the right time.
+    private var tuckScrolled = false
+
     /// Arm a one-shot prompt tuck (called when a command completes).
-    func scheduleTuck() { shouldTuckPrompt = true }
+    func scheduleTuck() {
+        shouldTuckPrompt = true
+        tuckScrolled = false
+    }
 
     // MARK: Private Properties
 
@@ -456,6 +464,29 @@ class TerminalRenderer: NSView {
         return lower..<upper
     }
 
+    /// Walk up from `upTo` and return the index of the last viewport row that
+    /// contains a non-blank glyph, or -1 if every row at/below it is empty.
+    /// Used to strip the blank padding shells print before a prompt so output
+    /// sits flush against the input bar.
+    static func lastNonBlankRow(grid: GridBufferReader, upTo: Int, cols: Int) -> Int {
+        var row = min(upTo, grid.lines - 1)
+        while row >= 0 {
+            var blank = true
+            for col in 0..<cols {
+                let cell = grid.cell(row: row, col: col)
+                if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+                let value = cell.character.value
+                if value != 0 && value != 32 {
+                    blank = false
+                    break
+                }
+            }
+            if !blank { return row }
+            row -= 1
+        }
+        return -1
+    }
+
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
@@ -535,17 +566,29 @@ class TerminalRenderer: NSView {
                 } else {
                     lastContentRow = -1
                 }
+                // The block's end row runs down to where the next prompt begins,
+                // so it includes the blank padding line(s) shells print before a
+                // prompt. Trim those trailing blanks so the last *visible* text —
+                // not empty rows — anchors against the input bar; otherwise the
+                // suppressed prompt's padding shows up as a gap.
+                lastContentRow = Self.lastNonBlankRow(
+                    grid: grid, upTo: min(lastContentRow, lines - 1), cols: cols)
                 allowAnchor = !contentFillsViewport
                 // A full screen can't be pushed (it would gap at the top), so
-                // instead scroll the grid up just enough to tuck the prompt off
-                // the bottom — the last output then sits flush against the input
-                // bar, with scrollback filling the rows above. Self-limiting:
-                // once tucked, the prompt is off-screen and this stops firing.
+                // instead scroll the grid up to tuck the prompt off the bottom —
+                // the last output then sits flush against the input bar, with
+                // scrollback filling the rows above. The shell renders its prompt
+                // over several frames, so a single scroll can land short; keep
+                // nudging once per command until the last content is flush, then
+                // disarm. Disarming on flush is what stops the scroll-to-bottom
+                // bounce: manual scrolling never re-arms it.
                 if contentFillsViewport && shouldTuckPrompt {
                     let hidden = (lines - 1) - lastContentRow
-                    if hidden > 0 && !pendingPromptTuck {
-                        pendingPromptTuck = true
+                    if hidden <= 0 {
                         shouldTuckPrompt = false
+                    } else if !pendingPromptTuck {
+                        pendingPromptTuck = true
+                        tuckScrolled = true
                         let backend = self.backend
                         DispatchQueue.main.async { [weak self] in
                             backend?.scroll(delta: Int32(hidden))
@@ -559,6 +602,14 @@ class TerminalRenderer: NSView {
                 // anchors to the bottom while it fits.
                 lastContentRow = Int(cursorRow)
                 allowAnchor = !contentFillsViewport
+            }
+            // Once a tuck has scrolled the prompt off the bottom, the prompt is
+            // no longer visible (promptRow == nil) — that is the signal that
+            // convergence is done. Disarm so a later manual scroll-to-bottom
+            // can't re-fire the tuck and bounce. We require tuckScrolled so a
+            // not-yet-drawn prompt (also nil) doesn't disarm us prematurely.
+            if shouldTuckPrompt && tuckScrolled && !pendingPromptTuck && !atIdlePrompt {
+                shouldTuckPrompt = false
             }
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
