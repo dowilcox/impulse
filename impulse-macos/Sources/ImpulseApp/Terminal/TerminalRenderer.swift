@@ -1143,18 +1143,41 @@ class TerminalRenderer: NSView {
             }
         }
 
-        for block in overlay.blocks {
+        let starts = Self.contiguousStartRows(overlay.blocks)
+        for (index, block) in overlay.blocks.enumerated() {
+            let start = starts[index]
             let isHighlighted = block.id == highlightedBlockId
             let isHovered = block.id == hoveredBlockId
             if isHovered, !isHighlighted,
                let hover = blockPromptFillColor.copy(alpha: 0.05) {
-                fillRows(Int(block.startRow), Int(block.endRow), color: hover)
+                fillRows(start, Int(block.endRow), color: hover)
             }
             guard block.failed || isHighlighted else { continue }
             let base = isHighlighted ? blockAccentColor : blockFailedColor
             guard let wash = base.copy(alpha: isHighlighted ? 0.09 : 0.07) else { continue }
-            fillRows(Int(block.startRow), Int(block.endRow), color: wash)
+            fillRows(start, Int(block.endRow), color: wash)
         }
+    }
+
+    /// Block start rows extended upward to absorb the blank padding line(s)
+    /// shells print before a prompt, so adjacent blocks tile with no unstyled
+    /// orphan row between them. Only small gaps (the prompt padding) are
+    /// absorbed; a larger gap (scrollback between non-adjacent blocks) is left
+    /// alone so a block's wash doesn't bleed across unrelated output.
+    static func contiguousStartRows(_ blocks: [TerminalBlockOverlayRegion]) -> [Int] {
+        let maxPaddingRows = 3
+        var starts: [Int] = []
+        var prevEnd: Int?
+        for block in blocks {
+            let rawStart = Int(block.startRow)
+            if let prevEnd, case let gap = rawStart - prevEnd, gap > 1, gap <= maxPaddingRows + 1 {
+                starts.append(prevEnd + 1)
+            } else {
+                starts.append(rawStart)
+            }
+            prevEnd = Int(block.endRow)
+        }
+        return starts
     }
 
     /// Hairline separators between blocks, left-edge status stripes
@@ -1165,8 +1188,11 @@ class TerminalRenderer: NSView {
         let ch = fontMetrics.cellHeight
         let fullWidth = bounds.width
 
-        for block in overlay.blocks {
-            let startRow = Int(block.startRow)
+        let starts = Self.contiguousStartRows(overlay.blocks)
+        for (index, block) in overlay.blocks.enumerated() {
+            // Extend the block's top to absorb the prompt's blank padding so
+            // adjacent blocks tile with no unstyled orphan row between them.
+            let startRow = starts[index]
             let endRow = min(Int(block.endRow), lines - 1)
 
             // Separator along the block's top edge (skip the viewport edge).
