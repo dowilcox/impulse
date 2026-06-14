@@ -898,8 +898,13 @@ class TerminalTab: NSView {
     // When the input bar is present it stands in for the shell's prompt, so
     // the renderer suppresses the in-grid prompt region.
     renderer.suppressLivePrompt = settings.terminalContextBar
+    // The theme `border` color is window-chrome border — nearly identical to
+    // the terminal background — so a separator drawn in it is invisible against
+    // the grid. Base the block separators on `fgMuted`, which always contrasts
+    // with the background (light and dark themes alike), at a low alpha so the
+    // hairline reads as a subtle divider rather than a hard rule.
     renderer.blockSeparatorColor =
-      cgColorFromHex(theme.border).copy(alpha: 0.6) ?? cgColorFromHex(theme.border)
+      cgColorFromHex(theme.fgMuted).copy(alpha: 0.28) ?? cgColorFromHex(theme.fgMuted)
     renderer.blockMutedTextColor = cgColorFromHex(theme.fgMuted)
     renderer.blockFailedColor = cgColorFromHex(theme.red)
     renderer.blockAccentColor = cgColorFromHex(theme.accent)
