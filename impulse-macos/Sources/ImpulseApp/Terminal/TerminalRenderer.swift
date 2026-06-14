@@ -240,6 +240,52 @@ class TerminalRenderer: NSView {
     /// Latest display offset reported by the overlay; used by the scroll clamp.
     private var currentDisplayOffset: Int32 = 0
 
+    /// Vertical gap (a "tad" of padding) each collapsed blank prompt-padding row
+    /// reserves between command blocks, in points. A normal row is `cellHeight`.
+    private let blockPadPixels: CGFloat = 6
+
+    /// Per-frame row layout, written during `draw()` so methods running outside
+    /// it (`rectForRow`, blink, `gridPoint`) map rows consistently.
+    /// `frameRowTops[r]` = the content-space top Y of grid row r (collapsed rows
+    /// shrink to `blockPadPixels`); length `lines + 1`.
+    private var frameCollapsedRows: Set<Int> = []
+    private var frameRowTops: [CGFloat] = []
+
+    /// Content-space top Y of grid row `r` (before the bottom-anchor translate).
+    /// Falls back to the uniform layout before the per-frame map is built.
+    private func rowTopY(_ r: Int) -> CGFloat {
+        guard !frameRowTops.isEmpty else { return padding + CGFloat(r) * fontMetrics.cellHeight }
+        return frameRowTops[min(max(0, r), frameRowTops.count - 1)]
+    }
+
+    /// Y of the hairline border drawn at the top of a block. Centered in the
+    /// collapsed prompt-padding gap above the block (when present) so the block
+    /// reads with symmetric top/bottom breathing room; otherwise the row's top.
+    private func blockBorderY(_ row: Int) -> CGFloat {
+        if row > 0, frameCollapsedRows.contains(row - 1) {
+            return rowTopY(row) - blockPadPixels / 2
+        }
+        return rowTopY(row)
+    }
+
+    /// Inverse of `rowTopY`: the grid row drawn at content-space Y `py`. A point
+    /// in a collapsed gap resolves to the block-start row just below it — the
+    /// desired hover/selection target.
+    private func gridRowForContentY(_ py: CGFloat) -> Int {
+        guard frameRowTops.count > 1 else {
+            return max(0, Int((py - padding) / fontMetrics.cellHeight))
+        }
+        let lines = frameRowTops.count - 1
+        // Largest row whose top is <= py.
+        var lo = 0, hi = lines - 1, found = 0
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if frameRowTops[mid] <= py { found = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        if frameCollapsedRows.contains(found), found + 1 < lines { return found + 1 }
+        return found
+    }
+
     /// Arm a one-shot prompt tuck (called when a command completes).
     func scheduleTuck() {
         shouldTuckPrompt = true
@@ -451,11 +497,12 @@ class TerminalRenderer: NSView {
 
     // MARK: Dirty-Row Geometry
 
-    /// The full-width rect covering one viewport row.
+    /// The full-width rect covering one viewport row (in display coordinates,
+    /// so blank-row collapse keeps damage invalidation aligned with drawing).
     func rectForRow(_ row: Int) -> NSRect {
         NSRect(
             x: 0,
-            y: contentYOffset + padding + CGFloat(row) * fontMetrics.cellHeight,
+            y: contentYOffset + rowTopY(row),
             width: bounds.width,
             height: fontMetrics.cellHeight
         )
@@ -474,6 +521,18 @@ class TerminalRenderer: NSView {
         return lower..<upper
     }
 
+    /// True when viewport `row` has no visible glyph (only spaces/nulls).
+    static func isBlankRow(grid: GridBufferReader, row: Int, cols: Int) -> Bool {
+        guard row >= 0, row < grid.lines else { return true }
+        for col in 0..<cols {
+            let cell = grid.cell(row: row, col: col)
+            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+            let value = cell.character.value
+            if value != 0 && value != 32 { return false }
+        }
+        return true
+    }
+
     /// Walk up from `upTo` and return the index of the last viewport row that
     /// contains a non-blank glyph, or -1 if every row at/below it is empty.
     /// Used to strip the blank padding shells print before a prompt so output
@@ -481,21 +540,38 @@ class TerminalRenderer: NSView {
     static func lastNonBlankRow(grid: GridBufferReader, upTo: Int, cols: Int) -> Int {
         var row = min(upTo, grid.lines - 1)
         while row >= 0 {
-            var blank = true
-            for col in 0..<cols {
-                let cell = grid.cell(row: row, col: col)
-                if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
-                let value = cell.character.value
-                if value != 0 && value != 32 {
-                    blank = false
-                    break
-                }
-            }
-            if !blank { return row }
+            if !isBlankRow(grid: grid, row: row, cols: cols) { return row }
             row -= 1
         }
         return -1
     }
+
+    /// Blank prompt-padding grid rows to collapse so command blocks tile with
+    /// no empty row between them. Mirrors `contiguousStartRows`' gap rule
+    /// exactly (`gap > 1 && gap <= maxPaddingRows + 1`) so a row is never both
+    /// absorbed into the block above's wash AND removed. Only rows at or above
+    /// `lastContentRow` are eligible — the suppressed/tucked prompt region below
+    /// it is never collapsed.
+    static func collapsedRows(
+        blocks: [TerminalBlockOverlayRegion],
+        grid: GridBufferReader, cols: Int,
+        lastContentRow: Int, maxPaddingRows: Int = 3
+    ) -> Set<Int> {
+        guard lastContentRow >= 0 else { return [] }
+        var collapsed = Set<Int>()
+        var prevEnd: Int?
+        for block in blocks {
+            let rawStart = Int(block.startRow)
+            if let prevEnd, case let gap = rawStart - prevEnd, gap > 1, gap <= maxPaddingRows + 1 {
+                for r in (prevEnd + 1)..<rawStart where r <= lastContentRow {
+                    if isBlankRow(grid: grid, row: r, cols: cols) { collapsed.insert(r) }
+                }
+            }
+            prevEnd = Int(block.endRow)
+        }
+        return collapsed
+    }
+
 
     // MARK: Drawing
 
@@ -631,10 +707,36 @@ class TerminalRenderer: NSView {
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
 
+        // Collapse blank prompt-padding rows to a small pixel gap (draw-only).
+        // Runs AFTER the tuck / anchor / scroll-floor decisions are final —
+        // those stay in grid space; this is a pure pixel relayout on top.
+        let collapsed: Set<Int> = blockOverlay.map {
+            Self.collapsedRows(blocks: $0.blocks, grid: grid, cols: cols, lastContentRow: lastContentRow)
+        } ?? []
+        frameCollapsedRows = collapsed
+        // Cumulative row tops: a collapsed row shrinks to `blockPadPixels`, every
+        // other row is `ch`. frameRowTops[lines] is the content's bottom edge.
+        var tops = [CGFloat](repeating: padding, count: lines + 1)
+        if lines > 0 {
+            var y = padding
+            for r in 0..<lines {
+                tops[r] = y
+                y += collapsed.contains(r) ? blockPadPixels : ch
+            }
+            tops[lines] = y
+        }
+        frameRowTops = tops
+        let collapseActive = !collapsed.isEmpty
+
+        // Anchor so the last content row sits flush against the input bar.
+        // Fires when anchoring a short session OR whenever collapse shrank the
+        // on-screen content (the freed rows surface at the top, bottom stays
+        // flush). Derive the offset from the actual pixel bottom of the last
+        // content row so it is correct under both collapse and uniform layout.
         var yOffset: CGFloat = 0
-        let contentRows = lastContentRow + 1
-        if allowAnchor && contentRows > 0 && contentRows < lines {
-            yOffset = CGFloat(lines - contentRows) * ch
+        if lastContentRow >= 0 && (allowAnchor || collapseActive) {
+            let contentBottom = rowTopY(lastContentRow) + ch
+            yOffset = max(0, padding + CGFloat(lines) * ch - contentBottom)
         }
         let offsetChanged = yOffset != contentYOffset
         contentYOffset = yOffset
@@ -652,7 +754,11 @@ class TerminalRenderer: NSView {
         // scroll, …) arrive as the whole bounds and select every row. Rows
         // past lastContentRow (the suppressed prompt region) are never drawn.
         let rowCeiling = max(0, lastContentRow + 1)
-        let rawDrawRows = offsetChanged
+        // `rowRange` maps the dirty rect to *display* lines, but `drawRows` is
+        // consumed as *grid* rows. When collapse is active the two diverge, so
+        // repaint every row (collapse only happens at an idle prompt — the cost
+        // is negligible). Same when the anchor offset moved.
+        let rawDrawRows = (offsetChanged || collapseActive)
             ? 0..<lines
             : Self.rowRange(
                 intersecting: dirtyRect.offsetBy(dx: 0, dy: -yOffset),
@@ -693,7 +799,7 @@ class TerminalRenderer: NSView {
         for i in 0..<grid.selectionRangeCount {
             let range = grid.selectionRange(at: i)
             guard drawRows.contains(Int(range.row)) else { continue }
-            let rowY = padding + CGFloat(range.row) * ch
+            let rowY = rowTopY(Int(range.row))
             let startX = padding + CGFloat(range.startCol) * cw
             let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
             let rect = CGRect(x: startX, y: rowY, width: endX - startX, height: ch)
@@ -706,7 +812,7 @@ class TerminalRenderer: NSView {
         for i in 0..<grid.searchMatchRangeCount {
             let range = grid.searchMatchRange(at: i)
             guard drawRows.contains(Int(range.row)) else { continue }
-            let rowY = padding + CGFloat(range.row) * ch
+            let rowY = rowTopY(Int(range.row))
             let startX = padding + CGFloat(range.startCol) * cw
             let endX = padding + CGFloat(min(range.endCol + 1, cols)) * cw
             let rect = CGRect(x: startX, y: rowY, width: endX - startX, height: ch)
@@ -719,7 +825,8 @@ class TerminalRenderer: NSView {
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
 
         for row in drawRows {
-            let rowY = padding + CGFloat(row) * ch
+            if frameCollapsedRows.contains(row) { continue }
+            let rowY = rowTopY(row)
 
             // Run accumulation state.
             var runString = ""
@@ -899,7 +1006,7 @@ class TerminalRenderer: NSView {
             let cursorCol = grid.cursorCol
             if cursorRow < lines && cursorCol < cols && drawRows.contains(Int(cursorRow)) {
                 let cursorX = padding + CGFloat(cursorCol) * cw
-                let cursorY = padding + CGFloat(cursorRow) * ch
+                let cursorY = rowTopY(Int(cursorRow))
                 let cursorRect = CGRect(x: cursorX, y: cursorY, width: cw, height: ch)
 
                 // Use the theme-derived cursor color.
@@ -941,7 +1048,7 @@ class TerminalRenderer: NSView {
         // 8. Draw hover underline across the hovered link (OSC 8 or detected URL).
         if hoverIsLink && hoverRow >= 0 && hoverRow < lines
             && hoverLinkEndCol > hoverLinkStartCol {
-            let yBase = padding + CGFloat(hoverRow) * ch + ch - 1
+            let yBase = rowTopY(hoverRow) + ch - 1
             let x1 = padding + CGFloat(hoverLinkStartCol) * cw
             let x2 = padding + CGFloat(hoverLinkEndCol) * cw
             context.setStrokeColor(cursorColor)
@@ -956,7 +1063,7 @@ class TerminalRenderer: NSView {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
             let startX = padding + CGFloat(cursorCol) * cw
-            let startY = padding + CGFloat(cursorRow) * ch
+            let startY = rowTopY(Int(cursorRow))
 
             // Background for the marked text run.
             let markedWidth = cw * CGFloat(max(1, markedText.count))
@@ -1042,7 +1149,8 @@ class TerminalRenderer: NSView {
         cellHeight: CGFloat
     ) {
         for row in rows {
-            let rowY = padding + CGFloat(row) * cellHeight
+            if frameCollapsedRows.contains(row) { continue }
+            let rowY = rowTopY(row)
             var runStartCol: Int?
             var runEndCol = 0
             var runR: UInt8 = 0
@@ -1136,16 +1244,18 @@ class TerminalRenderer: NSView {
             let clampedEnd = min(end, lines - 1)
             guard clampedEnd >= clampedStart else { return }
             context.setFillColor(color)
-            for row in clampedStart...clampedEnd where drawRows.contains(row) {
+            for row in clampedStart...clampedEnd
+            where drawRows.contains(row) && !frameCollapsedRows.contains(row) {
                 context.fill(
-                    CGRect(x: 0, y: padding + CGFloat(row) * ch, width: fullWidth, height: ch)
+                    CGRect(x: 0, y: rowTopY(row), width: fullWidth, height: ch)
                 )
             }
         }
 
-        let starts = Self.contiguousStartRows(overlay.blocks)
-        for (index, block) in overlay.blocks.enumerated() {
-            let start = starts[index]
+        for block in overlay.blocks {
+            // Blank prompt padding is collapsed away, so the real prompt row
+            // already abuts the previous block — wash from there.
+            let start = Int(block.startRow)
             let isHighlighted = block.id == highlightedBlockId
             let isHovered = block.id == hoveredBlockId
             if isHovered, !isHighlighted,
@@ -1159,27 +1269,6 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Block start rows extended upward to absorb the blank padding line(s)
-    /// shells print before a prompt, so adjacent blocks tile with no unstyled
-    /// orphan row between them. Only small gaps (the prompt padding) are
-    /// absorbed; a larger gap (scrollback between non-adjacent blocks) is left
-    /// alone so a block's wash doesn't bleed across unrelated output.
-    static func contiguousStartRows(_ blocks: [TerminalBlockOverlayRegion]) -> [Int] {
-        let maxPaddingRows = 3
-        var starts: [Int] = []
-        var prevEnd: Int?
-        for block in blocks {
-            let rawStart = Int(block.startRow)
-            if let prevEnd, case let gap = rawStart - prevEnd, gap > 1, gap <= maxPaddingRows + 1 {
-                starts.append(prevEnd + 1)
-            } else {
-                starts.append(rawStart)
-            }
-            prevEnd = Int(block.endRow)
-        }
-        return starts
-    }
-
     /// Hairline separators between blocks, left-edge status stripes
     /// (Warp's "flag pole"), and right-aligned exit/duration chips.
     private func drawBlockDecorations(
@@ -1188,16 +1277,17 @@ class TerminalRenderer: NSView {
         let ch = fontMetrics.cellHeight
         let fullWidth = bounds.width
 
-        let starts = Self.contiguousStartRows(overlay.blocks)
-        for (index, block) in overlay.blocks.enumerated() {
-            // Extend the block's top to absorb the prompt's blank padding so
-            // adjacent blocks tile with no unstyled orphan row between them.
-            let startRow = starts[index]
+        for block in overlay.blocks {
+            // The blank prompt padding is collapsed away, so the block's real
+            // prompt row already sits directly below the previous block — draw
+            // the separator there as the border between the two blocks.
+            let startRow = Int(block.startRow)
             let endRow = min(Int(block.endRow), lines - 1)
 
             // Separator along the block's top edge (skip the viewport edge).
-            if startRow > 0, startRow < lines, drawRows.contains(startRow) {
-                let y = (padding + CGFloat(startRow) * ch).rounded() - 0.5
+            if startRow > 0, startRow < lines, drawRows.contains(startRow),
+               !frameCollapsedRows.contains(startRow) {
+                let y = blockBorderY(startRow).rounded() - 0.5
                 context.setStrokeColor(blockSeparatorColor)
                 context.setLineWidth(1)
                 context.move(to: CGPoint(x: padding, y: y))
@@ -1212,9 +1302,10 @@ class TerminalRenderer: NSView {
                 context.setFillColor(color)
                 let visibleStart = max(startRow, 0)
                 if endRow >= visibleStart {
-                    for row in visibleStart...endRow where drawRows.contains(row) {
+                    for row in visibleStart...endRow
+                    where drawRows.contains(row) && !frameCollapsedRows.contains(row) {
                         context.fill(
-                            CGRect(x: 3, y: padding + CGFloat(row) * ch, width: 3, height: ch)
+                            CGRect(x: 3, y: rowTopY(row), width: 3, height: ch)
                         )
                     }
                 }
@@ -1234,8 +1325,9 @@ class TerminalRenderer: NSView {
         // Hairline above the live prompt region, separating it from the last
         // block's output.
         if let promptRow = overlay.promptRow.map(Int.init),
-           promptRow > 0, promptRow < lines, drawRows.contains(promptRow) {
-            let y = (padding + CGFloat(promptRow) * ch).rounded() - 0.5
+           promptRow > 0, promptRow < lines, drawRows.contains(promptRow),
+           !frameCollapsedRows.contains(promptRow) {
+            let y = blockBorderY(promptRow).rounded() - 0.5
             context.setStrokeColor(blockSeparatorColor)
             context.setLineWidth(1)
             context.move(to: CGPoint(x: padding, y: y))
@@ -1268,7 +1360,7 @@ class TerminalRenderer: NSView {
         let x = bounds.width - padding - toolbarW
         // Nudge the toolbar down from the block's top edge so it floats clear
         // of the separator and reads as part of the command row.
-        let y = padding + CGFloat(row) * ch + ch * 0.55
+        let y = rowTopY(row) + ch * 0.55
         let toolbarRect = CGRect(x: x, y: y, width: toolbarW, height: toolbarH)
         let radius = min(toolbarH / 2, 7)
 
@@ -2464,11 +2556,13 @@ class TerminalRenderer: NSView {
         needsDisplay = true
     }
 
-    /// View point -> grid cell, accounting for the bottom-anchor offset.
+    /// View point -> grid cell, accounting for the bottom-anchor offset and the
+    /// blank-row collapse. The pixel Y maps to a *display* line, which the
+    /// collapse inverse turns back into the true grid row every consumer expects.
     private func gridPoint(from event: NSEvent) -> (col: UInt16, row: UInt16) {
         let point = convert(event.locationInWindow, from: nil)
         var col = max(0, Int((point.x - padding) / fontMetrics.cellWidth))
-        var row = max(0, Int((point.y - contentYOffset - padding) / fontMetrics.cellHeight))
+        var row = gridRowForContentY(point.y - contentYOffset)
         if let grid = backend?.gridSnapshot() {
             col = min(col, max(0, grid.cols - 1))
             row = min(row, max(0, grid.lines - 1))
