@@ -157,7 +157,13 @@ struct TerminalContextBarView: View {
           }
           .onKeyPress(.upArrow) { cycleHistory(direction: 1) }
           .onKeyPress(.downArrow) { cycleHistory(direction: -1) }
-          .onKeyPress(.tab) { acceptSuggestion() }
+          .onKeyPress(.tab) {
+            // Accept the suggestion if there is one, but always swallow Tab so
+            // it never falls through to the default focus-traversal (which
+            // would yank focus out of the command field).
+            _ = acceptSuggestion()
+            return .handled
+          }
           .onKeyPress(.rightArrow) { acceptSuggestionWord() }
           .onKeyPress(.escape) {
             model.onFocusTerminal?()
