@@ -163,7 +163,12 @@ class TerminalRenderer: NSView {
 
     /// Block emphasized by block navigation; drawn with an accent wash.
     var highlightedBlockId: UInt64? = nil {
-        didSet { if highlightedBlockId != oldValue { needsDisplay = true } }
+        didSet {
+            if highlightedBlockId != oldValue {
+                invalidateBlockRows(oldValue)
+                invalidateBlockRows(highlightedBlockId)
+            }
+        }
     }
 
     /// Hairline drawn between command blocks.
@@ -184,7 +189,8 @@ class TerminalRenderer: NSView {
     private var hoveredBlockId: UInt64? = nil {
         didSet {
             if hoveredBlockId != oldValue {
-                needsDisplay = true
+                invalidateBlockRows(oldValue)
+                invalidateBlockRows(hoveredBlockId)
                 window?.invalidateCursorRects(for: self)
             }
         }
@@ -284,6 +290,32 @@ class TerminalRenderer: NSView {
             return base + blockPadPixels / 2
         }
         return base
+    }
+
+    /// Invalidate every on-screen row of the block with `id`, so its translucent
+    /// wash (hover / navigation highlight / failure) can be added or removed
+    /// across the block's full height in a single pass. A block wash only
+    /// repaints on rows the frame clears (else its translucent tint would stack),
+    /// so a partial invalidation would strand a half-painted wash; widening the
+    /// dirty region to the whole block keeps it all-or-nothing. Falls back to a
+    /// full repaint before the first frame, when the row map isn't built yet.
+    private func invalidateBlockRows(_ id: UInt64?) {
+        guard let id else { return }
+        guard !frameRowTops.isEmpty,
+            let overlay = backend?.blockOverlay(),
+            let block = overlay.blocks.first(where: { $0.id == id })
+        else {
+            needsDisplay = true
+            return
+        }
+        let lines = frameRowTops.count - 1
+        let start = max(Int(block.startRow), 0)
+        let end = min(Int(block.endRow), lines - 1)
+        guard end >= start else { return }
+        let top = contentYOffset + blockBorderY(start)
+        let bottom = contentYOffset + blockBottomY(end)
+        setNeedsDisplay(
+            CGRect(x: 0, y: top, width: bounds.width, height: bottom - top).intersection(bounds))
     }
 
     /// Inverse of `rowTopY`: the grid row drawn at content-space Y `py`. A point
@@ -795,14 +827,40 @@ class TerminalRenderer: NSView {
                 intersecting: dirtyRect.offsetBy(dx: 0, dy: -yOffset),
                 lines: lines, padding: padding, cellHeight: ch
             )
-        let drawRows = min(rawDrawRows.lowerBound, rowCeiling)..<min(rawDrawRows.upperBound, rowCeiling)
+        var drawRows = min(rawDrawRows.lowerBound, rowCeiling)..<min(rawDrawRows.upperBound, rowCeiling)
+
+        // A block's translucent wash (hover, navigation highlight, failure) spans
+        // the whole block, but can only be painted on rows this frame clears —
+        // washing a row that still carries last frame's tint would stack it. When
+        // a frame's damage already reaches into a washed block (hover/highlight
+        // invalidate the whole block via invalidateBlockRows; failures and theme/
+        // resize/scroll repaints damage broadly), grow drawRows and the clear to
+        // the block's exact bounds so the wash, text, and clear stay aligned over
+        // the whole block rather than a rounded sub-span. This is a consistency
+        // guard within AppKit's dirty-region clip — it tightens what we paint, it
+        // cannot paint beyond the invalidated region (that is invalidateBlockRows'
+        // job).
+        var clearRect = dirtyRect
+        if let blockOverlay {
+            for block in blockOverlay.blocks
+            where block.id == hoveredBlockId || block.id == highlightedBlockId || block.failed {
+                let bStart = max(Int(block.startRow), 0)
+                let bEnd = min(Int(block.endRow), rowCeiling - 1)
+                guard bEnd >= bStart, drawRows.overlaps(bStart..<(bEnd + 1)) else { continue }
+                drawRows = min(drawRows.lowerBound, bStart)..<max(drawRows.upperBound, bEnd + 1)
+                let top = yOffset + blockBorderY(bStart)
+                let bottom = yOffset + blockBottomY(bEnd)
+                clearRect = clearRect.union(
+                    CGRect(x: 0, y: top, width: bounds.width, height: bottom - top))
+            }
+        }
 
         // 1. Fill background with the configured terminal background color.
         // Do not infer it from the top-left cell: TUIs like Codex/Claude can
         // place a colored block in the first visible cell, which would make
         // the entire viewport inherit that accent color.
         context.setFillColor(defaultBackgroundColor)
-        context.fill(dirtyRect)
+        context.fill(clearRect.intersection(bounds))
 
         // All content below draws in bottom-anchored coordinates.
         context.translateBy(x: 0, y: yOffset)
