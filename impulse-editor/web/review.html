@@ -71,7 +71,7 @@
           -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
         font-size: 13px;
       }
-      /* The OUTER page scrolls; inner Monaco diff editors never scroll. */
+      /* The OUTER page scrolls; diff rows lay out as natural-height DOM. */
       body {
         overflow-y: auto;
         overflow-x: hidden;
@@ -228,52 +228,84 @@
       }
 
       /* =====================================================================
-         Monaco inline-diff gutter polish.
+         Unified-diff rows.
 
-         By default the original + modified line-number columns and the +/-
-         change marker are crammed together. We add breathing room: pad the
-         numbers, separate the +/- sign, and add comfortable left padding
-         before the code itself. These target Monaco's stable margin/gutter
-         classes (paired with lineNumbersMinChars/lineDecorationsWidth/padding
-         set in review.js).
+         Each row is a flex line: old line-number gutter, new line-number
+         gutter, a +/- marker, then the syntax-colored content. Rows tint by
+         kind (added/removed); the exact characters that changed get a stronger
+         word-level emphasis from the per-line spans.
          ===================================================================== */
-
-      /* The whole left margin (line numbers + decorations) — give it a hair of
-         right padding so it never touches the code text. */
-      .review-diff-container .margin {
-        background: var(--review-header-bg) !important;
-      }
-      .review-diff-container .margin-view-overlays {
-        padding-left: 2px;
-      }
-      /* Line-number columns: muted, right-aligned, with trailing space before
-         the +/- marker / code. */
-      .review-diff-container .line-numbers {
-        color: var(--review-muted) !important;
-        padding-right: 10px;
-      }
-      /* Inline-diff +/- change markers sit in the line-decorations slot; keep
-         them clear of both the numbers and the code, and color them. */
-      .review-diff-container .cldr {
-        margin-left: 2px;
-      }
-      .review-diff-container .insert-sign,
-      .review-diff-container .delete-sign {
-        font-weight: 700;
-      }
-      .review-diff-container .insert-sign {
-        color: var(--review-added) !important;
-      }
-      .review-diff-container .delete-sign {
-        color: var(--review-deleted) !important;
-      }
-      /* Comfortable left padding before the code on every line. */
-      .review-diff-container .view-line {
-        padding-left: 6px;
-      }
-      /* "Show unchanged region" folding widgets: keep them subtle. */
-      .review-diff-container .diff-hidden-lines {
+      .review-hunk-header {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11.5px;
         color: var(--review-muted);
+        background: var(--review-header-bg);
+        padding: 3px 12px;
+        white-space: pre;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-top: 1px solid var(--review-border);
+      }
+      .review-diff-container > .review-hunk-header:first-child {
+        border-top: none;
+      }
+      .review-row {
+        display: flex;
+        align-items: flex-start;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        line-height: 1.5;
+      }
+      .review-gutter {
+        flex: 0 0 auto;
+        width: 46px;
+        padding: 0 8px;
+        text-align: right;
+        color: var(--review-muted);
+        background: var(--review-header-bg);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .review-line-marker {
+        flex: 0 0 auto;
+        width: 16px;
+        text-align: center;
+        color: var(--review-muted);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .review-line-content {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 0 8px 0 6px;
+        white-space: pre;
+        tab-size: 4;
+        -moz-tab-size: 4;
+      }
+      .review-row-added {
+        background: color-mix(in srgb, var(--review-added) 12%, transparent);
+      }
+      .review-row-added .review-line-marker {
+        color: var(--review-added);
+      }
+      .review-row-removed {
+        background: color-mix(in srgb, var(--review-deleted) 12%, transparent);
+      }
+      .review-row-removed .review-line-marker {
+        color: var(--review-deleted);
+      }
+      .review-word {
+        border-radius: 2px;
+      }
+      .review-row-added .review-word {
+        background: color-mix(in srgb, var(--review-added) 32%, transparent);
+      }
+      .review-row-removed .review-word {
+        background: color-mix(in srgb, var(--review-deleted) 32%, transparent);
+      }
+      .review-truncated {
+        color: var(--review-modified);
+        font-style: normal;
       }
 
       /* Native-style overlay scrollbars: rounded, auto-fade (mirrors editor.html) */

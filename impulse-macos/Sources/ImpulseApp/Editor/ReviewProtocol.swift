@@ -9,21 +9,14 @@ import Foundation
 /// keys, matching the Rust `ReviewCommand` serde output from impulse-editor.
 enum ReviewCommand: Encodable {
     case render(files: [ReviewFileEntry])
-    case setDiff(
-        path: String,
-        original: String,
-        modified: String,
-        language: String,
-        isBinary: Bool,
-        tooLarge: Bool
-    )
+    case setHunks(path: String, hunks: ImpulseCore.FileHunks)
     case setTheme(theme: MonacoThemeDefinition)
 
     // MARK: Tagged Enum Encoding
 
     private enum TypeTag: String, Encodable {
         case render = "Render"
-        case setDiff = "SetDiff"
+        case setHunks = "SetHunks"
         case setTheme = "SetTheme"
     }
 
@@ -31,11 +24,7 @@ enum ReviewCommand: Encodable {
         case type
         case files
         case path
-        case original
-        case modified
-        case language
-        case isBinary = "is_binary"
-        case tooLarge = "too_large"
+        case hunks
         case theme
     }
 
@@ -47,14 +36,10 @@ enum ReviewCommand: Encodable {
             try container.encode(TypeTag.render, forKey: .type)
             try container.encode(files, forKey: .files)
 
-        case let .setDiff(path, original, modified, language, isBinary, tooLarge):
-            try container.encode(TypeTag.setDiff, forKey: .type)
+        case let .setHunks(path, hunks):
+            try container.encode(TypeTag.setHunks, forKey: .type)
             try container.encode(path, forKey: .path)
-            try container.encode(original, forKey: .original)
-            try container.encode(modified, forKey: .modified)
-            try container.encode(language, forKey: .language)
-            try container.encode(isBinary, forKey: .isBinary)
-            try container.encode(tooLarge, forKey: .tooLarge)
+            try container.encode(hunks, forKey: .hunks)
 
         case let .setTheme(theme):
             try container.encode(TypeTag.setTheme, forKey: .type)

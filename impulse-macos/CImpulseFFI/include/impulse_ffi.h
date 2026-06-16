@@ -74,12 +74,19 @@ int32_t impulse_git_discard_changes(const char *file_path, const char *workspace
 // status letters: "A"|"M"|"D"|"R"|"?". Returns NULL on error.
 // Caller must free the returned string with impulse_free_string.
 char *impulse_git_list_changed_files(const char *repo_path);
-// Computes diff contents for one REPO-RELATIVE file_path as JSON:
-//   { "original": string, "modified": string, "language": string,
-//     "is_binary": bool, "too_large": bool, "added": u32, "removed": u32 }
+// Computes unified-diff hunks for one REPO-RELATIVE file_path as JSON:
+//   { "language": string, "is_binary": bool, "too_large": bool,
+//     "truncated": bool, "added": u32, "removed": u32,
+//     "hunks": [{ "old_start", "old_lines", "new_start", "new_lines",
+//                 "header": string,
+//                 "lines": [{ "kind": "context"|"added"|"removed",
+//                             "old_lineno": u32|null, "new_lineno": u32|null,
+//                             "content": string,
+//                             "spans": [{ "start": u32, "end": u32 }] }] }] }
+// Only changed regions plus context are materialized, never the whole file.
 // Returns NULL on error.
 // Caller must free the returned string with impulse_free_string.
-char *impulse_git_file_diff_contents(const char *repo_path, const char *file_path);
+char *impulse_git_file_hunks(const char *repo_path, const char *file_path);
 // Stages all changes and commits with message. Returns JSON (never NULL unless
 // an input pointer is NULL): { "ok": bool, "oid": string|null, "error": string|null }.
 // Caller must free the returned string with impulse_free_string.

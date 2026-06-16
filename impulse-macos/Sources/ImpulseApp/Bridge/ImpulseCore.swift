@@ -545,20 +545,60 @@ final class ImpulseCore {
         }
     }
 
-    /// Diff contents for a single file, mirroring the Rust `FileDiffContents`
-    /// serialization. `original` is the HEAD text, `modified` the working-tree
-    /// text. Both are blanked when `isBinary` or `tooLarge` is set.
-    struct FileDiffContents: Codable {
-        let original: String
-        let modified: String
+    /// A changed sub-range within a diff line, in UTF-16 code units (matching
+    /// JavaScript string offsets). Mirrors the Rust `WordSpan`.
+    struct WordSpan: Codable, Hashable {
+        let start: UInt32
+        let end: UInt32
+    }
+
+    /// A single line within a `DiffHunk`. Mirrors the Rust `DiffLine`.
+    struct DiffLine: Codable {
+        /// "context" | "added" | "removed".
+        let kind: String
+        let oldLineno: UInt32?
+        let newLineno: UInt32?
+        let content: String
+        let spans: [WordSpan]
+
+        enum CodingKeys: String, CodingKey {
+            case kind, content, spans
+            case oldLineno = "old_lineno"
+            case newLineno = "new_lineno"
+        }
+    }
+
+    /// A contiguous unified-diff hunk. Mirrors the Rust `DiffHunk`.
+    struct DiffHunk: Codable {
+        let oldStart: UInt32
+        let oldLines: UInt32
+        let newStart: UInt32
+        let newLines: UInt32
+        let header: String
+        let lines: [DiffLine]
+
+        enum CodingKeys: String, CodingKey {
+            case header, lines
+            case oldStart = "old_start"
+            case oldLines = "old_lines"
+            case newStart = "new_start"
+            case newLines = "new_lines"
+        }
+    }
+
+    /// Unified-diff hunks for a single file, mirroring the Rust `FileHunks`
+    /// serialization. `hunks` is empty when `isBinary` or `tooLarge` is set.
+    struct FileHunks: Codable {
         let language: String
         let isBinary: Bool
         let tooLarge: Bool
+        let truncated: Bool
         let added: UInt32
         let removed: UInt32
+        let hunks: [DiffHunk]
 
         enum CodingKeys: String, CodingKey {
-            case original, modified, language, added, removed
+            case language, truncated, added, removed, hunks
             case isBinary = "is_binary"
             case tooLarge = "too_large"
         }
@@ -583,14 +623,14 @@ final class ImpulseCore {
         return try? JSONDecoder().decode(ChangeSet.self, from: data)
     }
 
-    /// Computes diff contents for one REPO-RELATIVE `filePath`. Returns `nil`
-    /// on error. Call off the main thread — file reads + libgit2 work block.
-    static func fileDiffContents(repoPath: String, filePath: String) -> FileDiffContents? {
-        guard let json = consumeCString(impulse_git_file_diff_contents(repoPath, filePath)) else {
+    /// Computes unified-diff hunks for one REPO-RELATIVE `filePath`. Returns
+    /// `nil` on error. Call off the main thread — file reads + libgit2 work block.
+    static func fileHunks(repoPath: String, filePath: String) -> FileHunks? {
+        guard let json = consumeCString(impulse_git_file_hunks(repoPath, filePath)) else {
             return nil
         }
         guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(FileDiffContents.self, from: data)
+        return try? JSONDecoder().decode(FileHunks.self, from: data)
     }
 
     /// Stages all changes and commits with `message`. Always returns a

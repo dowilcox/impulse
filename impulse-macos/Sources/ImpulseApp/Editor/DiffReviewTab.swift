@@ -390,31 +390,26 @@ final class DiffReviewTab: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         sendCommand(.render(files: entries))
     }
 
-    /// Fetch diff contents for a repo-relative path off the main thread and
-    /// push a SetDiff command.
+    /// Fetch unified-diff hunks for a repo-relative path off the main thread and
+    /// push a SetHunks command.
     private func loadDiff(forPath path: String) {
         let repo = repoRoot
         let generation = loadGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let diff = ImpulseCore.fileDiffContents(repoPath: repo, filePath: path)
+            let hunks = ImpulseCore.fileHunks(repoPath: repo, filePath: path)
             DispatchQueue.main.async { [weak self] in
                 guard let self, generation == self.loadGeneration else { return }
-                guard let diff else {
-                    // Send an empty diff so review.js stops showing the spinner.
+                guard let hunks else {
+                    // Send an empty result so review.js stops showing the spinner.
                     self.sendCommand(
-                        .setDiff(
-                            path: path, original: "", modified: "",
-                            language: "plaintext", isBinary: false, tooLarge: false))
+                        .setHunks(
+                            path: path,
+                            hunks: ImpulseCore.FileHunks(
+                                language: "plaintext", isBinary: false, tooLarge: false,
+                                truncated: false, added: 0, removed: 0, hunks: [])))
                     return
                 }
-                self.sendCommand(
-                    .setDiff(
-                        path: path,
-                        original: diff.original,
-                        modified: diff.modified,
-                        language: diff.language,
-                        isBinary: diff.isBinary,
-                        tooLarge: diff.tooLarge))
+                self.sendCommand(.setHunks(path: path, hunks: hunks))
             }
         }
     }

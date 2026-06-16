@@ -75,6 +75,24 @@ pub struct BlameInfo {
 /// Maximum file/blob size (bytes) for which we read full diff contents.
 const MAX_DIFF_CONTENT_SIZE: u64 = 1_048_576;
 
+/// Maximum single-line length (bytes) before a file is treated as too complex to
+/// diff inline. Minified/generated files (bundles, lockfiles, single-line JSON)
+/// can sit under `MAX_DIFF_CONTENT_SIZE` yet contain one gigantic line; feeding
+/// those to the WebView renderer hangs it, and they aren't human-reviewable
+/// line-by-line anyway.
+const MAX_DIFF_LINE_LENGTH: usize = 20_000;
+
+/// Maximum number of hunks emitted per file before the diff is marked truncated.
+const MAX_DIFF_HUNKS: usize = 1_500;
+
+/// Maximum number of diff lines emitted per file before the diff is marked
+/// truncated. Bounds the DOM the WebView must build for a pathological diff.
+const MAX_DIFF_TOTAL_LINES: usize = 30_000;
+
+/// Skip intra-line word-diffing when the combined old+new line length (UTF-16
+/// units) exceeds this — the quadratic word diff isn't worth it on long lines.
+const MAX_WORD_DIFF_LINE_LEN: usize = 2_000;
+
 /// A single changed file in the working tree relative to HEAD (index + worktree).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangedFile {
@@ -108,24 +126,74 @@ pub struct ChangeSet {
     pub files: Vec<ChangedFile>,
 }
 
-/// The original (HEAD) and modified (working tree) contents of a single file,
-/// suitable for a side-by-side diff view.
+/// The kind of a single line in a unified diff hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffLineKind {
+    /// Unchanged context line (present on both sides).
+    Context,
+    /// Line present only on the new side.
+    Added,
+    /// Line present only on the old side.
+    Removed,
+}
+
+/// A changed sub-range within a diff line, expressed in UTF-16 code units so it
+/// maps directly onto JavaScript string offsets in the WebView renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordSpan {
+    /// Inclusive start offset (UTF-16 code units).
+    pub start: u32,
+    /// Exclusive end offset (UTF-16 code units).
+    pub end: u32,
+}
+
+/// A single line within a [`DiffHunk`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileDiffContents {
-    /// HEAD blob text (empty for added/untracked files).
-    pub original: String,
-    /// Working-tree text (empty for deleted files).
-    pub modified: String,
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    /// 1-based old-file line number (present for `Context` and `Removed`).
+    pub old_lineno: Option<u32>,
+    /// 1-based new-file line number (present for `Context` and `Added`).
+    pub new_lineno: Option<u32>,
+    /// Line text without the trailing newline.
+    pub content: String,
+    /// Intra-line word-diff ranges for changed lines (empty otherwise).
+    pub spans: Vec<WordSpan>,
+}
+
+/// A contiguous hunk of a unified diff (changed lines plus surrounding context).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffHunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    /// The `@@ ... @@` header, including any trailing function-context text.
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+/// The unified-diff hunks for a single file (HEAD vs index + working tree).
+///
+/// Only changed regions plus a few context lines are materialized — never the
+/// whole file — so a small change in a large file stays cheap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileHunks {
     /// Monaco language id.
     pub language: String,
-    /// Whether either side is binary/non-UTF-8 (contents blanked).
+    /// Whether either side is binary/non-UTF-8 (hunks blanked).
     pub is_binary: bool,
-    /// Whether the file exceeded the size guard (contents blanked).
+    /// Whether the file exceeded a size/complexity guard (hunks blanked).
     pub too_large: bool,
+    /// Whether the diff was capped (more hunks/lines exist than were emitted).
+    pub truncated: bool,
     /// Lines added.
     pub added: u32,
     /// Lines removed.
     pub removed: u32,
+    /// The diff hunks (empty when binary/too_large).
+    pub hunks: Vec<DiffHunk>,
 }
 
 fn file_diff_all_lines_added(path: &Path) -> Result<FileDiff, String> {
@@ -450,9 +518,13 @@ pub fn list_changed_files(repo_path: &str) -> Result<ChangeSet, String> {
     })
 }
 
-/// Read the original (HEAD) and modified (working tree) contents of a single
-/// repo-relative `file_path`, for a side-by-side diff view.
-pub fn file_diff_contents(repo_path: &str, file_path: &str) -> Result<FileDiffContents, String> {
+/// Compute the unified-diff hunks for a single repo-relative `file_path`
+/// (HEAD vs index + working tree). Only changed regions plus a few context
+/// lines are materialized, so a small change in a large file stays cheap.
+///
+/// Rename detection (`find_similar`) is applied so a renamed file diffs its old
+/// blob against the new content rather than reporting a 100% rewrite.
+pub fn file_hunks(repo_path: &str, file_path: &str) -> Result<FileHunks, String> {
     let repo = open_repo(Path::new(repo_path))?;
     let workdir = repo.workdir().ok_or("Bare repository")?.to_path_buf();
     let rel = Path::new(file_path);
@@ -464,146 +536,249 @@ pub fn file_diff_contents(repo_path: &str, file_path: &str) -> Result<FileDiffCo
         .map_err(|e| format!("Cannot read diff: {}", e))?;
 
     let abs = workdir.join(rel);
-
     let language = crate::util::file_path_to_uri(&abs)
         .map(|uri| crate::util::language_from_uri(&uri))
         .unwrap_or_default();
 
+    let blank = |is_binary: bool, too_large: bool| FileHunks {
+        language: language.clone(),
+        is_binary,
+        too_large,
+        truncated: false,
+        added: 0,
+        removed: 0,
+        hunks: Vec::new(),
+    };
+
     let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
 
-    // If this path is the NEW side of a rename/copy, the HEAD blob lives at the
-    // OLD path — looking it up at `rel` would (wrongly) show a 100% addition.
-    let head_lookup_path =
-        rename_original_path(&repo, head_tree.as_ref(), rel).unwrap_or_else(|| rel.to_path_buf());
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+    opts.show_untracked_content(true);
 
-    // Locate the HEAD blob (if any) for this path.
-    let head_blob = head_tree.as_ref().and_then(|tree| {
-        tree.get_path(&head_lookup_path)
-            .ok()
-            .and_then(|entry| entry.to_object(&repo).ok())
-            .and_then(|obj| obj.peel_to_blob().ok())
-    });
+    let mut diff = repo
+        .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))
+        .map_err(|e| format!("Diff failed: {}", e))?;
+    // Pair renames so a rename diffs old→new content instead of all-added.
+    let _ = diff.find_similar(None);
 
-    // Per-file added/removed (best effort) via a path-scoped diff.
-    let (added, removed) = file_diff_line_stats(&repo, head_tree.as_ref(), rel).unwrap_or((0, 0));
+    // Locate the delta for this path (new side for most, old side for deletions).
+    let found = diff
+        .deltas()
+        .enumerate()
+        .find(|(_, d)| d.new_file().path() == Some(rel) || d.old_file().path() == Some(rel));
+    let (index, delta) = match found {
+        Some(pair) => pair,
+        // No delta for this path: nothing changed (or already committed).
+        None => return Ok(blank(false, false)),
+    };
 
-    // Size guard: skip reading content for large files / large blobs.
-    let worktree_len = std::fs::metadata(&abs).ok().map(|m| m.len());
-    let blob_len = head_blob.as_ref().map(|b| b.content().len() as u64);
-    let too_large = worktree_len
-        .map(|l| l > MAX_DIFF_CONTENT_SIZE)
-        .unwrap_or(false)
-        || blob_len.map(|l| l > MAX_DIFF_CONTENT_SIZE).unwrap_or(false);
+    if delta.flags().is_binary() {
+        return Ok(blank(true, false));
+    }
 
-    if too_large {
-        return Ok(FileDiffContents {
-            original: String::new(),
-            modified: String::new(),
-            language,
-            is_binary: false,
-            too_large: true,
-            added,
-            removed,
+    // Size guard: skip diffing when either side exceeds the byte limit.
+    let worktree_too_big = delta
+        .new_file()
+        .path()
+        .and_then(|p| std::fs::metadata(workdir.join(p)).ok())
+        .map(|m| m.len() > MAX_DIFF_CONTENT_SIZE)
+        .unwrap_or(false);
+    let old_id = delta.old_file().id();
+    let blob_too_big = (!old_id.is_zero())
+        .then(|| repo.find_blob(old_id).ok())
+        .flatten()
+        .map(|b| b.size() as u64 > MAX_DIFF_CONTENT_SIZE)
+        .unwrap_or(false);
+    if worktree_too_big || blob_too_big {
+        return Ok(blank(false, true));
+    }
+
+    let patch = match git2::Patch::from_diff(&diff, index) {
+        Ok(Some(p)) => p,
+        // git2 returns None for binary deltas.
+        Ok(None) => return Ok(blank(true, false)),
+        Err(e) => return Err(format!("Patch failed: {}", e)),
+    };
+    // The binary flag is only reliable once the patch content is computed.
+    if patch.delta().flags().is_binary() {
+        return Ok(blank(true, false));
+    }
+
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+    let mut added: u32 = 0;
+    let mut removed: u32 = 0;
+    let mut total_lines: usize = 0;
+    let mut truncated = false;
+
+    let num_hunks = patch.num_hunks();
+    'hunks: for h in 0..num_hunks {
+        if hunks.len() >= MAX_DIFF_HUNKS || total_lines >= MAX_DIFF_TOTAL_LINES {
+            truncated = true;
+            break;
+        }
+        let (gh, _) = patch
+            .hunk(h)
+            .map_err(|e| format!("Hunk read failed: {}", e))?;
+        let header = String::from_utf8_lossy(gh.header())
+            .trim_end_matches('\n')
+            .to_string();
+        let mut lines: Vec<DiffLine> = Vec::new();
+        let num_lines = patch
+            .num_lines_in_hunk(h)
+            .map_err(|e| format!("Hunk size failed: {}", e))?;
+        for l in 0..num_lines {
+            if total_lines >= MAX_DIFF_TOTAL_LINES {
+                truncated = true;
+                hunks.push(DiffHunk {
+                    old_start: gh.old_start(),
+                    old_lines: gh.old_lines(),
+                    new_start: gh.new_start(),
+                    new_lines: gh.new_lines(),
+                    header,
+                    lines,
+                });
+                break 'hunks;
+            }
+            let dl = patch
+                .line_in_hunk(h, l)
+                .map_err(|e| format!("Line read failed: {}", e))?;
+            let kind = match dl.origin() {
+                '+' | '>' => DiffLineKind::Added,
+                '-' | '<' => DiffLineKind::Removed,
+                _ => DiffLineKind::Context,
+            };
+            let mut content = String::from_utf8_lossy(dl.content()).into_owned();
+            if content.ends_with('\n') {
+                content.pop();
+                if content.ends_with('\r') {
+                    content.pop();
+                }
+            }
+            // Overlong-line guard: bail out to a too-large placeholder rather
+            // than ship a line that would choke the WebView renderer.
+            if content.len() > MAX_DIFF_LINE_LENGTH {
+                return Ok(blank(false, true));
+            }
+            match kind {
+                DiffLineKind::Added => added += 1,
+                DiffLineKind::Removed => removed += 1,
+                DiffLineKind::Context => {}
+            }
+            lines.push(DiffLine {
+                kind,
+                old_lineno: dl.old_lineno(),
+                new_lineno: dl.new_lineno(),
+                content,
+                spans: Vec::new(),
+            });
+            total_lines += 1;
+        }
+        assign_word_spans(&mut lines);
+        hunks.push(DiffHunk {
+            old_start: gh.old_start(),
+            old_lines: gh.old_lines(),
+            new_start: gh.new_start(),
+            new_lines: gh.new_lines(),
+            header,
+            lines,
         });
     }
 
-    // original = HEAD blob bytes (empty if not in HEAD).
-    let original_bytes: Vec<u8> = head_blob
-        .as_ref()
-        .map(|b| b.content().to_vec())
-        .unwrap_or_default();
-
-    // modified = working-tree bytes (empty if deleted / missing).
-    let modified_bytes: Vec<u8> = std::fs::read(&abs).unwrap_or_default();
-
-    // Detect binary content via NUL bytes or invalid UTF-8 on either side.
-    let original_is_binary =
-        original_bytes.contains(&0) || std::str::from_utf8(&original_bytes).is_err();
-    let modified_is_binary =
-        modified_bytes.contains(&0) || std::str::from_utf8(&modified_bytes).is_err();
-
-    if original_is_binary || modified_is_binary {
-        return Ok(FileDiffContents {
-            original: String::new(),
-            modified: String::new(),
-            language,
-            is_binary: true,
-            too_large: false,
-            added,
-            removed,
-        });
-    }
-
-    Ok(FileDiffContents {
-        original: String::from_utf8_lossy(&original_bytes).into_owned(),
-        modified: String::from_utf8_lossy(&modified_bytes).into_owned(),
+    Ok(FileHunks {
         language,
         is_binary: false,
         too_large: false,
+        truncated,
         added,
         removed,
+        hunks,
     })
 }
 
-/// Best-effort per-file `(added, removed)` line counts for a single repo-relative
-/// path, using a HEAD-vs-worktree-and-index diff with rename detection.
-///
-/// Rename detection (`find_similar`) is applied so a pure rename reports
-/// `(0, 0)` instead of counting every line as added. We diff the whole tree
-/// (not pathspec-scoped) so `find_similar` can pair the deletion at the old
-/// path with the addition at the new path, then select the delta whose new (or
-/// old) path matches `rel`.
-fn file_diff_line_stats(
-    repo: &git2::Repository,
-    head_tree: Option<&git2::Tree>,
-    rel: &Path,
-) -> Option<(u32, u32)> {
-    let mut opts = git2::DiffOptions::new();
-    opts.include_untracked(true);
-    opts.recurse_untracked_dirs(true);
-    opts.show_untracked_content(true);
+/// Compute intra-line word-diff spans for paired removed/added lines within a
+/// hunk. A maximal run of consecutive `Removed` lines immediately followed by
+/// `Added` lines is paired index-for-index; each pair gets word-level spans so
+/// the renderer can emphasize only the characters that actually changed.
+fn assign_word_spans(lines: &mut [DiffLine]) {
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind != DiffLineKind::Removed {
+            i += 1;
+            continue;
+        }
+        let r_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Removed {
+            i += 1;
+        }
+        let r_end = i;
+        let a_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Added {
+            i += 1;
+        }
+        let a_end = i;
 
-    let mut diff = repo
-        .diff_tree_to_workdir_with_index(head_tree, Some(&mut opts))
-        .ok()?;
-
-    // Pair renames so a pure rename reports added=0/removed=0.
-    let _ = diff.find_similar(None);
-
-    let workdir = repo.workdir()?;
-    let (index, delta) = diff
-        .deltas()
-        .enumerate()
-        .find(|(_, d)| d.new_file().path() == Some(rel) || d.old_file().path() == Some(rel))?;
-    let (added, removed, _is_binary) = delta_line_stats(repo, workdir, &diff, index, &delta);
-    Some((added, removed))
-}
-
-/// If `rel` is the NEW side of a rename/copy (HEAD vs worktree+index), return
-/// the OLD path where the HEAD blob lives. Returns `None` for non-renames.
-fn rename_original_path(
-    repo: &git2::Repository,
-    head_tree: Option<&git2::Tree>,
-    rel: &Path,
-) -> Option<PathBuf> {
-    let mut opts = git2::DiffOptions::new();
-    opts.include_untracked(true);
-    opts.recurse_untracked_dirs(true);
-    opts.show_untracked_content(true);
-
-    let mut diff = repo
-        .diff_tree_to_workdir_with_index(head_tree, Some(&mut opts))
-        .ok()?;
-    diff.find_similar(None).ok()?;
-
-    for delta in diff.deltas() {
-        if matches!(delta.status(), git2::Delta::Renamed | git2::Delta::Copied)
-            && delta.new_file().path() == Some(rel)
-        {
-            return delta.old_file().path().map(|p| p.to_path_buf());
+        let pairs = (r_end - r_start).min(a_end - a_start);
+        for k in 0..pairs {
+            let old_idx = r_start + k;
+            let new_idx = a_start + k;
+            let old_content = lines[old_idx].content.clone();
+            let new_content = lines[new_idx].content.clone();
+            if old_content.encode_utf16().count() + new_content.encode_utf16().count()
+                > MAX_WORD_DIFF_LINE_LEN
+            {
+                continue;
+            }
+            let (old_spans, new_spans) = word_spans(&old_content, &new_content);
+            lines[old_idx].spans = old_spans;
+            lines[new_idx].spans = new_spans;
         }
     }
-    None
+}
+
+/// Word-level diff of two lines, returning the changed UTF-16 ranges on the old
+/// and new side respectively.
+fn word_spans(old: &str, new: &str) -> (Vec<WordSpan>, Vec<WordSpan>) {
+    use similar::{ChangeTag, TextDiff};
+
+    let push = |spans: &mut Vec<WordSpan>, start: u32, end: u32| {
+        if let Some(last) = spans.last_mut() {
+            if last.end == start {
+                last.end = end;
+                return;
+            }
+        }
+        spans.push(WordSpan { start, end });
+    };
+
+    let diff = TextDiff::from_words(old, new);
+    let mut old_off: u32 = 0;
+    let mut new_off: u32 = 0;
+    let mut old_spans: Vec<WordSpan> = Vec::new();
+    let mut new_spans: Vec<WordSpan> = Vec::new();
+    for change in diff.iter_all_changes() {
+        let len = change.value().encode_utf16().count() as u32;
+        match change.tag() {
+            ChangeTag::Equal => {
+                old_off += len;
+                new_off += len;
+            }
+            ChangeTag::Delete => {
+                if len > 0 {
+                    push(&mut old_spans, old_off, old_off + len);
+                }
+                old_off += len;
+            }
+            ChangeTag::Insert => {
+                if len > 0 {
+                    push(&mut new_spans, new_off, new_off + len);
+                }
+                new_off += len;
+            }
+        }
+    }
+    (old_spans, new_spans)
 }
 
 /// Stage all changes (additions, modifications, deletions) and create a commit
@@ -1139,8 +1314,13 @@ mod tests {
         assert_eq!(f.added, 2);
     }
 
+    /// Flatten every line across all hunks for assertions.
+    fn all_lines(fh: &FileHunks) -> Vec<&DiffLine> {
+        fh.hunks.iter().flat_map(|h| h.lines.iter()).collect()
+    }
+
     #[test]
-    fn file_diff_contents_modified() {
+    fn file_hunks_modified() {
         let temp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(temp.path()).unwrap();
         let file = temp.path().join("code.rs");
@@ -1148,16 +1328,28 @@ mod tests {
         commit_file(&repo, "code.rs", "init");
         std::fs::write(&file, "fn main() { println!(\"hi\"); }\n").unwrap();
 
-        let dc = file_diff_contents(temp.path().to_str().unwrap(), "code.rs").unwrap();
-        assert_eq!(dc.original, "fn main() {}\n");
-        assert_eq!(dc.modified, "fn main() { println!(\"hi\"); }\n");
-        assert_eq!(dc.language, "rust");
-        assert!(!dc.is_binary);
-        assert!(!dc.too_large);
+        let fh = file_hunks(temp.path().to_str().unwrap(), "code.rs").unwrap();
+        assert_eq!(fh.language, "rust");
+        assert!(!fh.is_binary);
+        assert!(!fh.too_large);
+        assert!(!fh.truncated);
+        assert_eq!(fh.added, 1);
+        assert_eq!(fh.removed, 1);
+
+        let lines = all_lines(&fh);
+        let removed = lines
+            .iter()
+            .find(|l| l.kind == DiffLineKind::Removed)
+            .unwrap();
+        assert_eq!(removed.content, "fn main() {}");
+        let added = lines.iter().find(|l| l.kind == DiffLineKind::Added).unwrap();
+        assert_eq!(added.content, "fn main() { println!(\"hi\"); }");
+        // The paired removed/added line should carry word-diff spans.
+        assert!(!added.spans.is_empty(), "expected word-diff spans on the added line");
     }
 
     #[test]
-    fn file_diff_contents_added_has_empty_original() {
+    fn file_hunks_added_is_all_added() {
         let temp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(temp.path()).unwrap();
         let tracked = temp.path().join("t.txt");
@@ -1166,13 +1358,18 @@ mod tests {
         let file = temp.path().join("added.txt");
         std::fs::write(&file, "new content\n").unwrap();
 
-        let dc = file_diff_contents(temp.path().to_str().unwrap(), "added.txt").unwrap();
-        assert_eq!(dc.original, "");
-        assert_eq!(dc.modified, "new content\n");
+        let fh = file_hunks(temp.path().to_str().unwrap(), "added.txt").unwrap();
+        assert_eq!(fh.added, 1);
+        assert_eq!(fh.removed, 0);
+        let lines = all_lines(&fh);
+        assert!(lines.iter().all(|l| l.kind == DiffLineKind::Added));
+        assert_eq!(lines[0].content, "new content");
+        assert_eq!(lines[0].new_lineno, Some(1));
+        assert_eq!(lines[0].old_lineno, None);
     }
 
     #[test]
-    fn file_diff_contents_deleted_has_empty_modified() {
+    fn file_hunks_deleted_is_all_removed() {
         let temp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(temp.path()).unwrap();
         let file = temp.path().join("del.txt");
@@ -1180,13 +1377,56 @@ mod tests {
         commit_file(&repo, "del.txt", "init");
         std::fs::remove_file(&file).unwrap();
 
-        let dc = file_diff_contents(temp.path().to_str().unwrap(), "del.txt").unwrap();
-        assert_eq!(dc.original, "to be removed\n");
-        assert_eq!(dc.modified, "");
+        let fh = file_hunks(temp.path().to_str().unwrap(), "del.txt").unwrap();
+        assert_eq!(fh.added, 0);
+        assert_eq!(fh.removed, 1);
+        let lines = all_lines(&fh);
+        assert!(lines.iter().all(|l| l.kind == DiffLineKind::Removed));
+        assert_eq!(lines[0].content, "to be removed");
+        assert_eq!(lines[0].old_lineno, Some(1));
+        assert_eq!(lines[0].new_lineno, None);
     }
 
     #[test]
-    fn file_diff_contents_binary_blanked() {
+    fn file_hunks_small_change_in_large_file_is_cheap() {
+        // A big file with a single changed line should produce just a hunk or
+        // two of context — never the whole file.
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        let file = temp.path().join("big.txt");
+        let mut body: String = (0..5000).map(|i| format!("line {}\n", i)).collect();
+        std::fs::write(&file, &body).unwrap();
+        commit_file(&repo, "big.txt", "init");
+        // Change one line in the middle.
+        body = body.replacen("line 2500\n", "line 2500 CHANGED\n", 1);
+        std::fs::write(&file, &body).unwrap();
+
+        let fh = file_hunks(temp.path().to_str().unwrap(), "big.txt").unwrap();
+        assert_eq!(fh.added, 1);
+        assert_eq!(fh.removed, 1);
+        // Only the changed region + context, not 5000 lines.
+        assert!(all_lines(&fh).len() < 20, "expected a small hunk, got many lines");
+    }
+
+    #[test]
+    fn file_hunks_overlong_line_marked_too_large() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        let file = temp.path().join("bundle.js");
+        std::fs::write(&file, "var a=1;\n").unwrap();
+        commit_file(&repo, "bundle.js", "init");
+        // A single line well past MAX_DIFF_LINE_LENGTH (minified/generated).
+        let huge = format!("var data=\"{}\";\n", "x".repeat(MAX_DIFF_LINE_LENGTH + 1));
+        std::fs::write(&file, huge).unwrap();
+
+        let fh = file_hunks(temp.path().to_str().unwrap(), "bundle.js").unwrap();
+        assert!(fh.too_large);
+        assert!(!fh.is_binary);
+        assert!(fh.hunks.is_empty());
+    }
+
+    #[test]
+    fn file_hunks_binary_blanked() {
         let temp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(temp.path()).unwrap();
         let placeholder = temp.path().join("p.txt");
@@ -1195,10 +1435,9 @@ mod tests {
         let bin = temp.path().join("b.bin");
         std::fs::write(&bin, [0u8, 1, 2, 0, 3]).unwrap();
 
-        let dc = file_diff_contents(temp.path().to_str().unwrap(), "b.bin").unwrap();
-        assert!(dc.is_binary);
-        assert_eq!(dc.original, "");
-        assert_eq!(dc.modified, "");
+        let fh = file_hunks(temp.path().to_str().unwrap(), "b.bin").unwrap();
+        assert!(fh.is_binary);
+        assert!(fh.hunks.is_empty());
     }
 
     #[test]
@@ -1453,7 +1692,7 @@ mod tests {
     }
 
     #[test]
-    fn file_diff_contents_rename_uses_head_content_as_original() {
+    fn file_hunks_pure_rename_has_no_changed_lines() {
         let temp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(temp.path()).unwrap();
         let content = "line1\nline2\nline3\nline4\n";
@@ -1463,25 +1702,20 @@ mod tests {
         std::fs::rename(temp.path().join("from.txt"), temp.path().join("to.txt")).unwrap();
         stage_rename(&repo, "from.txt", "to.txt");
 
-        let dc = file_diff_contents(temp.path().to_str().unwrap(), "to.txt").unwrap();
-        // The HEAD content (from from.txt) must be the `original` side, not empty.
-        assert_eq!(
-            dc.original, content,
-            "original should be HEAD content of old path"
-        );
-        assert_eq!(dc.modified, content, "modified should be worktree content");
-        // A pure rename has no added/removed lines.
-        assert_eq!(dc.added, 0, "pure rename should report 0 added");
-        assert_eq!(dc.removed, 0, "pure rename should report 0 removed");
-        assert!(!dc.is_binary);
-        assert!(!dc.too_large);
+        let fh = file_hunks(temp.path().to_str().unwrap(), "to.txt").unwrap();
+        // A pure rename has no added/removed lines (and thus no hunks).
+        assert_eq!(fh.added, 0, "pure rename should report 0 added");
+        assert_eq!(fh.removed, 0, "pure rename should report 0 removed");
+        assert!(fh.hunks.is_empty(), "pure rename should have no hunks");
+        assert!(!fh.is_binary);
+        assert!(!fh.too_large);
     }
 
     #[test]
-    fn file_diff_contents_rejects_traversal() {
+    fn file_hunks_rejects_traversal() {
         let temp = tempfile::tempdir().unwrap();
         git2::Repository::init(temp.path()).unwrap();
-        let err = file_diff_contents(temp.path().to_str().unwrap(), "../secret.txt")
+        let err = file_hunks(temp.path().to_str().unwrap(), "../secret.txt")
             .expect_err("traversal must be rejected");
         assert!(err.contains(".."), "unexpected error: {}", err);
     }

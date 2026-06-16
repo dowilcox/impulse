@@ -39,6 +39,15 @@ struct StatusBarView: View {
       // Inert while a TUI owns the grid — a checkout would type into the program.
       BranchChip(model: model, branch: branch, interactive: !model.terminalDirectInteraction)
     }
+    // Surface uncommitted changes even while a TUI (e.g. Claude Code) owns the
+    // grid — opening the diff review is a mouse action, so it's safe here.
+    if model.reviewChangedFileCount > 0 {
+      ReviewChip(
+        model: model,
+        fileCount: model.reviewChangedFileCount,
+        added: model.reviewAddedLines,
+        removed: model.reviewRemovedLines)
+    }
   }
 
   // MARK: - Right Group

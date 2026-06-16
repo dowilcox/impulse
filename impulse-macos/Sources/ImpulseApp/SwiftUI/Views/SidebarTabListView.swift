@@ -88,14 +88,21 @@ struct SidebarTabListView: View {
           .foregroundStyle(
             isSelected ? windowModel.theme.colorFg : windowModel.theme.colorFg.opacity(0.82))
 
-        if let subtitle = subtitleContent(tab) {
-          HStack(spacing: 3) {
-            Image(systemName: subtitle.symbol)
-              .font(.system(size: 8.5, weight: .medium))
-            Text(subtitle.text)
-              .font(.system(size: 10.5))
-              .lineLimit(1)
-              .truncationMode(.middle)
+        let subtitleSegments = subtitleSegments(tab)
+        if !subtitleSegments.isEmpty {
+          HStack(spacing: 6) {
+            ForEach(Array(subtitleSegments.enumerated()), id: \.offset) { _, segment in
+              HStack(spacing: 3) {
+                Image(systemName: segment.symbol)
+                  .font(.system(size: 8.5, weight: .medium))
+                Text(segment.text)
+                  .font(.system(size: 10.5))
+                  .lineLimit(1)
+                  .truncationMode(.middle)
+              }
+              // Keep the branch fully visible; let the longer path truncate first.
+              .layoutPriority(segment.symbol == "folder" ? 0 : 1)
+            }
           }
           .foregroundStyle(windowModel.theme.colorFgMuted)
         }
@@ -177,41 +184,29 @@ struct SidebarTabListView: View {
     }
   }
 
-  private func subtitleContent(_ tab: TabDisplayInfo) -> (symbol: String, text: String)? {
+  private func subtitleSegments(_ tab: TabDisplayInfo) -> [(symbol: String, text: String)] {
     // Open files (editor tabs): show the file's location path, not the branch.
     if !tab.isTerminal {
       if let directory = tab.directory, !directory.isEmpty {
-        return ("folder", directory)
+        return [("folder", directory)]
       }
-      return nil
+      return []
     }
-    // Terminal tabs running a program/TUI: the title shows the program name
-    // (e.g. "Claude Code") instead of the folder, so surface the working
-    // folder alongside the branch so the user knows where it runs.
-    if tab.isDirectInteractionActive {
-      var parts: [String] = []
-      if let directory = tab.directory, !directory.isEmpty {
-        parts.append(directory)
-      }
-      if let branch = tab.gitBranch, !branch.isEmpty {
-        parts.append(branch)
-      }
-      let combined = parts.joined(separator: " • ")
-      if !combined.isEmpty {
-        return ("arrow.triangle.branch", combined)
-      }
-      return nil
-    }
-    // Terminal tabs: git branch, falling back to the working directory.
-    if let branch = tab.gitBranch, !branch.isEmpty {
-      return ("arrow.triangle.branch", branch)
-    }
+    // Terminal tabs: always surface the working folder and the git branch
+    // together so the user knows where the tab runs and on what branch — each
+    // with its own icon (folder for the path, branch glyph for the branch).
+    var segments: [(symbol: String, text: String)] = []
     // Skip the directory when the title already shows it (e.g. fish's
-    // "~ - fish" title with a "~" working directory).
+    // "~ - fish" title with a "~" working directory). When a program/TUI is
+    // running the title is the program name (e.g. "Claude Code"), so the path
+    // is still shown.
     if let directory = tab.directory, !directory.isEmpty, !tab.title.contains(directory) {
-      return ("folder", directory)
+      segments.append(("folder", directory))
     }
-    return nil
+    if let branch = tab.gitBranch, !branch.isEmpty {
+      segments.append(("arrow.triangle.branch", branch))
+    }
+    return segments
   }
 
   // MARK: - Drag Reorder (vertical)

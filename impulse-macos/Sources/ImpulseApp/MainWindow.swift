@@ -261,6 +261,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       guard let self else { return }
       self.windowModel.updateFileTree(nodes, rootPath: self.fileTreeRootPath)
       self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: nodes)
+      // Keep the Review Changes chip current even when no tab/cwd change fires
+      // (e.g. a TUI like Claude Code editing files in place). Git status polling
+      // and the .git/index watcher drive this callback.
+      if !self.windowModel.currentCwd.isEmpty {
+        self.refreshReviewSummary(cwd: self.windowModel.currentCwd)
+      }
     }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)

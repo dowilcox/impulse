@@ -1301,20 +1301,25 @@ pub extern "C" fn impulse_git_list_changed_files(repo_path: *const c_char) -> *m
     )
 }
 
-/// Computes the original/modified diff contents for a single file.
+/// Computes the unified-diff hunks for a single file (HEAD vs index + worktree).
 ///
 /// `file_path` is REPO-RELATIVE (the `path` from the changed-file list).
 ///
-/// Returns a JSON-serialized `FileDiffContents`:
-/// `{ "original": string, "modified": string, "language": string,
-///    "is_binary": bool, "too_large": bool, "added": u32, "removed": u32 }`.
-/// `original` is the HEAD blob text ("" for added/untracked), `modified` is the
-/// working-tree text ("" for deleted).
+/// Returns a JSON-serialized `FileHunks`:
+/// `{ "language": string, "is_binary": bool, "too_large": bool,
+///    "truncated": bool, "added": u32, "removed": u32,
+///    "hunks": [{ "old_start", "old_lines", "new_start", "new_lines",
+///                "header": string,
+///                "lines": [{ "kind": "context"|"added"|"removed",
+///                            "old_lineno": u32|null, "new_lineno": u32|null,
+///                            "content": string,
+///                            "spans": [{ "start": u32, "end": u32 }] }] }] }`.
+/// Only changed regions plus context are materialized, never the whole file.
 ///
 /// Returns null on error.
 /// The caller must free the returned string with `impulse_free_string`.
 #[no_mangle]
-pub extern "C" fn impulse_git_file_diff_contents(
+pub extern "C" fn impulse_git_file_hunks(
     repo_path: *const c_char,
     file_path: *const c_char,
 ) -> *mut c_char {
@@ -1330,8 +1335,8 @@ pub extern "C" fn impulse_git_file_diff_contents(
                 None => return std::ptr::null_mut(),
             };
 
-            match impulse_core::git::file_diff_contents(&repo_path, &file_path) {
-                Ok(contents) => match serde_json::to_string(&contents) {
+            match impulse_core::git::file_hunks(&repo_path, &file_path) {
+                Ok(hunks) => match serde_json::to_string(&hunks) {
                     Ok(json) => to_c_string(&json),
                     Err(e) => {
                         log::error!("JSON serialization failed: {}", e);

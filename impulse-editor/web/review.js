@@ -1,19 +1,21 @@
 "use strict";
 
 // ===========================================================================
-// Review Changes — stacked-diff renderer + host bridge.
+// Review Changes — stacked unified-diff renderer + host bridge.
 //
 // Host -> JS:  window.__applyReviewCommand(cmd)  (object or JSON string)
-//              dispatches on cmd.type ("Render" / "SetDiff" / "SetTheme").
+//              dispatches on cmd.type ("Render" / "SetHunks" / "SetTheme").
 // JS -> Host:  ReviewEvents posted to messageHandlers.impulseReview
 //              (e.g. { "type": "Ready" }, { "type": "RequestDiff", "path": ... }).
 //
-// PERFORMANCE: Monaco diff editors are expensive. We virtualize the list so
-// only sections at/near the viewport hold a live Monaco instance. A section
-// far out of view is disposed and replaced by a spacer of its last-known
-// height (so scroll position is stable); it re-mounts from cached diff content
-// when it re-approaches. This keeps a handful of live editors regardless of
-// how many files changed.
+// The host computes unified-diff hunks in Rust (only changed regions + a few
+// context lines, never whole files) and sends them via SetHunks. We render them
+// as plain DOM rows — old/new line-number gutters, a +/- marker, and the line
+// content syntax-colored via monaco.editor.colorizeModelLine plus word-level
+// emphasis from the per-line spans. No client-side diffing, no Monaco editor
+// instances. We still virtualize: only sections near the viewport build their
+// rows; off-screen ones collapse to a spacer of last-known height so scroll
+// position stays stable.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -41,21 +43,21 @@ let monacoReady = false;
 let pendingCommands = [];
 let currentThemeColors = null;
 
-// Virtualization margin: mount/keep a section's Monaco editor when it is within
-// this many pixels of the viewport; dispose it once it scrolls farther away.
+// Virtualization margin: build/keep a section's rows when it is within this
+// many pixels of the viewport; collapse to a spacer once it scrolls away.
 const VIRTUALIZE_ROOT_MARGIN = "600px 0px";
 
 // path -> section record
 //   { path, status, oldPath, added, removed, isBinary, expanded,
-//     diffRequested, diffLoaded, diffData, isBinaryDiff, isTooLarge,
+//     diffRequested, isBinaryDiff, isTooLarge,
+//     hunksData,        // cached FileHunks payload from SetHunks
+//     rendered,         // whether rows are currently mounted in the DOM
 //     near, lastHeight,
-//     el, bodyEl, diffContainerEl,
-//     diffEditor, originalModel, modifiedModel,
-//     contentSizeListener, updateDiffListener, layoutRaf }
+//     el, bodyEl, diffContainerEl }
 const sections = new Map();
 
 // Shared IntersectionObserver: tracks which sections are near the viewport so
-// we can mount/dispose their Monaco editors. Created lazily once Monaco is up.
+// we can build/collapse their rows. Created lazily once Monaco is up.
 let viewportObserver = null;
 
 // ---------------------------------------------------------------------------
@@ -145,8 +147,8 @@ function handleCommand(cmd) {
       case "Render":
         handleRender(cmd);
         break;
-      case "SetDiff":
-        handleSetDiff(cmd);
+      case "SetHunks":
+        handleSetHunks(cmd);
         break;
       case "SetTheme":
         handleSetTheme(cmd);
@@ -163,8 +165,8 @@ function handleCommand(cmd) {
 // Viewport virtualization
 //
 // The observer watches each section element. When a section is near the
-// viewport it becomes "near" and (if expanded + diff available) mounts a live
-// Monaco editor; when it leaves the margin it is disposed and the container is
+// viewport it becomes "near" and (if expanded + hunks available) builds its
+// rows; when it leaves the margin the rows are cleared and the container is
 // replaced by a spacer of its last-known height so scroll position is stable.
 // ---------------------------------------------------------------------------
 function createViewportObserver() {
@@ -190,24 +192,24 @@ function observeSection(rec) {
   if (viewportObserver && rec.el) viewportObserver.observe(rec.el);
 }
 
-// Bring a section's DOM in line with its (expanded, near, diff) state. This is
-// the single funnel for mount/dispose decisions so expand/collapse, viewport
-// changes, and diff arrival all converge here.
+// Bring a section's DOM in line with its (expanded, near, hunks) state. This is
+// the single funnel for build/clear decisions so expand/collapse, viewport
+// changes, and hunk arrival all converge here.
 function reconcileSection(rec) {
   if (!rec.expanded) {
-    // Collapsed sections never hold a live editor.
-    if (rec.diffEditor) disposeSectionDiff(rec);
+    // Collapsed sections never hold rows.
+    if (rec.rendered) clearSection(rec);
     return;
   }
 
-  // Expanded but no diff content yet: request it (once) when near; binaries and
-  // too-large files render placeholders without any host round-trip.
+  // Binaries and too-large files render placeholders without a host round-trip.
   if (rec.isBinaryDiff || rec.isTooLarge) {
     renderPlaceholder(rec);
     return;
   }
 
-  if (!rec.diffData) {
+  // Expanded but no hunks yet: request them (once) when near.
+  if (!rec.hunksData) {
     if (rec.near && !rec.diffRequested) {
       rec.diffRequested = true;
       sendToHost({ type: "RequestDiff", path: rec.path });
@@ -215,13 +217,12 @@ function reconcileSection(rec) {
     return;
   }
 
-  // We have cached diff content.
+  // We have cached hunks.
   if (rec.near) {
-    if (!rec.diffEditor) mountSectionDiff(rec);
-    else scheduleLayout(rec);
-  } else if (rec.diffEditor) {
-    // Far from viewport: dispose the editor, keep a spacer of last height.
-    disposeSectionDiff(rec, /* keepSpacer */ true);
+    if (!rec.rendered) renderHunks(rec);
+  } else if (rec.rendered) {
+    // Far from viewport: clear the rows, keep a spacer of last height.
+    clearSection(rec, /* keepSpacer */ true);
   }
 }
 
@@ -233,7 +234,7 @@ function handleRender(cmd) {
   const root = document.getElementById("review-root");
   if (!root) return;
 
-  // Dispose all existing editors/models + stop observing before tearing down.
+  // Clear all existing rows + stop observing before tearing down.
   sections.forEach(function (rec) {
     if (viewportObserver && rec.el) {
       try {
@@ -242,7 +243,7 @@ function handleRender(cmd) {
         /* ignore */
       }
     }
-    disposeSectionDiff(rec);
+    clearSection(rec);
   });
   sections.clear();
   root.textContent = "";
@@ -297,9 +298,9 @@ function buildSection(f, expanded) {
     isBinary: !!f.is_binary,
     expanded: !!expanded,
     diffRequested: false,
-    diffLoaded: false,
-    // Cached diff payload from SetDiff so a re-mount needs no host round-trip.
-    diffData: null, // { original, modified, language }
+    // Cached FileHunks payload from SetHunks so a re-build needs no round-trip.
+    hunksData: null,
+    rendered: false,
     isBinaryDiff: !!f.is_binary,
     isTooLarge: false,
     near: false,
@@ -307,12 +308,6 @@ function buildSection(f, expanded) {
     el: null,
     bodyEl: null,
     diffContainerEl: null,
-    diffEditor: null,
-    originalModel: null,
-    modifiedModel: null,
-    contentSizeListener: null,
-    updateDiffListener: null,
-    layoutRaf: 0,
   };
 
   const section = document.createElement("div");
@@ -401,55 +396,46 @@ function toggleSection(rec) {
   sendToHost({ type: "ToggleFile", path: rec.path, expanded: next });
 
   if (!next) {
-    // Collapsed: free the editor immediately (no spacer needed — body hidden).
-    disposeSectionDiff(rec);
+    // Collapsed: clear the rows immediately (no spacer needed — body hidden).
+    clearSection(rec);
     return;
   }
 
-  // Expanded: let the reconciler decide whether to request/mount based on
+  // Expanded: let the reconciler decide whether to request/build based on
   // whether this section is currently near the viewport. Re-expanding a section
-  // that is on-screen will mount synchronously here; off-screen ones wait for
+  // that is on-screen will build synchronously here; off-screen ones wait for
   // the IntersectionObserver to flag them near.
   reconcileSection(rec);
 }
 
 // ---------------------------------------------------------------------------
-// SetDiff: cache the diff payload for one section, then reconcile.
+// SetHunks: cache the unified-diff hunks for one section, then reconcile.
 // ---------------------------------------------------------------------------
-function handleSetDiff(cmd) {
+function handleSetHunks(cmd) {
   const rec = sections.get(cmd.path);
   if (!rec) return;
+  const data = cmd.hunks || null;
+  rec.diffRequested = false;
 
-  if (cmd.is_binary || cmd.too_large) {
-    // Placeholder content — no editor, no round-trip needed again.
-    rec.isBinaryDiff = !!cmd.is_binary;
-    rec.isTooLarge = !!cmd.too_large;
-    rec.diffLoaded = true;
-    rec.diffRequested = false;
-    rec.diffData = null;
+  if (data && (data.is_binary || data.too_large)) {
+    // Placeholder content — no rows, no round-trip needed again.
+    rec.isBinaryDiff = !!data.is_binary;
+    rec.isTooLarge = !!data.too_large;
+    rec.hunksData = null;
     reconcileSection(rec);
     return;
   }
 
-  // Cache the real diff content so we can rebuild on re-mount without asking
-  // the host again.
-  rec.diffData = {
-    original: cmd.original != null ? cmd.original : "",
-    modified: cmd.modified != null ? cmd.modified : "",
-    language: cmd.language || "plaintext",
-  };
-  rec.diffLoaded = true;
-  rec.diffRequested = false;
-
-  // If the section was collapsed again before the diff arrived, keep the cached
-  // data but build nothing now. A later expand reconciles from cache (CORRECTNESS
-  // fix: previously this marked loaded with no editor and never re-rendered).
+  // Cache the hunks so we can rebuild on re-approach without asking again.
+  rec.isBinaryDiff = false;
+  rec.isTooLarge = false;
+  rec.hunksData = data;
+  rec.rendered = false;
   reconcileSection(rec);
 }
 
 // Render the binary / too-large placeholder directly into the container.
 function renderPlaceholder(rec) {
-  if (rec.diffEditor) disposeSectionDiff(rec);
   const container = rec.diffContainerEl;
   if (!container) return;
   container.textContent = "";
@@ -457,195 +443,198 @@ function renderPlaceholder(rec) {
   ph.className = "review-placeholder";
   ph.textContent = rec.isBinaryDiff
     ? "Binary file not shown"
-    : "File too large to display";
+    : "File too large or complex to display";
   container.appendChild(ph);
   container.style.height = "auto";
+  rec.rendered = false;
 }
 
 // ---------------------------------------------------------------------------
-// Mount a live Monaco diff editor from cached diff content.
+// Build the unified-diff rows for a section from its cached hunks.
+//
+// Syntax coloring: we drop all the hunks' content lines into one throwaway
+// Monaco model and colorize each line synchronously via colorizeModelLine
+// (tokenize-only — no diff algorithm, no editor instance), then dispose the
+// model. Word-level emphasis is overlaid from each line's `spans`.
 // ---------------------------------------------------------------------------
-function mountSectionDiff(rec) {
-  const data = rec.diffData;
-  if (!data) return;
-
-  // Replace any spacer / stale content.
-  disposeSectionDiff(rec);
+function renderHunks(rec) {
   const container = rec.diffContainerEl;
   if (!container) return;
   container.textContent = "";
-  // Seed the container with the last-known height so layout doesn't collapse to
-  // zero (and jump the page) during the first frame before Monaco measures.
-  if (rec.lastHeight > 0) container.style.height = rec.lastHeight + "px";
+  container.style.height = "auto";
 
-  const language = data.language || "plaintext";
-
-  rec.originalModel = monaco.editor.createModel(data.original, language);
-  rec.modifiedModel = monaco.editor.createModel(data.modified, language);
-
-  rec.diffEditor = monaco.editor.createDiffEditor(container, {
-    renderSideBySide: false,
-    readOnly: true,
-    originalEditable: false,
-    automaticLayout: false,
-    scrollBeyondLastLine: false,
-    hideUnchangedRegions: { enabled: true },
-    renderOverviewRuler: false,
-    overviewRulerLanes: 0,
-    minimap: { enabled: false },
-    glyphMargin: false,
-    folding: false,
-    // --- UI polish: breathing room in the gutter ---
-    // Reserve enough columns for the line numbers and push the code away from
-    // the +/- change markers with extra decoration + padding space.
-    lineNumbers: "on",
-    lineNumbersMinChars: 4,
-    lineDecorationsWidth: 18,
-    renderLineHighlight: "none",
-    padding: { top: 10, bottom: 10 },
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-    fontSize: 13,
-    lineHeight: 20,
-    scrollbar: {
-      vertical: "hidden",
-      handleMouseWheel: false,
-      alwaysConsumeMouseWheel: false,
-    },
-  });
-
-  if (currentThemeColors) {
-    // Apply the already-defined theme to this freshly created editor.
-    monaco.editor.setTheme("impulse-review-theme");
-  }
-
-  rec.diffEditor.setModel({
-    original: rec.originalModel,
-    modified: rec.modifiedModel,
-  });
-
-  // AUTO-HEIGHT: size the container to the inline diff's content height so the
-  // OUTER page scrolls, never the inner editor.
-  rec.updateDiffListener = rec.diffEditor.onDidUpdateDiff(function () {
-    scheduleLayout(rec);
-  });
-
-  const modEditor = rec.diffEditor.getModifiedEditor();
-  if (modEditor && modEditor.onDidContentSizeChange) {
-    rec.contentSizeListener = modEditor.onDidContentSizeChange(function () {
-      scheduleLayout(rec);
-    });
-  }
-
-  scheduleLayout(rec);
-}
-
-// ---------------------------------------------------------------------------
-// Auto-height layout (single coalesced rAF per content-size change).
-//
-// IMPORTANT: when the container is not measurable (width 0 — e.g. still
-// collapsed, or the section is virtualized out), we BAIL instead of
-// self-rescheduling. A spinning rAF wastes a frame every tick; the next
-// IntersectionObserver "near" event or expand will re-run layout for us.
-// ---------------------------------------------------------------------------
-function scheduleLayout(rec) {
-  if (!rec.diffEditor) return;
-  if (rec.layoutRaf) cancelAnimationFrame(rec.layoutRaf);
-  rec.layoutRaf = requestAnimationFrame(function () {
-    rec.layoutRaf = 0;
-    layoutSection(rec);
-  });
-}
-
-function layoutSection(rec) {
-  if (!rec.diffEditor) return;
-  const container = rec.diffContainerEl;
-  const width = container.clientWidth || rec.el.clientWidth || 0;
-  if (width === 0) {
-    // Not measurable yet — DO NOT spin. Wait for the next visibility/expand
-    // event to call scheduleLayout again.
+  const data = rec.hunksData;
+  if (!data || !data.hunks || data.hunks.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "review-placeholder";
+    empty.textContent = "No textual changes.";
+    container.appendChild(empty);
+    rec.rendered = true;
+    rec.lastHeight = container.offsetHeight;
     return;
   }
 
-  const modEditor = rec.diffEditor.getModifiedEditor();
-  const origEditor = rec.diffEditor.getOriginalEditor();
-  let height = 0;
-  if (modEditor) height = Math.max(height, modEditor.getContentHeight());
-  // Inline diff renders original deletions inside the modified pane, but guard
-  // for any bundle that exposes original content height as the taller side.
-  if (origEditor) height = Math.max(height, origEditor.getContentHeight());
-  if (height === 0) height = 40;
+  const language = data.language || "plaintext";
+  // One throwaway model holding every content line, for sync syntax coloring.
+  const allContent = [];
+  data.hunks.forEach(function (h) {
+    h.lines.forEach(function (l) {
+      allContent.push(l.content);
+    });
+  });
+  let model = null;
+  try {
+    model = monaco.editor.createModel(allContent.join("\n"), language);
+  } catch (e) {
+    model = null;
+  }
 
-  rec.lastHeight = height;
-  container.style.height = height + "px";
-  rec.diffEditor.layout({ width: width, height: height });
+  const frag = document.createDocumentFragment();
+  let lineNo = 0; // 1-based index into the throwaway model
+  data.hunks.forEach(function (h) {
+    const hh = document.createElement("div");
+    hh.className = "review-hunk-header";
+    hh.textContent =
+      h.header || "@@ -" + h.old_start + " +" + h.new_start + " @@";
+    frag.appendChild(hh);
+    h.lines.forEach(function (l) {
+      lineNo += 1;
+      frag.appendChild(buildRow(l, model, lineNo));
+    });
+  });
+  container.appendChild(frag);
+
+  if (model) {
+    try {
+      model.dispose();
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  if (data.truncated) {
+    const t = document.createElement("div");
+    t.className = "review-placeholder review-truncated";
+    t.textContent = "Diff truncated — file has more changes than shown.";
+    container.appendChild(t);
+  }
+
+  rec.rendered = true;
+  rec.lastHeight = container.offsetHeight;
+}
+
+// Build a single unified-diff row: old gutter, new gutter, +/- marker, content.
+function buildRow(line, model, lineNo) {
+  const kind = line.kind || "context";
+  const row = document.createElement("div");
+  row.className = "review-row review-row-" + kind;
+
+  const gOld = document.createElement("span");
+  gOld.className = "review-gutter review-gutter-old";
+  gOld.textContent = line.old_lineno != null ? String(line.old_lineno) : "";
+  const gNew = document.createElement("span");
+  gNew.className = "review-gutter review-gutter-new";
+  gNew.textContent = line.new_lineno != null ? String(line.new_lineno) : "";
+
+  const marker = document.createElement("span");
+  marker.className = "review-line-marker";
+  marker.textContent = kind === "added" ? "+" : kind === "removed" ? "-" : " ";
+
+  const content = document.createElement("span");
+  content.className = "review-line-content";
+  let html = null;
+  if (model) {
+    try {
+      html = monaco.editor.colorizeModelLine(model, lineNo);
+    } catch (e) {
+      html = null;
+    }
+  }
+  if (html != null) {
+    content.appendChild(applyWordSpans(html, line.spans));
+  } else if (line.spans && line.spans.length) {
+    content.appendChild(highlightTextNode(line.content, 0, line.spans));
+  } else {
+    content.textContent = line.content;
+  }
+  // Keep empty lines at full row height.
+  if (content.textContent.length === 0) {
+    content.appendChild(document.createTextNode("​"));
+  }
+
+  row.appendChild(gOld);
+  row.appendChild(gNew);
+  row.appendChild(marker);
+  row.appendChild(content);
+  return row;
+}
+
+// Wrap the colorized line HTML, overlaying word-diff emphasis on the changed
+// UTF-16 ranges. Returns a <span> whose children are the final content nodes.
+function applyWordSpans(html, spans) {
+  const wrapper = document.createElement("span");
+  wrapper.innerHTML = html;
+  if (!spans || spans.length === 0) return wrapper;
+
+  // Collect text nodes first — splitting them while walking is unsafe.
+  const textNodes = [];
+  const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, null);
+  let n;
+  while ((n = walker.nextNode())) textNodes.push(n);
+
+  let offset = 0;
+  textNodes.forEach(function (tn) {
+    const text = tn.nodeValue;
+    const frag = highlightTextNode(text, offset, spans);
+    offset += text.length;
+    if (tn.parentNode) tn.parentNode.replaceChild(frag, tn);
+  });
+  return wrapper;
+}
+
+// Split `text` (whose first char is at global UTF-16 `globalStart`) into a
+// fragment where ranges intersecting `spans` are wrapped in <span class=word>.
+function highlightTextNode(text, globalStart, spans) {
+  const frag = document.createDocumentFragment();
+  const len = text.length;
+  let pos = 0;
+  for (let i = 0; i < spans.length && pos < len; i++) {
+    const s = spans[i];
+    const localStart = Math.max(pos, s.start - globalStart);
+    const localEnd = Math.min(len, s.end - globalStart);
+    if (localEnd <= 0 || localStart >= len || localEnd <= localStart) continue;
+    if (localStart > pos) {
+      frag.appendChild(document.createTextNode(text.slice(pos, localStart)));
+    }
+    const mark = document.createElement("span");
+    mark.className = "review-word";
+    mark.textContent = text.slice(localStart, localEnd);
+    frag.appendChild(mark);
+    pos = localEnd;
+  }
+  if (pos < len) frag.appendChild(document.createTextNode(text.slice(pos)));
+  return frag;
 }
 
 // ---------------------------------------------------------------------------
-// Dispose helpers (free Monaco editors + models)
+// Clear a section's rows.
 //
 // keepSpacer: when true (virtualized-out), leave a spacer div of the last-known
 // height so the page scroll position does not jump. When false (collapsed), the
 // body is hidden anyway so the container is just reset.
 // ---------------------------------------------------------------------------
-function disposeSectionDiff(rec, keepSpacer) {
-  if (!rec) return;
-  if (rec.layoutRaf) {
-    cancelAnimationFrame(rec.layoutRaf);
-    rec.layoutRaf = 0;
-  }
-  if (rec.updateDiffListener) {
-    try {
-      rec.updateDiffListener.dispose();
-    } catch (e) {
-      /* ignore */
-    }
-    rec.updateDiffListener = null;
-  }
-  if (rec.contentSizeListener) {
-    try {
-      rec.contentSizeListener.dispose();
-    } catch (e) {
-      /* ignore */
-    }
-    rec.contentSizeListener = null;
-  }
-  if (rec.diffEditor) {
-    try {
-      rec.diffEditor.setModel(null);
-      rec.diffEditor.dispose();
-    } catch (e) {
-      /* ignore */
-    }
-    rec.diffEditor = null;
-  }
-  if (rec.originalModel) {
-    try {
-      rec.originalModel.dispose();
-    } catch (e) {
-      /* ignore */
-    }
-    rec.originalModel = null;
-  }
-  if (rec.modifiedModel) {
-    try {
-      rec.modifiedModel.dispose();
-    } catch (e) {
-      /* ignore */
-    }
-    rec.modifiedModel = null;
-  }
-  if (rec.diffContainerEl) {
-    rec.diffContainerEl.textContent = "";
-    if (keepSpacer && rec.lastHeight > 0) {
-      // Preserve scroll position with a placeholder spacer of the last height.
-      const spacer = document.createElement("div");
-      spacer.className = "review-spacer";
-      spacer.style.height = rec.lastHeight + "px";
-      rec.diffContainerEl.appendChild(spacer);
-      rec.diffContainerEl.style.height = rec.lastHeight + "px";
-    } else {
-      rec.diffContainerEl.style.height = "auto";
-    }
+function clearSection(rec, keepSpacer) {
+  if (!rec || !rec.diffContainerEl) return;
+  rec.rendered = false;
+  rec.diffContainerEl.textContent = "";
+  if (keepSpacer && rec.lastHeight > 0) {
+    const spacer = document.createElement("div");
+    spacer.className = "review-spacer";
+    spacer.style.height = rec.lastHeight + "px";
+    rec.diffContainerEl.appendChild(spacer);
+    rec.diffContainerEl.style.height = rec.lastHeight + "px";
+  } else {
+    rec.diffContainerEl.style.height = "auto";
   }
 }
 
