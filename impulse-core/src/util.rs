@@ -248,6 +248,53 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<std::path::Pa
     Ok(canonical_path)
 }
 
+/// Validate that a repo-relative path is lexically contained within `root`,
+/// WITHOUT touching the filesystem.
+///
+/// Unlike [`validate_path_within_root`], this does not require the path (or its
+/// parent) to exist — it only inspects the path components. This makes it safe
+/// to use for operations that may target deleted files (e.g. restoring a file
+/// from HEAD, or reading a HEAD blob for a file removed along with its
+/// directory).
+///
+/// `rel` is rejected if it is absolute or contains any `..` (parent-dir)
+/// component. On success, returns `root.join(rel)` normalized lexically.
+pub fn validate_rel_path_lexically(root: &Path, rel: &Path) -> Result<std::path::PathBuf, String> {
+    use std::path::Component;
+
+    if rel.is_absolute() {
+        return Err(format!("Path '{}' must be relative", rel.display()));
+    }
+
+    let mut normalized = root.to_path_buf();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(format!(
+                    "Path '{}' must not contain '..' components",
+                    rel.display()
+                ));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("Path '{}' must be relative", rel.display()));
+            }
+        }
+    }
+
+    // Defensive: ensure the lexical join did not escape the root.
+    if !normalized.starts_with(root) {
+        return Err(format!(
+            "Path '{}' is outside the workspace root '{}'",
+            rel.display(),
+            root.display()
+        ));
+    }
+
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,5 +470,39 @@ mod tests {
     #[test]
     fn matches_file_pattern_no_extension_no_match() {
         assert!(!matches_file_pattern("/src/Makefile", "*.rs"));
+    }
+
+    #[test]
+    fn validate_rel_path_lexically_accepts_nested() {
+        let root = Path::new("/repo");
+        let got = validate_rel_path_lexically(root, Path::new("a/b/c.txt")).unwrap();
+        assert_eq!(got, Path::new("/repo/a/b/c.txt"));
+    }
+
+    #[test]
+    fn validate_rel_path_lexically_accepts_missing_file() {
+        // No filesystem access -> nonexistent paths are fine.
+        let root = Path::new("/definitely/does/not/exist");
+        assert!(validate_rel_path_lexically(root, Path::new("nested/gone.txt")).is_ok());
+    }
+
+    #[test]
+    fn validate_rel_path_lexically_rejects_parent_dir() {
+        let root = Path::new("/repo");
+        assert!(validate_rel_path_lexically(root, Path::new("../escape.txt")).is_err());
+        assert!(validate_rel_path_lexically(root, Path::new("a/../../escape.txt")).is_err());
+    }
+
+    #[test]
+    fn validate_rel_path_lexically_rejects_absolute() {
+        let root = Path::new("/repo");
+        assert!(validate_rel_path_lexically(root, Path::new("/etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn validate_rel_path_lexically_ignores_curdir() {
+        let root = Path::new("/repo");
+        let got = validate_rel_path_lexically(root, Path::new("./a/./b.txt")).unwrap();
+        assert_eq!(got, Path::new("/repo/a/b.txt"));
     }
 }

@@ -23,6 +23,10 @@ struct TabDisplayInfo: Identifiable {
   var gitBranch: String? = nil
   /// Abbreviated working directory, shown when no branch is available.
   var directory: String? = nil
+  /// Whether a program/TUI (e.g. Claude Code, vim) currently owns this
+  /// terminal's grid. When true the tab title shows the program name instead
+  /// of the folder, so the subtitle shows the folder alongside the branch.
+  var isDirectInteractionActive: Bool = false
 }
 
 // MARK: - Window Model
@@ -79,6 +83,12 @@ final class WindowModel {
   var shellName: String = ""
   var gitBranch: String? = nil
   var currentCwd: String = ""
+
+  /// Working-tree change summary for the context-bar "Review Changes" chip,
+  /// recomputed by MainWindow alongside the git branch. A count of 0 hides the chip.
+  var reviewChangedFileCount: Int = 0
+  var reviewAddedLines: Int = 0
+  var reviewRemovedLines: Int = 0
 
   // MARK: Terminal input bar
 
@@ -140,6 +150,9 @@ final class WindowModel {
   var onRunCommand: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
+  /// Resolve path-completion candidates for the active token of the typed
+  /// input (input-bar dropdown). Filesystem work — call off the main thread.
+  var onCompletionCandidates: ((String) -> CompletionResult?)?
   /// Most recent commands, newest first, for ↑/↓ cycling in the input bar.
   var onRecentCommands: ((Int) -> [String])?
   /// Send SIGINT to the active terminal (input-bar Stop button / ⌃C).
@@ -161,6 +174,8 @@ final class WindowModel {
   var onToggleHidden: (() -> Void)?
   var onOpenSettingsFile: (() -> Void)?
   var onDismissSettingsWarning: (() -> Void)?
+  /// Open the Review Changes tab for the current workspace git root.
+  var onOpenDiffReview: (() -> Void)?
 
   // MARK: Methods
 

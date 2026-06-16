@@ -628,6 +628,15 @@ class TerminalTab: NSView {
     return backend.completeInput(text, cwd: cwd)
   }
 
+  /// Path-completion candidates for the active argument token of `text`
+  /// (input-bar dropdown). Resolves against the tab's current working
+  /// directory. Returns `nil` when the active token is not a path argument.
+  func completionCandidates(for text: String) -> CompletionResult? {
+    guard !text.isEmpty, let backend else { return nil }
+    let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
+    return backend.completionCandidates(input: text, cwd: cwd)
+  }
+
   /// Most recent commands, newest first (input-bar ↑/↓ cycling).
   func recentCommands(limit: Int) -> [String] {
     guard let backend else { return [] }

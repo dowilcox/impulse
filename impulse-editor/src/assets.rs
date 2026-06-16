@@ -10,6 +10,9 @@ static MONACO_DIR_CACHE: OnceLock<PathBuf> = OnceLock::new();
 pub const EDITOR_HTML: &str = include_str!("../web/editor.html");
 pub const EDITOR_JS: &str = include_str!("../web/editor.js");
 
+pub const REVIEW_HTML: &str = include_str!("../web/review.html");
+pub const REVIEW_JS: &str = include_str!("../web/review.js");
+
 pub const MONACO_VERSION: &str = "0.55.1+fonts2+hljs";
 
 static MONACO_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/vendor/monaco");
@@ -63,6 +66,11 @@ fn ensure_monaco_extracted_inner() -> Result<PathBuf, String> {
                     .map_err(|e| format!("Failed to write editor.html: {}", e))?;
                 std::fs::write(monaco_dir.join("editor.js"), EDITOR_JS)
                     .map_err(|e| format!("Failed to write editor.js: {}", e))?;
+                // Always overwrite review.html and review.js (Review Changes WebView)
+                std::fs::write(monaco_dir.join("review.html"), REVIEW_HTML)
+                    .map_err(|e| format!("Failed to write review.html: {}", e))?;
+                std::fs::write(monaco_dir.join("review.js"), REVIEW_JS)
+                    .map_err(|e| format!("Failed to write review.js: {}", e))?;
                 return Ok(monaco_dir);
             }
         }
@@ -102,6 +110,12 @@ fn ensure_monaco_extracted_inner() -> Result<PathBuf, String> {
         .map_err(|e| format!("Failed to write editor.html: {}", e))?;
     std::fs::write(monaco_dir.join("editor.js"), EDITOR_JS)
         .map_err(|e| format!("Failed to write editor.js: {}", e))?;
+
+    // Write review.html and review.js (Review Changes WebView)
+    std::fs::write(monaco_dir.join("review.html"), REVIEW_HTML)
+        .map_err(|e| format!("Failed to write review.html: {}", e))?;
+    std::fs::write(monaco_dir.join("review.js"), REVIEW_JS)
+        .map_err(|e| format!("Failed to write review.js: {}", e))?;
 
     // Install fonts to user font directory for the terminal
     install_user_fonts();

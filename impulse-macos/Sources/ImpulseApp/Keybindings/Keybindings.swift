@@ -148,6 +148,14 @@ enum Keybindings {
             modifierFlags: [.command, .shift]
         ),
         BuiltinKeybinding(
+            id: "review_changes",
+            description: "Review Changes",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Shift+G",
+            keyEquivalent: "G",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "open_settings",
             description: "Open Settings",
             category: "Navigation",

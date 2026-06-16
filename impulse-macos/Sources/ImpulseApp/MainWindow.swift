@@ -327,6 +327,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
     }
+    windowModel.onCompletionCandidates = { [weak self] text in
+      self?.tabManager.selectedTerminal?.activeTerminal?.completionCandidates(for: text)
+    }
     windowModel.onRecentCommands = { [weak self] limit in
       self?.tabManager.selectedTerminal?.activeTerminal?.recentCommands(limit: limit) ?? []
     }
@@ -453,6 +456,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // Sidebar action-bar shortcuts: create in the selected tree dir (or root).
     windowModel.onCreateFile = { [weak self] in self?.newFileAction(nil) }
     windowModel.onCreateFolder = { [weak self] in self?.newFolderAction(nil) }
+    windowModel.onOpenDiffReview = { [weak self] in self?.openDiffReview() }
 
     // Single NSHostingView replaces ALL AppKit chrome
     let rootView = MainContentView(
@@ -989,6 +993,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     hideTerminalSearch()
   }
 
+  /// Recompute the working-tree change summary (changed-file count + aggregate
+  /// +/- line counts) for the context-bar Review Changes chip. Runs off the main
+  /// thread; results are dropped if the active cwd changes before they return.
+  private func refreshReviewSummary(cwd: String) {
+    guard !cwd.isEmpty else {
+      windowModel.reviewChangedFileCount = 0
+      windowModel.reviewAddedLines = 0
+      windowModel.reviewRemovedLines = 0
+      return
+    }
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let summary = ImpulseCore.listChangedFiles(repoPath: cwd)
+      DispatchQueue.main.async {
+        guard let self = self, self.windowModel.currentCwd == cwd else { return }
+        self.windowModel.reviewChangedFileCount = summary?.files.count ?? 0
+        self.windowModel.reviewAddedLines = Int(summary?.totalAdded ?? 0)
+        self.windowModel.reviewRemovedLines = Int(summary?.totalRemoved ?? 0)
+      }
+    }
+  }
+
   /// Updates the status bar with information from the currently active tab.
   func updateStatusBar() {
     guard let tabInfo = tabManager.activeTabInfo else { return }
@@ -1000,6 +1025,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       windowModel.shellName = shellName
       windowModel.currentCwd = cwd
       windowModel.gitBranch = branch
+      refreshReviewSummary(cwd: cwd)
       windowModel.cursorLine = nil
       windowModel.cursorCol = nil
       windowModel.currentLanguage = nil
@@ -1020,6 +1046,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       windowModel.terminalDirectInteraction = false
       windowModel.currentCwd = cwd
       windowModel.gitBranch = branch
+      refreshReviewSummary(cwd: cwd)
       windowModel.cursorLine = tabInfo.cursorLine
       windowModel.cursorCol = tabInfo.cursorCol
       windowModel.currentLanguage = language
@@ -1414,6 +1441,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             dir = editor.projectDirectory
           case .imagePreview:
             dir = nil
+          case .diffReview(let repoRoot, _):
+            dir = repoRoot
           }
           if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
             self.switchFileTreeRoot(dir, updateStatusBar: false)
@@ -1521,6 +1550,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           let interactive = notification.userInfo?["interactive"] as? Bool
         else { return }
         self.windowModel.terminalDirectInteraction = interactive
+        // Re-sync tab subtitles so the working folder appears alongside the
+        // branch while a program/TUI owns the grid.
+        self.tabManager.syncToWindowModel()
         // Leaving a TUI: the input bar reappears and should reclaim focus.
         if !interactive {
           self.windowModel.inputBarFocusToken += 1
@@ -1661,7 +1693,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           )
         case .terminal:
           self.toggleTerminalSearch()
-        case .imagePreview:
+        case .imagePreview, .diffReview:
           break
         }
       }
@@ -1817,6 +1849,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.togglePreview()
+      }
+    )
+
+    // Review Changes — open the git diff review tab for the current workspace.
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseReviewChanges, object: nil, queue: .main) {
+        [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.openDiffReview()
       }
     )
 
@@ -2287,8 +2328,51 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       }
     case .imagePreview(let path, _):
       return (path as NSString).deletingLastPathComponent
+    case .diffReview(let repoRoot, _):
+      return repoRoot.isEmpty ? nil : repoRoot
     }
     return nil
+  }
+
+  // MARK: - Review Changes
+
+  /// Opens the Review Changes tab for the current workspace's git repository.
+  ///
+  /// Resolves the repo root from the active tab's directory (or the file-tree
+  /// root) off the main thread via `listChangedFiles`, which returns the
+  /// repository root. If the directory is not inside a git repository, an
+  /// alert is shown and no tab is created.
+  private func openDiffReview() {
+    let candidate = getActiveCwd() ?? fileTreeRootPath
+    guard !candidate.isEmpty else {
+      presentNotAGitRepoAlert()
+      return
+    }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let changeSet = ImpulseCore.listChangedFiles(repoPath: candidate)
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        guard let changeSet, !changeSet.repoRoot.isEmpty else {
+          self.presentNotAGitRepoAlert()
+          return
+        }
+        self.tabManager.addDiffReviewTab(repoRoot: changeSet.repoRoot)
+      }
+    }
+  }
+
+  private func presentNotAGitRepoAlert() {
+    let alert = NSAlert()
+    alert.messageText = "Not a Git Repository"
+    alert.informativeText =
+      "The current workspace is not inside a git repository, so there are no changes to review."
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "OK")
+    if let window = self.window {
+      alert.beginSheetModal(for: window, completionHandler: nil)
+    } else {
+      alert.runModal()
+    }
   }
 
   // MARK: - Go to Line
@@ -2383,7 +2467,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview:
+      case .imagePreview, .diffReview:
         break
       }
     }
@@ -2403,7 +2487,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview:
+      case .imagePreview, .diffReview:
         break
       }
     }
@@ -2603,7 +2687,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return editor.filePath
       case .imagePreview(let path, _):
         return path
-      case .terminal:
+      case .terminal, .diffReview:
         return nil
       }
     }

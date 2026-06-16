@@ -65,6 +65,29 @@ char *impulse_git_diff_markers(const char *file_path);
 char *impulse_git_blame(const char *file_path, uint32_t line);
 int32_t impulse_git_discard_changes(const char *file_path, const char *workspace_root);
 
+// Review Changes (git diff review)
+// Lists changed files as a JSON ChangeSet:
+//   { "repo_root": string, "branch": string|null, "total_added": u32,
+//     "total_removed": u32, "files": [ { "path": string, "status": string,
+//     "old_path": string|null, "added": u32, "removed": u32,
+//     "is_binary": bool } ] }
+// status letters: "A"|"M"|"D"|"R"|"?". Returns NULL on error.
+// Caller must free the returned string with impulse_free_string.
+char *impulse_git_list_changed_files(const char *repo_path);
+// Computes diff contents for one REPO-RELATIVE file_path as JSON:
+//   { "original": string, "modified": string, "language": string,
+//     "is_binary": bool, "too_large": bool, "added": u32, "removed": u32 }
+// Returns NULL on error.
+// Caller must free the returned string with impulse_free_string.
+char *impulse_git_file_diff_contents(const char *repo_path, const char *file_path);
+// Stages all changes and commits with message. Returns JSON (never NULL unless
+// an input pointer is NULL): { "ok": bool, "oid": string|null, "error": string|null }.
+// Caller must free the returned string with impulse_free_string.
+char *impulse_git_commit_all(const char *repo_path, const char *message);
+// Discards changes for one REPO-RELATIVE file_path (checkout HEAD for tracked,
+// delete for untracked/new). Returns 0 on success or -1 on error.
+int32_t impulse_git_discard_path(const char *repo_path, const char *file_path);
+
 // Settings
 char *impulse_settings_default_json(void);
 char *impulse_settings_schema_json(void);
@@ -105,6 +128,12 @@ char *impulse_terminal_block_overlay(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);
 char *impulse_terminal_command_history_search(void *handle, const char *query_json);
 char *impulse_terminal_complete_input(void *handle, const char *input, const char *cwd);
+// Path completion candidates for the input-bar dropdown. Returns JSON:
+//   { "span": { "start": usize, "end": usize },
+//     "candidates": [ { "value": string, "display": string, "kind": "path",
+//                       "is_dir": bool, "git_status": string|null } ] }
+// Returns NULL on error. Caller frees with impulse_free_string.
+char *impulse_terminal_completion_candidates(void *handle, const char *input, const char *cwd, unsigned long limit);
 _Bool impulse_terminal_rerun_command(void *handle, const char *command);
 void impulse_terminal_start_selection(void *handle, unsigned short col, unsigned short row, unsigned char kind);
 void impulse_terminal_update_selection(void *handle, unsigned short col, unsigned short row);

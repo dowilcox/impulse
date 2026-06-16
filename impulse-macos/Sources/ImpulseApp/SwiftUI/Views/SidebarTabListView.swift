@@ -185,6 +185,23 @@ struct SidebarTabListView: View {
       }
       return nil
     }
+    // Terminal tabs running a program/TUI: the title shows the program name
+    // (e.g. "Claude Code") instead of the folder, so surface the working
+    // folder alongside the branch so the user knows where it runs.
+    if tab.isDirectInteractionActive {
+      var parts: [String] = []
+      if let directory = tab.directory, !directory.isEmpty {
+        parts.append(directory)
+      }
+      if let branch = tab.gitBranch, !branch.isEmpty {
+        parts.append(branch)
+      }
+      let combined = parts.joined(separator: " • ")
+      if !combined.isEmpty {
+        return ("arrow.triangle.branch", combined)
+      }
+      return nil
+    }
     // Terminal tabs: git branch, falling back to the working directory.
     if let branch = tab.gitBranch, !branch.isEmpty {
       return ("arrow.triangle.branch", branch)

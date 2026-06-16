@@ -75,6 +75,101 @@ pub fn warm_cache() {
     let _ = path_executables();
 }
 
+// ---------------------------------------------------------------------------
+// Multi-candidate completion (dropdown)
+// ---------------------------------------------------------------------------
+
+/// A single completion candidate for the terminal completion dropdown.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct CompletionCandidate {
+    /// Full replacement text for the active token. Directories get a trailing
+    /// `/` so accepting one re-opens the dropdown for the next segment.
+    pub value: String,
+    /// The label shown in the dropdown (the entry's basename).
+    pub display: String,
+    /// The candidate category. v1 only produces `"path"`.
+    pub kind: &'static str,
+    pub is_dir: bool,
+    /// Git status (porcelain code) when cheaply available; `None` during the
+    /// hot typeahead path scan, where computing it per-entry would be costly.
+    pub git_status: Option<String>,
+}
+
+/// The result of [`complete_candidates`]: the token span to replace plus the
+/// matching candidates.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct CompletionResult {
+    pub span: crate::shell_parser::TextSpan,
+    pub candidates: Vec<CompletionCandidate>,
+}
+
+/// Compute path completion candidates for the active token in `input`.
+///
+/// Only argument and redirect-target tokens enumerate filesystem candidates;
+/// command words and other token kinds return an empty candidate list in v1.
+/// Candidates are directories-first, then files, each alphabetical, prefix
+/// matched (case-sensitive). Hidden (dot) entries appear only when the active
+/// token's basename starts with `.`. The list is capped at `limit`.
+///
+/// `history` is accepted for forward compatibility (history-backed candidates
+/// are not part of v1) and is currently unused.
+pub fn complete_candidates(
+    input: &str,
+    cwd: Option<&str>,
+    _history: &[String],
+    limit: usize,
+) -> CompletionResult {
+    let parsed = parse_shell_input(input, input.len());
+    let comp = &parsed.completion;
+    let span = comp.span;
+
+    // Splicing into quoted/escaped tokens is ambiguous; don't offer candidates.
+    if parsed.incomplete {
+        return CompletionResult {
+            span,
+            candidates: Vec::new(),
+        };
+    }
+
+    // Only path-bearing token kinds enumerate filesystem candidates in v1.
+    if !matches!(
+        comp.kind,
+        ShellCompletionKind::Argument | ShellCompletionKind::RedirectTarget
+    ) {
+        return CompletionResult {
+            span,
+            candidates: Vec::new(),
+        };
+    }
+
+    let cwd_path = cwd.filter(|value| !value.is_empty()).map(Path::new);
+    let (dir_part, _) = split_path_prefix(&comp.prefix);
+
+    let mut matches = path_matches(&comp.prefix, cwd_path);
+    // Directories first, then files; each group alphabetical by name.
+    matches.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+
+    let candidates = matches
+        .into_iter()
+        .take(limit)
+        .map(|m| {
+            let mut value = format!("{dir_part}{}", m.name);
+            if m.is_dir {
+                value.push('/');
+            }
+            CompletionCandidate {
+                value,
+                display: m.name,
+                kind: "path",
+                is_dir: m.is_dir,
+                git_status: None,
+            }
+        })
+        .collect();
+
+    CompletionResult { span, candidates }
+}
+
 /// Replace the completion token in `input` with `candidate`, keeping the text
 /// before it verbatim. Returns `None` unless the result genuinely extends what
 /// was typed (so the ghost suffix stays consistent).
@@ -205,17 +300,37 @@ fn complete_flag(command: Option<&str>, prefix: &str) -> Option<String> {
         .map(|flag| (*flag).to_string())
 }
 
-fn complete_path(prefix: &str, cwd: Option<&Path>) -> Option<String> {
-    // Keep the directory part exactly as typed; match only the trailing name.
-    let (dir_part, base) = match prefix.rfind('/') {
+/// A filesystem entry that prefix-matches a path token, used by both the inline
+/// ghost completion and the multi-candidate dropdown.
+struct PathMatch {
+    /// The entry's file name (basename) as read from disk.
+    name: String,
+    is_dir: bool,
+}
+
+/// Split a path prefix into its directory part (kept verbatim) and the trailing
+/// basename being matched, e.g. `alpha/inn` -> (`alpha/`, `inn`).
+fn split_path_prefix(prefix: &str) -> (&str, &str) {
+    match prefix.rfind('/') {
         Some(index) => (&prefix[..=index], &prefix[index + 1..]),
         None => ("", prefix),
+    }
+}
+
+/// Enumerate every filesystem entry in the directory implied by `prefix` whose
+/// name prefix-matches the trailing basename. Hidden (dot) entries surface only
+/// when the user typed a leading dot. Returns an empty vec when the directory
+/// can't be resolved or read. Ordering is left to the caller.
+fn path_matches(prefix: &str, cwd: Option<&Path>) -> Vec<PathMatch> {
+    let (dir_part, base) = split_path_prefix(prefix);
+    let Some(search_dir) = resolve_dir(dir_part, cwd) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&search_dir) else {
+        return Vec::new();
     };
 
-    let search_dir = resolve_dir(dir_part, cwd)?;
-    let entries = std::fs::read_dir(&search_dir).ok()?;
-
-    let mut best: Option<(String, bool)> = None;
+    let mut matches = Vec::new();
     for entry in entries.flatten() {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -228,15 +343,22 @@ fn complete_path(prefix: &str, cwd: Option<&Path>) -> Option<String> {
             continue;
         }
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        // Alphabetically-first match keeps the guess stable across keystrokes.
-        if best.as_ref().map(|(b, _)| name < *b).unwrap_or(true) {
-            best = Some((name, is_dir));
-        }
+        matches.push(PathMatch { name, is_dir });
     }
+    matches
+}
 
-    let (name, is_dir) = best?;
-    let mut candidate = format!("{dir_part}{name}");
-    if is_dir {
+fn complete_path(prefix: &str, cwd: Option<&Path>) -> Option<String> {
+    // Keep the directory part exactly as typed; match only the trailing name.
+    let (dir_part, _) = split_path_prefix(prefix);
+
+    // Alphabetically-first match keeps the guess stable across keystrokes.
+    let best = path_matches(prefix, cwd)
+        .into_iter()
+        .min_by(|a, b| a.name.cmp(&b.name))?;
+
+    let mut candidate = format!("{dir_part}{}", best.name);
+    if best.is_dir {
         candidate.push('/');
     }
     Some(candidate)
@@ -572,5 +694,116 @@ mod tests {
     #[test]
     fn skips_incomplete_quoted_tokens() {
         assert_eq!(complete("cat \"unterminated", None, &[]), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-candidate dropdown
+    // -----------------------------------------------------------------------
+
+    /// Build a fresh temp directory laid out like a WordPress project root.
+    fn wp_fixture(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("impulse-candidates-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("wp-content")).unwrap();
+        std::fs::create_dir_all(dir.join("wp-admin")).unwrap();
+        std::fs::create_dir_all(dir.join("wp-includes")).unwrap();
+        std::fs::write(dir.join("readme.md"), b"x").unwrap();
+        dir
+    }
+
+    #[test]
+    fn candidates_lists_matching_dirs_first_alphabetical() {
+        let dir = wp_fixture("wp-prefix");
+        let cwd = dir.to_str().unwrap();
+
+        let result = complete_candidates("cd wp-", Some(cwd), &[], 50);
+        let values: Vec<&str> = result.candidates.iter().map(|c| c.value.as_str()).collect();
+        // Three directories, dirs-first, alphabetical, each value ends with `/`.
+        assert_eq!(values, ["wp-admin/", "wp-content/", "wp-includes/"]);
+        assert!(result.candidates.iter().all(|c| c.is_dir));
+        assert!(result.candidates.iter().all(|c| c.kind == "path"));
+        assert_eq!(result.candidates[0].display, "wp-admin");
+        // The span covers exactly the `wp-` token.
+        assert_eq!(result.span, TextSpan { start: 3, end: 6 });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_empty_prefix_lists_all_entries() {
+        let dir = wp_fixture("empty-prefix");
+        let cwd = dir.to_str().unwrap();
+
+        let result = complete_candidates("cd ", Some(cwd), &[], 50);
+        let values: Vec<&str> = result.candidates.iter().map(|c| c.value.as_str()).collect();
+        // Dirs first (alphabetical), then files.
+        assert_eq!(
+            values,
+            ["wp-admin/", "wp-content/", "wp-includes/", "readme.md"]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_hidden_only_when_prefix_starts_with_dot() {
+        let dir = wp_fixture("hidden");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let cwd = dir.to_str().unwrap();
+
+        // No leading dot: `.git` is filtered out.
+        let plain = complete_candidates("cd wp-", Some(cwd), &[], 50);
+        assert!(plain.candidates.iter().all(|c| c.display != ".git"));
+
+        // Leading dot: `.git` surfaces.
+        let dotted = complete_candidates("cd .", Some(cwd), &[], 50);
+        assert!(dotted.candidates.iter().any(|c| c.display == ".git"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_empty_for_command_word() {
+        let dir = wp_fixture("command-word");
+        let cwd = dir.to_str().unwrap();
+
+        // `gi` is the command word, not a path argument.
+        let result = complete_candidates("gi", Some(cwd), &[], 50);
+        assert!(result.candidates.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_respect_limit() {
+        let dir = wp_fixture("limit");
+        let cwd = dir.to_str().unwrap();
+
+        let result = complete_candidates("cd wp-", Some(cwd), &[], 2);
+        assert_eq!(result.candidates.len(), 2);
+        // The cap keeps the dirs-first alphabetical ordering.
+        let values: Vec<&str> = result.candidates.iter().map(|c| c.value.as_str()).collect();
+        assert_eq!(values, ["wp-admin/", "wp-content/"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_serialize_to_contract_json() {
+        let dir = wp_fixture("serialize");
+        let cwd = dir.to_str().unwrap();
+
+        let result = complete_candidates("cd wp-c", Some(cwd), &[], 50);
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["span"]["start"], 3);
+        assert_eq!(json["span"]["end"], 7);
+        let first = &json["candidates"][0];
+        assert_eq!(first["value"], "wp-content/");
+        assert_eq!(first["display"], "wp-content");
+        assert_eq!(first["kind"], "path");
+        assert_eq!(first["is_dir"], true);
+        assert_eq!(first["git_status"], serde_json::Value::Null);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -91,3 +91,43 @@ struct BranchChip: View {
     return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
 }
+
+/// Warp-style "Review Changes" summary chip: a page glyph, the changed-file
+/// count, and the aggregate +added / -removed line counts (green/red). Sits next
+/// to the branch chip and opens the Review Changes tab when tapped. Rendered only
+/// while the working tree has uncommitted changes.
+struct ReviewChip: View {
+  var model: WindowModel
+  let fileCount: Int
+  let added: Int
+  let removed: Int
+
+  private var theme: Theme { model.theme }
+
+  var body: some View {
+    Button(action: { model.onOpenDiffReview?() }) {
+      HStack(spacing: 6) {
+        Image(systemName: "doc")
+          .font(.system(size: 9.5, weight: .medium))
+          .foregroundStyle(theme.colorFgComment)
+        Text("\(fileCount)")
+          .foregroundStyle(theme.colorFgMuted)
+        Text("•")
+          .foregroundStyle(theme.colorFgComment)
+        Text("+\(added)")
+          .foregroundStyle(theme.colorGreen)
+        Text("-\(removed)")
+          .foregroundStyle(theme.colorRed)
+      }
+      .font(.system(size: 11, weight: .medium, design: .monospaced))
+      .lineLimit(1)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 3)
+      .background(Capsule().fill(theme.colorFg.opacity(0.07)))
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .help("Review \(fileCount) changed file\(fileCount == 1 ? "" : "s") (⌘⇧G)")
+    .accessibilityLabel("Review Changes")
+  }
+}

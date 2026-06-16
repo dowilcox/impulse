@@ -570,6 +570,16 @@ final class TerminalBackend {
         return ImpulseCore.terminalCompleteInput(handle: handle, input: input, cwd: cwd)
     }
 
+    /// Path-completion candidates for the active argument token of `input`,
+    /// capped at `limit`. Returns `nil` on error or when the active token is
+    /// not a path argument. Performs filesystem work in Rust — call off the
+    /// main thread.
+    func completionCandidates(input: String, cwd: String?, limit: Int = 50) -> CompletionResult? {
+        guard let handle, !isShutdown, !input.isEmpty else { return nil }
+        return ImpulseCore.terminalCompletionCandidates(
+            handle: handle, input: input, cwd: cwd, limit: limit)
+    }
+
     private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload)

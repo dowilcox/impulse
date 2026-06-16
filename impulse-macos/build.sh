@@ -166,6 +166,7 @@ echo "==> Copying Monaco editor assets..."
 
 MONACO_SRC="impulse-editor/vendor/monaco"
 EDITOR_HTML_SRC="impulse-editor/web/editor.html"
+REVIEW_HTML_SRC="impulse-editor/web/review.html"
 MONACO_DST="impulse-macos/Sources/ImpulseApp/Resources/monaco"
 
 if [[ ! -d "${MONACO_SRC}" ]]; then
@@ -179,9 +180,15 @@ if [[ ! -f "${EDITOR_HTML_SRC}" ]]; then
     exit 1
 fi
 
+if [[ ! -f "${REVIEW_HTML_SRC}" ]]; then
+    echo "ERROR: review.html not found at ${REVIEW_HTML_SRC}." >&2
+    exit 1
+fi
+
 mkdir -p "${MONACO_DST}"
 cp -r "${MONACO_SRC}"/* "${MONACO_DST}/"
 cp "${EDITOR_HTML_SRC}" "${MONACO_DST}/"
+cp "${REVIEW_HTML_SRC}" "${MONACO_DST}/"
 echo "    OK: Monaco assets copied to ${MONACO_DST}"
 
 # ── Step 2b: Copy file icons ─────────────────────────────────────

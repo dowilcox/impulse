@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; connect-src 'none'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; object-src 'none';"
+    />
+    <style>
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Regular.ttf")
+          format("truetype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Bold.ttf")
+          format("truetype");
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-Italic.ttf")
+          format("truetype");
+        font-weight: 400;
+        font-style: italic;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("./fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf")
+          format("truetype");
+        font-weight: 700;
+        font-style: italic;
+        font-display: swap;
+      }
+      :root {
+        /* Overridden by SetTheme; defaults mirror editor.html fallbacks. */
+        --review-bg: #1a1b26;
+        --review-fg: #c0caf5;
+        --review-header-bg: #1f2335;
+        --review-header-hover-bg: #292e42;
+        --review-border: #292e42;
+        --review-muted: #565f89;
+        --review-added: #9ece6a;
+        --review-modified: #e0af68;
+        --review-deleted: #f7768e;
+        --review-renamed: #7aa2f7;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        background: var(--review-bg);
+        color: var(--review-fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 13px;
+      }
+      /* The OUTER page scrolls; inner Monaco diff editors never scroll. */
+      body {
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      #review-root {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        min-height: 100%;
+        padding: 6px 0 24px;
+      }
+      .review-empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        min-height: 200px;
+        color: var(--review-muted);
+      }
+      .review-section {
+        margin: 0 10px 8px;
+        border: 1px solid var(--review-border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--review-bg);
+      }
+      .review-section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+        background: var(--review-header-bg);
+        user-select: none;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        transition: background 0.1s ease;
+      }
+      .review-section:not(.collapsed) .review-section-header {
+        border-bottom: 1px solid var(--review-border);
+      }
+      .review-section-header:hover {
+        background: var(--review-header-hover-bg);
+      }
+      .review-chevron {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.12s ease;
+        color: var(--review-muted);
+      }
+      .review-section.collapsed .review-chevron {
+        transform: rotate(-90deg);
+      }
+      .review-status-glyph {
+        flex: 0 0 auto;
+        width: 16px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 12px;
+      }
+      .review-status-A {
+        color: var(--review-added);
+      }
+      .review-status-M {
+        color: var(--review-modified);
+      }
+      .review-status-D {
+        color: var(--review-deleted);
+      }
+      .review-status-R {
+        color: var(--review-renamed);
+      }
+      .review-status-Q {
+        color: var(--review-added);
+      }
+      .review-path {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        letter-spacing: 0.1px;
+      }
+      .review-old-path {
+        color: var(--review-muted);
+      }
+      .review-badge {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .review-badge .added {
+        color: var(--review-added);
+      }
+      .review-badge .removed {
+        color: var(--review-deleted);
+      }
+      .review-discard {
+        flex: 0 0 auto;
+        background: transparent;
+        border: 1px solid var(--review-border);
+        color: var(--review-muted);
+        border-radius: 6px;
+        padding: 3px 10px;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          color 0.1s ease,
+          border-color 0.1s ease,
+          background 0.1s ease;
+      }
+      .review-discard:hover {
+        color: var(--review-deleted);
+        border-color: var(--review-deleted);
+        background: color-mix(in srgb, var(--review-deleted) 12%, transparent);
+      }
+      .review-discard:active {
+        transform: translateY(0.5px);
+      }
+      .review-section-body {
+        width: 100%;
+      }
+      .review-section.collapsed .review-section-body {
+        display: none;
+      }
+      .review-diff-container {
+        width: 100%;
+        background: var(--review-bg);
+      }
+      .review-spacer {
+        width: 100%;
+      }
+      .review-placeholder {
+        padding: 16px 14px;
+        color: var(--review-muted);
+        font-style: italic;
+      }
+      .review-loading {
+        padding: 12px 14px;
+        color: var(--review-muted);
+      }
+
+      /* =====================================================================
+         Monaco inline-diff gutter polish.
+
+         By default the original + modified line-number columns and the +/-
+         change marker are crammed together. We add breathing room: pad the
+         numbers, separate the +/- sign, and add comfortable left padding
+         before the code itself. These target Monaco's stable margin/gutter
+         classes (paired with lineNumbersMinChars/lineDecorationsWidth/padding
+         set in review.js).
+         ===================================================================== */
+
+      /* The whole left margin (line numbers + decorations) — give it a hair of
+         right padding so it never touches the code text. */
+      .review-diff-container .margin {
+        background: var(--review-header-bg) !important;
+      }
+      .review-diff-container .margin-view-overlays {
+        padding-left: 2px;
+      }
+      /* Line-number columns: muted, right-aligned, with trailing space before
+         the +/- marker / code. */
+      .review-diff-container .line-numbers {
+        color: var(--review-muted) !important;
+        padding-right: 10px;
+      }
+      /* Inline-diff +/- change markers sit in the line-decorations slot; keep
+         them clear of both the numbers and the code, and color them. */
+      .review-diff-container .cldr {
+        margin-left: 2px;
+      }
+      .review-diff-container .insert-sign,
+      .review-diff-container .delete-sign {
+        font-weight: 700;
+      }
+      .review-diff-container .insert-sign {
+        color: var(--review-added) !important;
+      }
+      .review-diff-container .delete-sign {
+        color: var(--review-deleted) !important;
+      }
+      /* Comfortable left padding before the code on every line. */
+      .review-diff-container .view-line {
+        padding-left: 6px;
+      }
+      /* "Show unchanged region" folding widgets: keep them subtle. */
+      .review-diff-container .diff-hidden-lines {
+        color: var(--review-muted);
+      }
+
+      /* Native-style overlay scrollbars: rounded, auto-fade (mirrors editor.html) */
+      .monaco-scrollable-element > .scrollbar > .slider {
+        border-radius: 5px;
+        transition: opacity 0.2s ease;
+      }
+      .monaco-scrollable-element > .scrollbar {
+        transition: opacity 0.3s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="review-root">
+      <div class="review-empty">Loading changes…</div>
+    </div>
+
+    <script src="vs/loader.js"></script>
+    <script src="review.js"></script>
+  </body>
+</html>

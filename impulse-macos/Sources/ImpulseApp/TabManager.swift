@@ -44,6 +44,7 @@ enum TabEntry {
   case terminal(TerminalContainer)
   case editor(EditorTab)
   case imagePreview(path: String, view: NSView)
+  case diffReview(repoRoot: String, view: DiffReviewTab)
 
   /// The view to display in the content area.
   var view: NSView {
@@ -51,6 +52,7 @@ enum TabEntry {
     case .terminal(let container): return container
     case .editor(let editor): return editor
     case .imagePreview(_, let view): return view
+    case .diffReview(_, let view): return view
     }
   }
 
@@ -71,6 +73,9 @@ enum TabEntry {
       return editor.isModified ? "Untitled *" : "Untitled"
     case .imagePreview(let path, _):
       return (path as NSString).lastPathComponent
+    case .diffReview(let repoRoot, _):
+      let name = (repoRoot as NSString).lastPathComponent
+      return name.isEmpty ? "Review Changes" : "Review: \(name)"
     }
   }
 
@@ -79,7 +84,7 @@ enum TabEntry {
     switch self {
     case .terminal(let container):
       return container.needsAttention
-    case .editor, .imagePreview:
+    case .editor, .imagePreview, .diffReview:
       return false
     }
   }
@@ -116,6 +121,16 @@ enum TabEntry {
         encoding: nil,
         indentInfo: nil
       )
+    case .diffReview(let repoRoot, _):
+      return TabInfo(
+        cwd: repoRoot,
+        gitBranch: nil,
+        shellName: nil,
+        cursorLine: nil, cursorCol: nil,
+        language: nil,
+        encoding: nil,
+        indentInfo: nil
+      )
     }
   }
 
@@ -128,6 +143,8 @@ enum TabEntry {
       editor.focus()
     case .imagePreview:
       break
+    case .diffReview(_, let view):
+      view.focus()
     }
   }
 
@@ -151,6 +168,8 @@ enum TabEntry {
       editor.applyTheme(ThemeManager.monacoTheme(forName: theme.id))
     case .imagePreview(_, let view):
       view.layer?.backgroundColor = theme.bgColor.cgColor
+    case .diffReview(_, let view):
+      view.applyTheme(theme)
     }
   }
 }
@@ -418,6 +437,29 @@ final class TabManager: NSObject {
     openFilePaths.insert(path)
   }
 
+  /// Opens the Review Changes tab for `repoRoot`. Review tabs are per-repo: if
+  /// one already exists for this exact `repoRoot` it is selected, focused, and
+  /// reloaded; otherwise a new tab is created. A different repo gets its own tab
+  /// so the user never reviews/commits/discards against a stale repository.
+  func addDiffReviewTab(repoRoot: String) {
+    if let existingIndex = tabs.firstIndex(where: {
+      if case .diffReview(let r, _) = $0 { return r == repoRoot }
+      return false
+    }) {
+      selectTab(index: existingIndex)
+      tabs[existingIndex].focus()
+      // Refresh on re-selection so the diff reflects the current working tree.
+      if case .diffReview(_, let view) = tabs[existingIndex] {
+        view.reloadAndRender()
+      }
+      return
+    }
+
+    let reviewTab = DiffReviewTab(repoRoot: repoRoot, theme: theme)
+    let entry = TabEntry.diffReview(repoRoot: repoRoot, view: reviewTab)
+    insertTab(entry)
+  }
+
   /// Detect the Monaco language ID for a file path.
   func detectLanguage(forPath path: String) -> String {
     languageIdForPath(path)
@@ -517,6 +559,8 @@ final class TabManager: NSObject {
       editor.cleanup()
     case .imagePreview:
       break
+    case .diffReview(_, let view):
+      view.cleanup()
     }
   }
 
@@ -535,8 +579,8 @@ final class TabManager: NSObject {
       if closedTabs.count > maxClosedTabs {
         closedTabs.removeFirst()
       }
-    case .terminal:
-      break  // Terminals cannot be reopened
+    case .terminal, .diffReview:
+      break  // Terminals and review tabs cannot be reopened
     }
   }
 
@@ -766,6 +810,9 @@ final class TabManager: NSObject {
         } else {
           sessionTab = nil
         }
+      case .diffReview:
+        // Review tabs are not persisted across sessions.
+        sessionTab = nil
       case .terminal(let container):
         let shellName = ImpulseCore.getUserLoginShellName()
         if let snapshot = container.sessionSnapshot(shellName: shellName) {
@@ -871,6 +918,10 @@ final class TabManager: NSObject {
 
     let infos = tabs.enumerated().map { (i, tab) in
       let directory = tabDirectory(for: tab)
+      var isDirectInteractionActive = false
+      if case .terminal(let container) = tab {
+        isDirectInteractionActive = container.activeTerminal?.isDirectInteraction ?? false
+      }
       return TabDisplayInfo(
         id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
         index: i,
@@ -880,7 +931,8 @@ final class TabManager: NSObject {
         isTerminal: { if case .terminal = tab { return true } else { return false } }(),
         needsAttention: tab.needsAttention,
         gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },
-        directory: directory.map(Self.abbreviateHomePath)
+        directory: directory.map(Self.abbreviateHomePath),
+        isDirectInteractionActive: isDirectInteractionActive
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)
@@ -912,6 +964,8 @@ final class TabManager: NSObject {
         ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent }
     case .imagePreview(let path, _):
       return (path as NSString).deletingLastPathComponent
+    case .diffReview(let repoRoot, _):
+      return repoRoot
     }
   }
 
@@ -970,6 +1024,9 @@ final class TabManager: NSObject {
     case .imagePreview:
       return iconCache?.toolbarIcon(name: "image")
         ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
+    case .diffReview:
+      return NSImage(
+        systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Review Changes")
     }
   }
 

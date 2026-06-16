@@ -250,6 +250,14 @@ enum MenuBuilder {
         applyKeybinding("project_search", overrides: overrides, to: findInProjectItem)
         menu.addItem(findInProjectItem)
 
+        let reviewChangesItem = NSMenuItem(title: "Review Changes",
+                                           action: #selector(MenuActions.menuReviewChanges(_:)),
+                                           keyEquivalent: "G")
+        reviewChangesItem.target = MenuActions.shared
+        reviewChangesItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("review_changes", overrides: overrides, to: reviewChangesItem)
+        menu.addItem(reviewChangesItem)
+
         let markdownPreviewItem = NSMenuItem(title: "Toggle Markdown Preview",
                                              action: #selector(MenuActions.menuToggleMarkdownPreview(_:)),
                                              keyEquivalent: "M")
@@ -434,6 +442,10 @@ final class MenuActions: NSObject {
 
     @objc func menuToggleMarkdownPreview(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseToggleMarkdownPreview, object: nil)
+    }
+
+    @objc func menuReviewChanges(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseReviewChanges, object: nil)
     }
 
     @objc func menuGoToLine(_ sender: Any?) {

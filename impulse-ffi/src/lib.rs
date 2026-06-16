@@ -1261,6 +1261,163 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
 }
 
 // ---------------------------------------------------------------------------
+// Review Changes (git diff review)
+// ---------------------------------------------------------------------------
+
+/// Lists changed files in the repository for the Review Changes view.
+///
+/// Returns a JSON-serialized `ChangeSet`:
+/// `{ "repo_root": string, "branch": string|null, "total_added": u32,
+///    "total_removed": u32, "files": [ { "path": string, "status": string,
+///    "old_path": string|null, "added": u32, "removed": u32,
+///    "is_binary": bool } ] }`.
+///
+/// Status letters: "A" (added/untracked-new), "M" (modified), "D" (deleted),
+/// "R" (renamed), "?" (untracked).
+///
+/// Returns null if not in a git repo or on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_list_changed_files(repo_path: *const c_char) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let repo_path = match to_rust_str(repo_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            match impulse_core::git::list_changed_files(&repo_path) {
+                Ok(change_set) => match serde_json::to_string(&change_set) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => {
+                        log::error!("JSON serialization failed: {}", e);
+                        std::ptr::null_mut()
+                    }
+                },
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
+/// Computes the original/modified diff contents for a single file.
+///
+/// `file_path` is REPO-RELATIVE (the `path` from the changed-file list).
+///
+/// Returns a JSON-serialized `FileDiffContents`:
+/// `{ "original": string, "modified": string, "language": string,
+///    "is_binary": bool, "too_large": bool, "added": u32, "removed": u32 }`.
+/// `original` is the HEAD blob text ("" for added/untracked), `modified` is the
+/// working-tree text ("" for deleted).
+///
+/// Returns null on error.
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_file_diff_contents(
+    repo_path: *const c_char,
+    file_path: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let repo_path = match to_rust_str(repo_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let file_path = match to_rust_str(file_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            match impulse_core::git::file_diff_contents(&repo_path, &file_path) {
+                Ok(contents) => match serde_json::to_string(&contents) {
+                    Ok(json) => to_c_string(&json),
+                    Err(e) => {
+                        log::error!("JSON serialization failed: {}", e);
+                        std::ptr::null_mut()
+                    }
+                },
+                Err(_) => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
+/// Stages all changes (including tracked deletions) and creates a commit with
+/// the given message.
+///
+/// Returns a JSON object that is NEVER null except when an input pointer is
+/// null: `{ "ok": bool, "oid": string|null, "error": string|null }`. On success
+/// `ok` is true, `oid` is the new commit hash, and `error` is null. On failure
+/// `ok` is false, `oid` is null, and `error` carries the raw git error text.
+///
+/// The caller must free the returned string with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_git_commit_all(
+    repo_path: *const c_char,
+    message: *const c_char,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            let repo_path = match to_rust_str(repo_path) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+            let message = match to_rust_str(message) {
+                Some(s) => s,
+                None => return std::ptr::null_mut(),
+            };
+
+            let result = match impulse_core::git::commit_all(&repo_path, &message) {
+                Ok(oid) => serde_json::json!({
+                    "ok": true,
+                    "oid": oid,
+                    "error": serde_json::Value::Null,
+                }),
+                Err(e) => serde_json::json!({
+                    "ok": false,
+                    "oid": serde_json::Value::Null,
+                    "error": e,
+                }),
+            };
+            to_c_string(&result.to_string())
+        }),
+    )
+}
+
+/// Discards changes for a single REPO-RELATIVE path, reverting it to a clean
+/// state: tracked modified/deleted files are checked out from HEAD, while
+/// untracked/new files are deleted from disk.
+///
+/// Returns 0 on success or -1 on error.
+#[no_mangle]
+pub extern "C" fn impulse_git_discard_path(
+    repo_path: *const c_char,
+    file_path: *const c_char,
+) -> i32 {
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            let repo_path = match to_rust_str(repo_path) {
+                Some(s) => s,
+                None => return -1,
+            };
+            let file_path = match to_rust_str(file_path) {
+                Some(s) => s,
+                None => return -1,
+            };
+
+            match impulse_core::git::discard_path(&repo_path, &file_path) {
+                Ok(()) => 0,
+                Err(_) => -1,
+            }
+        }),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Markdown preview
 // ---------------------------------------------------------------------------
 
@@ -2062,6 +2219,50 @@ pub extern "C" fn impulse_terminal_complete_input(
             match impulse_core::completion::complete(&input, cwd.as_deref(), &history) {
                 Some(completed) => to_c_string(&completed),
                 None => std::ptr::null_mut(),
+            }
+        }),
+    )
+}
+
+/// Path completion candidates for the terminal input bar's dropdown. `input` is
+/// the current text, `cwd` the terminal's working directory (may be NULL), and
+/// `limit` the maximum number of candidates to return. Returns a JSON
+/// `CompletionResult`:
+///   { "span": { "start": usize, "end": usize },
+///     "candidates": [ { "value": string, "display": string, "kind": "path",
+///                       "is_dir": bool, "git_status": string|null } ] }
+/// Returns NULL on error. Caller frees with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_completion_candidates(
+    handle: *mut TerminalHandle,
+    input: *const c_char,
+    cwd: *const c_char,
+    limit: usize,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
+            }
+            let Some(input) = to_rust_str(input) else {
+                return std::ptr::null_mut();
+            };
+            let cwd = to_rust_str(cwd);
+            let h = unsafe { &*handle };
+            let history = h.backend.recent_command_strings(500);
+            let result = impulse_core::completion::complete_candidates(
+                &input,
+                cwd.as_deref(),
+                &history,
+                limit,
+            );
+            match serde_json::to_string(&result) {
+                Ok(json) => to_c_string(&json),
+                Err(e) => {
+                    log::error!("JSON serialization failed: {}", e);
+                    std::ptr::null_mut()
+                }
             }
         }),
     )

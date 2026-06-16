@@ -158,6 +158,67 @@ pub enum EditorEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Review Changes: Rust → Monaco diff-review WebView (sent via evaluate_javascript)
+// ---------------------------------------------------------------------------
+
+/// Commands sent from the host to the stacked-diff "Review Changes" WebView.
+///
+/// Mirrors the [`EditorCommand`] style: `#[serde(tag = "type")]` with a
+/// PascalCase variant name as the `type` tag and snake_case fields. These types
+/// document the wire format for the future Linux frontend; the macOS frontend
+/// mirrors them in Swift.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ReviewCommand {
+    /// Rebuild the review list with one collapsible section per changed file.
+    Render { files: Vec<ReviewFileEntry> },
+    /// Provide the diff contents for a single file's section.
+    SetDiff {
+        path: String,
+        original: String,
+        modified: String,
+        language: String,
+        is_binary: bool,
+        too_large: bool,
+    },
+    /// Apply the Monaco theme to all live diff editors + section chrome.
+    SetTheme { theme: Box<MonacoThemeDefinition> },
+}
+
+/// One changed file in the review list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewFileEntry {
+    pub path: String,
+    /// Git status letter: "A"|"M"|"D"|"R"|"?".
+    pub status: String,
+    #[serde(default)]
+    pub old_path: Option<String>,
+    pub added: u32,
+    pub removed: u32,
+    pub is_binary: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Review Changes: Monaco diff-review WebView → Rust (sent via postMessage)
+// ---------------------------------------------------------------------------
+
+/// Events posted from the "Review Changes" WebView back to the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ReviewEvent {
+    /// The review page has finished loading and is ready for commands.
+    Ready,
+    /// A section was expanded and needs its diff contents.
+    RequestDiff { path: String },
+    /// The user clicked the discard button for a file.
+    Discard { path: String },
+    /// A section was expanded or collapsed.
+    ToggleFile { path: String, expanded: bool },
+    /// The user asked to refresh the changed-files list.
+    Refresh,
+}
+
+// ---------------------------------------------------------------------------
 // Supporting Types
 // ---------------------------------------------------------------------------
 
@@ -1611,6 +1672,92 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    #[test]
+    fn review_command_roundtrip_render() {
+        let cmd = ReviewCommand::Render {
+            files: vec![ReviewFileEntry {
+                path: "src/main.rs".to_string(),
+                status: "M".to_string(),
+                old_path: None,
+                added: 12,
+                removed: 3,
+                is_binary: false,
+            }],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"Render\""));
+        assert!(json.contains("\"status\":\"M\""));
+        let parsed: ReviewCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ReviewCommand::Render { files } => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].path, "src/main.rs");
+                assert_eq!(files[0].status, "M");
+                assert!(files[0].old_path.is_none());
+                assert_eq!(files[0].added, 12);
+                assert_eq!(files[0].removed, 3);
+                assert!(!files[0].is_binary);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn review_command_roundtrip_set_diff() {
+        let cmd = ReviewCommand::SetDiff {
+            path: "a.txt".to_string(),
+            original: "old".to_string(),
+            modified: "new".to_string(),
+            language: "plaintext".to_string(),
+            is_binary: false,
+            too_large: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"SetDiff\""));
+        let parsed: ReviewCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ReviewCommand::SetDiff {
+                path,
+                original,
+                modified,
+                language,
+                is_binary,
+                too_large,
+            } => {
+                assert_eq!(path, "a.txt");
+                assert_eq!(original, "old");
+                assert_eq!(modified, "new");
+                assert_eq!(language, "plaintext");
+                assert!(!is_binary);
+                assert!(!too_large);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn review_event_roundtrip() {
+        let event = ReviewEvent::ToggleFile {
+            path: "src/lib.rs".to_string(),
+            expanded: true,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"ToggleFile\""));
+        let parsed: ReviewEvent = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ReviewEvent::ToggleFile { path, expanded } => {
+                assert_eq!(path, "src/lib.rs");
+                assert!(expanded);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let ready = ReviewEvent::Ready;
+        assert!(serde_json::to_string(&ready)
+            .unwrap()
+            .contains("\"type\":\"Ready\""));
     }
 
     #[test]

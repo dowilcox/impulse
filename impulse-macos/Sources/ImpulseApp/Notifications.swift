@@ -129,6 +129,8 @@ extension Notification.Name {
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
     /// Requests toggling markdown preview in the active editor tab.
     static let impulseToggleMarkdownPreview = Notification.Name("impulseToggleMarkdownPreview")
+    /// Requests opening the Review Changes tab for the current workspace.
+    static let impulseReviewChanges = Notification.Name("impulseReviewChanges")
 
     // MARK: File Tree
 

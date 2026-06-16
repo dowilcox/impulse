@@ -62,6 +62,46 @@ struct RecentCommandStore: Codable, Hashable {
     var items: [RecentCommandItem] = []
 }
 
+// MARK: - Terminal Completion
+
+/// A byte range within the input text to be replaced by a completion.
+/// Mirrors the Rust `TextSpan` serialization (`{start, end}`) used by the
+/// shell parser and consumed by the completion bridge.
+struct TextSpan: Codable, Equatable {
+    let start: Int
+    let end: Int
+}
+
+/// A single path-completion candidate for the terminal input bar. Mirrors the
+/// Rust `CompletionCandidate` serialization (snake_case keys: `is_dir`,
+/// `git_status`).
+struct CompletionCandidate: Codable, Equatable {
+    /// Full replacement text for the active token. Directories carry a
+    /// trailing `/`.
+    let value: String
+    /// Label shown in the dropdown (the basename).
+    let display: String
+    /// Candidate kind. v1 always `"path"`.
+    let kind: String
+    /// Whether the candidate is a directory.
+    let isDir: Bool
+    /// Optional git status code (e.g. `"M"`, `"?"`); `nil` on the hot path.
+    let gitStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case value, display, kind
+        case isDir = "is_dir"
+        case gitStatus = "git_status"
+    }
+}
+
+/// The result of a completion request: the token span to replace plus the
+/// ranked candidate list. Mirrors the Rust `CompletionResult` serialization.
+struct CompletionResult: Codable, Equatable {
+    let span: TextSpan
+    let candidates: [CompletionCandidate]
+}
+
 // MARK: - Error Type
 
 /// Simple error wrapper so we can use `Result<String, ImpulseError>` (Swift
@@ -467,6 +507,114 @@ final class ImpulseCore {
         return (try? JSONDecoder().decode([DiffDecoration].self, from: data)) ?? []
     }
 
+    // MARK: - Review Changes (git diff review)
+
+    /// A single changed file in the working tree, mirroring the Rust
+    /// `ChangedFile` serialization (snake_case keys).
+    struct ChangedFile: Codable, Hashable {
+        let path: String
+        /// Status letter: "A" (added/untracked-new), "M" (modified),
+        /// "D" (deleted), "R" (renamed), "?" (untracked).
+        let status: String
+        let oldPath: String?
+        let added: UInt32
+        let removed: UInt32
+        let isBinary: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case path, status, added, removed
+            case oldPath = "old_path"
+            case isBinary = "is_binary"
+        }
+    }
+
+    /// The complete set of changes in a repository, mirroring the Rust
+    /// `ChangeSet` serialization.
+    struct ChangeSet: Codable {
+        let repoRoot: String
+        let branch: String?
+        let totalAdded: UInt32
+        let totalRemoved: UInt32
+        let files: [ChangedFile]
+
+        enum CodingKeys: String, CodingKey {
+            case branch, files
+            case repoRoot = "repo_root"
+            case totalAdded = "total_added"
+            case totalRemoved = "total_removed"
+        }
+    }
+
+    /// Diff contents for a single file, mirroring the Rust `FileDiffContents`
+    /// serialization. `original` is the HEAD text, `modified` the working-tree
+    /// text. Both are blanked when `isBinary` or `tooLarge` is set.
+    struct FileDiffContents: Codable {
+        let original: String
+        let modified: String
+        let language: String
+        let isBinary: Bool
+        let tooLarge: Bool
+        let added: UInt32
+        let removed: UInt32
+
+        enum CodingKeys: String, CodingKey {
+            case original, modified, language, added, removed
+            case isBinary = "is_binary"
+            case tooLarge = "too_large"
+        }
+    }
+
+    /// Result of a commit attempt, mirroring the FFI JSON
+    /// `{ "ok": bool, "oid": string|null, "error": string|null }`.
+    struct CommitResult: Codable {
+        let ok: Bool
+        let oid: String?
+        let error: String?
+    }
+
+    /// Lists changed files (HEAD vs index+worktree) for the repository
+    /// containing `repoPath`. Returns `nil` if `repoPath` is not in a git
+    /// repository or on error. Call off the main thread — libgit2 work blocks.
+    static func listChangedFiles(repoPath: String) -> ChangeSet? {
+        guard let json = consumeCString(impulse_git_list_changed_files(repoPath)) else {
+            return nil
+        }
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ChangeSet.self, from: data)
+    }
+
+    /// Computes diff contents for one REPO-RELATIVE `filePath`. Returns `nil`
+    /// on error. Call off the main thread — file reads + libgit2 work block.
+    static func fileDiffContents(repoPath: String, filePath: String) -> FileDiffContents? {
+        guard let json = consumeCString(impulse_git_file_diff_contents(repoPath, filePath)) else {
+            return nil
+        }
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(FileDiffContents.self, from: data)
+    }
+
+    /// Stages all changes and commits with `message`. Always returns a
+    /// `CommitResult` (never `nil`) except when an input is empty/invalid, in
+    /// which case a synthetic failure result is returned. Call off the main
+    /// thread — libgit2 work blocks.
+    static func commitAll(repoPath: String, message: String) -> CommitResult {
+        guard let json = consumeCString(impulse_git_commit_all(repoPath, message)) else {
+            return CommitResult(ok: false, oid: nil, error: "Commit failed (null result)")
+        }
+        guard let data = json.data(using: .utf8),
+              let result = try? JSONDecoder().decode(CommitResult.self, from: data) else {
+            return CommitResult(ok: false, oid: nil, error: "Commit failed (decode error)")
+        }
+        return result
+    }
+
+    /// Discards changes for one REPO-RELATIVE `filePath` (checkout HEAD for
+    /// tracked, delete for untracked/new). Returns `true` on success.
+    /// Call off the main thread — libgit2/filesystem work blocks.
+    static func discardPath(repoPath: String, filePath: String) -> Bool {
+        return impulse_git_discard_path(repoPath, filePath) == 0
+    }
+
     // MARK: - LSP
 
     /// Creates a new LSP registry for the given workspace root URI.
@@ -781,6 +929,27 @@ final class ImpulseCore {
         }
         guard let ptr else { return nil }
         return consumeCString(ptr)
+    }
+
+    /// Returns the path-completion candidates for the active argument token of
+    /// `input`, capped at `limit`. Decodes the JSON `CompletionResult` produced
+    /// by impulse-core, or `nil` on error / empty handle. Runs filesystem work
+    /// in Rust — call off the main thread.
+    static func terminalCompletionCandidates(
+        handle: OpaquePointer, input: String, cwd: String?, limit: Int
+    ) -> CompletionResult? {
+        let ptr = input.withCString { inputPtr -> UnsafeMutablePointer<CChar>? in
+            if let cwd {
+                return cwd.withCString { cwdPtr in
+                    impulse_terminal_completion_candidates(
+                        UnsafeMutableRawPointer(handle), inputPtr, cwdPtr, CUnsignedLong(limit))
+                }
+            }
+            return impulse_terminal_completion_candidates(
+                UnsafeMutableRawPointer(handle), inputPtr, nil, CUnsignedLong(limit))
+        }
+        guard let json = consumeCString(ptr), let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CompletionResult.self, from: data)
     }
 
     /// Searches completed terminal command history and returns a JSON array string.
