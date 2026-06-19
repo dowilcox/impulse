@@ -12,7 +12,9 @@ struct SidebarTabListView: View {
   @State private var dragOffset: CGFloat = 0
   @State private var rowFrames: [Int: CGRect] = [:]
 
-  private let rowHeight: CGFloat = 40
+  /// Row height (plus 1pt inter-row spacing) — shared with `SidebarView` so it
+  /// can size the auto-height tab section from the tab count.
+  static let rowHeight: CGFloat = 40
 
   var body: some View {
     VStack(spacing: 2) {
@@ -54,14 +56,8 @@ struct SidebarTabListView: View {
       }
       .coordinateSpace(name: "sidebarTabList")
       .onPreferenceChange(TabRowFrameKey.self) { rowFrames = $0 }
-      .frame(maxHeight: listMaxHeight)
     }
     .padding(.top, 4)
-  }
-
-  /// Grow with content up to a cap so the file tree keeps most of the sidebar.
-  private var listMaxHeight: CGFloat {
-    min(CGFloat(windowModel.tabDisplayInfos.count) * (rowHeight + 1) + 8, 320)
   }
 
   // MARK: - Row
@@ -137,7 +133,7 @@ struct SidebarTabListView: View {
       }
     }
     .padding(.horizontal, 8)
-    .frame(height: rowHeight)
+    .frame(height: Self.rowHeight)
     .background(rowBackground(isSelected: isSelected || isDragging, isHovered: isHovered))
     .contentShape(Rectangle())
     .simultaneousGesture(
