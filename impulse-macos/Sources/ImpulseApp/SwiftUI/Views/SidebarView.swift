@@ -47,7 +47,16 @@ struct SidebarView: View {
         }
 
         if model.sidebarPanel == .search {
-          SearchPanelView(model: model)
+          // Search bar pinned at the top of the lower region, with results
+          // below it. While the query is empty the file tree stays visible so
+          // browsing context isn't lost.
+          SidebarSearchBar(model: model)
+          Divider()
+          if model.searchQuery.isEmpty {
+            FileTreeListView(model: model)
+          } else {
+            SearchResultsList(model: model)
+          }
         } else {
           // File-action bar sits between the tabs and the file tree.
           SidebarActionBarView(model: model)

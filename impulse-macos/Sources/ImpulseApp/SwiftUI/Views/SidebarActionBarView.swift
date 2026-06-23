@@ -8,6 +8,9 @@ struct SidebarActionBarView: View {
 
   var body: some View {
     HStack(spacing: 2) {
+      actionButton(symbol: "magnifyingglass", help: "Find in Project") {
+        model.beginSearch()
+      }
       actionButton(symbol: "doc.badge.plus", help: "New File") {
         model.onCreateFile?()
       }

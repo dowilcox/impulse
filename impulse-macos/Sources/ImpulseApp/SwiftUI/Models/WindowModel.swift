@@ -77,6 +77,18 @@ final class WindowModel {
   var searchQuery: String = ""
   var searchResults: [SearchResult] = []
   var searchCaseSensitive: Bool = false
+  /// True while a search FFI call is in flight (drives the results spinner).
+  var isSearching: Bool = false
+  /// Bumped whenever the sidebar search field should grab keyboard focus.
+  var searchFocusToken: Int = 0
+  /// Monotonic counter used to drop stale async search results. Lives on the
+  /// model (not the search view) so it survives the view being recreated when
+  /// the sidebar swaps between the file tree and search results.
+  @ObservationIgnored var searchGeneration: UInt = 0
+  /// Pending debounced search work; coalesces rapid keystrokes.
+  @ObservationIgnored var searchDebounceWork: DispatchWorkItem?
+  /// In-flight search task, cancelled when superseded.
+  @ObservationIgnored var searchTask: Task<Void, Never>?
 
   // MARK: Status bar — left group
 

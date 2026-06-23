@@ -1085,10 +1085,26 @@ class TerminalTab: NSView {
 
   // MARK: Search
 
-  func search(_ pattern: String) { backend?.search(pattern) }
-  func searchNext() { backend?.searchNext() }
-  func searchPrev() { backend?.searchPrev() }
-  func searchClear() { backend?.searchClear() }
+  // The backend marks full damage for each of these, but searching produces no
+  // PTY output, so nothing emits a wakeup event to drive the redraw — without
+  // an explicit repaint the match highlights (and their removal) never paint
+  // until the next terminal activity. Force a full repaint here.
+  func search(_ pattern: String) {
+    backend?.search(pattern)
+    renderer.needsDisplay = true
+  }
+  func searchNext() {
+    backend?.searchNext()
+    renderer.needsDisplay = true
+  }
+  func searchPrev() {
+    backend?.searchPrev()
+    renderer.needsDisplay = true
+  }
+  func searchClear() {
+    backend?.searchClear()
+    renderer.needsDisplay = true
+  }
 
   // MARK: CWD Polling
 

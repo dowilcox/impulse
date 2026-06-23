@@ -58,15 +58,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   /// Manages the tab bar and tab content lifecycle.
   let tabManager: TabManager
 
-  /// Search field shown in the window toolbar (titlebar area).
-  private let toolbarSearchField: NSSearchField = {
-    let sf = NSSearchField()
-    sf.placeholderString = "Search"
-    sf.controlSize = .regular
-    sf.translatesAutoresizingMaskIntoConstraints = false
-    return sf
-  }()
-
   /// Terminal search bar (hidden by default, toggled with Cmd+F on terminal tabs).
   private let termSearchBar = NSView()
   private let termSearchField = NSSearchField()
@@ -492,7 +483,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private static let toolbarCollapseAll = NSToolbarItem.Identifier("collapseAll")
   private static let toolbarToggleHidden = NSToolbarItem.Identifier("toggleHidden")
   private static let toolbarNewTab = NSToolbarItem.Identifier("newTab")
-  private static let toolbarSearch = NSToolbarItem.Identifier("search")
 
   /// Card-surface themes (Harbor) use flat stroke icons on the canvas instead
   /// of the system's bordered glass toolbar buttons.
@@ -501,18 +491,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   }
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    // File-tree actions live in a SwiftUI bar inside the sidebar (below the
-    // vertical tabs). In the toolbar, the sidebar toggle sits at the left of
-    // the sidebar column and the new-tab "+" is pushed to its right edge (just
-    // before the tracking separator); the search field sits in the content
-    // column.
+    // File-tree actions and project search live in a SwiftUI bar inside the
+    // sidebar (below the vertical tabs). In the toolbar, the sidebar toggle
+    // sits at the left of the sidebar column and the new-tab "+" is pushed to
+    // its right edge (just before the tracking separator).
     [
       Self.toolbarSidebarToggle,
       .flexibleSpace,
       Self.toolbarNewTab,
       .sidebarTrackingSeparator,
-      .flexibleSpace,
-      Self.toolbarSearch,
     ]
   }
 
@@ -602,13 +589,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       item.isBordered = !flatToolbarItems
       return item
 
-    case Self.toolbarSearch:
-      let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-      item.searchField = toolbarSearchField
-      toolbarSearchField.target = self
-      toolbarSearchField.action = #selector(toolbarSearchChanged(_:))
-      return item
-
     default:
       return nil
     }
@@ -620,20 +600,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
   @objc private func toolbarNewTabClicked(_ sender: Any?) {
     tabManager.addTerminalTab()
-  }
-
-  @objc private func toolbarSearchChanged(_ sender: NSSearchField) {
-    let query = sender.stringValue
-    windowModel.searchQuery = query
-    if query.isEmpty {
-      windowModel.sidebarPanel = .files
-    } else {
-      windowModel.sidebarPanel = .search
-      // Open sidebar if collapsed so search results are visible
-      if !windowModel.sidebarVisible {
-        setSidebarVisible(true)
-      }
-    }
   }
 
   // MARK: - Toolbar Validation
@@ -772,15 +738,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
   }
 
-  @objc private func filesToggleClicked(_ sender: Any?) {
-    windowModel.sidebarPanel = .files
-    windowModel.searchQuery = ""
-  }
-
-  @objc private func searchToggleClicked(_ sender: Any?) {
-    windowModel.sidebarPanel = .search
-  }
-
   /// Toggles the sidebar visibility via NavigationSplitView's responder chain.
   func toggleSidebar() {
     setSidebarVisible(!windowModel.sidebarVisible)
@@ -838,6 +795,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     termSearchBar.translatesAutoresizingMaskIntoConstraints = false
     termSearchBar.wantsLayer = true
     termSearchBar.layer?.backgroundColor = theme.bgSurfaceColor.cgColor
+    // Clip contents to the bar's bounds so the field/buttons are wiped into
+    // view as it grows, instead of overflowing fully-formed while the height
+    // animates (which read as a "pop"). The field + focus ring fit within the
+    // 32pt open height, so this never clips them at rest.
+    termSearchBar.layer?.masksToBounds = true
     termSearchBar.isHidden = true
 
     let separator = NSBox()
@@ -941,11 +903,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private func showTerminalSearch() {
     termSearchBarVisible = true
     termSearchBar.isHidden = false
+    // The active tab's view is added to `contentView` on every tab switch
+    // (TabManager), so it sits above the search bar (added once at setup) and
+    // occludes the field + buttons — only the field's focus ring, which draws
+    // outside the view bounds, escapes. Re-raise the bar to the front so its
+    // contents are visible.
+    termSearchBar.superview?.addSubview(termSearchBar, positioned: .above, relativeTo: nil)
+    termSearchBar.alphaValue = 0
     NSAnimationContext.runAnimationGroup(
       { context in
-        context.duration = 0.15
+        context.duration = 0.2
+        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
         context.allowsImplicitAnimation = true
         termSearchHeightConstraint?.constant = 32
+        termSearchBar.alphaValue = 1
         tabManager.contentView.layoutSubtreeIfNeeded()
       },
       completionHandler: { [weak self] in
@@ -973,14 +944,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     NSAnimationContext.runAnimationGroup(
       { context in
-        context.duration = 0.15
+        context.duration = 0.16
+        context.timingFunction = CAMediaTimingFunction(name: .easeIn)
         context.allowsImplicitAnimation = true
         termSearchHeightConstraint?.constant = 0
+        termSearchBar.alphaValue = 0
         tabManager.contentView.layoutSubtreeIfNeeded()
       },
       completionHandler: { [weak self] in
         guard let self else { return }
         self.termSearchBar.isHidden = true
+        self.termSearchBar.alphaValue = 1
         if let terminal = self.tabManager.selectedTerminal?.activeTerminal {
           terminal.focus()
         }
@@ -1371,12 +1345,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
   private func showSearchSidebarAndFocus() {
     setSidebarVisible(true)
-    searchToggleClicked(nil)
-    DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      self.window?.makeFirstResponder(self.toolbarSearchField)
-      (self.toolbarSearchField.currentEditor() as? NSTextView)?.selectAll(nil)
-    }
+    // Enter search mode and ask the in-sidebar search field to take focus.
+    windowModel.beginSearch()
   }
 
   private func setupNotificationObservers() {
@@ -1463,6 +1433,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if self.termSearchBarVisible {
           if self.tabManager.selectedTerminal == nil {
             self.hideTerminalSearch()
+          } else {
+            // Still on a terminal: the freshly-shown tab view was added above
+            // the search bar, so re-raise the bar to keep it visible.
+            self.termSearchBar.superview?.addSubview(
+              self.termSearchBar, positioned: .above, relativeTo: nil)
           }
         }
       }
@@ -2562,6 +2537,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
     fileTreeRootPath = dir
     windowModel.fileTreeRootPath = dir
+    // Drop any active search and its results so stale matches from the old
+    // root don't linger against the new project.
+    windowModel.resetSearch()
     invalidateGitBranchCache()
 
     // Immediate UI update with no branch yet.
