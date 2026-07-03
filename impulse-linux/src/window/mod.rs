@@ -690,7 +690,8 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     let tab_view = adw::TabView::new();
     tab_view.add_css_class("impulse-tab-view");
     tab_bar.set_view(Some(&tab_view));
-    tab_bar.set_autohide(false);
+    // Hide the tab strip with a single tab, like the macOS Finder-style bar.
+    tab_bar.set_autohide(true);
     tab_bar.set_cursor_from_name(Some("pointer"));
     // Tab context menu
     let tab_menu = gio::Menu::new();
@@ -896,16 +897,6 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let sidebar_state = sidebar_state.clone();
         let toast_overlay = toast_overlay.clone();
         move || {
-            // Reuse an already-open review tab.
-            for i in 0..tab_view.n_pages() {
-                let page = tab_view.nth_page(i);
-                if crate::review_tab::is_review_tab(&page.child()) {
-                    tab_view.set_selected_page(&page);
-                    crate::review_tab::refresh(&page.child());
-                    return;
-                }
-            }
-
             // Repo root from the active terminal's cwd, falling back to the
             // sidebar's current directory.
             let cwd = tab_view
@@ -921,6 +912,20 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 return;
             };
 
+            // Reuse an already-open review tab for this repository; other
+            // repositories get their own tab.
+            for i in 0..tab_view.n_pages() {
+                let page = tab_view.nth_page(i);
+                let child = page.child();
+                if crate::review_tab::is_review_tab(&child)
+                    && crate::review_tab::repo_root(&child).as_deref() == Some(repo_root.as_str())
+                {
+                    tab_view.set_selected_page(&page);
+                    crate::review_tab::refresh(&child);
+                    return;
+                }
+            }
+
             let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
             let child = crate::review_tab::create_review_tab(&repo_root, theme);
             let page = tab_management::insert_after_selected(&tab_view, &child);
@@ -930,9 +935,38 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     });
     context_bar.set_on_open_review(open_review_tab.clone());
 
+    // While a TUI hides the context bar, surface the status bar (with the
+    // review pill) as the terminal tab's bottom chrome — mirrors macOS.
+    {
+        let status_bar = status_bar.clone();
+        context_bar.set_on_tui_change(Rc::new(move |tui_active| {
+            // Fires only from terminal-tab refreshes with the bar enabled,
+            // so this directly complements the context bar's visibility.
+            status_bar.borrow().widget.set_visible(tui_active);
+        }));
+    }
+    {
+        let status_bar = status_bar.clone();
+        context_bar.set_on_review_counts(Rc::new(move |summary| {
+            status_bar.borrow().update_review(summary);
+        }));
+    }
+    {
+        let open_review_tab = open_review_tab.clone();
+        status_bar
+            .borrow()
+            .review_button
+            .connect_clicked(move |_| open_review_tab());
+    }
+
     // Vertical tab list at the top of the sidebar (Warp-style). Shown when
     // tab_bar_position is "sidebar"; the header tab bar is hidden then.
-    let vertical_tabs = crate::vertical_tabs::build_vertical_tabs(&tab_view, &settings);
+    let vertical_tabs = crate::vertical_tabs::build_vertical_tabs(&tab_view, &settings, {
+        let create_tab = create_tab.clone();
+        Rc::new(move || {
+            create_tab();
+        })
+    });
     sidebar_widget.prepend(&vertical_tabs);
 
     // Sidebar-toolbar "+" opens a new terminal tab (mirrors macOS, which
@@ -1168,6 +1202,12 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 // Update sidebar file icons for the new theme
                 sidebar_state.update_theme(new_theme);
 
+                // Sync the hidden-files preference into the tree.
+                if *sidebar_state.show_hidden.borrow() != s.sidebar_show_hidden {
+                    *sidebar_state.show_hidden.borrow_mut() = s.sidebar_show_hidden;
+                    sidebar_state.refresh();
+                }
+
                 // Re-evaluate tab bar position and context bar visibility.
                 // NOTE: set_enabled (not refresh) — this callback may run
                 // while the settings RefCell is mutably borrowed.
@@ -1337,6 +1377,200 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 Rc::new({
                     let open_review_tab = open_review_tab.clone();
                     move || open_review_tab()
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "next_tab",
+                shortcut_for("next_tab"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    move || {
+                        let n = tab_view.n_pages();
+                        if n <= 1 {
+                            return;
+                        }
+                        if let Some(current) = tab_view.selected_page() {
+                            let next = (tab_view.page_position(&current) + 1) % n;
+                            tab_view.set_selected_page(&tab_view.nth_page(next));
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "prev_tab",
+                shortcut_for("prev_tab"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    move || {
+                        let n = tab_view.n_pages();
+                        if n <= 1 {
+                            return;
+                        }
+                        if let Some(current) = tab_view.selected_page() {
+                            let pos = tab_view.page_position(&current);
+                            let prev = if pos == 0 { n - 1 } else { pos - 1 };
+                            tab_view.set_selected_page(&tab_view.nth_page(prev));
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "copy",
+                shortcut_for("copy"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    move || {
+                        if let Some(page) = tab_view.selected_page() {
+                            if let Some(term) =
+                                terminal_container::get_active_terminal(&page.child())
+                            {
+                                terminal::copy_selection(&term);
+                            }
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "paste",
+                shortcut_for("paste"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    move || {
+                        if let Some(page) = tab_view.selected_page() {
+                            if let Some(term) =
+                                terminal_container::get_active_terminal(&page.child())
+                            {
+                                terminal::paste_from_clipboard(&term);
+                            }
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "new_file",
+                shortcut_for("new_file"),
+                Rc::new({
+                    let window_ref = window_ref.clone();
+                    move || {
+                        gtk4::prelude::ActionGroupExt::activate_action(
+                            &window_ref,
+                            "new-file",
+                            None,
+                        );
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "save",
+                shortcut_for("save"),
+                Rc::new({
+                    let window_ref = window_ref.clone();
+                    move || {
+                        gtk4::prelude::ActionGroupExt::activate_action(
+                            &window_ref,
+                            "save-file",
+                            None,
+                        );
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "find",
+                shortcut_for("find"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    let search_revealer = search_revealer.clone();
+                    let find_entry = find_entry.clone();
+                    move || {
+                        if let Some(page) = tab_view.selected_page() {
+                            // Editor tabs use Monaco's built-in search.
+                            if !editor::is_editor(&page.child()) {
+                                let is_visible = search_revealer.reveals_child();
+                                search_revealer.set_reveal_child(!is_visible);
+                                if !is_visible {
+                                    find_entry.grab_focus();
+                                }
+                            }
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "go_to_line",
+                shortcut_for("go_to_line"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    let window_ref = window_ref.clone();
+                    move || {
+                        if let Some(page) = tab_view.selected_page() {
+                            let child = page.child();
+                            if editor::is_editor(&child) {
+                                dialogs::show_go_to_line_dialog(&window_ref, &child);
+                            }
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "font_increase",
+                shortcut_for("font_increase"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    let font_size = font_size.clone();
+                    let settings = settings.clone();
+                    move || {
+                        let new_size = font_size.get() + 1;
+                        if (6..=72).contains(&new_size) {
+                            font_size.set(new_size);
+                            let family = settings.borrow().terminal_font_family.clone();
+                            apply_font_size_to_all_terminals(&tab_view, new_size, &family);
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "font_decrease",
+                shortcut_for("font_decrease"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    let font_size = font_size.clone();
+                    let settings = settings.clone();
+                    move || {
+                        let new_size = font_size.get() - 1;
+                        if (6..=72).contains(&new_size) {
+                            font_size.set(new_size);
+                            let family = settings.borrow().terminal_font_family.clone();
+                            apply_font_size_to_all_terminals(&tab_view, new_size, &family);
+                        }
+                    }
+                }),
+            ),
+            make_palette_builtin_command(
+                &builtin_items_by_id,
+                "font_reset",
+                shortcut_for("font_reset"),
+                Rc::new({
+                    let tab_view = tab_view.clone();
+                    let font_size = font_size.clone();
+                    let settings = settings.clone();
+                    move || {
+                        let s = settings.borrow();
+                        let default_size = s.terminal_font_size;
+                        let family = s.terminal_font_family.clone();
+                        drop(s);
+                        font_size.set(default_size);
+                        apply_font_size_to_all_terminals(&tab_view, default_size, &family);
+                    }
                 }),
             ),
             make_palette_builtin_command(

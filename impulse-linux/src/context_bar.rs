@@ -21,6 +21,10 @@ use crate::terminal_container;
 type FetchCandidatesFn = Rc<dyn Fn(&str) -> Option<CompletionResult>>;
 /// Applies a fetch result to the dropdown; returns whether it is open.
 type ApplyCandidatesFn = Rc<dyn Fn(Option<CompletionResult>, &str) -> bool>;
+/// Mirrors the review summary (files, +added, -removed) to the status bar.
+type ReviewCountsFn = Rc<dyn Fn(Option<(usize, u32, u32)>)>;
+/// Notified when a TUI takes (true) or releases (false) the grid.
+type TuiChangeFn = Rc<dyn Fn(bool)>;
 
 /// Shared mutable state for the input entry's suggestion/history/completion
 /// machinery (mirrors the @State fields of the macOS view).
@@ -45,6 +49,7 @@ struct InputState {
 
 pub struct ContextBar {
     pub widget: gtk4::Box,
+    cwd_box: gtk4::Box,
     cwd_chip: gtk4::Label,
     branch_chip: gtk4::Label,
     branch_btn: gtk4::MenuButton,
@@ -52,9 +57,18 @@ pub struct ContextBar {
     review_btn: gtk4::Button,
     /// Callback opening the Review Changes tab (wired by the window).
     on_open_review: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Forwarded review summary (files, +added, -removed) so the status
+    /// bar's review pill stays in sync with the chip.
+    on_review_counts: RefCell<Option<ReviewCountsFn>>,
+    /// Notified when a TUI takes (true) or releases (false) the grid, so the
+    /// window can swap in the status bar while the bar is hidden.
+    on_tui_change: RefCell<Option<TuiChangeFn>>,
     /// Last time the review chip's counts were polled (throttled to ~2s).
     review_last_poll: Cell<Option<std::time::Instant>>,
     status_chip: gtk4::Label,
+    prompt_arrow: gtk4::Label,
+    running_spinner: gtk4::Spinner,
+    run_hint: gtk4::Label,
     stop_btn: gtk4::Button,
     /// Whether a command was running at the last refresh, for detecting the
     /// running→idle transition (which reclaims focus for the input).
@@ -74,6 +88,19 @@ pub struct ContextBar {
 fn active_terminal(tab_view: &adw::TabView) -> Option<terminal::Terminal> {
     let page = tab_view.selected_page()?;
     terminal_container::get_active_terminal(&page.child())
+}
+
+/// Build a context-chip capsule: a small leading symbolic glyph + label.
+fn build_chip(icon_name: &str) -> (gtk4::Box, gtk4::Label) {
+    let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
+    chip.add_css_class("context-chip");
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(11);
+    icon.add_css_class("context-chip-icon");
+    chip.append(&icon);
+    let label = gtk4::Label::new(None);
+    chip.append(&label);
+    (chip, label)
 }
 
 /// Shorten the home directory prefix to `~` (matches the status bar).
@@ -96,26 +123,31 @@ pub fn build_context_bar(
     let chip_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     widget.append(&chip_row);
 
-    // Context chips: shell name, cwd, git branch, last command status
-    let shell_chip = gtk4::Label::new(Some(&impulse_core::shell::get_default_shell_name()));
-    shell_chip.add_css_class("context-chip");
-    chip_row.append(&shell_chip);
+    // Context chips: shell name, cwd, git branch, last command status. Each
+    // chip is a capsule with a small leading glyph (mirrors macOS ContextChip).
+    let (shell_box, shell_chip) = build_chip("utilities-terminal-symbolic");
+    shell_chip.set_text(&impulse_core::shell::get_default_shell_name());
+    chip_row.append(&shell_box);
 
-    let cwd_chip = gtk4::Label::new(None);
-    cwd_chip.add_css_class("context-chip");
+    let (cwd_box, cwd_chip) = build_chip("folder-symbolic");
     cwd_chip.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
     cwd_chip.set_max_width_chars(36);
-    cwd_chip.set_visible(false);
-    chip_row.append(&cwd_chip);
+    cwd_box.set_visible(false);
+    chip_row.append(&cwd_box);
 
     // Branch chip: a button that opens a Warp-style branch switcher popover
     // (mirrors the macOS BranchChip + BranchPickerView).
     let branch_chip = gtk4::Label::new(None);
     branch_chip.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
     branch_chip.set_max_width_chars(24);
+    let branch_child = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
+    let branch_glyph = gtk4::Label::new(Some("\u{e0a0}"));
+    branch_glyph.add_css_class("context-chip-icon");
+    branch_child.append(&branch_glyph);
+    branch_child.append(&branch_chip);
     let current_branch = Rc::new(RefCell::new(String::new()));
     let branch_btn = gtk4::MenuButton::new();
-    branch_btn.set_child(Some(&branch_chip));
+    branch_btn.set_child(Some(&branch_child));
     branch_btn.add_css_class("context-chip-button");
     branch_btn.set_always_show_arrow(true);
     branch_btn.set_tooltip_text(Some("Switch branch"));
@@ -153,6 +185,11 @@ pub fn build_context_bar(
     prompt_arrow.add_css_class("context-prompt-arrow");
     input_row.append(&prompt_arrow);
 
+    // Spinner replaces the prompt glyph while a command runs (macOS parity).
+    let running_spinner = gtk4::Spinner::new();
+    running_spinner.set_visible(false);
+    input_row.append(&running_spinner);
+
     // Command input with a ghost-suggestion label layered behind the text
     // (typed prefix rendered invisible, completion suffix dimmed).
     let entry = gtk4::Entry::new();
@@ -172,6 +209,12 @@ pub fn build_context_bar(
     entry_overlay.set_child(Some(&entry));
     entry_overlay.add_overlay(&ghost);
     input_row.append(&entry_overlay);
+
+    // "⏎ run" hint while there's a draft command and the shell is idle.
+    let run_hint = gtk4::Label::new(Some("\u{23ce} run"));
+    run_hint.add_css_class("context-run-hint");
+    run_hint.set_visible(false);
+    input_row.append(&run_hint);
 
     // Stop button: sends SIGINT to the running command (visible while one runs).
     let stop_btn = gtk4::Button::from_icon_name("media-playback-stop-symbolic");
@@ -364,7 +407,12 @@ pub fn build_context_bar(
         let refresh_suggestion = refresh_suggestion.clone();
         let fetch = fetch_candidates.clone();
         let apply = apply_candidates.clone();
+        let run_hint = run_hint.clone();
+        let tab_view_hint = tab_view.clone();
         entry.connect_changed(move |entry| {
+            let idle = active_terminal(&tab_view_hint)
+                .is_some_and(|term| !terminal::is_command_running(&term));
+            run_hint.set_visible(idle && !entry.text().trim().is_empty());
             if input_state.borrow().setting_text {
                 return;
             }
@@ -539,14 +587,20 @@ pub fn build_context_bar(
 
     let bar = Rc::new(ContextBar {
         widget,
+        cwd_box,
         cwd_chip,
         branch_chip,
         branch_btn,
         current_branch,
         review_btn: review_btn.clone(),
         on_open_review: RefCell::new(None),
+        on_review_counts: RefCell::new(None),
+        on_tui_change: RefCell::new(None),
         review_last_poll: Cell::new(None),
         status_chip,
+        prompt_arrow,
+        running_spinner,
+        run_hint: run_hint.clone(),
         stop_btn,
         last_running: Cell::new(false),
         entry,
@@ -637,6 +691,16 @@ fn populate_completion_list(list: &gtk4::ListBox, state: &InputState, input: &st
             label.set_text(&candidate.display);
         }
         row_box.append(&label);
+
+        // Trailing type label: git status when known, else dir/file.
+        let kind_text = candidate
+            .git_status
+            .clone()
+            .unwrap_or_else(|| if candidate.is_dir { "dir" } else { "file" }.to_string());
+        let kind = gtk4::Label::new(Some(&kind_text));
+        kind.add_css_class("completion-kind");
+        kind.set_halign(gtk4::Align::End);
+        row_box.append(&kind);
 
         let row = gtk4::ListBoxRow::new();
         row.set_child(Some(&row_box));
@@ -974,6 +1038,16 @@ impl ContextBar {
         *self.on_open_review.borrow_mut() = Some(open);
     }
 
+    /// Wire the callback that mirrors review counts to the status bar pill.
+    pub fn set_on_review_counts(&self, f: ReviewCountsFn) {
+        *self.on_review_counts.borrow_mut() = Some(f);
+    }
+
+    /// Wire the callback notified when a TUI takes/releases the grid.
+    pub fn set_on_tui_change(&self, f: TuiChangeFn) {
+        *self.on_tui_change.borrow_mut() = Some(f);
+    }
+
     /// Focus the command input, appending a printable character forwarded
     /// from the read-only terminal grid so the first keystroke isn't lost.
     pub fn focus_input_with_char(&self, ch: Option<char>) {
@@ -1002,28 +1076,38 @@ impl ContextBar {
 
         let Some(repo_root) = impulse_core::git::get_git_root(path) else {
             self.review_btn.set_visible(false);
+            if let Some(on_counts) = self.on_review_counts.borrow().clone() {
+                on_counts(None);
+            }
             return;
         };
         let review_btn = self.review_btn.clone();
+        let on_counts = self.on_review_counts.borrow().clone();
         gtk4::glib::spawn_future_local(async move {
             let result = gtk4::gio::spawn_blocking(move || {
                 impulse_core::git::list_changed_files(&repo_root)
             })
             .await;
-            match result {
+            let summary = match result {
                 Ok(Ok(set)) if !set.files.is_empty() => {
-                    let files = if set.files.len() == 1 {
+                    Some((set.files.len(), set.total_added, set.total_removed))
+                }
+                _ => None,
+            };
+            match summary {
+                Some((count, added, removed)) => {
+                    let files = if count == 1 {
                         "1 file".to_string()
                     } else {
-                        format!("{} files", set.files.len())
+                        format!("{count} files")
                     };
-                    review_btn.set_label(&format!(
-                        "{files} +{} \u{2212}{}",
-                        set.total_added, set.total_removed
-                    ));
+                    review_btn.set_label(&format!("{files} +{added} \u{2212}{removed}"));
                     review_btn.set_visible(true);
                 }
-                _ => review_btn.set_visible(false),
+                None => review_btn.set_visible(false),
+            }
+            if let Some(on_counts) = on_counts {
+                on_counts(summary);
             }
         });
     }
@@ -1047,23 +1131,34 @@ impl ContextBar {
         };
 
         // A full-screen/raw TUI (vim, htop, Claude Code) owns the grid: hide
-        // the bar and hand the grid keyboard focus until the TUI exits.
+        // the bar and hand the grid keyboard focus until the TUI exits. The
+        // window swaps in the status bar (with the review pill) meanwhile.
         if terminal::tui_owns_grid(&term) {
             let was_visible = self.widget.is_visible();
             self.widget.set_visible(false);
             self.dismiss_input_overlays();
+            // Keep the status-bar review pill current while the bar is away.
+            if let Some(path) = terminal::current_directory(&term).filter(|p| !p.is_empty()) {
+                self.update_review_chip(&path);
+            }
+            if let Some(on_tui) = self.on_tui_change.borrow().clone() {
+                on_tui(true);
+            }
             if was_visible {
                 term.grab_focus();
             }
             return;
         }
         self.widget.set_visible(true);
+        if let Some(on_tui) = self.on_tui_change.borrow().clone() {
+            on_tui(false);
+        }
 
         // CWD + git branch + review chips
         match terminal::current_directory(&term) {
             Some(path) if !path.is_empty() => {
                 self.cwd_chip.set_text(&abbreviate_home_path(&path));
-                self.cwd_chip.set_visible(true);
+                self.cwd_box.set_visible(true);
                 self.update_review_chip(&path);
                 match impulse_core::filesystem::get_git_branch(&path) {
                     Ok(Some(branch)) if !branch.is_empty() => {
@@ -1075,7 +1170,7 @@ impl ContextBar {
                 }
             }
             _ => {
-                self.cwd_chip.set_visible(false);
+                self.cwd_box.set_visible(false);
                 self.branch_btn.set_visible(false);
                 self.review_btn.set_visible(false);
             }
@@ -1091,10 +1186,19 @@ impl ContextBar {
             self.branch_btn.set_sensitive(false);
             self.status_chip.set_visible(false);
             self.stop_btn.set_visible(true);
+            self.prompt_arrow.set_visible(false);
+            self.running_spinner.set_visible(true);
+            self.running_spinner.set_spinning(true);
+            self.run_hint.set_visible(false);
             self.dismiss_input_overlays();
             self.entry
                 .set_placeholder_text(Some("Send input to the running command…"));
         } else {
+            self.prompt_arrow.set_visible(true);
+            self.running_spinner.set_spinning(false);
+            self.running_spinner.set_visible(false);
+            self.run_hint
+                .set_visible(!self.entry.text().trim().is_empty());
             if was_running {
                 // Shell returned to the prompt — reclaim focus for the next
                 // command (Warp model: the bar IS the prompt).

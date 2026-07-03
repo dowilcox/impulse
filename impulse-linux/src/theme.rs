@@ -1,10 +1,21 @@
 /// A color theme definition for the entire application.
+///
+/// Instances are resolved from `impulse_core::theme` (the same audited TOML
+/// pipeline the macOS frontend consumes) and leaked once per theme so the
+/// existing `&'static` plumbing keeps working.
 pub struct ThemeColors {
     pub bg: &'static str,
     pub bg_dark: &'static str,
     pub bg_highlight: &'static str,
+    /// Window-chrome surface behind the tab bar / titlebar.
+    pub bg_surface: &'static str,
+    /// Audited hairline stroke color.
+    pub border: &'static str,
     pub fg: &'static str,
     pub fg_dark: &'static str,
+    /// Interactive/selected accent (NOT the same as `cyan` — Harbor's accent
+    /// is copper, for example).
+    pub accent: &'static str,
     pub cyan: &'static str,
     pub blue: &'static str,
     pub green: &'static str,
@@ -13,6 +24,13 @@ pub struct ThemeColors {
     pub yellow: &'static str,
     pub orange: &'static str,
     pub comment: &'static str,
+    // Contrast-audited git indicator tones (readable on the sidebar canvas).
+    pub git_added: &'static str,
+    pub git_modified: &'static str,
+    pub git_deleted: &'static str,
+    pub git_renamed: &'static str,
+    pub git_conflict: &'static str,
+    pub git_ignored: &'static str,
     /// Monaco base theme: `"vs-dark"` for dark themes, `"vs"` for light themes.
     pub base: &'static str,
     /// Content-surface presentation: `"flat"` renders the terminal/editor area
@@ -26,546 +44,82 @@ pub struct ThemeColors {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in themes
+// Theme lookup (resolved from impulse-core's audited TOML pipeline)
 // ---------------------------------------------------------------------------
 
-/// Kanagawa Wave — warm golden tones inspired by Hokusai's Great Wave (default).
-pub static KANAGAWA: ThemeColors = ThemeColors {
-    bg: "#1F1F28",
-    bg_dark: "#16161D",
-    bg_highlight: "#2A2A37",
-    fg: "#DCD7BA",
-    fg_dark: "#C8C093",
-    cyan: "#7AA89F",
-    blue: "#7E9CD8",
-    green: "#98BB6C",
-    magenta: "#957FB8",
-    red: "#E46876",
-    yellow: "#E6C384",
-    orange: "#FFA066",
-    comment: "#727169",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#7E9CD850",
-    terminal_palette: [
-        "#090618", "#C34043", "#76946A", "#C0A36E", "#7E9CD8", "#957FB8", "#6A9589", "#C8C093",
-        "#727169", "#E82424", "#98BB6C", "#E6C384", "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
-    ],
-};
+fn leak(value: &str) -> &'static str {
+    Box::leak(value.to_string().into_boxed_str())
+}
 
-/// Rosé Pine — muted pastels on warm dark purple, "soho vibes".
-pub static ROSE_PINE: ThemeColors = ThemeColors {
-    bg: "#191724",
-    bg_dark: "#1f1d2e",
-    bg_highlight: "#26233a",
-    fg: "#e0def4",
-    fg_dark: "#908caa",
-    cyan: "#9ccfd8",
-    blue: "#4392b5",
-    green: "#9ccfd8",
-    magenta: "#c4a7e7",
-    red: "#eb6f92",
-    yellow: "#f6c177",
-    orange: "#ebbcba",
-    comment: "#6e6a86",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#c4a7e740",
-    terminal_palette: [
-        "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
-        "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
-    ],
-};
+/// Build a leaked `ThemeColors` from a core `ResolvedTheme`. Leaking is
+/// bounded: at most one allocation set per distinct theme id per run.
+fn from_resolved(rt: &impulse_core::theme::ResolvedTheme) -> &'static ThemeColors {
+    Box::leak(Box::new(ThemeColors {
+        bg: leak(&rt.bg),
+        bg_dark: leak(&rt.bg_dark),
+        bg_highlight: leak(&rt.bg_highlight),
+        bg_surface: leak(&rt.bg_surface),
+        border: leak(&rt.border),
+        fg: leak(&rt.fg),
+        fg_dark: leak(&rt.fg_muted),
+        accent: leak(&rt.accent),
+        cyan: leak(&rt.cyan),
+        blue: leak(&rt.blue),
+        green: leak(&rt.green),
+        magenta: leak(&rt.magenta),
+        red: leak(&rt.red),
+        yellow: leak(&rt.yellow),
+        orange: leak(&rt.orange),
+        comment: leak(&rt.fg_comment),
+        git_added: leak(&rt.git_added),
+        git_modified: leak(&rt.git_modified),
+        git_deleted: leak(&rt.git_deleted),
+        git_renamed: leak(&rt.git_renamed),
+        git_conflict: leak(&rt.git_conflict),
+        git_ignored: leak(&rt.git_ignored),
+        base: if rt.is_light { "vs" } else { "vs-dark" },
+        surface_style: leak(&rt.surface_style),
+        selection: leak(&rt.selection),
+        terminal_palette: {
+            let mut palette = [""; 16];
+            for (slot, color) in palette.iter_mut().zip(rt.terminal_palette.iter()) {
+                *slot = leak(color);
+            }
+            palette
+        },
+    }))
+}
 
-/// Nord — arctic, clean, minimal blue palette.
-pub static NORD: ThemeColors = ThemeColors {
-    bg: "#2E3440",
-    bg_dark: "#272C36",
-    bg_highlight: "#434C5E",
-    fg: "#D8DEE9",
-    fg_dark: "#E5E9F0",
-    cyan: "#88C0D0",
-    blue: "#81A1C1",
-    green: "#A3BE8C",
-    magenta: "#B48EAD",
-    red: "#BF616A",
-    yellow: "#EBCB8B",
-    orange: "#D08770",
-    comment: "#4C566A",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#81A1C150",
-    terminal_palette: [
-        "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
-        "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
-    ],
-};
-
-/// Gruvbox Dark — warm retro palette with earthy tones.
-pub static GRUVBOX: ThemeColors = ThemeColors {
-    bg: "#282828",
-    bg_dark: "#1d2021",
-    bg_highlight: "#3c3836",
-    fg: "#ebdbb2",
-    fg_dark: "#d5c4a1",
-    cyan: "#8ec07c",
-    blue: "#83a598",
-    green: "#b8bb26",
-    magenta: "#d3869b",
-    red: "#fb4934",
-    yellow: "#fabd2f",
-    orange: "#fe8019",
-    comment: "#928374",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#83a59850",
-    terminal_palette: [
-        "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
-        "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
-    ],
-};
-
-/// Tokyo Night — cool blue-purple palette.
-pub static TOKYO_NIGHT: ThemeColors = ThemeColors {
-    bg: "#1a1b26",
-    bg_dark: "#16161e",
-    bg_highlight: "#292e42",
-    fg: "#c0caf5",
-    fg_dark: "#a9b1d6",
-    cyan: "#7dcfff",
-    blue: "#7aa2f7",
-    green: "#9ece6a",
-    magenta: "#bb9af7",
-    red: "#f7768e",
-    yellow: "#e0af68",
-    orange: "#ff9e64",
-    comment: "#565f89",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#7aa2f740",
-    terminal_palette: [
-        "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
-        "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
-    ],
-};
-
-/// Tokyo Night Storm — deeper blue-tinted variant of Tokyo Night.
-pub static TOKYO_NIGHT_STORM: ThemeColors = ThemeColors {
-    bg: "#24283b",
-    bg_dark: "#1f2335",
-    bg_highlight: "#292e42",
-    fg: "#c0caf5",
-    fg_dark: "#a9b1d6",
-    cyan: "#7dcfff",
-    blue: "#7aa2f7",
-    green: "#9ece6a",
-    magenta: "#bb9af7",
-    red: "#f7768e",
-    yellow: "#e0af68",
-    orange: "#ff9e64",
-    comment: "#565f89",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#7aa2f740",
-    terminal_palette: [
-        "#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
-        "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
-    ],
-};
-
-/// Catppuccin Mocha — warm pastel palette on dark base.
-pub static CATPPUCCIN_MOCHA: ThemeColors = ThemeColors {
-    bg: "#1e1e2e",
-    bg_dark: "#181825",
-    bg_highlight: "#313244",
-    fg: "#cdd6f4",
-    fg_dark: "#bac2de",
-    cyan: "#94e2d5",
-    blue: "#89b4fa",
-    green: "#a6e3a1",
-    magenta: "#cba6f7",
-    red: "#f38ba8",
-    yellow: "#f9e2af",
-    orange: "#fab387",
-    comment: "#6c7086",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#89b4fa40",
-    terminal_palette: [
-        "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#bac2de",
-        "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#cba6f7", "#94e2d5", "#cdd6f4",
-    ],
-};
-
-/// Dracula — iconic purple-tinted dark theme with vibrant accents.
-pub static DRACULA: ThemeColors = ThemeColors {
-    bg: "#282a36",
-    bg_dark: "#21222c",
-    bg_highlight: "#44475a",
-    fg: "#f8f8f2",
-    fg_dark: "#8490b7",
-    cyan: "#8be9fd",
-    blue: "#7c89b4",
-    green: "#50fa7b",
-    magenta: "#ff79c6",
-    red: "#ff5555",
-    yellow: "#f1fa8c",
-    orange: "#ffb86c",
-    comment: "#6272a4",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#bd93f940",
-    terminal_palette: [
-        "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
-        "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
-    ],
-};
-
-/// Solarized Dark — precision-engineered palette with balanced contrast.
-pub static SOLARIZED_DARK: ThemeColors = ThemeColors {
-    bg: "#002b36",
-    bg_dark: "#001e26",
-    bg_highlight: "#073642",
-    fg: "#839496",
-    fg_dark: "#748e97",
-    cyan: "#2aa198",
-    blue: "#268bd2",
-    green: "#859900",
-    magenta: "#d33682",
-    red: "#dc322f",
-    yellow: "#b58900",
-    orange: "#cb4b16",
-    comment: "#586e75",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#268bd240",
-    terminal_palette: [
-        "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
-        "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
-    ],
-};
-
-/// One Dark — Atom-inspired balanced dark theme.
-pub static ONE_DARK: ThemeColors = ThemeColors {
-    bg: "#282c34",
-    bg_dark: "#21252b",
-    bg_highlight: "#2c313a",
-    fg: "#abb2bf",
-    fg_dark: "#8c93a1",
-    cyan: "#56b6c2",
-    blue: "#61afef",
-    green: "#98c379",
-    magenta: "#c678dd",
-    red: "#e06c75",
-    yellow: "#e5c07b",
-    orange: "#d19a66",
-    comment: "#5c6370",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#61afef40",
-    terminal_palette: [
-        "#21252b", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
-        "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
-    ],
-};
-
-/// Ayu Dark — minimal dark theme with warm accent colors.
-pub static AYU_DARK: ThemeColors = ThemeColors {
-    bg: "#0b0e14",
-    bg_dark: "#07090d",
-    bg_highlight: "#131721",
-    fg: "#bfbdb6",
-    fg_dark: "#797f8e",
-    cyan: "#73b8ff",
-    blue: "#59c2ff",
-    green: "#aad94c",
-    magenta: "#d2a6ff",
-    red: "#f07178",
-    yellow: "#ffb454",
-    orange: "#ff8f40",
-    comment: "#565b66",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#59c2ff30",
-    terminal_palette: [
-        "#07090d", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#bfbdb6",
-        "#565b66", "#f07178", "#aad94c", "#ffb454", "#59c2ff", "#d2a6ff", "#73b8ff", "#ffffff",
-    ],
-};
-
-/// Everforest Dark — soft green tones inspired by nature.
-pub static EVERFOREST_DARK: ThemeColors = ThemeColors {
-    bg: "#2d353b",
-    bg_dark: "#272e33",
-    bg_highlight: "#3d484d",
-    fg: "#d3c6aa",
-    fg_dark: "#9da9a0",
-    cyan: "#83c092",
-    blue: "#7fbbb3",
-    green: "#a7c080",
-    magenta: "#d699b6",
-    red: "#e67e80",
-    yellow: "#dbbc7f",
-    orange: "#e69875",
-    comment: "#7a8478",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#7fbbb340",
-    terminal_palette: [
-        "#272e33", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#9da9a0",
-        "#7a8478", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#d3c6aa",
-    ],
-};
-
-/// GitHub Dark — GitHub's official dark theme.
-pub static GITHUB_DARK: ThemeColors = ThemeColors {
-    bg: "#0d1117",
-    bg_dark: "#010409",
-    bg_highlight: "#161b22",
-    fg: "#e6edf3",
-    fg_dark: "#8b949e",
-    cyan: "#79c0ff",
-    blue: "#79c0ff",
-    green: "#7ee787",
-    magenta: "#d2a8ff",
-    red: "#ff7b72",
-    yellow: "#ffa657",
-    orange: "#f0883e",
-    comment: "#8b949e",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#79c0ff30",
-    terminal_palette: [
-        "#010409", "#ff7b72", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#8b949e",
-        "#6e7681", "#ffa198", "#7ee787", "#ffa657", "#79c0ff", "#d2a8ff", "#a5d6ff", "#e6edf3",
-    ],
-};
-
-/// Monokai Pro — iconic warm dark theme with vibrant syntax colors.
-pub static MONOKAI_PRO: ThemeColors = ThemeColors {
-    bg: "#2d2a2e",
-    bg_dark: "#221f22",
-    bg_highlight: "#403e41",
-    fg: "#fcfcfa",
-    fg_dark: "#939293",
-    cyan: "#78dce8",
-    blue: "#78dce8",
-    green: "#a9dc76",
-    magenta: "#ab9df2",
-    red: "#ff6188",
-    yellow: "#ffd866",
-    orange: "#fc9867",
-    comment: "#727072",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#ab9df240",
-    terminal_palette: [
-        "#221f22", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#939293",
-        "#727072", "#ff6188", "#a9dc76", "#ffd866", "#78dce8", "#ab9df2", "#78dce8", "#fcfcfa",
-    ],
-};
-
-/// Palenight — Material Design-inspired dark theme with purple tones.
-pub static PALENIGHT: ThemeColors = ThemeColors {
-    bg: "#292d3e",
-    bg_dark: "#1b1e2b",
-    bg_highlight: "#32374d",
-    fg: "#a6accd",
-    fg_dark: "#868bab",
-    cyan: "#89ddff",
-    blue: "#82aaff",
-    green: "#c3e88d",
-    magenta: "#c792ea",
-    red: "#f07178",
-    yellow: "#ffcb6b",
-    orange: "#f78c6c",
-    comment: "#676e95",
-    base: "vs-dark",
-    surface_style: "flat",
-    selection: "#82aaff35",
-    terminal_palette: [
-        "#1b1e2b", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#676e95",
-        "#676e95", "#f07178", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#a6accd",
-    ],
-};
-
-/// Solarized Light — precision-engineered light palette with balanced contrast.
-pub static SOLARIZED_LIGHT: ThemeColors = ThemeColors {
-    bg: "#fdf6e3",
-    bg_dark: "#eee8d5",
-    bg_highlight: "#eee8d5",
-    fg: "#657b83",
-    fg_dark: "#576464",
-    cyan: "#217e77",
-    blue: "#1d6da3",
-    green: "#859900",
-    magenta: "#d33682",
-    red: "#dc322f",
-    yellow: "#b58900",
-    orange: "#cb4b16",
-    comment: "#93a1a1",
-    base: "vs",
-    surface_style: "flat",
-    selection: "#268bd230",
-    terminal_palette: [
-        "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
-        "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
-    ],
-};
-
-/// Catppuccin Latte — warm pastel light theme.
-pub static CATPPUCCIN_LATTE: ThemeColors = ThemeColors {
-    bg: "#eff1f5",
-    bg_dark: "#e6e9ef",
-    bg_highlight: "#dce0e8",
-    fg: "#4c4f69",
-    fg_dark: "#65677c",
-    cyan: "#137a80",
-    blue: "#1559de",
-    green: "#40a02b",
-    magenta: "#8839ef",
-    red: "#d20f39",
-    yellow: "#df8e1d",
-    orange: "#fe640b",
-    comment: "#9ca0b0",
-    base: "vs",
-    surface_style: "flat",
-    selection: "#1e66f525",
-    terminal_palette: [
-        "#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#acb0be",
-        "#6c6f85", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#8839ef", "#179299", "#4c4f69",
-    ],
-};
-
-/// GitHub Light — GitHub's official light theme.
-pub static GITHUB_LIGHT: ThemeColors = ThemeColors {
-    bg: "#ffffff",
-    bg_dark: "#f6f8fa",
-    bg_highlight: "#f0f2f4",
-    fg: "#1f2328",
-    fg_dark: "#656d76",
-    cyan: "#0a3069",
-    blue: "#0969da",
-    green: "#1a7f37",
-    magenta: "#8250df",
-    red: "#cf222e",
-    yellow: "#9a6700",
-    orange: "#bc4c00",
-    comment: "#6e7781",
-    base: "vs",
-    surface_style: "flat",
-    selection: "#0969da25",
-    terminal_palette: [
-        "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#0a3069", "#6e7781",
-        "#57606a", "#a40e26", "#2da44e", "#bf8700", "#218bff", "#a475f9", "#0a3069", "#1f2328",
-    ],
-};
-
-/// Harbor — mid-tone light theme from the Impulse Harbor design handoff.
-/// Cream content card floating on a blue-slate canvas; copper accent,
-/// indigo for interactive/syntax, red only for danger, green only for success.
-pub static HARBOR: ThemeColors = ThemeColors {
-    bg: "#f8fafd",
-    bg_dark: "#d2d8de",
-    bg_highlight: "#dde4ea",
-    fg: "#222935",
-    fg_dark: "#4d5662",
-    cyan: "#005366",
-    blue: "#3959a6",
-    green: "#267b4c",
-    magenta: "#503975",
-    red: "#ba3535",
-    yellow: "#af5a21",
-    orange: "#9b4805",
-    comment: "#565f69",
-    base: "vs",
-    surface_style: "card",
-    selection: "#3959a640",
-    terminal_palette: [
-        "#222935", "#a5292b", "#095c34", "#af5a21", "#3959a6", "#503975", "#005366", "#6c7278",
-        "#565f69", "#ba3535", "#267b4c", "#af5a21", "#4e71c0", "#674f8d", "#006a7d", "#222935",
-    ],
-};
-
-// ---------------------------------------------------------------------------
-// Theme lookup helpers
-// ---------------------------------------------------------------------------
-
-/// Return the theme matching `name` (case-insensitive). Falls back to `KANAGAWA`.
+/// Return the theme matching `name` (case-insensitive), resolved through
+/// `impulse_core::theme` so both frontends share the same audited palettes
+/// (including user themes from `~/.config/impulse/themes/*.toml`). Falls
+/// back to core's default when unknown.
 pub fn get_theme(name: &str) -> &'static ThemeColors {
-    match name.to_ascii_lowercase().as_str() {
-        "kanagawa" => &KANAGAWA,
-        "rose-pine" | "rose_pine" | "rosepine" => &ROSE_PINE,
-        "nord" => &NORD,
-        "gruvbox" | "gruvbox-dark" | "gruvbox_dark" => &GRUVBOX,
-        "tokyo-night" | "tokyo_night" | "tokyonight" => &TOKYO_NIGHT,
-        "tokyo-night-storm" | "tokyo_night_storm" | "tokyonightstorm" => &TOKYO_NIGHT_STORM,
-        "catppuccin-mocha" | "catppuccin_mocha" | "catppuccinmocha" => &CATPPUCCIN_MOCHA,
-        "dracula" => &DRACULA,
-        "solarized-dark" | "solarized_dark" | "solarizeddark" => &SOLARIZED_DARK,
-        "one-dark" | "one_dark" | "onedark" => &ONE_DARK,
-        "ayu-dark" | "ayu_dark" | "ayudark" => &AYU_DARK,
-        "everforest-dark" | "everforest_dark" | "everforestdark" => &EVERFOREST_DARK,
-        "github-dark" | "github_dark" | "githubdark" => &GITHUB_DARK,
-        "monokai-pro" | "monokai_pro" | "monokaipro" => &MONOKAI_PRO,
-        "palenight" => &PALENIGHT,
-        "solarized-light" | "solarized_light" | "solarizedlight" => &SOLARIZED_LIGHT,
-        "catppuccin-latte" | "catppuccin_latte" | "catppuccinlatte" => &CATPPUCCIN_LATTE,
-        "github-light" | "github_light" | "githublight" => &GITHUB_LIGHT,
-        "harbor" => &HARBOR,
-        _ => &NORD,
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static ThemeColors>>> = OnceLock::new();
+    let key = name.to_ascii_lowercase().replace('_', "-");
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().expect("theme cache poisoned");
+    if let Some(theme) = cache.get(&key) {
+        return theme;
     }
+    let resolved = impulse_core::theme::get_theme(&key);
+    let theme = from_resolved(&resolved);
+    cache.insert(key, theme);
+    theme
 }
 
-/// Convert a theme ID like `"tokyo-night-storm"` to a display name like `"Tokyo Night Storm"`.
+/// Convert a theme ID like `"tokyo-night-storm"` to a display name like
+/// `"Tokyo Night Storm"` (shared with macOS via impulse-core).
 pub fn theme_display_name(id: &str) -> String {
-    match id {
-        "rose-pine" => "Rosé Pine".to_string(),
-        "catppuccin-mocha" => "Catppuccin Mocha".to_string(),
-        "catppuccin-latte" => "Catppuccin Latte".to_string(),
-        "github-dark" => "GitHub Dark".to_string(),
-        "github-light" => "GitHub Light".to_string(),
-        "monokai-pro" => "Monokai Pro".to_string(),
-        _ => id
-            .split('-')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    Some(c) => {
-                        let upper: String = c.to_uppercase().collect();
-                        format!("{}{}", upper, chars.as_str())
-                    }
-                    None => String::new(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-    }
+    impulse_core::theme::theme_display_name(id)
 }
 
-/// Return the list of built-in theme names.
-pub fn get_available_themes() -> Vec<&'static str> {
-    vec![
-        "kanagawa",
-        "rose-pine",
-        "nord",
-        "gruvbox",
-        "tokyo-night",
-        "tokyo-night-storm",
-        "catppuccin-mocha",
-        "dracula",
-        "solarized-dark",
-        "one-dark",
-        "ayu-dark",
-        "everforest-dark",
-        "github-dark",
-        "monokai-pro",
-        "palenight",
-        "solarized-light",
-        "catppuccin-latte",
-        "github-light",
-        "harbor",
-    ]
+/// All available theme ids: built-ins plus user themes discovered in
+/// `~/.config/impulse/themes/*.toml`.
+pub fn get_available_themes() -> Vec<String> {
+    impulse_core::theme::available_themes()
 }
 
 // ---------------------------------------------------------------------------
@@ -609,7 +163,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .sidebar {{
             margin: 0;
             background-color: {bg_dark};
-            border-right: 1px solid alpha({fg}, 0.10);
+            border-right: 1px solid {border};
             border-radius: 0;
             box-shadow: none;
         }}
@@ -629,8 +183,8 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: alpha({fg}, 0.08);
         }}
         .sidebar-toolbar-btn:checked {{
-            color: {cyan};
-            background-color: alpha({cyan}, 0.14);
+            color: {accent};
+            background-color: alpha({accent}, 0.14);
         }}
         .file-tree {{
             background-color: transparent;
@@ -666,52 +220,30 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             margin-right: 4px;
             min-width: 14px;
         }}
-        /* TODO: use the per-theme git_added/git_modified/... tones (as the
-           macOS FileTreeRow does via impulse-core's ResolvedTheme) once
-           ThemeColors carries them; the palette colors below are stand-ins
-           and are not contrast-audited for the sidebar canvas. */
-        .git-modified {{
-            color: {yellow};
+        /* Per-theme contrast-audited git tones, shared with macOS via
+           impulse-core's ResolvedTheme. */
+        .git-modified, .file-entry-git-modified {{
+            color: {git_modified};
         }}
-        .git-added {{
-            color: {green};
+        .git-added, .git-untracked,
+        .file-entry-git-added, .file-entry-git-untracked {{
+            color: {git_added};
         }}
-        .git-untracked {{
-            color: {green};
+        .git-deleted, .file-entry-git-deleted {{
+            color: {git_deleted};
         }}
-        .git-deleted {{
-            color: {red};
+        .git-renamed, .file-entry-git-renamed {{
+            color: {git_renamed};
         }}
-        .git-renamed {{
-            color: {blue};
-        }}
-        .git-conflict {{
-            color: {orange};
-        }}
-        .file-entry-git-modified {{
-            color: {yellow};
-        }}
-        .file-entry-git-added {{
-            color: {green};
-        }}
-        .file-entry-git-untracked {{
-            color: {green};
-        }}
-        .file-entry-git-deleted {{
-            color: {red};
-        }}
-        .file-entry-git-renamed {{
-            color: {blue};
-        }}
-        .file-entry-git-conflict {{
-            color: {orange};
+        .git-conflict, .file-entry-git-conflict {{
+            color: {git_conflict};
         }}
         .file-entry-git-ignored {{
-            color: {fg_dark};
+            color: {git_ignored};
         }}
         .drop-target {{
-            background-color: alpha({cyan}, 0.10);
-            outline: 1px dashed {cyan};
+            background-color: alpha({accent}, 0.10);
+            outline: 1px dashed {accent};
             outline-offset: -1px;
         }}
         /* --- Search --- */
@@ -747,7 +279,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: {bg_dark};
             padding: 3px 12px;
             min-height: 26px;
-            border-top: 1px solid alpha({fg}, 0.08);
+            border-top: 1px solid {border};
         }}
         .status-bar label {{
             font-size: 12px;
@@ -838,7 +370,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             padding: 0;
         }}
         headerbar.impulse-header {{
-            background-color: {bg_dark};
+            background-color: {bg_surface};
         }}
         headerbar button {{
             color: {fg_dark};
@@ -902,7 +434,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border-color: alpha({fg}, 0.08);
         }}
         button.impulse-header-button:checked {{
-            color: {cyan};
+            color: {accent};
             background-color: alpha({fg}, 0.10);
             border-color: alpha({fg}, 0.10);
         }}
@@ -927,7 +459,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         tabbar tab:selected {{
             background-color: {bg};
-            color: {cyan};
+            color: {accent};
             border-color: transparent;
         }}
         tabbar tab:hover:not(:selected) {{
@@ -1054,6 +586,13 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: transparent;
             padding: 6px 8px 6px 8px;
         }}
+        .vertical-tab-attention {{
+            color: {accent};
+            font-size: 8px;
+        }}
+        .vertical-tab-pin {{
+            opacity: 0.6;
+        }}
         .vertical-tabs-resize-handle {{
             min-height: 7px;
             padding: 3px 0;
@@ -1071,7 +610,7 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: alpha({fg}, 0.06);
         }}
         .vertical-tabs-list row:selected {{
-            background-color: alpha({cyan}, 0.16);
+            background-color: alpha({accent}, 0.16);
         }}
         .vertical-tab-title {{
             font-size: 12px;
@@ -1115,6 +654,23 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border-radius: 999px;
             padding: 2px 10px;
         }}
+        .status-bar button.status-bar-review-btn {{
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {fg_dark};
+            background-color: {bg_highlight};
+            background-image: none;
+            border: none;
+            box-shadow: none;
+            border-radius: 999px;
+            padding: 1px 10px;
+            min-height: 0;
+            min-width: 0;
+        }}
+        .status-bar button.status-bar-review-btn:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.15);
+        }}
         .context-bar menubutton.context-chip-button > button,
         .context-bar button.context-chip-button {{
             font-size: 11px;
@@ -1155,6 +711,27 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             min-height: 28px;
             padding-left: 8px;
             padding-right: 8px;
+            background-color: {bg};
+            border: 1px solid {border};
+            border-radius: 8px;
+            box-shadow: none;
+            outline: none;
+        }}
+        .context-input:focus-within {{
+            border-color: alpha({accent}, 0.6);
+        }}
+        .context-chip-icon {{
+            color: alpha({fg_dark}, 0.9);
+            font-size: 10px;
+        }}
+        .context-run-hint {{
+            font-size: 10px;
+            color: {comment};
+        }}
+        .completion-kind {{
+            font-size: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {comment};
         }}
         /* Ghost suggestion overlay: must use the same font metrics and
            horizontal inset as .context-input so the suffix lines up. */
@@ -1230,33 +807,31 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         bg_highlight = theme.bg_highlight,
         fg = theme.fg,
         fg_dark = theme.fg_dark,
+        accent = theme.accent,
+        bg_surface = theme.bg_surface,
+        border = theme.border,
         cyan = theme.cyan,
         blue = theme.blue,
         magenta = theme.magenta,
         green = theme.green,
         yellow = theme.yellow,
         red = theme.red,
-        orange = theme.orange,
         comment = theme.comment,
+        git_added = theme.git_added,
+        git_modified = theme.git_modified,
+        git_deleted = theme.git_deleted,
+        git_renamed = theme.git_renamed,
+        git_conflict = theme.git_conflict,
+        git_ignored = theme.git_ignored,
     );
 
     if theme.surface_style == "card" {
-        // Harbor-style floating content card: the terminal/editor surface
-        // floats on the bg_dark canvas with rounded corners and a soft warm
-        // shadow. The window/mod.rs content box uses Overflow::Hidden so
-        // children are clipped to the rounded corners.
+        // Card-surface themes (Harbor): the content stays EDGE-TO-EDGE to
+        // match the Warp-style terminal — no floating card, mirroring the
+        // macOS treatment. "Card" is expressed through raised pill tabs
+        // with a soft warm shadow and quieter chrome strokes instead.
         css.push_str(&format!(
             r#"
-        .workspace-content {{
-            margin: 10px 16px 14px 16px;
-            background-color: {bg};
-            border-radius: 16px;
-            box-shadow: 0 4px 14px -6px alpha(#5c5142, 0.20),
-                        0 1px 2px alpha(#5c5142, 0.08);
-        }}
-        .impulse-tab-view {{
-            border-radius: 16px;
-        }}
         .workspace-paned > separator {{
             background-color: transparent;
         }}
@@ -1284,21 +859,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         }}
         .status-bar .cwd {{
             color: {comment};
-        }}
-        /* Git badges sit on the bg_dark canvas — audited Harbor text tones
-           (>=4.5:1 there) instead of the brighter palette hues. */
-        .git-modified, .file-entry-git-modified {{
-            color: #904100;
-        }}
-        .git-added, .git-untracked,
-        .file-entry-git-added, .file-entry-git-untracked {{
-            color: #095c34;
-        }}
-        .git-deleted, .file-entry-git-deleted {{
-            color: #a5292b;
-        }}
-        .git-conflict, .file-entry-git-conflict {{
-            color: #ba3535;
         }}
         "#,
             bg = theme.bg,

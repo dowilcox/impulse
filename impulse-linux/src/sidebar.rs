@@ -165,6 +165,7 @@ pub fn build_sidebar(
     // Menu models: one for files, one for directories
     let file_menu = gio::Menu::new();
     file_menu.append(Some("Open in Default App"), Some("filetree.open"));
+    file_menu.append(Some("Reveal in Files"), Some("filetree.reveal"));
     file_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
     file_menu.append(
         Some("Copy Relative Path"),
@@ -177,6 +178,7 @@ pub fn build_sidebar(
 
     let file_menu_git = gio::Menu::new();
     file_menu_git.append(Some("Open in Default App"), Some("filetree.open"));
+    file_menu_git.append(Some("Reveal in Files"), Some("filetree.reveal"));
     file_menu_git.append(Some("Copy Path"), Some("filetree.copy-path"));
     file_menu_git.append(
         Some("Copy Relative Path"),
@@ -190,6 +192,7 @@ pub fn build_sidebar(
 
     let dir_menu = gio::Menu::new();
     dir_menu.append(Some("Open in Terminal"), Some("filetree.open-terminal"));
+    dir_menu.append(Some("Reveal in Files"), Some("filetree.reveal"));
     dir_menu.append(Some("Copy Path"), Some("filetree.copy-path"));
     dir_menu.append(
         Some("Copy Relative Path"),
@@ -225,6 +228,29 @@ pub fn build_sidebar(
         });
     }
     action_group.add_action(&open_action);
+
+    // "reveal" action - shows the file/directory in the system file manager
+    let reveal_action = gio::SimpleAction::new("reveal", None);
+    {
+        let clicked_path = clicked_path.clone();
+        let file_tree_list = file_tree_list.clone();
+        reveal_action.connect_activate(move |_, _| {
+            let path = clicked_path.borrow().clone();
+            if path.is_empty() {
+                return;
+            }
+            let launcher = gtk4::FileLauncher::new(Some(&gio::File::for_path(&path)));
+            let window = file_tree_list
+                .root()
+                .and_then(|r| r.downcast::<gtk4::Window>().ok());
+            launcher.open_containing_folder(window.as_ref(), gio::Cancellable::NONE, move |res| {
+                if let Err(e) = res {
+                    log::warn!("Failed to reveal in file manager: {}", e);
+                }
+            });
+        });
+    }
+    action_group.add_action(&reveal_action);
 
     // "copy-path" action - copies path to clipboard
     let copy_action = gio::SimpleAction::new("copy-path", None);
@@ -413,19 +439,19 @@ pub fn build_sidebar(
             let is_dir = std::path::Path::new(&path).is_dir();
 
             let dialog = adw::AlertDialog::builder()
-                .heading("Delete File")
+                .heading("Move to Trash")
                 .body(format!(
-                    "Are you sure you want to delete \"{}\"?{}",
+                    "Are you sure you want to move \"{}\" to the Trash?{}",
                     filename,
                     if is_dir {
-                        " This will delete the directory and all its contents."
+                        " This will move the directory and all its contents."
                     } else {
                         ""
                     }
                 ))
                 .build();
             dialog.add_response("cancel", "Cancel");
-            dialog.add_response("delete", "Delete");
+            dialog.add_response("delete", "Move to Trash");
             dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             dialog.set_default_response(Some("cancel"));
             dialog.set_close_response("cancel");
@@ -438,13 +464,10 @@ pub fn build_sidebar(
                     return;
                 }
 
-                let result = if is_dir {
-                    std::fs::remove_dir_all(&path)
-                } else {
-                    std::fs::remove_file(&path)
-                };
-
-                match result {
+                // Move to the system trash rather than deleting permanently.
+                // On failure we surface a warning and leave the file untouched —
+                // never fall back to an irreversible delete.
+                match gio::File::for_path(&path).trash(gio::Cancellable::NONE) {
                     Ok(()) => {
                         let mut nodes = tree_nodes.borrow_mut();
                         // Remove the node and any descendants (for directories)
@@ -465,7 +488,7 @@ pub fn build_sidebar(
                         );
                     }
                     Err(e) => {
-                        log::error!("Failed to delete {}: {}", path, e);
+                        log::warn!("Failed to move {} to trash: {}", path, e);
                     }
                 }
             });
@@ -825,23 +848,62 @@ pub fn build_sidebar(
     }
     file_tree_list.add_controller(drop_target_external);
 
-    // Search page: project-wide find and replace
+    // Search results page: project-wide find. The query input is pinned in a
+    // revealer above the stack (below), so an empty query can keep the file
+    // tree visible beneath the bar (mirrors macOS SidebarView).
     let project_search_state = project_search::build_project_search_panel();
     stack.add_named(&project_search_state.widget, Some("search"));
 
-    // The search toggle switches the stack between the tree and the search
-    // panel, focusing the query entry on the way in.
-    {
+    let search_revealer = gtk4::Revealer::new();
+    search_revealer.set_transition_type(gtk4::RevealerTransitionType::SlideDown);
+    search_revealer.set_child(Some(&project_search_state.search_bar));
+    search_revealer.set_reveal_child(false);
+
+    // Show the results page only when there is a query; an empty query keeps
+    // the file tree visible under the pinned search bar.
+    let update_search_stack: Rc<dyn Fn()> = {
         let stack = stack.clone();
         let search_entry = project_search_state.search_entry.clone();
+        Rc::new(move || {
+            if search_entry.text().is_empty() {
+                stack.set_visible_child_name("files");
+            } else {
+                stack.set_visible_child_name("search");
+            }
+        })
+    };
+
+    // The search toggle reveals/hides the pinned bar and, while active, drives
+    // the stack from the query contents; focuses the entry on the way in.
+    {
+        let search_revealer = search_revealer.clone();
+        let stack = stack.clone();
+        let search_entry = project_search_state.search_entry.clone();
+        let update_search_stack = update_search_stack.clone();
         search_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
-                stack.set_visible_child_name("search");
+                search_revealer.set_reveal_child(true);
+                update_search_stack();
                 search_entry.grab_focus();
             } else {
+                search_revealer.set_reveal_child(false);
                 stack.set_visible_child_name("files");
             }
         });
+    }
+
+    // While search mode is active, switch the stack as the query gains or loses
+    // text (empty -> tree, non-empty -> results).
+    {
+        let search_btn = search_btn.clone();
+        let update_search_stack = update_search_stack.clone();
+        project_search_state
+            .search_entry
+            .connect_search_changed(move |_| {
+                if search_btn.is_active() {
+                    update_search_stack();
+                }
+            });
     }
 
     // Esc in the search entry returns to the file tree.
@@ -859,6 +921,7 @@ pub fn build_sidebar(
     }
 
     sidebar.append(&header_box);
+    sidebar.append(&search_revealer);
     sidebar.append(&stack);
 
     let on_file_activated: EventCallback = Rc::new(RefCell::new(None));

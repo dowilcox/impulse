@@ -15,7 +15,13 @@ type ResultActivatedCallback = Rc<RefCell<Option<Box<dyn Fn(&str, u32)>>>>;
 /// State for the project-wide search panel, used to wire callbacks from window.rs.
 #[allow(dead_code)]
 pub struct ProjectSearchState {
+    /// Results panel (count label + result list). Packed as the stack's
+    /// "search" page; the query input lives in `search_bar` instead so the
+    /// file tree can stay visible beneath the pinned bar on an empty query.
     pub widget: gtk4::Box,
+    /// The query input row (entry + match-case toggle), pinned above the stack
+    /// by the sidebar while search mode is active.
+    pub search_bar: gtk4::Box,
     pub search_entry: gtk4::SearchEntry,
     pub result_list: gtk4::ListBox,
     pub result_count_label: gtk4::Label,
@@ -61,7 +67,6 @@ pub fn build_project_search_panel() -> ProjectSearchState {
     result_list.add_css_class("project-search-results");
     scroll.set_child(Some(&result_list));
 
-    panel.append(&search_row);
     panel.append(&result_count_label);
     panel.append(&scroll);
 
@@ -225,6 +230,7 @@ pub fn build_project_search_panel() -> ProjectSearchState {
 
     ProjectSearchState {
         widget: panel,
+        search_bar: search_row,
         search_entry,
         result_list,
         result_count_label,

@@ -14,6 +14,10 @@ pub struct StatusBar {
     encoding_label: gtk4::Label,
     indent_label: gtk4::Label,
     blame_label: gtk4::Label,
+    /// "Review Changes" pill: changed-file count + aggregate +/- line counts.
+    /// Shown while the working tree has uncommitted changes; the primary
+    /// review entry point while a TUI hides the context bar (mirrors macOS).
+    pub review_button: gtk4::Button,
     pub preview_button: gtk4::Button,
     update_button: gtk4::Button,
 }
@@ -56,6 +60,12 @@ impl StatusBar {
         blame_label.set_visible(false);
         blame_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
 
+        let review_button = gtk4::Button::new();
+        review_button.add_css_class("status-bar-review-btn");
+        review_button.set_tooltip_text(Some("Review Changes (Ctrl+Shift+G)"));
+        review_button.set_visible(false);
+        review_button.set_cursor_from_name(Some("pointer"));
+
         let preview_button = gtk4::Button::with_label("Preview");
         preview_button.add_css_class("status-bar-preview-btn");
         preview_button.set_tooltip_text(Some("Toggle Preview (Ctrl+Shift+M)"));
@@ -71,6 +81,7 @@ impl StatusBar {
         widget.append(&branch_label);
         widget.append(&cwd_label);
         widget.append(&blame_label);
+        widget.append(&review_button);
         widget.append(&update_button);
         widget.append(&encoding_label);
         widget.append(&indent_label);
@@ -88,8 +99,26 @@ impl StatusBar {
             encoding_label,
             indent_label,
             blame_label,
+            review_button,
             preview_button,
             update_button,
+        }
+    }
+
+    /// Update (or hide) the Review Changes pill from a changed-file summary.
+    pub fn update_review(&self, summary: Option<(usize, u32, u32)>) {
+        match summary {
+            Some((files, added, removed)) => {
+                let files = if files == 1 {
+                    "1 file".to_string()
+                } else {
+                    format!("{files} files")
+                };
+                self.review_button
+                    .set_label(&format!("{files} +{added} \u{2212}{removed}"));
+                self.review_button.set_visible(true);
+            }
+            None => self.review_button.set_visible(false),
         }
     }
 

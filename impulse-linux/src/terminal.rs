@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk4::cairo::{Context, FontSlant, FontWeight};
+use gtk4::cairo::{Antialias, Context, FontSlant, FontWeight};
 use gtk4::glib;
 use gtk4::prelude::*;
 use impulse_terminal::{
@@ -135,6 +135,15 @@ struct TerminalState {
     hover_toolbar_targets: RefCell<Vec<ToolbarTarget>>,
     /// The block overlay from the last frame, kept for pointer hit-testing.
     last_overlay: RefCell<Option<impulse_terminal::BlockOverlay>>,
+    /// Last known pointer position in widget coordinates, so a wheel scroll
+    /// can translate into a mouse-report / arrow-key sequence at that cell.
+    pointer_x: Cell<f64>,
+    pointer_y: Cell<f64>,
+    /// Fractional line accumulator for wheel-to-key/mouse translation.
+    scroll_accum: Cell<f64>,
+    /// Hyperlink currently under the pointer (OSC 8 or a detected URL),
+    /// underlined while hovered and opened on Ctrl+click.
+    hover_link: RefCell<Option<HoverLink>>,
     blocks_enabled: Cell<bool>,
     block_style: Cell<BlockStyle>,
     is_command_running: Cell<bool>,
@@ -177,8 +186,12 @@ impl TerminalState {
             hovered_toolbar_button: Cell::new(None),
             hover_toolbar_targets: RefCell::new(Vec::new()),
             last_overlay: RefCell::new(None),
+            pointer_x: Cell::new(-1.0),
+            pointer_y: Cell::new(-1.0),
+            scroll_accum: Cell::new(0.0),
+            hover_link: RefCell::new(None),
             blocks_enabled: Cell::new(true),
-            block_style: Cell::new(block_style_from_theme(&crate::theme::KANAGAWA)),
+            block_style: Cell::new(block_style_from_theme(crate::theme::get_theme("kanagawa"))),
             is_command_running: Cell::new(false),
             last_command_exit: Cell::new(None),
             last_command_duration_ms: Cell::new(None),
@@ -188,6 +201,16 @@ impl TerminalState {
             child_exited_callbacks: RefCell::new(Vec::new()),
         }
     }
+}
+
+/// A hyperlink under the pointer: an OSC 8 link or a URL auto-detected in the
+/// hovered row's text. `end_col` is exclusive.
+#[derive(Clone, PartialEq)]
+struct HoverLink {
+    row: usize,
+    start_col: usize,
+    end_col: usize,
+    uri: String,
 }
 
 /// Buttons in the per-block hover toolbar (Warp-style).
@@ -953,15 +976,11 @@ fn install_input_handlers(terminal: &Terminal) {
     {
         let term = terminal.clone();
         scroll.connect_scroll(move |_, _dx, dy| {
-            if let Some(state) = state(&term) {
-                if let Some(backend) = state.backend.borrow().as_ref() {
-                    let delta = if dy < 0.0 { 3 } else { -3 };
-                    backend.scroll(delta);
-                    refresh_grid(&state);
-                    return gtk4::glib::Propagation::Stop;
-                }
+            if handle_scroll(&term, dy) {
+                gtk4::glib::Propagation::Stop
+            } else {
+                gtk4::glib::Propagation::Proceed
             }
-            gtk4::glib::Propagation::Proceed
         });
     }
     terminal.add_controller(scroll);
@@ -970,14 +989,27 @@ fn install_input_handlers(terminal: &Terminal) {
     let motion = gtk4::EventControllerMotion::new();
     {
         let term = terminal.clone();
-        motion.connect_motion(move |_, x, y| update_block_hover(&term, x, y));
+        motion.connect_motion(move |_, x, y| {
+            if let Some(state) = state(&term) {
+                state.pointer_x.set(x);
+                state.pointer_y.set(y);
+            }
+            update_block_hover(&term, x, y);
+            update_hover_link(&term, x, y);
+        });
     }
     {
         let term = terminal.clone();
         motion.connect_leave(move |_| {
             if let Some(state) = state(&term) {
-                let changed = state.hovered_block_id.take().is_some()
+                state.pointer_x.set(-1.0);
+                state.pointer_y.set(-1.0);
+                let mut changed = state.hovered_block_id.take().is_some()
                     || state.hovered_toolbar_button.take().is_some();
+                if state.hover_link.borrow_mut().take().is_some() {
+                    state.drawing.set_cursor_from_name(None);
+                    changed = true;
+                }
                 if changed {
                     state.drawing.queue_draw();
                 }
@@ -995,6 +1027,19 @@ fn install_input_handlers(terminal: &Terminal) {
             if gesture.current_button() == 3 {
                 show_context_menu(&term, x, y, block_id_at(&term, y));
             } else if gesture.current_button() == 1 {
+                // Ctrl+click on a hyperlink opens it (before selection starts).
+                if gesture
+                    .current_event_state()
+                    .contains(gtk4::gdk::ModifierType::CONTROL_MASK)
+                {
+                    if let Some(uri) = link_uri_at(&term, x, y) {
+                        let _ = gtk4::gio::AppInfo::launch_default_for_uri(
+                            &uri,
+                            gtk4::gio::AppLaunchContext::NONE,
+                        );
+                        return;
+                    }
+                }
                 // Hover-toolbar buttons take precedence over selection.
                 if let Some(target) = toolbar_target_at(&term, x, y) {
                     match target.button {
@@ -1135,6 +1180,240 @@ fn update_block_hover(terminal: &Terminal, x: f64, y: f64) {
     if changed {
         state.drawing.queue_draw();
     }
+}
+
+/// Update the hovered hyperlink from a pointer position; repaint and swap the
+/// cursor to a pointing hand only when the hover state actually changes.
+fn update_hover_link(terminal: &Terminal, x: f64, y: f64) {
+    let Some(state) = state(terminal) else {
+        return;
+    };
+    let link = link_at(&state, x, y);
+    if *state.hover_link.borrow() == link {
+        return;
+    }
+    if link.is_some() {
+        state.drawing.set_cursor_from_name(Some("pointer"));
+    } else {
+        state.drawing.set_cursor_from_name(None);
+    }
+    *state.hover_link.borrow_mut() = link;
+    state.drawing.queue_draw();
+}
+
+/// The URI to open for a Ctrl+click at widget coordinates `(x, y)`.
+fn link_uri_at(terminal: &Terminal, x: f64, y: f64) -> Option<String> {
+    let state = state(terminal)?;
+    link_at(&state, x, y).map(|link| link.uri)
+}
+
+/// Detect a hyperlink under widget coordinates: an OSC 8 link (expanded across
+/// its contiguous run) takes priority, else a URL auto-detected in the row's
+/// text. Mirrors the macOS renderer's link hit-testing.
+fn link_at(state: &Rc<TerminalState>, x: f64, y: f64) -> Option<HoverLink> {
+    if x < TERMINAL_PADDING || y < TERMINAL_PADDING {
+        return None;
+    }
+    let cell_width = state.cell_width.get().max(1) as f64;
+    let cell_height = state.cell_height.get().max(1) as f64;
+    let col = ((x - TERMINAL_PADDING) / cell_width).floor() as usize;
+    let row = ((y - TERMINAL_PADDING) / cell_height).floor() as usize;
+
+    // OSC 8 hyperlink takes priority; expand across its contiguous run.
+    if let Some(uri) = state
+        .backend
+        .borrow()
+        .as_ref()
+        .and_then(|backend| backend.hyperlink_at(col, row))
+    {
+        let backend = state.backend.borrow();
+        let backend = backend.as_ref()?;
+        let mut start = col;
+        while start > 0 && backend.hyperlink_at(start - 1, row).as_deref() == Some(uri.as_str()) {
+            start -= 1;
+        }
+        let mut end = col;
+        while backend.hyperlink_at(end + 1, row).as_deref() == Some(uri.as_str()) {
+            end += 1;
+        }
+        return Some(HoverLink {
+            row,
+            start_col: start,
+            end_col: end + 1,
+            uri,
+        });
+    }
+    // Otherwise, auto-detect a plain URL in the row's text.
+    detect_url_at(state, row, col)
+}
+
+/// Scan a row's text for an `http(s)://` URL containing `col`, trimming common
+/// trailing punctuation. Ports the macOS `detectUrlAt` regex behavior with a
+/// hand-rolled scan (no regex dependency in this crate).
+fn detect_url_at(state: &Rc<TerminalState>, row: usize, col: usize) -> Option<HoverLink> {
+    let cells = row_cells(state, row);
+    if cells.is_empty() {
+        return None;
+    }
+    // Work in character indices (not byte offsets) so the per-index grid column
+    // map stays correct even when the row contains non-ASCII text.
+    let chars: Vec<char> = cells
+        .iter()
+        .map(|(_, ch)| ch.to_ascii_lowercase())
+        .collect();
+    let originals: Vec<char> = cells.iter().map(|(_, ch)| *ch).collect();
+    let columns: Vec<usize> = cells.iter().map(|(c, _)| *c).collect();
+    let n = chars.len();
+    let matches_at = |i: usize, pat: &str| {
+        pat.chars()
+            .enumerate()
+            .all(|(k, pc)| chars.get(i + k) == Some(&pc))
+    };
+
+    let mut i = 0;
+    while i < n {
+        let scheme_len = if matches_at(i, "https://") {
+            8
+        } else if matches_at(i, "http://") {
+            7
+        } else {
+            i += 1;
+            continue;
+        };
+        // The URL runs until whitespace or a delimiter the macOS regex excludes.
+        let mut end = i + scheme_len;
+        while end < n {
+            let ch = originals[end];
+            if ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\'' | '`') {
+                break;
+            }
+            end += 1;
+        }
+        // Trim common trailing punctuation.
+        while end > i + scheme_len
+            && matches!(
+                originals[end - 1],
+                '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']'
+            )
+        {
+            end -= 1;
+        }
+        if end > i {
+            let start_col = columns[i];
+            let end_col = columns[end - 1] + 1;
+            if col >= start_col && col < end_col {
+                let uri: String = originals[i..end].iter().collect();
+                return Some(HoverLink {
+                    row,
+                    start_col,
+                    end_col,
+                    uri,
+                });
+            }
+        }
+        i = end.max(i + scheme_len);
+    }
+    None
+}
+
+/// Reconstruct a viewport row's visible characters from the grid snapshot,
+/// paired with their grid columns (wide-char spacer cells are skipped).
+fn row_cells(state: &Rc<TerminalState>, row: usize) -> Vec<(usize, char)> {
+    let buf = state.grid_buffer.borrow();
+    if buf.len() < FIXED_HEADER_SIZE {
+        return Vec::new();
+    }
+    let cols = read_u16(&buf, 0) as usize;
+    let rows = read_u16(&buf, 2) as usize;
+    if cols == 0 || row >= rows {
+        return Vec::new();
+    }
+    let selection_count = read_u16(&buf, 12) as usize;
+    let search_count = read_u16(&buf, 14) as usize;
+    let cell_offset = FIXED_HEADER_SIZE + (selection_count + search_count) * RANGE_ENTRY_SIZE;
+    if buf.len() < cell_offset + cols * rows * CELL_STRIDE {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(cols);
+    for col in 0..cols {
+        let offset = cell_offset + (row * cols + col) * CELL_STRIDE;
+        let flags = CellFlags::from_bits_truncate(read_u16(&buf, offset + 10));
+        if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+            continue;
+        }
+        let ch = read_char(&buf, offset);
+        out.push((col, if ch == '\0' { ' ' } else { ch }));
+    }
+    out
+}
+
+/// Last known pointer position mapped to a clamped grid cell, for translating
+/// wheel scrolls into mouse-report sequences.
+fn pointer_cell(state: &Rc<TerminalState>) -> (usize, usize) {
+    let cell_width = state.cell_width.get().max(1) as f64;
+    let cell_height = state.cell_height.get().max(1) as f64;
+    let col = (((state.pointer_x.get() - TERMINAL_PADDING) / cell_width).floor()).max(0.0) as usize;
+    let row =
+        (((state.pointer_y.get() - TERMINAL_PADDING) / cell_height).floor()).max(0.0) as usize;
+    let cols = state.cols.get().max(1) as usize;
+    let rows = state.rows.get().max(1) as usize;
+    (col.min(cols - 1), row.min(rows - 1))
+}
+
+/// Translate a vertical wheel scroll, mirroring the macOS `scrollWheel`
+/// handler: mouse-reporting TUIs receive SGR wheel-button events at the pointer
+/// cell; alt-screen TUIs without mouse reporting get arrow keys; otherwise the
+/// scroll moves the scrollback buffer. Returns whether the event was consumed.
+fn handle_scroll(terminal: &Terminal, dy: f64) -> bool {
+    let Some(state) = state(terminal) else {
+        return false;
+    };
+    let bits = state.mode_bits.get();
+    let mouse_report = bits
+        & (TerminalMode::MOUSE_REPORT_CLICK.bits()
+            | TerminalMode::MOUSE_MOTION.bits()
+            | TerminalMode::MOUSE_DRAG.bits())
+        != 0;
+    let alt_screen = bits & TerminalMode::ALT_SCREEN.bits() != 0;
+    let sgr_mouse = bits & TerminalMode::MOUSE_SGR.bits() != 0;
+    let scrolling_up = dy < 0.0;
+
+    // Fold fractional deltas (smooth scrolling / touchpads) into whole ticks.
+    let acc = state.scroll_accum.get() + dy;
+    let ticks = acc.trunc() as i32;
+    state.scroll_accum.set(acc - acc.trunc());
+    if ticks == 0 {
+        return true;
+    }
+    let magnitude = ticks.unsigned_abs().min(10) as usize;
+
+    if mouse_report {
+        // Only SGR-mode reporting can encode wheel buttons; ignore otherwise.
+        if !sgr_mouse {
+            return true;
+        }
+        let (col, row) = pointer_cell(&state);
+        let button = if scrolling_up { 64 } else { 65 };
+        let seq = format!("\x1b[<{button};{};{}M", col + 1, row + 1);
+        write_text(terminal, &seq.repeat(magnitude));
+        return true;
+    }
+
+    if alt_screen {
+        // No mouse reporting: send PageUp/PageDown like macOS — arrow keys
+        // get misread as input by inline TUIs like Claude Code.
+        let seq = if scrolling_up { "\x1b[5~" } else { "\x1b[6~" };
+        write_text(terminal, &seq.repeat(magnitude));
+        return true;
+    }
+
+    if let Some(backend) = state.backend.borrow().as_ref() {
+        let delta = if scrolling_up { 3 } else { -3 } * magnitude as i32;
+        backend.scroll(delta);
+        refresh_grid(&state);
+        return true;
+    }
+    false
 }
 
 /// The command block under viewport y-position `y`, from the last frame.
@@ -1951,6 +2230,21 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
     *state.last_overlay.borrow_mut() = block_overlay.clone();
     state.hover_toolbar_targets.borrow_mut().clear();
 
+    // Warp model: while the input bar owns the prompt (not a TUI) and the shell
+    // is idle at a prompt, the in-grid prompt is redundant — suppress every row
+    // from the prompt row down. Mirrors macOS `suppressPrompt`. Never suppresses
+    // running-command output (prompt_row is None) or the alternate screen (no
+    // overlay). A prompt scrolled above the viewport (negative row) is ignored.
+    let suppress_prompt_from: Option<usize> = if grid_keyboard_interactive(state) {
+        None
+    } else {
+        block_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.prompt_row)
+            .filter(|&p| p >= 0)
+            .map(|p| p as usize)
+    };
+
     if let Some(overlay) = &block_overlay {
         draw_block_washes(
             cr,
@@ -1961,6 +2255,7 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             width as f64,
             cell_height,
             snapshot_rows as i32,
+            suppress_prompt_from.is_some(),
         );
     }
 
@@ -1969,6 +2264,9 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         Some((FontSlant::Normal, FontWeight::Normal));
 
     for row in 0..snapshot_rows {
+        if suppress_prompt_from.is_some_and(|from| row >= from) {
+            continue;
+        }
         for col in 0..snapshot_cols {
             let offset = cell_offset + (row * snapshot_cols + col) * CELL_STRIDE;
             let ch = read_char(&buf, offset);
@@ -1998,6 +2296,20 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             }
 
             if ch != ' ' && !flags.contains(CellFlags::HIDDEN) {
+                // Draw line/box glyphs and block/shade elements geometrically so
+                // TUI fills and sprites tile without the seams the font glyphs
+                // leave (they don't cover the leading-inclusive cell).
+                let cp = ch as u32;
+                let dim = flags.contains(CellFlags::DIM);
+                if (0x2500..=0x257F).contains(&cp)
+                    && draw_box_drawing(cr, cp, x, y, cell_width, cell_height, fg, dim)
+                {
+                    continue;
+                }
+                if (0x2580..=0x259F).contains(&cp) {
+                    draw_block_element(cr, cp, x, y, cell_width, cell_height, fg, dim);
+                    continue;
+                }
                 let slant = if flags.contains(CellFlags::ITALIC) {
                     FontSlant::Italic
                 } else {
@@ -2037,15 +2349,14 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             overlay,
             &state.block_style.get(),
             state.selected_command_block_id.get(),
-            state.hovered_block_id.get(),
             default_bg,
             width as f64,
-            cell_width,
             cell_height,
             font_size,
             ascent,
             snapshot_rows as i32,
             &font_family,
+            suppress_prompt_from.is_some(),
         );
         // Warp-style hover toolbar at the hovered block's top-right.
         if let Some(hovered) = state.hovered_block_id.get() {
@@ -2065,6 +2376,29 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
         // Restore the cell font face after chip text rendering.
         cr.select_font_face(&font_family, FontSlant::Normal, FontWeight::Normal);
         cr.set_font_size(font_size);
+    }
+
+    // Hover underline across a hyperlink under the pointer (OSC 8 or detected
+    // URL), matching the pointing-hand cursor set on hover.
+    if let Some(link) = state.hover_link.borrow().as_ref() {
+        let visible = match suppress_prompt_from {
+            Some(from) => link.row < from,
+            None => true,
+        };
+        if visible
+            && link.row < snapshot_rows
+            && link.start_col < snapshot_cols
+            && link.end_col > link.start_col
+        {
+            let x1 = TERMINAL_PADDING + link.start_col as f64 * cell_width;
+            let x2 = TERMINAL_PADDING + link.end_col.min(snapshot_cols) as f64 * cell_width;
+            let y = TERMINAL_PADDING + link.row as f64 * cell_height + cell_height - 1.0;
+            set_rgb(cr, RgbColor::new(220, 215, 186));
+            cr.set_line_width(1.0);
+            cr.move_to(x1, y);
+            cr.line_to(x2, y);
+            let _ = cr.stroke();
+        }
     }
 
     // Warp model: the input bar owns the cursor at the prompt, so the in-grid
@@ -2112,6 +2446,7 @@ fn draw_block_washes(
     width: f64,
     cell_height: f64,
     rows: i32,
+    suppress_prompt: bool,
 ) {
     let fill_rows = |color: RgbColor, alpha: f64, start: i32, end: i32| {
         let start = start.max(0);
@@ -2129,10 +2464,13 @@ fn draw_block_washes(
         let _ = cr.fill();
     };
 
-    // Live prompt region: a quiet, distinct surface for the input area.
-    if let Some(prompt_row) = overlay.prompt_row {
-        let end = overlay.cursor_row.unwrap_or(rows - 1);
-        fill_rows(style.prompt_fill, 0.035, prompt_row, end);
+    // Live prompt region: a quiet, distinct surface for the input area. Skipped
+    // when the in-grid prompt is suppressed (the input bar is the prompt).
+    if !suppress_prompt {
+        if let Some(prompt_row) = overlay.prompt_row {
+            let end = overlay.cursor_row.unwrap_or(rows - 1);
+            fill_rows(style.prompt_fill, 0.035, prompt_row, end);
+        }
     }
 
     for block in &overlay.blocks {
@@ -2144,7 +2482,9 @@ fn draw_block_washes(
         if is_highlighted {
             fill_rows(style.accent, 0.09, block.start_row, block.end_row);
         } else if is_hovered {
-            fill_rows(style.accent, 0.05, block.start_row, block.end_row);
+            // Neutral hover wash (matches macOS), distinct from the accent
+            // navigation highlight.
+            fill_rows(style.prompt_fill, 0.05, block.start_row, block.end_row);
         }
     }
 }
@@ -2157,15 +2497,14 @@ fn draw_block_decorations(
     overlay: &impulse_terminal::BlockOverlay,
     style: &BlockStyle,
     highlighted_block: Option<u64>,
-    hovered_block: Option<u64>,
     default_bg: RgbColor,
     width: f64,
-    _cell_width: f64,
     cell_height: f64,
     font_size: f64,
     ascent: f64,
     rows: i32,
     font_family: &str,
+    suppress_prompt: bool,
 ) {
     let draw_separator = |row: i32| {
         if row <= 0 || row >= rows {
@@ -2174,8 +2513,8 @@ fn draw_block_decorations(
         let y = (TERMINAL_PADDING + row as f64 * cell_height).round() - 0.5;
         set_rgba(cr, style.separator, 0.6);
         cr.set_line_width(1.0);
-        cr.move_to(TERMINAL_PADDING, y);
-        cr.line_to(width - TERMINAL_PADDING, y);
+        cr.move_to(0.0, y);
+        cr.line_to(width, y);
         let _ = cr.stroke();
     };
 
@@ -2206,36 +2545,113 @@ fn draw_block_decorations(
                 let _ = cr.fill();
             }
         }
+    }
 
-        // Exit/duration chip on the block's first line. Suppressed while the
-        // block is hovered — the hover toolbar occupies that corner.
-        if !block.is_running
-            && Some(block.id) != hovered_block
-            && start_row >= 0
-            && start_row < rows
-        {
-            if let Some(text) = block_chip_text(block.exit_code, block.duration_ms) {
-                draw_block_chip(
-                    cr,
-                    &text,
-                    block.failed,
-                    style,
-                    default_bg,
-                    width,
-                    cell_height,
-                    font_size,
-                    ascent,
-                    start_row,
-                    font_family,
-                );
-            }
+    // Sticky header: when the topmost block started above the viewport, pin its
+    // command along the top edge so the output on screen stays attributable.
+    if let Some(pinned) = overlay
+        .blocks
+        .iter()
+        .find(|block| block.start_row < 0 && block.end_row >= 1)
+    {
+        if let Some(command) = pinned.command.as_deref().filter(|c| !c.is_empty()) {
+            draw_sticky_block_header(
+                cr,
+                pinned,
+                command,
+                style,
+                default_bg,
+                width,
+                cell_height,
+                font_size,
+                ascent,
+                font_family,
+            );
         }
     }
 
-    // Hairline above the live prompt region.
-    if let Some(prompt_row) = overlay.prompt_row {
-        draw_separator(prompt_row);
+    // Hairline above the live prompt region, unless the prompt is suppressed.
+    if !suppress_prompt {
+        if let Some(prompt_row) = overlay.prompt_row {
+            draw_separator(prompt_row);
+        }
     }
+}
+
+/// Warp-style sticky header pinned to the top edge for a block that scrolled
+/// above the viewport: "❯ command" plus its exit/duration status. Mirrors the
+/// macOS `drawStickyBlockHeader`.
+#[allow(clippy::too_many_arguments)]
+fn draw_sticky_block_header(
+    cr: &Context,
+    block: &impulse_terminal::BlockOverlayRegion,
+    command: &str,
+    style: &BlockStyle,
+    default_bg: RgbColor,
+    width: f64,
+    cell_height: f64,
+    font_size: f64,
+    ascent: f64,
+    font_family: &str,
+) {
+    let bar_height = cell_height + 6.0;
+
+    // Background with a bottom hairline.
+    set_rgba(cr, default_bg, 0.96);
+    cr.rectangle(0.0, 0.0, width, bar_height);
+    let _ = cr.fill();
+    set_rgba(cr, style.separator, 0.6);
+    cr.set_line_width(1.0);
+    cr.move_to(0.0, bar_height - 0.5);
+    cr.line_to(width, bar_height - 0.5);
+    let _ = cr.stroke();
+
+    // Left status stripe for failed / running blocks.
+    if block.failed || block.is_running {
+        let color = if block.failed {
+            style.failed
+        } else {
+            style.accent
+        };
+        set_rgba(cr, color, 1.0);
+        cr.rectangle(1.5, 0.0, 2.5, bar_height);
+        let _ = cr.fill();
+    }
+
+    // Right-aligned exit/duration status text.
+    let mut status_width = 0.0;
+    if let Some(status) = block_chip_text(block.exit_code, block.duration_ms) {
+        cr.select_font_face(font_family, FontSlant::Normal, FontWeight::Normal);
+        cr.set_font_size((font_size * 0.85).round());
+        if let Ok(extents) = cr.text_extents(&status) {
+            status_width = extents.x_advance();
+            let color = if block.failed {
+                style.failed
+            } else {
+                style.muted_text
+            };
+            set_rgba(cr, color, 1.0);
+            cr.move_to(width - TERMINAL_PADDING - status_width, 3.0 + ascent);
+            let _ = cr.show_text(&status);
+        }
+    }
+
+    // "❯ command", clipped to the space left of the status text.
+    cr.select_font_face(font_family, FontSlant::Normal, FontWeight::Normal);
+    cr.set_font_size(font_size);
+    set_rgba(cr, style.muted_text, 1.0);
+    let max_x = (width - TERMINAL_PADDING - status_width - 16.0).max(TERMINAL_PADDING);
+    let _ = cr.save();
+    cr.rectangle(
+        TERMINAL_PADDING,
+        0.0,
+        (max_x - TERMINAL_PADDING).max(0.0),
+        bar_height,
+    );
+    cr.clip();
+    cr.move_to(TERMINAL_PADDING, 3.0 + ascent);
+    let _ = cr.show_text(&format!("❯ {command}"));
+    let _ = cr.restore();
 }
 
 /// Append a rounded-rectangle path.
@@ -2411,88 +2827,216 @@ fn format_block_duration(ms: u64) -> String {
     }
 }
 
-/// Right-aligned rounded chip over the block's first line.
+/// Draw a box-drawing glyph (U+2500..U+257F) geometrically with pixel-snapped
+/// rects so contiguous rules tile without the seams the font glyphs leave.
+/// Mirrors the macOS `drawBoxDrawing`. Returns `false` for codepoints it does
+/// not handle (e.g. rounded corners) so the caller falls back to the font.
 #[allow(clippy::too_many_arguments)]
-fn draw_block_chip(
+fn draw_box_drawing(
     cr: &Context,
-    text: &str,
-    failed: bool,
-    style: &BlockStyle,
-    default_bg: RgbColor,
+    codepoint: u32,
+    x: f64,
+    y: f64,
     width: f64,
-    cell_height: f64,
-    font_size: f64,
-    ascent: f64,
-    row: i32,
-    font_family: &str,
+    height: f64,
+    fg: RgbColor,
+    dim: bool,
+) -> bool {
+    let alpha = if dim { 0.5 } else { 1.0 };
+    let snap = |v: f64| v.round();
+    // Snap each edge independently so adjacent cells share an exact boundary.
+    let srect = |x: f64, y: f64, w: f64, h: f64| -> (f64, f64, f64, f64) {
+        let min_x = snap(x);
+        let min_y = snap(y);
+        let max_x = snap(x + w);
+        let max_y = snap(y + h);
+        (
+            min_x,
+            min_y,
+            (max_x - min_x).max(0.0),
+            (max_y - min_y).max(0.0),
+        )
+    };
+    let mid_x = snap(x + width / 2.0);
+    let mid_y = snap(y + height / 2.0);
+    let thin = 1.0;
+    let thick = 2.0;
+
+    let _ = cr.save();
+    cr.set_antialias(Antialias::None);
+    set_rgba(cr, fg, alpha);
+    let fill = |r: (f64, f64, f64, f64)| {
+        cr.rectangle(r.0, r.1, r.2, r.3);
+        let _ = cr.fill();
+    };
+
+    let handled = match codepoint {
+        // Horizontal lines.
+        0x2500 => {
+            fill(srect(x, mid_y - thin / 2.0, width, thin));
+            true
+        }
+        0x2501 => {
+            fill(srect(x, mid_y - thick / 2.0, width, thick));
+            true
+        }
+        // Vertical lines.
+        0x2502 => {
+            fill(srect(mid_x - thin / 2.0, y, thin, height));
+            true
+        }
+        0x2503 => {
+            fill(srect(mid_x - thick / 2.0, y, thick, height));
+            true
+        }
+        // Light corners.
+        0x250C => {
+            fill(srect(mid_x - thin / 2.0, mid_y, thin, height - (mid_y - y)));
+            fill(srect(mid_x, mid_y - thin / 2.0, width - (mid_x - x), thin));
+            true
+        }
+        0x2510 => {
+            fill(srect(mid_x - thin / 2.0, mid_y, thin, height - (mid_y - y)));
+            fill(srect(x, mid_y - thin / 2.0, mid_x - x, thin));
+            true
+        }
+        0x2514 => {
+            fill(srect(mid_x - thin / 2.0, y, thin, mid_y - y));
+            fill(srect(mid_x, mid_y - thin / 2.0, width - (mid_x - x), thin));
+            true
+        }
+        0x2518 => {
+            fill(srect(mid_x - thin / 2.0, y, thin, mid_y - y));
+            fill(srect(x, mid_y - thin / 2.0, mid_x - x, thin));
+            true
+        }
+        // T-junctions.
+        0x251C => {
+            fill(srect(mid_x - thin / 2.0, y, thin, height));
+            fill(srect(mid_x, mid_y - thin / 2.0, width - (mid_x - x), thin));
+            true
+        }
+        0x2524 => {
+            fill(srect(mid_x - thin / 2.0, y, thin, height));
+            fill(srect(x, mid_y - thin / 2.0, mid_x - x, thin));
+            true
+        }
+        0x252C => {
+            fill(srect(x, mid_y - thin / 2.0, width, thin));
+            fill(srect(mid_x - thin / 2.0, mid_y, thin, height - (mid_y - y)));
+            true
+        }
+        0x2534 => {
+            fill(srect(x, mid_y - thin / 2.0, width, thin));
+            fill(srect(mid_x - thin / 2.0, y, thin, mid_y - y));
+            true
+        }
+        // Cross.
+        0x253C => {
+            fill(srect(x, mid_y - thin / 2.0, width, thin));
+            fill(srect(mid_x - thin / 2.0, y, thin, height));
+            true
+        }
+        // Double lines.
+        0x2550 => {
+            let gap = 2.0;
+            fill(srect(x, mid_y - gap - thin / 2.0, width, thin));
+            fill(srect(x, mid_y + gap - thin / 2.0, width, thin));
+            true
+        }
+        0x2551 => {
+            let gap = 2.0;
+            fill(srect(mid_x - gap - thin / 2.0, y, thin, height));
+            fill(srect(mid_x + gap - thin / 2.0, y, thin, height));
+            true
+        }
+        // Rounded corners and other glyphs fall back to the font.
+        _ => false,
+    };
+
+    let _ = cr.restore();
+    handled
+}
+
+/// Draw a block/shade element (U+2580..U+259F) as pixel-snapped fills so
+/// contiguous fills and sprites tile seamlessly. Mirrors the macOS
+/// `drawBlockElement`; solid blocks paint at full opacity, shades blend the
+/// foreground over the already-drawn cell background.
+#[allow(clippy::too_many_arguments)]
+fn draw_block_element(
+    cr: &Context,
+    codepoint: u32,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fg: RgbColor,
+    dim: bool,
 ) {
-    cr.select_font_face(font_family, FontSlant::Normal, FontWeight::Normal);
-    cr.set_font_size((font_size * 0.85).round());
-    let Ok(extents) = cr.text_extents(text) else {
-        return;
+    let dim_alpha = if dim { 0.5 } else { 1.0 };
+    let snap = |v: f64| v.round();
+    let rect = |rx: f64, ry: f64, rw: f64, rh: f64| -> (f64, f64, f64, f64) {
+        let min_x = snap(rx);
+        let min_y = snap(ry);
+        let max_x = snap(rx + rw);
+        let max_y = snap(ry + rh);
+        (
+            min_x,
+            min_y,
+            (max_x - min_x).max(0.0),
+            (max_y - min_y).max(0.0),
+        )
     };
 
-    let chip_padding = 6.0;
-    let chip_height = cell_height - 2.0;
-    let chip_width = extents.x_advance() + chip_padding * 2.0;
-    let x = width - TERMINAL_PADDING - chip_width;
-    let y = TERMINAL_PADDING + row as f64 * cell_height + 1.0;
-    let radius = (chip_height / 2.0).min(6.0);
-
-    // Rounded-rect pill.
-    let path = |cr: &Context| {
-        cr.new_sub_path();
-        cr.arc(
-            x + chip_width - radius,
-            y + radius,
-            radius,
-            -std::f64::consts::FRAC_PI_2,
-            0.0,
-        );
-        cr.arc(
-            x + chip_width - radius,
-            y + chip_height - radius,
-            radius,
-            0.0,
-            std::f64::consts::FRAC_PI_2,
-        );
-        cr.arc(
-            x + radius,
-            y + chip_height - radius,
-            radius,
-            std::f64::consts::FRAC_PI_2,
-            std::f64::consts::PI,
-        );
-        cr.arc(
-            x + radius,
-            y + radius,
-            radius,
-            std::f64::consts::PI,
-            1.5 * std::f64::consts::PI,
-        );
-        cr.close_path();
+    let _ = cr.save();
+    cr.set_antialias(Antialias::None);
+    let fill = |rects: &[(f64, f64, f64, f64)], alpha: f64| {
+        set_rgba(cr, fg, alpha * dim_alpha);
+        for r in rects {
+            cr.rectangle(r.0, r.1, r.2, r.3);
+            let _ = cr.fill();
+        }
     };
 
-    path(cr);
-    set_rgba(cr, default_bg, 0.92);
-    let _ = cr.fill();
-    path(cr);
-    set_rgba(cr, style.separator, 0.6);
-    cr.set_line_width(1.0);
-    let _ = cr.stroke();
+    // Quadrant rects.
+    let ul = rect(x, y, width / 2.0, height / 2.0);
+    let ur = rect(x + width / 2.0, y, width / 2.0, height / 2.0);
+    let ll = rect(x, y + height / 2.0, width / 2.0, height / 2.0);
+    let lr = rect(x + width / 2.0, y + height / 2.0, width / 2.0, height / 2.0);
 
-    let text_color = if failed {
-        style.failed
-    } else {
-        style.muted_text
-    };
-    set_rgba(cr, text_color, 1.0);
-    // Baseline-align with the row's cell text.
-    cr.move_to(
-        x + chip_padding,
-        TERMINAL_PADDING + row as f64 * cell_height + ascent,
-    );
-    let _ = cr.show_text(text);
+    match codepoint {
+        0x2580 => fill(&[rect(x, y, width, height / 2.0)], 1.0), // ▀ upper half
+        0x2581..=0x2587 => {
+            // ▁▂▃▄▅▆▇ lower n eighths (incl. lower half ▄).
+            let h = height * (codepoint - 0x2580) as f64 / 8.0;
+            fill(&[rect(x, y + height - h, width, h)], 1.0);
+        }
+        0x2588 => fill(&[rect(x, y, width, height)], 1.0), // █ full block
+        0x2589..=0x258F => {
+            // ▉▊▋▌▍▎▏ left n eighths (incl. left half ▌).
+            let w = width * (8 - (codepoint - 0x2588)) as f64 / 8.0;
+            fill(&[rect(x, y, w, height)], 1.0);
+        }
+        0x2590 => fill(&[rect(x + width / 2.0, y, width / 2.0, height)], 1.0), // ▐ right half
+        0x2591 => fill(&[rect(x, y, width, height)], 0.25),                    // ░ light shade
+        0x2592 => fill(&[rect(x, y, width, height)], 0.5),                     // ▒ medium shade
+        0x2593 => fill(&[rect(x, y, width, height)], 0.75),                    // ▓ dark shade
+        0x2594 => fill(&[rect(x, y, width, height / 8.0)], 1.0),               // ▔ upper eighth
+        0x2595 => fill(&[rect(x + width * 7.0 / 8.0, y, width / 8.0, height)], 1.0), // ▕ right eighth
+        0x2596 => fill(&[ll], 1.0),                                                  // ▖ lower left
+        0x2597 => fill(&[lr], 1.0),         // ▗ lower right
+        0x2598 => fill(&[ul], 1.0),         // ▘ upper left
+        0x2599 => fill(&[ul, ll, lr], 1.0), // ▙
+        0x259A => fill(&[ul, lr], 1.0),     // ▚
+        0x259B => fill(&[ul, ur, ll], 1.0), // ▛
+        0x259C => fill(&[ul, ur, lr], 1.0), // ▜
+        0x259D => fill(&[ur], 1.0),         // ▝ upper right
+        0x259E => fill(&[ur, ll], 1.0),     // ▞
+        0x259F => fill(&[ur, ll, lr], 1.0), // ▟
+        _ => {}
+    }
+
+    let _ = cr.restore();
 }
 
 fn resize_backend_if_needed(state: &Rc<TerminalState>, cols: u16, rows: u16) {

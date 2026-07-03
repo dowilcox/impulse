@@ -826,7 +826,8 @@ pub(super) fn setup_shortcut_controller(
 
     // Ctrl+H: Monaco handles find-and-replace for editor tabs natively
 
-    // Ctrl+S: Save current editor tab
+    // Ctrl+S: Save current editor tab. Registered as a window action so the
+    // command palette can trigger it too.
     {
         let tab_view = tab_view.clone();
         let toast_overlay = toast_overlay.clone();
@@ -838,68 +839,75 @@ pub(super) fn setup_shortcut_controller(
         let doc_versions_save = ctx.lsp.doc_versions.clone();
         let sidebar_state_save = sidebar_state.clone();
         let icon_cache_save = sidebar_state.icon_cache.clone();
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("save", &kb_overrides),
-            move || {
-                if let Some(page) = tab_view.selected_page() {
-                    let child = page.child();
-                    if editor::is_editor(&child) {
-                        let path = child.widget_name().to_string();
-                        // Untitled files: show save-as dialog instead
-                        if editor::is_untitled_path(&path) {
-                            if let Some(handle) = editor::get_handle(&path) {
-                                show_save_dialog_for_untitled(
-                                    &window_for_save,
-                                    &handle,
-                                    &tab_view,
-                                    &editor_tab_pages_save,
-                                    &open_editor_paths_save,
-                                    &lsp_tx,
-                                    &doc_versions_save,
-                                    &sidebar_state_save,
-                                    &toast_overlay,
-                                    &icon_cache_save,
-                                    &settings,
-                                );
-                            }
-                            return;
+        let save_action = gtk4::gio::SimpleAction::new("save-file", None);
+        save_action.connect_activate(move |_, _| {
+            if let Some(page) = tab_view.selected_page() {
+                let child = page.child();
+                if editor::is_editor(&child) {
+                    let path = child.widget_name().to_string();
+                    // Untitled files: show save-as dialog instead
+                    if editor::is_untitled_path(&path) {
+                        if let Some(handle) = editor::get_handle(&path) {
+                            show_save_dialog_for_untitled(
+                                &window_for_save,
+                                &handle,
+                                &tab_view,
+                                &editor_tab_pages_save,
+                                &open_editor_paths_save,
+                                &lsp_tx,
+                                &doc_versions_save,
+                                &sidebar_state_save,
+                                &toast_overlay,
+                                &icon_cache_save,
+                                &settings,
+                            );
                         }
-                        if let Some(text) = editor::get_editor_text(&child) {
-                            match super::atomic_write(&path, &text) {
-                                Ok(()) => {
-                                    editor::set_unmodified(&child);
-                                    // Revert tab title
-                                    let filename = std::path::Path::new(&path)
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or(&path);
-                                    page.set_title(filename);
-                                    // LSP: send didSave
-                                    if let Err(e) = lsp_tx.try_send(LspRequest::DidSave {
-                                        uri: ensure_file_uri(&path),
-                                    }) {
-                                        log::warn!(
-                                            "LSP request channel full, dropping request: {}",
-                                            e
-                                        );
-                                    }
-                                    let toast = adw::Toast::new(&format!("Saved {}", filename));
-                                    toast.set_timeout(2);
-                                    toast_overlay.add_toast(toast);
-                                    // Run commands-on-save in a background thread
-                                    let commands = settings.borrow().commands_on_save.clone();
-                                    super::spawn_commands_on_save(path.clone(), commands);
+                        return;
+                    }
+                    if let Some(text) = editor::get_editor_text(&child) {
+                        match super::atomic_write(&path, &text) {
+                            Ok(()) => {
+                                editor::set_unmodified(&child);
+                                // Revert tab title
+                                let filename = std::path::Path::new(&path)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(&path);
+                                page.set_title(filename);
+                                // LSP: send didSave
+                                if let Err(e) = lsp_tx.try_send(LspRequest::DidSave {
+                                    uri: ensure_file_uri(&path),
+                                }) {
+                                    log::warn!("LSP request channel full, dropping request: {}", e);
                                 }
-                                Err(e) => {
-                                    let toast = adw::Toast::new(&format!("Error saving: {}", e));
-                                    toast.set_timeout(4);
-                                    toast_overlay.add_toast(toast);
-                                }
+                                let toast = adw::Toast::new(&format!("Saved {}", filename));
+                                toast.set_timeout(2);
+                                toast_overlay.add_toast(toast);
+                                // Run commands-on-save in a background thread
+                                let commands = settings.borrow().commands_on_save.clone();
+                                super::spawn_commands_on_save(path.clone(), commands);
+                            }
+                            Err(e) => {
+                                let toast = adw::Toast::new(&format!("Error saving: {}", e));
+                                toast.set_timeout(4);
+                                toast_overlay.add_toast(toast);
                             }
                         }
                     }
                 }
+            }
+        });
+        window.add_action(&save_action);
+        let window_for_shortcut = window.clone();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("save", &kb_overrides),
+            move || {
+                gtk4::prelude::ActionGroupExt::activate_action(
+                    &window_for_shortcut,
+                    "save-file",
+                    None,
+                );
             },
         );
     }

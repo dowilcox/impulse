@@ -7,6 +7,7 @@
 //! chosen height is persisted in settings (0 = auto-size to content).
 
 use gtk4::prelude::*;
+use gtk4::{gio, glib};
 use libadwaita as adw;
 
 use std::cell::{Cell, RefCell};
@@ -32,7 +33,11 @@ const MIN_TREE_HEIGHT: i32 = 140;
 /// The returned box contains the scrollable list and a draggable divider,
 /// so callers only need to `prepend()` it into the sidebar and toggle its
 /// visibility as one unit.
-pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settings>>) -> gtk4::Box {
+pub fn build_vertical_tabs(
+    tab_view: &adw::TabView,
+    settings: &Rc<RefCell<Settings>>,
+    new_tab: Rc<dyn Fn()>,
+) -> gtk4::Box {
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     container.add_css_class("vertical-tabs");
 
@@ -112,6 +117,7 @@ pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settin
     let rebuild: Rc<dyn Fn()> = {
         let tab_view = tab_view.clone();
         let list = list.clone();
+        let new_tab = new_tab.clone();
         Rc::new(move || {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
@@ -120,7 +126,7 @@ pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settin
             let n = tab_view.n_pages();
             for i in 0..n {
                 let page = tab_view.nth_page(i);
-                let row = build_tab_row(&tab_view, &page);
+                let row = build_tab_row(&tab_view, &page, i, &new_tab);
                 list.append(&row);
                 if selected.as_ref() == Some(&page) {
                     list.select_row(Some(&row));
@@ -147,6 +153,37 @@ pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settin
                 }
             }
         });
+    }
+
+    // Drag-and-drop reorder: each row carries its page index; dropping on a row
+    // reorders the dragged page to that row's position. adw clamps the target
+    // to respect pinned/unpinned boundaries.
+    {
+        let drop_target =
+            gtk4::DropTarget::new(glib::types::Type::STRING, gtk4::gdk::DragAction::MOVE);
+        let tab_view = tab_view.clone();
+        let list_for_drop = list.clone();
+        drop_target.connect_drop(move |_, value, _x, y| {
+            let Ok(source) = value.get::<String>() else {
+                return false;
+            };
+            let Ok(source_idx) = source.parse::<i32>() else {
+                return false;
+            };
+            let n = tab_view.n_pages();
+            if source_idx < 0 || source_idx >= n {
+                return false;
+            }
+            let target_idx = list_for_drop
+                .row_at_y(y as i32)
+                .map(|r| r.index())
+                .unwrap_or(n - 1)
+                .clamp(0, n - 1);
+            let page = tab_view.nth_page(source_idx);
+            tab_view.reorder_page(&page, target_idx);
+            true
+        });
+        list.add_controller(drop_target);
     }
 
     // Keep the list in sync with the tab view.
@@ -187,8 +224,22 @@ pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settin
     container
 }
 
-/// Build one row: title, dimmed subtitle, and a hover-revealed close button.
-fn build_tab_row(tab_view: &adw::TabView, page: &adw::TabPage) -> gtk4::ListBoxRow {
+/// A subtitle segment shown under a tab title: the abbreviated working
+/// directory (folder glyph) or the git branch (branch glyph).
+enum SubtitleSegment {
+    Directory(String),
+    Branch(String),
+}
+
+/// Build one row: title, dimmed subtitle segments, an optional attention dot,
+/// and a pin indicator / hover-revealed close button. Right-click opens a
+/// per-row context menu; the row can be dragged to reorder tabs.
+fn build_tab_row(
+    tab_view: &adw::TabView,
+    page: &adw::TabPage,
+    index: i32,
+    new_tab: &Rc<dyn Fn()>,
+) -> gtk4::ListBoxRow {
     let row_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     row_box.add_css_class("vertical-tab-row");
 
@@ -203,14 +254,44 @@ fn build_tab_row(tab_view: &adw::TabView, page: &adw::TabPage) -> gtk4::ListBoxR
     title_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
     text_box.append(&title_label);
 
-    if let Some(subtitle) = tab_subtitle(page, &title) {
-        let subtitle_label = gtk4::Label::new(Some(&subtitle));
-        subtitle_label.add_css_class("vertical-tab-subtitle");
-        subtitle_label.set_halign(gtk4::Align::Start);
-        subtitle_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
-        text_box.append(&subtitle_label);
+    let segments = tab_subtitle_segments(page, &title);
+    if !segments.is_empty() {
+        let subtitle_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        subtitle_box.set_halign(gtk4::Align::Start);
+        for segment in &segments {
+            match segment {
+                SubtitleSegment::Directory(dir) => {
+                    let seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 3);
+                    let icon = gtk4::Image::from_icon_name("folder-symbolic");
+                    icon.set_pixel_size(12);
+                    icon.add_css_class("vertical-tab-subtitle");
+                    seg.append(&icon);
+                    let label = gtk4::Label::new(Some(dir));
+                    label.add_css_class("vertical-tab-subtitle");
+                    label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+                    seg.append(&label);
+                    subtitle_box.append(&seg);
+                }
+                SubtitleSegment::Branch(branch) => {
+                    // Nerd-font branch glyph, matching the status bar.
+                    let label = gtk4::Label::new(Some(&format!("\u{e0a0} {}", branch)));
+                    label.add_css_class("vertical-tab-subtitle");
+                    label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+                    subtitle_box.append(&label);
+                }
+            }
+        }
+        text_box.append(&subtitle_box);
     }
     row_box.append(&text_box);
+
+    // Attention dot: shown when the page requests attention and isn't selected.
+    if page.needs_attention() && tab_view.selected_page().as_ref() != Some(page) {
+        let dot = gtk4::Label::new(Some("\u{25cf}"));
+        dot.add_css_class("vertical-tab-attention");
+        dot.set_valign(gtk4::Align::Center);
+        row_box.append(&dot);
+    }
 
     let close_btn = gtk4::Button::from_icon_name("window-close-symbolic");
     close_btn.add_css_class("flat");
@@ -224,40 +305,146 @@ fn build_tab_row(tab_view: &adw::TabView, page: &adw::TabPage) -> gtk4::ListBoxR
             tab_view.close_page(&page);
         });
     }
-    row_box.append(&close_btn);
+
+    // Trailing slot: a pinned tab shows a pin icon when the row isn't hovered,
+    // swapping to the close button on hover; unpinned tabs show only the
+    // hover-revealed close button.
+    let is_pinned = tab_view.page_position(page) < tab_view.n_pinned_pages();
+    if is_pinned {
+        let pin = gtk4::Image::from_icon_name("view-pin-symbolic");
+        pin.set_pixel_size(12);
+        pin.add_css_class("vertical-tab-pin");
+        pin.set_valign(gtk4::Align::Center);
+
+        let slot = gtk4::Overlay::new();
+        slot.set_child(Some(&pin));
+        slot.add_overlay(&close_btn);
+        row_box.append(&slot);
+
+        // Hide the pin on hover so the close button (revealed by CSS) takes its
+        // place.
+        let motion = gtk4::EventControllerMotion::new();
+        {
+            let pin = pin.clone();
+            motion.connect_enter(move |_, _, _| pin.set_visible(false));
+        }
+        {
+            let pin = pin.clone();
+            motion.connect_leave(move |_| pin.set_visible(true));
+        }
+        row_box.add_controller(motion);
+    } else {
+        row_box.append(&close_btn);
+    }
+
+    // Per-row right-click context menu: Pin/Unpin, Close, New Tab.
+    {
+        let action_group = gio::SimpleActionGroup::new();
+
+        let pin_action = gio::SimpleAction::new("pin-toggle", None);
+        {
+            let tab_view = tab_view.clone();
+            let page = page.clone();
+            pin_action.connect_activate(move |_, _| {
+                let pinned = tab_view.page_position(&page) < tab_view.n_pinned_pages();
+                tab_view.set_page_pinned(&page, !pinned);
+            });
+        }
+        action_group.add_action(&pin_action);
+
+        let close_action = gio::SimpleAction::new("close", None);
+        {
+            let tab_view = tab_view.clone();
+            let page = page.clone();
+            close_action.connect_activate(move |_, _| {
+                tab_view.close_page(&page);
+            });
+        }
+        action_group.add_action(&close_action);
+
+        let new_tab_action = gio::SimpleAction::new("new-tab", None);
+        {
+            let new_tab = new_tab.clone();
+            new_tab_action.connect_activate(move |_, _| new_tab());
+        }
+        action_group.add_action(&new_tab_action);
+        row_box.insert_action_group("tabrow", Some(&action_group));
+
+        let menu = gio::Menu::new();
+        menu.append(
+            Some(if is_pinned { "Unpin Tab" } else { "Pin Tab" }),
+            Some("tabrow.pin-toggle"),
+        );
+        menu.append(Some("Close Tab"), Some("tabrow.close"));
+        menu.append(Some("New Tab"), Some("tabrow.new-tab"));
+
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(3);
+        {
+            let row_box = row_box.clone();
+            gesture.connect_pressed(move |_, _, x, y| {
+                let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+                popover.set_has_arrow(false);
+                popover.set_parent(&row_box);
+                let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+                popover.set_pointing_to(Some(&rect));
+                popover.connect_closed(|p| p.unparent());
+                popover.popup();
+            });
+        }
+        row_box.add_controller(gesture);
+    }
+
+    // Drag to reorder: the row carries its page index; the list's DropTarget
+    // (set up in build_vertical_tabs) reorders the page on drop.
+    {
+        let drag = gtk4::DragSource::new();
+        drag.set_actions(gtk4::gdk::DragAction::MOVE);
+        let index_str = index.to_string();
+        drag.connect_prepare(move |_, _, _| {
+            Some(gtk4::gdk::ContentProvider::for_value(&index_str.to_value()))
+        });
+        row_box.add_controller(drag);
+    }
 
     let row = gtk4::ListBoxRow::new();
     row.set_child(Some(&row_box));
     row
 }
 
-/// Subtitle for a tab row: the git branch of the tab's directory if it is a
-/// git repository, otherwise the abbreviated directory itself. Skipped when
-/// the title already contains the directory text (matches the macOS
-/// `SidebarTabListView.subtitleContent`).
-fn tab_subtitle(page: &adw::TabPage, title: &str) -> Option<String> {
+/// Subtitle segments for a tab row. Terminal tabs surface both the working
+/// directory and the git branch (each with its own glyph); editor tabs show the
+/// containing directory only. The directory segment is skipped when the title
+/// already contains it (matches the macOS `SidebarTabListView.subtitleSegments`).
+fn tab_subtitle_segments(page: &adw::TabPage, title: &str) -> Vec<SubtitleSegment> {
     let child = page.child();
-    let dir = if let Some(term) = terminal_container::get_active_terminal(&child) {
-        terminal::current_directory(&term)
+    let mut segments = Vec::new();
+
+    if let Some(term) = terminal_container::get_active_terminal(&child) {
+        if let Some(dir) = terminal::current_directory(&term).filter(|d| !d.is_empty()) {
+            let display = crate::context_bar::abbreviate_home_path(&dir);
+            if !title.contains(&display) {
+                segments.push(SubtitleSegment::Directory(display));
+            }
+            if let Ok(Some(branch)) = impulse_core::filesystem::get_git_branch(&dir) {
+                if !branch.is_empty() {
+                    segments.push(SubtitleSegment::Branch(branch));
+                }
+            }
+        }
     } else if crate::editor::is_editor(&child) {
         let path = child.widget_name().to_string();
-        std::path::Path::new(&path)
+        if let Some(dir) = std::path::Path::new(&path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
-    } else {
-        None
-    };
-    let dir = dir.filter(|d| !d.is_empty())?;
-
-    if let Ok(Some(branch)) = impulse_core::filesystem::get_git_branch(&dir) {
-        if !branch.is_empty() {
-            return Some(branch);
+            .filter(|d| !d.is_empty())
+        {
+            let display = crate::context_bar::abbreviate_home_path(&dir);
+            if !title.contains(&display) {
+                segments.push(SubtitleSegment::Directory(display));
+            }
         }
     }
 
-    let display = crate::context_bar::abbreviate_home_path(&dir);
-    if title.contains(&display) {
-        return None;
-    }
-    Some(display)
+    segments
 }

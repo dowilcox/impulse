@@ -72,6 +72,11 @@ pub fn refresh(widget: &gtk4::Widget) {
     }
 }
 
+/// The repository a review tab is showing, for per-repo tab reuse.
+pub fn repo_root(widget: &gtk4::Widget) -> Option<String> {
+    handle_for_widget(widget).map(|handle| handle.repo_root.borrow().clone())
+}
+
 /// Build a review tab for the repository containing `repo_root`.
 pub fn create_review_tab(repo_root: &str, theme: &'static ThemeColors) -> gtk4::Box {
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -433,6 +438,7 @@ impl ReviewTabHandle {
 
         let handle = self.clone();
         let path = path.to_string();
+        let alert_parent = container.clone();
         dialog.connect_response(None, move |_, response| {
             if response != "discard" {
                 return;
@@ -440,13 +446,22 @@ impl ReviewTabHandle {
             let repo = handle.repo_root.borrow().clone();
             let path = path.clone();
             let handle = handle.clone();
+            let alert_parent = alert_parent.clone();
             gtk4::glib::spawn_future_local(async move {
+                let path_for_task = path.clone();
                 let result = gtk4::gio::spawn_blocking(move || {
-                    impulse_core::git::discard_path(&repo, &path)
+                    impulse_core::git::discard_path(&repo, &path_for_task)
                 })
                 .await;
                 if !matches!(result, Ok(Ok(()))) {
                     log::warn!("Discard failed: {:?}", result);
+                    let alert = adw::AlertDialog::new(
+                        Some("Discard Failed"),
+                        Some(&format!("Could not discard changes to {path}.")),
+                    );
+                    alert.add_responses(&[("ok", "OK")]);
+                    alert.set_default_response(Some("ok"));
+                    alert.present(Some(&alert_parent));
                 }
                 // Reload + re-render regardless: even on partial failure the
                 // file list should reflect the current state.

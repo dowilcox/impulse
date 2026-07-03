@@ -497,6 +497,27 @@ pub fn show_settings_window(
     window_group.add(&close_warnings_row);
     general_page.add(&window_group);
 
+    // -- Sidebar group --
+    let sidebar_group = adw::PreferencesGroup::new();
+    sidebar_group.set_title("Sidebar");
+
+    let show_hidden_row = adw::SwitchRow::new();
+    show_hidden_row.set_title("Show Hidden Files");
+    show_hidden_row.set_subtitle("Include dotfiles in the file tree");
+    show_hidden_row.set_active(settings.borrow().sidebar_show_hidden);
+    {
+        let settings = Rc::clone(settings);
+        let on_changed = Rc::clone(&on_changed);
+        show_hidden_row.connect_active_notify(move |row| {
+            let mut s = settings.borrow_mut();
+            s.sidebar_show_hidden = row.is_active();
+            settings::save(&s);
+            on_changed(&s);
+        });
+    }
+    sidebar_group.add(&show_hidden_row);
+    general_page.add(&sidebar_group);
+
     preferences_window.add(&general_page);
 
     // ── Page 2: Editor ───────────────────────────────────────────────────
@@ -1261,9 +1282,9 @@ pub fn show_settings_window(
         let on_changed = Rc::clone(&on_changed);
         theme_row.connect_selected_notify(move |row| {
             let idx = row.selected() as usize;
-            if let Some(&val) = available_themes.get(idx) {
+            if let Some(val) = available_themes.get(idx) {
                 let mut s = settings.borrow_mut();
-                s.color_scheme = val.to_string();
+                s.color_scheme = val.clone();
                 settings::save(&s);
                 on_changed(&s);
             }
