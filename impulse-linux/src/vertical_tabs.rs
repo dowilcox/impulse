@@ -2,51 +2,39 @@
 //! `tab_bar_position` setting is "sidebar". Mirrors the macOS
 //! `SidebarTabListView`: each row shows the tab title plus a dimmed
 //! subtitle (git branch or abbreviated working directory) and a
-//! hover-revealed close button.
+//! hover-revealed close button. The divider under the list is draggable:
+//! pulling it down grows the tab section and shrinks the file tree; the
+//! chosen height is persisted in settings (0 = auto-size to content).
 
 use gtk4::prelude::*;
 use libadwaita as adw;
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::settings::Settings;
 use crate::terminal;
 use crate::terminal_container;
 
-/// Maximum height of the scrollable tab list, in pixels. The list grows
-/// with its content up to this cap so the file tree keeps most of the
-/// sidebar (matches the macOS implementation).
+/// Auto mode: maximum height of the scrollable tab list, in pixels. The list
+/// grows with its content up to this cap so the file tree keeps most of the
+/// sidebar.
 const LIST_MAX_HEIGHT: i32 = 320;
 
-/// Build the vertical tab list widget. `new_tab` is invoked by the header
-/// "+" button and must open a new terminal tab (the window passes in the
-/// same closure used by the header bar's new-tab button).
+/// Smallest the tab section may shrink to (about one row).
+const MIN_TAB_HEIGHT: i32 = 48;
+
+/// Always leave at least this much sidebar height for the file tree.
+const MIN_TREE_HEIGHT: i32 = 140;
+
+/// Build the vertical tab list widget.
 ///
-/// The returned box contains the header row, the scrollable list, and a
-/// trailing separator, so callers only need to `prepend()` it into the
-/// sidebar and toggle its visibility as one unit.
-pub fn build_vertical_tabs(tab_view: &adw::TabView, new_tab: Rc<dyn Fn()>) -> gtk4::Box {
+/// The returned box contains the scrollable list and a draggable divider,
+/// so callers only need to `prepend()` it into the sidebar and toggle its
+/// visibility as one unit.
+pub fn build_vertical_tabs(tab_view: &adw::TabView, settings: &Rc<RefCell<Settings>>) -> gtk4::Box {
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     container.add_css_class("vertical-tabs");
-
-    // Header row: "Tabs" label + flat "+" button
-    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    header.add_css_class("vertical-tabs-header");
-
-    let title_label = gtk4::Label::new(Some("Tabs"));
-    title_label.set_halign(gtk4::Align::Start);
-    title_label.set_hexpand(true);
-    header.append(&title_label);
-
-    let plus_btn = gtk4::Button::from_icon_name("list-add-symbolic");
-    plus_btn.add_css_class("flat");
-    plus_btn.set_tooltip_text(Some("New Tab"));
-    plus_btn.set_cursor_from_name(Some("pointer"));
-    {
-        let new_tab = new_tab.clone();
-        plus_btn.connect_clicked(move |_| new_tab());
-    }
-    header.append(&plus_btn);
-    container.append(&header);
 
     // Tab list inside a height-capped scrolled window
     let list = gtk4::ListBox::new();
@@ -55,12 +43,69 @@ pub fn build_vertical_tabs(tab_view: &adw::TabView, new_tab: Rc<dyn Fn()>) -> gt
 
     let scrolled = gtk4::ScrolledWindow::new();
     scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
-    scrolled.set_propagate_natural_height(true);
-    scrolled.set_max_content_height(LIST_MAX_HEIGHT);
     scrolled.set_child(Some(&list));
     container.append(&scrolled);
 
-    container.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    // Apply a fixed (user-dragged) or auto height to the list.
+    let apply_height = {
+        let scrolled = scrolled.clone();
+        Rc::new(move |height: i32| {
+            if height > 0 {
+                let height = height.max(MIN_TAB_HEIGHT);
+                scrolled.set_propagate_natural_height(false);
+                scrolled.set_min_content_height(height);
+                scrolled.set_max_content_height(height);
+            } else {
+                scrolled.set_min_content_height(-1);
+                scrolled.set_propagate_natural_height(true);
+                scrolled.set_max_content_height(LIST_MAX_HEIGHT);
+            }
+        })
+    };
+    apply_height(settings.borrow().sidebar_tab_section_height);
+
+    // Draggable divider between the tab list and the file tree.
+    let handle = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    handle.add_css_class("vertical-tabs-resize-handle");
+    handle.set_cursor_from_name(Some("ns-resize"));
+    handle.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    container.append(&handle);
+
+    {
+        let drag_anchor = Rc::new(Cell::new(0));
+        let drag = gtk4::GestureDrag::new();
+        {
+            let drag_anchor = drag_anchor.clone();
+            let scrolled = scrolled.clone();
+            drag.connect_drag_begin(move |_, _, _| {
+                drag_anchor.set(scrolled.height());
+            });
+        }
+        {
+            let drag_anchor = drag_anchor.clone();
+            let apply_height = apply_height.clone();
+            let container = container.clone();
+            drag.connect_drag_update(move |_, _dx, dy| {
+                let available = container
+                    .parent()
+                    .map(|parent| parent.height())
+                    .unwrap_or(0);
+                let max = (available - MIN_TREE_HEIGHT).max(MIN_TAB_HEIGHT);
+                let height = (drag_anchor.get() + dy as i32).clamp(MIN_TAB_HEIGHT, max);
+                apply_height(height);
+            });
+        }
+        {
+            let settings = settings.clone();
+            let scrolled = scrolled.clone();
+            drag.connect_drag_end(move |_, _, _| {
+                let height = scrolled.height();
+                settings.borrow_mut().sidebar_tab_section_height = height;
+                crate::settings::save(&settings.borrow());
+            });
+        }
+        handle.add_controller(drag);
+    }
 
     // Rebuild the whole list on any tab change. Tabs are few, so a full
     // rebuild is simpler and more robust than incremental updates.

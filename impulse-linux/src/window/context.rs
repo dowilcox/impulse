@@ -6,7 +6,6 @@ use libadwaita as adw;
 
 use crate::lsp_completion::LspRequest;
 use crate::sidebar;
-use crate::terminal;
 
 /// LSP-related shared state that is passed between window module functions.
 ///
@@ -31,13 +30,12 @@ pub(crate) struct LspState {
 
 /// Terminal session state shared across keybinding closures.
 ///
-/// Groups the simple `Rc<Cell<T>>` / `Rc<T>` state related to terminal
-/// configuration so it can be passed as a single parameter instead of three.
+/// Groups the simple `Rc<Cell<T>>` state related to terminal configuration
+/// so it can be passed as a single parameter.
 #[derive(Clone)]
 pub(crate) struct TerminalContext {
     pub copy_on_select: Rc<Cell<bool>>,
     pub font_size: Rc<Cell<i32>>,
-    pub shell_cache: Rc<terminal::ShellSpawnCache>,
 }
 
 /// Shared window state passed between window module functions.

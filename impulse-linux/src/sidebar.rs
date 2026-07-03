@@ -51,31 +51,14 @@ pub fn build_sidebar(
     stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
     stack.set_vexpand(true);
 
-    // Custom toggle button row instead of StackSwitcher
-    let switcher_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-    switcher_box.add_css_class("sidebar-switcher");
-    switcher_box.set_homogeneous(true);
-
-    let files_btn = gtk4::ToggleButton::builder()
-        .label("Files")
-        .active(true)
-        .build();
-    files_btn.add_css_class("sidebar-tab");
-    files_btn.add_css_class("sidebar-tab-active");
-    files_btn.set_cursor_from_name(Some("pointer"));
-
-    let search_btn = gtk4::ToggleButton::builder()
-        .label("Search")
-        .active(false)
-        .build();
-    search_btn.add_css_class("sidebar-tab");
+    // Search toggle in the toolbar switches between the file tree and the
+    // project-search panel (no Files/Search tab row; mirrors macOS).
+    let search_btn = gtk4::ToggleButton::new();
+    search_btn.set_icon_name("system-search-symbolic");
+    search_btn.set_tooltip_text(Some("Search in Project (Ctrl+Shift+F)"));
     search_btn.set_cursor_from_name(Some("pointer"));
-
-    // Link them as a group
-    search_btn.set_group(Some(&files_btn));
-
-    switcher_box.append(&files_btn);
-    switcher_box.append(&search_btn);
+    search_btn.add_css_class("flat");
+    search_btn.add_css_class("sidebar-toolbar-btn");
 
     // Project name header with toolbar buttons
     let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
@@ -86,6 +69,15 @@ pub fn build_sidebar(
     toolbar_box.set_hexpand(true);
 
     let show_hidden = Rc::new(RefCell::new(settings.borrow().sidebar_show_hidden));
+
+    let new_tab_btn = gtk4::Button::new();
+    new_tab_btn.set_tooltip_text(Some("New Tab (Ctrl+T)"));
+    new_tab_btn.set_cursor_from_name(Some("pointer"));
+    new_tab_btn.add_css_class("flat");
+    new_tab_btn.add_css_class("sidebar-toolbar-btn");
+    if let Some(texture) = icon_cache.borrow().get_toolbar_icon("toolbar-plus") {
+        new_tab_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
+    }
 
     let new_file_btn = gtk4::Button::new();
     new_file_btn.set_tooltip_text(Some("New File"));
@@ -141,8 +133,10 @@ pub fn build_sidebar(
         collapse_btn.set_child(Some(&gtk4::Image::from_paintable(Some(texture))));
     }
 
+    toolbar_box.append(&new_tab_btn);
     toolbar_box.append(&new_file_btn);
     toolbar_box.append(&new_folder_btn);
+    toolbar_box.append(&search_btn);
     toolbar_box.append(&hidden_btn);
     toolbar_box.append(&refresh_btn);
     toolbar_box.append(&collapse_btn);
@@ -835,35 +829,35 @@ pub fn build_sidebar(
     let project_search_state = project_search::build_project_search_panel();
     stack.add_named(&project_search_state.widget, Some("search"));
 
-    // Wire up toggle buttons to switch stack pages
+    // The search toggle switches the stack between the tree and the search
+    // panel, focusing the query entry on the way in.
     {
         let stack = stack.clone();
-        let search_btn_ref = search_btn.clone();
-        let header_box = header_box.clone();
-        files_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
-            if btn.is_active() {
-                stack.set_visible_child_name("files");
-                btn.add_css_class("sidebar-tab-active");
-                search_btn_ref.remove_css_class("sidebar-tab-active");
-                header_box.set_visible(true);
-            }
-        });
-    }
-    {
-        let stack = stack.clone();
-        let files_btn_ref = files_btn.clone();
-        let header_box = header_box.clone();
+        let search_entry = project_search_state.search_entry.clone();
         search_btn.connect_toggled(move |btn: &gtk4::ToggleButton| {
             if btn.is_active() {
                 stack.set_visible_child_name("search");
-                btn.add_css_class("sidebar-tab-active");
-                files_btn_ref.remove_css_class("sidebar-tab-active");
-                header_box.set_visible(false);
+                search_entry.grab_focus();
+            } else {
+                stack.set_visible_child_name("files");
             }
         });
     }
 
-    sidebar.append(&switcher_box);
+    // Esc in the search entry returns to the file tree.
+    {
+        let search_btn = search_btn.clone();
+        let key_ctrl = gtk4::EventControllerKey::new();
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk4::gdk::Key::Escape {
+                search_btn.set_active(false);
+                return gtk4::glib::Propagation::Stop;
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+        project_search_state.search_entry.add_controller(key_ctrl);
+    }
+
     sidebar.append(&header_box);
     sidebar.append(&stack);
 
@@ -873,6 +867,7 @@ pub fn build_sidebar(
         file_tree_list,
         file_tree_scroll: file_tree_scroll.clone(),
         search_btn: search_btn.clone(),
+        new_tab_btn: new_tab_btn.clone(),
         project_search: project_search_state,
         current_path: current_path.clone(),
         on_file_activated: on_file_activated.clone(),
@@ -1142,6 +1137,7 @@ pub struct SidebarState {
     pub file_tree_list: gtk4::ListBox,
     pub file_tree_scroll: gtk4::ScrolledWindow,
     pub search_btn: gtk4::ToggleButton,
+    pub new_tab_btn: gtk4::Button,
     pub project_search: project_search::ProjectSearchState,
     pub current_path: Rc<RefCell<String>>,
     pub on_file_activated: EventCallback,

@@ -162,31 +162,71 @@ fn nudge_to_aa(hex: &str, bgs: &[String], target: f64) -> String {
             lo = base.l;
             hi = 1.0;
             // f(L) increasing in L on dark bg → find smallest L meeting target.
-            if min_contrast(&hsl_to_hex(&Hsl { h: base.h, s, l: hi }), bgs) >= target {
+            if min_contrast(
+                &hsl_to_hex(&Hsl {
+                    h: base.h,
+                    s,
+                    l: hi,
+                }),
+                bgs,
+            ) >= target
+            {
                 for _ in 0..40 {
                     let mid = (lo + hi) / 2.0;
-                    if min_contrast(&hsl_to_hex(&Hsl { h: base.h, s, l: mid }), bgs) >= target {
+                    if min_contrast(
+                        &hsl_to_hex(&Hsl {
+                            h: base.h,
+                            s,
+                            l: mid,
+                        }),
+                        bgs,
+                    ) >= target
+                    {
                         hi = mid;
                     } else {
                         lo = mid;
                     }
                 }
-                return hsl_to_hex(&Hsl { h: base.h, s, l: hi });
+                return hsl_to_hex(&Hsl {
+                    h: base.h,
+                    s,
+                    l: hi,
+                });
             }
         } else {
             lo = 0.0;
             hi = base.l;
             // f(L) decreasing in L on light bg → find largest L meeting target.
-            if min_contrast(&hsl_to_hex(&Hsl { h: base.h, s, l: lo }), bgs) >= target {
+            if min_contrast(
+                &hsl_to_hex(&Hsl {
+                    h: base.h,
+                    s,
+                    l: lo,
+                }),
+                bgs,
+            ) >= target
+            {
                 for _ in 0..40 {
                     let mid = (lo + hi) / 2.0;
-                    if min_contrast(&hsl_to_hex(&Hsl { h: base.h, s, l: mid }), bgs) >= target {
+                    if min_contrast(
+                        &hsl_to_hex(&Hsl {
+                            h: base.h,
+                            s,
+                            l: mid,
+                        }),
+                        bgs,
+                    ) >= target
+                    {
                         lo = mid;
                     } else {
                         hi = mid;
                     }
                 }
-                return hsl_to_hex(&Hsl { h: base.h, s, l: lo });
+                return hsl_to_hex(&Hsl {
+                    h: base.h,
+                    s,
+                    l: lo,
+                });
             }
         }
         s *= 0.8; // desaturate and retry
@@ -429,10 +469,7 @@ fn main() {
             .iter()
             .filter(|c| c.ratio < c.sev.threshold())
             .collect();
-        let worst = checks
-            .iter()
-            .map(|c| c.ratio)
-            .fold(f64::INFINITY, f64::min);
+        let worst = checks.iter().map(|c| c.ratio).fold(f64::INFINITY, f64::min);
 
         println!(
             "\n\x1b[1m{name}\x1b[0m  ({variant}, id={id})  —  {} checks, {} fail, worst {:.2}:1",
@@ -551,7 +588,10 @@ fn print_json(ids: &[&str]) {
         println!("  {{");
         println!("    \"id\": \"{id}\",");
         println!("    \"name\": \"{}\",", theme_display_name(id));
-        println!("    \"variant\": \"{}\",", if t.is_light { "light" } else { "dark" });
+        println!(
+            "    \"variant\": \"{}\",",
+            if t.is_light { "light" } else { "dark" }
+        );
         println!("    \"checks\": [");
         for (ci, c) in checks.iter().enumerate() {
             let comma = if ci + 1 < checks.len() { "," } else { "" };

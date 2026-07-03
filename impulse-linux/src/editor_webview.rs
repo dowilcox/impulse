@@ -1106,7 +1106,7 @@ fn settings_to_editor_options(settings: &Settings) -> EditorOptions {
     }
 }
 
-fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
+pub fn theme_to_monaco(theme: &ThemeColors) -> MonacoThemeDefinition {
     // Strip '#' prefix from colors for Monaco (which expects bare hex)
     let strip = |c: &str| c.trim_start_matches('#').to_string();
 

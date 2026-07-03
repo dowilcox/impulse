@@ -205,6 +205,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
       "font_increase": .impulseFontIncrease,
       "font_decrease": .impulseFontDecrease,
       "font_reset": .impulseFontReset,
+      "review_changes": .impulseReviewChanges,
     ]
 
     if let notificationName = notificationMap[id] {

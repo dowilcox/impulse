@@ -1342,10 +1342,16 @@ mod tests {
             .find(|l| l.kind == DiffLineKind::Removed)
             .unwrap();
         assert_eq!(removed.content, "fn main() {}");
-        let added = lines.iter().find(|l| l.kind == DiffLineKind::Added).unwrap();
+        let added = lines
+            .iter()
+            .find(|l| l.kind == DiffLineKind::Added)
+            .unwrap();
         assert_eq!(added.content, "fn main() { println!(\"hi\"); }");
         // The paired removed/added line should carry word-diff spans.
-        assert!(!added.spans.is_empty(), "expected word-diff spans on the added line");
+        assert!(
+            !added.spans.is_empty(),
+            "expected word-diff spans on the added line"
+        );
     }
 
     #[test]
@@ -1405,7 +1411,10 @@ mod tests {
         assert_eq!(fh.added, 1);
         assert_eq!(fh.removed, 1);
         // Only the changed region + context, not 5000 lines.
-        assert!(all_lines(&fh).len() < 20, "expected a small hunk, got many lines");
+        assert!(
+            all_lines(&fh).len() < 20,
+            "expected a small hunk, got many lines"
+        );
     }
 
     #[test]

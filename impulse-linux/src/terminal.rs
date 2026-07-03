@@ -46,6 +46,10 @@ pub type Terminal = gtk4::Box;
 
 type TerminalCallback = Box<dyn Fn(&Terminal) + 'static>;
 
+/// Redirects a keystroke declined by the read-only grid to the input bar,
+/// forwarding the typed printable character, if any.
+type InputRedirect = Box<dyn Fn(Option<char>)>;
+
 pub struct ShellSpawnCache {
     shell_name: String,
     launch: impulse_core::shell::ShellLaunchConfig,
@@ -114,6 +118,23 @@ struct TerminalState {
     scroll_on_output: Cell<bool>,
     terminal_bell: Cell<bool>,
     selected_command_block_id: Cell<Option<u64>>,
+    /// Warp model: while the context/input bar manages this terminal, the
+    /// grid only takes keyboard input when a full-screen/raw TUI owns it.
+    input_bar_managed: Cell<bool>,
+    /// Called when the read-only grid declines a keystroke; the window wires
+    /// this to focus the input bar (forwarding a printable char, if any).
+    input_redirect: RefCell<Option<InputRedirect>>,
+    /// Last observed grid-interactivity, for surfacing TUI-ownership flips
+    /// (alt screen / raw mode) to the input bar as they happen.
+    last_grid_interactive: Cell<bool>,
+    /// Block currently under the pointer; washed like Warp's hover highlight.
+    hovered_block_id: Cell<Option<u64>>,
+    /// The hover-toolbar button under the pointer (for hover highlight).
+    hovered_toolbar_button: Cell<Option<ToolbarButton>>,
+    /// Hit targets for the hover toolbar buttons, rebuilt every frame.
+    hover_toolbar_targets: RefCell<Vec<ToolbarTarget>>,
+    /// The block overlay from the last frame, kept for pointer hit-testing.
+    last_overlay: RefCell<Option<impulse_terminal::BlockOverlay>>,
     blocks_enabled: Cell<bool>,
     block_style: Cell<BlockStyle>,
     is_command_running: Cell<bool>,
@@ -149,6 +170,13 @@ impl TerminalState {
             scroll_on_output: Cell::new(true),
             terminal_bell: Cell::new(false),
             selected_command_block_id: Cell::new(None),
+            input_bar_managed: Cell::new(false),
+            input_redirect: RefCell::new(None),
+            last_grid_interactive: Cell::new(false),
+            hovered_block_id: Cell::new(None),
+            hovered_toolbar_button: Cell::new(None),
+            hover_toolbar_targets: RefCell::new(Vec::new()),
+            last_overlay: RefCell::new(None),
             blocks_enabled: Cell::new(true),
             block_style: Cell::new(block_style_from_theme(&crate::theme::KANAGAWA)),
             is_command_running: Cell::new(false),
@@ -160,6 +188,25 @@ impl TerminalState {
             child_exited_callbacks: RefCell::new(Vec::new()),
         }
     }
+}
+
+/// Buttons in the per-block hover toolbar (Warp-style).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolbarButton {
+    CopyOutput,
+    Menu,
+}
+
+/// A hover-toolbar button's hit rectangle, rebuilt every frame while a block
+/// is hovered.
+#[derive(Clone, Copy)]
+struct ToolbarTarget {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    button: ToolbarButton,
+    block_id: u64,
 }
 
 /// Chrome colors for Warp-style command-block decorations, derived from the
@@ -252,6 +299,7 @@ pub fn apply_settings(
     state.terminal_bell.set(settings.terminal_bell);
     copy_on_select_flag.set(settings.terminal_copy_on_select);
     state.blocks_enabled.set(settings.terminal_blocks);
+    state.input_bar_managed.set(settings.terminal_context_bar);
     state.block_style.set(block_style_from_theme(theme));
     *state.colors.borrow_mut() = terminal_colors(theme);
 
@@ -401,7 +449,44 @@ pub fn title(terminal: &Terminal) -> String {
 
 /// Whether a command is currently executing (between OSC 133;C and ;D).
 pub fn is_command_running(terminal: &Terminal) -> bool {
-    state(terminal).map_or(false, |state| state.is_command_running.get())
+    state(terminal).is_some_and(|state| state.is_command_running.get())
+}
+
+/// Wire the callback invoked when the read-only grid declines a keystroke.
+/// The callback receives the typed printable character, if any, so the first
+/// keystroke isn't lost while focus moves to the input bar.
+pub fn set_input_redirect(terminal: &Terminal, redirect: impl Fn(Option<char>) + 'static) {
+    if let Some(state) = state(terminal) {
+        *state.input_redirect.borrow_mut() = Some(Box::new(redirect));
+    }
+}
+
+/// Whether a full-screen/raw TUI currently owns the grid: the alternate
+/// screen (vim, htop), or a running command that turned on bracketed-paste
+/// or mouse reporting (Claude Code, fzf). A bare prompt has bracketed paste
+/// on too, so the running gate keeps the input bar active at the prompt.
+/// The input bar hides while this is true.
+pub fn tui_owns_grid(terminal: &Terminal) -> bool {
+    state(terminal).is_some_and(|state| tui_owns_grid_state(&state))
+}
+
+fn tui_owns_grid_state(state: &Rc<TerminalState>) -> bool {
+    let bits = state.mode_bits.get();
+    let alt_screen = bits & TerminalMode::ALT_SCREEN.bits() != 0;
+    let raw_mode = bits
+        & (TerminalMode::BRACKETED_PASTE.bits()
+            | TerminalMode::MOUSE_REPORT_CLICK.bits()
+            | TerminalMode::MOUSE_MOTION.bits()
+            | TerminalMode::MOUSE_DRAG.bits())
+        != 0;
+    alt_screen || (state.is_command_running.get() && raw_mode)
+}
+
+/// Whether the grid itself should take keyboard input: the input bar is not
+/// managing this terminal, or a TUI owns the grid. Mirrors the macOS
+/// renderer's `keyboardInteractive`.
+fn grid_keyboard_interactive(state: &Rc<TerminalState>) -> bool {
+    !state.input_bar_managed.get() || tui_owns_grid_state(state)
 }
 
 /// Exit code and duration of the most recently completed command.
@@ -430,10 +515,7 @@ pub fn show_history(terminal: &Terminal) {
 /// Invoke `f` whenever a command block starts or ends (for the context bar).
 pub fn connect_command_block_changed(terminal: &Terminal, f: impl Fn(&Terminal) + 'static) {
     if let Some(state) = state(terminal) {
-        state
-            .command_block_callbacks
-            .borrow_mut()
-            .push(Box::new(f));
+        state.command_block_callbacks.borrow_mut().push(Box::new(f));
     }
 }
 
@@ -560,6 +642,21 @@ pub fn rerun_last_command(terminal: &Terminal) {
     }
 }
 
+/// Recent command strings for the input bar (newest first), for history
+/// cycling and ghost autosuggestions.
+pub fn recent_commands(terminal: &Terminal, limit: usize) -> Vec<String> {
+    let Some(state) = state(terminal) else {
+        return Vec::new();
+    };
+    let commands = state
+        .backend
+        .borrow()
+        .as_ref()
+        .map(|backend| backend.recent_command_strings(limit))
+        .unwrap_or_default();
+    commands
+}
+
 fn command_history_search(
     terminal: &Terminal,
     text: &str,
@@ -574,12 +671,13 @@ fn command_history_search(
         session_id: None,
         limit: Some(limit),
     };
-    state
+    let results = state
         .backend
         .borrow()
         .as_ref()
         .map(|backend| backend.search_command_history(&query))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    results
 }
 
 fn has_command_history(terminal: &Terminal) -> bool {
@@ -868,6 +966,26 @@ fn install_input_handlers(terminal: &Terminal) {
     }
     terminal.add_controller(scroll);
 
+    // Pointer tracking for the Warp-style block hover highlight and toolbar.
+    let motion = gtk4::EventControllerMotion::new();
+    {
+        let term = terminal.clone();
+        motion.connect_motion(move |_, x, y| update_block_hover(&term, x, y));
+    }
+    {
+        let term = terminal.clone();
+        motion.connect_leave(move |_| {
+            if let Some(state) = state(&term) {
+                let changed = state.hovered_block_id.take().is_some()
+                    || state.hovered_toolbar_button.take().is_some();
+                if changed {
+                    state.drawing.queue_draw();
+                }
+            }
+        });
+    }
+    terminal.add_controller(motion);
+
     let click = gtk4::GestureClick::new();
     click.set_button(0);
     {
@@ -875,8 +993,18 @@ fn install_input_handlers(terminal: &Terminal) {
         click.connect_pressed(move |gesture, n_press, x, y| {
             term.grab_focus();
             if gesture.current_button() == 3 {
-                show_context_menu(&term, x, y);
+                show_context_menu(&term, x, y, block_id_at(&term, y));
             } else if gesture.current_button() == 1 {
+                // Hover-toolbar buttons take precedence over selection.
+                if let Some(target) = toolbar_target_at(&term, x, y) {
+                    match target.button {
+                        ToolbarButton::CopyOutput => {
+                            copy_block(&term, target.block_id, false, true);
+                        }
+                        ToolbarButton::Menu => show_block_menu(&term, target.block_id, x, y),
+                    }
+                    return;
+                }
                 let kind = match n_press {
                     2 => SelectionKind::Semantic,
                     3 => SelectionKind::Lines,
@@ -966,7 +1094,218 @@ fn install_input_handlers(terminal: &Terminal) {
     terminal.add_controller(drop_target_files);
 }
 
-fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
+/// Update the hovered block / toolbar button from a pointer position and
+/// repaint when either changed.
+fn update_block_hover(terminal: &Terminal, x: f64, y: f64) {
+    let Some(state) = state(terminal) else {
+        return;
+    };
+
+    // Toolbar buttons hit-test first (the toolbar floats over the block).
+    let mut hovered_button = None;
+    let mut toolbar_block = None;
+    for target in state.hover_toolbar_targets.borrow().iter() {
+        if x >= target.x
+            && x < target.x + target.width
+            && y >= target.y
+            && y < target.y + target.height
+        {
+            hovered_button = Some(target.button);
+            toolbar_block = Some(target.block_id);
+            break;
+        }
+    }
+
+    let hovered_block = toolbar_block.or_else(|| {
+        let overlay = state.last_overlay.borrow();
+        let overlay = overlay.as_ref()?;
+        let cell_height = state.cell_height.get().max(1) as f64;
+        let row = ((y - TERMINAL_PADDING) / cell_height).floor() as i32;
+        overlay
+            .blocks
+            .iter()
+            .find(|block| row >= block.start_row && row <= block.end_row)
+            .map(|block| block.id)
+    });
+
+    let changed = state.hovered_block_id.get() != hovered_block
+        || state.hovered_toolbar_button.get() != hovered_button;
+    state.hovered_block_id.set(hovered_block);
+    state.hovered_toolbar_button.set(hovered_button);
+    if changed {
+        state.drawing.queue_draw();
+    }
+}
+
+/// The command block under viewport y-position `y`, from the last frame.
+fn block_id_at(terminal: &Terminal, y: f64) -> Option<u64> {
+    let state = state(terminal)?;
+    let overlay = state.last_overlay.borrow();
+    let overlay = overlay.as_ref()?;
+    let cell_height = state.cell_height.get().max(1) as f64;
+    let row = ((y - TERMINAL_PADDING) / cell_height).floor() as i32;
+    overlay
+        .blocks
+        .iter()
+        .find(|block| row >= block.start_row && row <= block.end_row)
+        .map(|block| block.id)
+}
+
+fn toolbar_target_at(terminal: &Terminal, x: f64, y: f64) -> Option<ToolbarTarget> {
+    let state = state(terminal)?;
+    let targets = state.hover_toolbar_targets.borrow();
+    targets
+        .iter()
+        .find(|t| x >= t.x && x < t.x + t.width && y >= t.y && y < t.y + t.height)
+        .copied()
+}
+
+fn block_with_id(terminal: &Terminal, id: u64) -> Option<TerminalCommandBlock> {
+    command_blocks(terminal)
+        .into_iter()
+        .find(|block| block.id.0 == id)
+}
+
+/// Copy a block's command and/or output to the clipboard (Warp-style block
+/// actions; mirrors macOS `copyBlock`).
+pub fn copy_block(terminal: &Terminal, id: u64, include_command: bool, include_output: bool) {
+    let Some(block) = block_with_id(terminal, id) else {
+        return;
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if include_command {
+        if let Some(command) = block.command.as_deref() {
+            let command = command.trim();
+            if !command.is_empty() {
+                parts.push(command.to_string());
+            }
+        }
+    }
+    if include_output {
+        let output = block.output.trim_matches('\n');
+        if !output.is_empty() {
+            parts.push(output.to_string());
+        }
+    }
+    if !parts.is_empty() {
+        terminal.clipboard().set_text(&parts.join("\n\n"));
+    }
+}
+
+/// Re-run a specific block's command in the terminal.
+pub fn rerun_block(terminal: &Terminal, id: u64) {
+    if let Some(command) = block_with_id(terminal, id).and_then(|block| block.command) {
+        if !command.trim().is_empty() {
+            rerun_command_text(terminal, &command);
+        }
+    }
+}
+
+/// Block-focused menu shown by the hover toolbar's "⋯" button: per-block
+/// copy/re-run actions plus block navigation.
+fn show_block_menu(terminal: &Terminal, block_id: u64, x: f64, y: f64) {
+    let popover = gtk4::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_parent(terminal);
+    popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    popover.connect_closed(|popover| popover.unparent());
+
+    let menu_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    menu_box.set_margin_top(6);
+    menu_box.set_margin_bottom(6);
+    menu_box.set_margin_start(6);
+    menu_box.set_margin_end(6);
+
+    append_block_actions(&menu_box, &popover, terminal, block_id);
+    append_context_separator(&menu_box);
+
+    let block_flags = command_block_flags(terminal);
+    let has_block = block_flags.has_command || block_flags.has_output;
+    append_context_button(&menu_box, "Previous Command Block", has_block, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_previous_command_block(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Next Command Block", has_block, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_next_command_block(&term);
+            popover.popdown();
+        }
+    });
+    append_context_button(&menu_box, "Last Failed Command", block_flags.has_failed, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            jump_to_last_failed_command_block(&term);
+            popover.popdown();
+        }
+    });
+
+    popover.set_child(Some(&menu_box));
+    popover.popup();
+}
+
+/// Per-block copy / re-run actions, shared by the right-click menu (when a
+/// block is under the pointer) and the hover toolbar's block menu.
+fn append_block_actions(
+    menu_box: &gtk4::Box,
+    popover: &gtk4::Popover,
+    terminal: &Terminal,
+    block_id: u64,
+) {
+    let block = block_with_id(terminal, block_id);
+    let has_command = block
+        .as_ref()
+        .and_then(|b| b.command.as_deref())
+        .is_some_and(|c| !c.trim().is_empty());
+    let has_output = block.as_ref().is_some_and(|b| !b.output.is_empty());
+    let is_running = block.as_ref().is_some_and(|b| b.ended_at_ms.is_none());
+
+    append_context_button(menu_box, "Copy Command", has_command, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            copy_block(&term, block_id, true, false);
+            popover.popdown();
+        }
+    });
+    append_context_button(menu_box, "Copy Output", has_output, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            copy_block(&term, block_id, false, true);
+            popover.popdown();
+        }
+    });
+    append_context_button(
+        menu_box,
+        "Copy Command & Output",
+        has_command || has_output,
+        {
+            let term = terminal.clone();
+            let popover = popover.clone();
+            move || {
+                copy_block(&term, block_id, true, true);
+                popover.popdown();
+            }
+        },
+    );
+    append_context_button(menu_box, "Re-run Command", has_command && !is_running, {
+        let term = terminal.clone();
+        let popover = popover.clone();
+        move || {
+            rerun_block(&term, block_id);
+            popover.popdown();
+        }
+    });
+}
+
+fn show_context_menu(terminal: &Terminal, x: f64, y: f64, block_under_pointer: Option<u64>) {
     let popover = gtk4::Popover::new();
     popover.set_has_arrow(false);
     popover.set_parent(terminal);
@@ -1008,30 +1347,35 @@ fn show_context_menu(terminal: &Terminal, x: f64, y: f64) {
 
     append_context_separator(&menu_box);
 
-    append_context_button(&menu_box, "Copy Last Command", has_command, {
-        let term = terminal.clone();
-        let popover = popover.clone();
-        move || {
-            copy_last_command(&term);
-            popover.popdown();
-        }
-    });
-    append_context_button(&menu_box, "Copy Last Command Output", has_output, {
-        let term = terminal.clone();
-        let popover = popover.clone();
-        move || {
-            copy_last_command_output(&term);
-            popover.popdown();
-        }
-    });
-    append_context_button(&menu_box, "Rerun Last Command", has_command, {
-        let term = terminal.clone();
-        let popover = popover.clone();
-        move || {
-            rerun_last_command(&term);
-            popover.popdown();
-        }
-    });
+    if let Some(block_id) = block_under_pointer {
+        // Scope the copy/re-run actions to the block under the pointer.
+        append_block_actions(&menu_box, &popover, terminal, block_id);
+    } else {
+        append_context_button(&menu_box, "Copy Last Command", has_command, {
+            let term = terminal.clone();
+            let popover = popover.clone();
+            move || {
+                copy_last_command(&term);
+                popover.popdown();
+            }
+        });
+        append_context_button(&menu_box, "Copy Last Command Output", has_output, {
+            let term = terminal.clone();
+            let popover = popover.clone();
+            move || {
+                copy_last_command_output(&term);
+                popover.popdown();
+            }
+        });
+        append_context_button(&menu_box, "Rerun Last Command", has_command, {
+            let term = terminal.clone();
+            let popover = popover.clone();
+            move || {
+                rerun_last_command(&term);
+                popover.popdown();
+            }
+        });
+    }
     append_context_button(&menu_box, "Command History...", has_history, {
         let term = terminal.clone();
         let popover = popover.clone();
@@ -1486,6 +1830,17 @@ fn poll_events(terminal: &Terminal) -> bool {
     if needs_draw {
         refresh_grid(&state);
     }
+
+    // Surface TUI-ownership flips (alt screen / raw mode) to the input bar
+    // through the command-block callbacks, so it can hide/reappear promptly.
+    let interactive = grid_keyboard_interactive(&state);
+    if interactive != state.last_grid_interactive.get() {
+        state.last_grid_interactive.set(interactive);
+        for callback in state.command_block_callbacks.borrow().iter() {
+            callback(terminal);
+        }
+    }
+
     had_events
 }
 
@@ -1591,6 +1946,10 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
     } else {
         None
     };
+    // Keep the overlay for pointer hit-testing (hover highlight, toolbar,
+    // right-click block menu), and rebuild the toolbar targets this frame.
+    *state.last_overlay.borrow_mut() = block_overlay.clone();
+    state.hover_toolbar_targets.borrow_mut().clear();
 
     if let Some(overlay) = &block_overlay {
         draw_block_washes(
@@ -1598,6 +1957,7 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             overlay,
             &state.block_style.get(),
             state.selected_command_block_id.get(),
+            state.hovered_block_id.get(),
             width as f64,
             cell_height,
             snapshot_rows as i32,
@@ -1677,6 +2037,7 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             overlay,
             &state.block_style.get(),
             state.selected_command_block_id.get(),
+            state.hovered_block_id.get(),
             default_bg,
             width as f64,
             cell_width,
@@ -1686,12 +2047,33 @@ fn draw_terminal(cr: &Context, width: i32, height: i32, state: &Rc<TerminalState
             snapshot_rows as i32,
             &font_family,
         );
+        // Warp-style hover toolbar at the hovered block's top-right.
+        if let Some(hovered) = state.hovered_block_id.get() {
+            if let Some(block) = overlay.blocks.iter().find(|b| b.id == hovered) {
+                draw_block_toolbar(
+                    cr,
+                    state,
+                    block,
+                    &state.block_style.get(),
+                    default_bg,
+                    width as f64,
+                    cell_height,
+                    snapshot_rows as i32,
+                );
+            }
+        }
         // Restore the cell font face after chip text rendering.
         cr.select_font_face(&font_family, FontSlant::Normal, FontWeight::Normal);
         cr.set_font_size(font_size);
     }
 
-    if cursor_visible && cursor_row < snapshot_rows && cursor_col < snapshot_cols {
+    // Warp model: the input bar owns the cursor at the prompt, so the in-grid
+    // cursor renders only while the grid itself takes keyboard input (TUIs).
+    if cursor_visible
+        && grid_keyboard_interactive(state)
+        && cursor_row < snapshot_rows
+        && cursor_col < snapshot_cols
+    {
         let x = TERMINAL_PADDING + cursor_col as f64 * cell_width;
         let y = TERMINAL_PADDING + cursor_row as f64 * cell_height;
         set_rgb(cr, RgbColor::new(220, 215, 186));
@@ -1720,11 +2102,13 @@ fn set_rgba(cr: &Context, color: RgbColor, alpha: f64) {
 
 /// Translucent row washes under the text: failure tint, navigation
 /// highlight, and the live input-prompt region.
+#[allow(clippy::too_many_arguments)]
 fn draw_block_washes(
     cr: &Context,
     overlay: &impulse_terminal::BlockOverlay,
     style: &BlockStyle,
     highlighted_block: Option<u64>,
+    hovered_block: Option<u64>,
     width: f64,
     cell_height: f64,
     rows: i32,
@@ -1753,15 +2137,15 @@ fn draw_block_washes(
 
     for block in &overlay.blocks {
         let is_highlighted = Some(block.id) == highlighted_block;
-        if !block.failed && !is_highlighted {
-            continue;
+        let is_hovered = Some(block.id) == hovered_block;
+        if block.failed {
+            fill_rows(style.failed, 0.07, block.start_row, block.end_row);
         }
-        let (color, alpha) = if is_highlighted {
-            (style.accent, 0.09)
-        } else {
-            (style.failed, 0.07)
-        };
-        fill_rows(color, alpha, block.start_row, block.end_row);
+        if is_highlighted {
+            fill_rows(style.accent, 0.09, block.start_row, block.end_row);
+        } else if is_hovered {
+            fill_rows(style.accent, 0.05, block.start_row, block.end_row);
+        }
     }
 }
 
@@ -1773,6 +2157,7 @@ fn draw_block_decorations(
     overlay: &impulse_terminal::BlockOverlay,
     style: &BlockStyle,
     highlighted_block: Option<u64>,
+    hovered_block: Option<u64>,
     default_bg: RgbColor,
     width: f64,
     _cell_width: f64,
@@ -1804,7 +2189,11 @@ fn draw_block_decorations(
         // drawn in the padding gutter so it never covers glyphs.
         let is_highlighted = Some(block.id) == highlighted_block;
         if block.failed || block.is_running || is_highlighted {
-            let color = if block.failed { style.failed } else { style.accent };
+            let color = if block.failed {
+                style.failed
+            } else {
+                style.accent
+            };
             let visible_start = start_row.max(0);
             if end_row >= visible_start {
                 set_rgba(cr, color, 1.0);
@@ -1818,8 +2207,13 @@ fn draw_block_decorations(
             }
         }
 
-        // Exit/duration chip on the block's first line.
-        if !block.is_running && start_row >= 0 && start_row < rows {
+        // Exit/duration chip on the block's first line. Suppressed while the
+        // block is hovered — the hover toolbar occupies that corner.
+        if !block.is_running
+            && Some(block.id) != hovered_block
+            && start_row >= 0
+            && start_row < rows
+        {
             if let Some(text) = block_chip_text(block.exit_code, block.duration_ms) {
                 draw_block_chip(
                     cr,
@@ -1841,6 +2235,153 @@ fn draw_block_decorations(
     // Hairline above the live prompt region.
     if let Some(prompt_row) = overlay.prompt_row {
         draw_separator(prompt_row);
+    }
+}
+
+/// Append a rounded-rectangle path.
+fn rounded_rect_path(cr: &Context, x: f64, y: f64, w: f64, h: f64, radius: f64) {
+    let r = radius.min(w / 2.0).min(h / 2.0);
+    cr.new_sub_path();
+    cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+    cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+    cr.arc(
+        x + r,
+        y + h - r,
+        r,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+    );
+    cr.arc(
+        x + r,
+        y + r,
+        r,
+        std::f64::consts::PI,
+        1.5 * std::f64::consts::PI,
+    );
+    cr.close_path();
+}
+
+/// Floating action toolbar at a hovered block's top-right: a quick
+/// copy-output button and a "⋯" options menu (Warp-style, mirrors macOS
+/// `drawBlockToolbar`). Rebuilds the pointer hit targets as it draws.
+#[allow(clippy::too_many_arguments)]
+fn draw_block_toolbar(
+    cr: &Context,
+    state: &Rc<TerminalState>,
+    block: &impulse_terminal::BlockOverlayRegion,
+    style: &BlockStyle,
+    default_bg: RgbColor,
+    width: f64,
+    cell_height: f64,
+    rows: i32,
+) {
+    // Pin to the block's first visible row (top edge when scrolled past).
+    let row = block.start_row.max(0);
+    if row >= rows {
+        return;
+    }
+
+    let button_w = 26.0;
+    let inset = 4.0;
+    let buttons = [ToolbarButton::CopyOutput, ToolbarButton::Menu];
+    let toolbar_h = cell_height;
+    let toolbar_w = inset * 2.0 + button_w * buttons.len() as f64;
+    let x = width - TERMINAL_PADDING - toolbar_w;
+    // Nudge the toolbar down from the block's top edge so it floats clear of
+    // the separator and reads as part of the command row.
+    let y = TERMINAL_PADDING + row as f64 * cell_height + cell_height * 0.55;
+    let radius = (toolbar_h / 2.0).min(7.0);
+
+    // Pill background + border.
+    rounded_rect_path(cr, x, y, toolbar_w, toolbar_h, radius);
+    set_rgba(cr, default_bg, 0.96);
+    let _ = cr.fill();
+    rounded_rect_path(cr, x, y, toolbar_w, toolbar_h, radius);
+    set_rgba(cr, style.separator, 0.6);
+    cr.set_line_width(1.0);
+    let _ = cr.stroke();
+
+    let hovered_button = state.hovered_toolbar_button.get();
+    let mut targets = state.hover_toolbar_targets.borrow_mut();
+    for (index, button) in buttons.iter().enumerate() {
+        let bx = x + inset + index as f64 * button_w;
+
+        if hovered_button == Some(*button) {
+            set_rgba(cr, style.muted_text, 0.15);
+            rounded_rect_path(cr, bx + 1.0, y + 2.0, button_w - 2.0, toolbar_h - 4.0, 4.0);
+            let _ = cr.fill();
+        }
+
+        let icon_alpha = if hovered_button == Some(*button) {
+            1.0
+        } else {
+            0.8
+        };
+        // Icon box centered in the button.
+        let icon = 12.0;
+        let ix = bx + (button_w - icon) / 2.0;
+        let iy = y + (toolbar_h - icon) / 2.0;
+        match button {
+            ToolbarButton::CopyOutput => {
+                draw_copy_glyph(cr, ix, iy, icon, style.muted_text, icon_alpha, default_bg);
+            }
+            ToolbarButton::Menu => {
+                draw_kebab_glyph(cr, ix, iy, icon, style.muted_text, icon_alpha);
+            }
+        }
+
+        targets.push(ToolbarTarget {
+            x: bx,
+            y,
+            width: button_w,
+            height: toolbar_h,
+            button: *button,
+            block_id: block.id,
+        });
+    }
+}
+
+/// Two overlapping rounded rectangles — the universal "copy" glyph.
+fn draw_copy_glyph(
+    cr: &Context,
+    x: f64,
+    y: f64,
+    size: f64,
+    color: RgbColor,
+    alpha: f64,
+    background: RgbColor,
+) {
+    let w = size * 0.66;
+    let h = size * 0.78;
+    cr.set_line_width(1.3);
+    // Back sheet.
+    set_rgba(cr, color, alpha);
+    rounded_rect_path(cr, x, y, w, h, 2.0);
+    let _ = cr.stroke();
+    // Front sheet, filled with the background so it visually overlaps.
+    set_rgba(cr, background, 1.0);
+    rounded_rect_path(cr, x + size - w, y + size - h, w, h, 2.0);
+    let _ = cr.fill();
+    set_rgba(cr, color, alpha);
+    rounded_rect_path(cr, x + size - w, y + size - h, w, h, 2.0);
+    let _ = cr.stroke();
+}
+
+/// Three vertical dots — the "more options" kebab glyph.
+fn draw_kebab_glyph(cr: &Context, x: f64, y: f64, size: f64, color: RgbColor, alpha: f64) {
+    let dot = 1.1;
+    let cx = x + size / 2.0;
+    let spacing = (size - dot * 2.0) / 2.0;
+    set_rgba(cr, color, alpha);
+    for i in 0..3 {
+        cr.arc(
+            cx,
+            y + dot + i as f64 * spacing,
+            dot,
+            0.0,
+            2.0 * std::f64::consts::PI,
+        );
+        let _ = cr.fill();
     }
 }
 
@@ -1940,7 +2481,11 @@ fn draw_block_chip(
     cr.set_line_width(1.0);
     let _ = cr.stroke();
 
-    let text_color = if failed { style.failed } else { style.muted_text };
+    let text_color = if failed {
+        style.failed
+    } else {
+        style.muted_text
+    };
     set_rgba(cr, text_color, 1.0);
     // Baseline-align with the row's cell text.
     cr.move_to(
@@ -1994,6 +2539,24 @@ fn handle_key_press(
     if ctrl && (key == gtk4::gdk::Key::V || key == gtk4::gdk::Key::v) {
         paste_from_clipboard(terminal);
         return gtk4::glib::Propagation::Stop;
+    }
+
+    // Warp model: at the prompt the grid is read-only — typing belongs to
+    // the pinned input bar. Redirect the keystroke there, forwarding a
+    // printable character so the first keypress isn't lost.
+    if let Some(state) = state(terminal) {
+        if !grid_keyboard_interactive(&state) {
+            let redirect = state.input_redirect.borrow();
+            if let Some(redirect) = redirect.as_ref() {
+                let ch = if !ctrl && !alt {
+                    key.to_unicode().filter(|c| !c.is_control())
+                } else {
+                    None
+                };
+                redirect(ch);
+                return gtk4::glib::Propagation::Stop;
+            }
+        }
     }
 
     if let Some(seq) = special_key_sequence(terminal, key, modifiers) {

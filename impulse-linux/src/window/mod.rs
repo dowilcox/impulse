@@ -806,9 +806,14 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
 
     main_box.append(&paned);
 
-    // Status bar
+    // Status bar. Hidden on terminal tabs while the context bar shows the
+    // shell/cwd/branch pills; the tab-switch handler keeps it in sync.
     let status_bar = status_bar::new_shared();
     main_box.append(&status_bar.borrow().widget);
+    status_bar
+        .borrow()
+        .widget
+        .set_visible(!settings.borrow().terminal_context_bar);
 
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&main_box));
@@ -884,16 +889,60 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         &sidebar_state.icon_cache,
     );
 
+    // Open (or focus) the "Review Changes" tab for the active repository.
+    let open_review_tab: Rc<dyn Fn()> = Rc::new({
+        let tab_view = tab_view.clone();
+        let settings = settings.clone();
+        let sidebar_state = sidebar_state.clone();
+        let toast_overlay = toast_overlay.clone();
+        move || {
+            // Reuse an already-open review tab.
+            for i in 0..tab_view.n_pages() {
+                let page = tab_view.nth_page(i);
+                if crate::review_tab::is_review_tab(&page.child()) {
+                    tab_view.set_selected_page(&page);
+                    crate::review_tab::refresh(&page.child());
+                    return;
+                }
+            }
+
+            // Repo root from the active terminal's cwd, falling back to the
+            // sidebar's current directory.
+            let cwd = tab_view
+                .selected_page()
+                .and_then(|page| terminal_container::get_active_terminal(&page.child()))
+                .and_then(|term| terminal::current_directory(&term))
+                .filter(|path| !path.is_empty())
+                .unwrap_or_else(|| sidebar_state.current_path.borrow().clone());
+            let Some(repo_root) = impulse_core::git::get_git_root(&cwd) else {
+                let toast = adw::Toast::new("Not in a git repository");
+                toast.set_timeout(3);
+                toast_overlay.add_toast(toast);
+                return;
+            };
+
+            let theme = crate::theme::get_theme(&settings.borrow().color_scheme);
+            let child = crate::review_tab::create_review_tab(&repo_root, theme);
+            let page = tab_management::insert_after_selected(&tab_view, &child);
+            page.set_title("Review Changes");
+            tab_view.set_selected_page(&page);
+        }
+    });
+    context_bar.set_on_open_review(open_review_tab.clone());
+
     // Vertical tab list at the top of the sidebar (Warp-style). Shown when
     // tab_bar_position is "sidebar"; the header tab bar is hidden then.
-    let vertical_tabs = {
-        let new_tab: Rc<dyn Fn()> = Rc::new({
-            let create_tab = create_tab.clone();
-            move || create_tab()
-        });
-        crate::vertical_tabs::build_vertical_tabs(&tab_view, new_tab)
-    };
+    let vertical_tabs = crate::vertical_tabs::build_vertical_tabs(&tab_view, &settings);
     sidebar_widget.prepend(&vertical_tabs);
+
+    // Sidebar-toolbar "+" opens a new terminal tab (mirrors macOS, which
+    // dropped the old "Tabs" header row in favor of a toolbar button).
+    {
+        let create_tab = create_tab.clone();
+        sidebar_state.new_tab_btn.connect_clicked(move |_| {
+            create_tab();
+        });
+    }
     {
         let sidebar_tabs = settings.borrow().tab_bar_position == "sidebar";
         vertical_tabs.set_visible(sidebar_tabs);
@@ -1039,7 +1088,6 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
     let term_ctx = context::TerminalContext {
         copy_on_select: copy_on_select_flag.clone(),
         font_size: font_size.clone(),
-        shell_cache: shell_cache.clone(),
     };
 
     keybinding_setup::setup_capture_phase_keys(
@@ -1087,6 +1135,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         let vertical_tabs = vertical_tabs.clone();
         let tab_bar = tab_bar.clone();
         let context_bar = context_bar.clone();
+        let status_bar = status_bar.clone();
         Rc::new(move || {
             let tab_view = tab_view.clone();
             let css_provider = css_provider.clone();
@@ -1096,6 +1145,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
             let vertical_tabs = vertical_tabs.clone();
             let tab_bar = tab_bar.clone();
             let context_bar = context_bar.clone();
+            let status_bar = status_bar.clone();
             crate::settings_page::show_settings_window(&window_ref, &settings, move |s| {
                 // Keep the font_size Cell in sync so the close handler
                 // doesn't overwrite the user's settings-page changes.
@@ -1126,6 +1176,18 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                 tab_bar.set_visible(!sidebar_tabs);
                 context_bar.set_enabled(s.terminal_context_bar);
 
+                // Status bar: redundant on terminal tabs while the context
+                // bar is enabled; always shown for editor tabs.
+                if let Some(page) = tab_view.selected_page() {
+                    let child = page.child();
+                    let show = if crate::terminal_container::get_active_terminal(&child).is_some() {
+                        !s.terminal_context_bar
+                    } else {
+                        crate::editor::is_editor(&child) || crate::editor::is_image_preview(&child)
+                    };
+                    status_bar.borrow().widget.set_visible(show);
+                }
+
                 // Apply to all open tabs
                 for i in 0..tab_view.n_pages() {
                     let page = tab_view.nth_page(i);
@@ -1137,6 +1199,11 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
                         crate::editor::apply_theme(child.upcast_ref::<gtk4::Widget>(), new_theme);
                         // Re-render preview if currently previewing
                         crate::editor::refresh_preview(
+                            child.upcast_ref::<gtk4::Widget>(),
+                            new_theme,
+                        );
+                    } else if crate::review_tab::is_review_tab(&child) {
+                        crate::review_tab::apply_theme(
                             child.upcast_ref::<gtk4::Widget>(),
                             new_theme,
                         );
@@ -1265,32 +1332,11 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
             ),
             make_palette_builtin_command(
                 &builtin_items_by_id,
-                "split_horizontal",
-                shortcut_for("split_horizontal"),
+                "review_changes",
+                shortcut_for("review_changes"),
                 Rc::new({
-                    let split = make_split_terminal(
-                        &tab_view,
-                        &setup_terminal_signals,
-                        &settings,
-                        &copy_on_select_flag,
-                        &shell_cache,
-                    );
-                    move || split(gtk4::Orientation::Horizontal)
-                }),
-            ),
-            make_palette_builtin_command(
-                &builtin_items_by_id,
-                "split_vertical",
-                shortcut_for("split_vertical"),
-                Rc::new({
-                    let split = make_split_terminal(
-                        &tab_view,
-                        &setup_terminal_signals,
-                        &settings,
-                        &copy_on_select_flag,
-                        &shell_cache,
-                    );
-                    move || split(gtk4::Orientation::Vertical)
+                    let open_review_tab = open_review_tab.clone();
+                    move || open_review_tab()
                 }),
             ),
             make_palette_builtin_command(
@@ -1428,6 +1474,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         &command_recents,
         &create_tab,
         &reopen_tab,
+        &open_review_tab,
     );
 
     // --- Terminal search bar wiring ---
@@ -1541,7 +1588,7 @@ pub fn build_window(app: &adw::Application, initial_files: Option<Vec<String>>) 
         sidebar_state.set_active_tab(&page.child());
     }
 
-    tab_management::setup_tab_switch_handler(&tab_view, &status_bar, &sidebar_state);
+    tab_management::setup_tab_switch_handler(&tab_view, &status_bar, &sidebar_state, &settings);
 
     tab_management::setup_tab_close_handler(&ctx, &create_tab, &closed_tabs);
 
@@ -1801,7 +1848,7 @@ fn restore_session_window(
                     terminal_tab,
                     setup_terminal_signals.as_ref(),
                     &s,
-                    &theme,
+                    theme,
                     copy_on_select_flag.clone(),
                     shell_cache,
                 );
@@ -1870,38 +1917,16 @@ fn session_state_for_tab_view(
                 None
             }
         } else {
-            terminal_container::session_snapshot(&child).map(|snapshot| {
-                let active_pane = snapshot
-                    .active_pane_index
-                    .and_then(|index| snapshot.panes.get(index))
-                    .or_else(|| snapshot.panes.first());
-                let cwd = active_pane
-                    .map(|pane| pane.cwd.clone())
-                    .unwrap_or_else(default_terminal_directory);
-                let title = active_pane.and_then(|pane| pane.title.clone());
-                let shell = active_pane.and_then(|pane| pane.shell.clone());
-                let has_split_layout = snapshot.panes.len() > 1;
+            terminal_container::session_snapshot(&child).map(|pane| {
                 impulse_core::session_state::SessionTab::Terminal(
                     impulse_core::session_state::SessionTerminalTab {
-                        cwd,
-                        title,
-                        shell,
+                        cwd: pane.cwd,
+                        title: pane.title,
+                        shell: pane.shell,
                         pinned: false,
-                        panes: if has_split_layout {
-                            snapshot.panes
-                        } else {
-                            Vec::new()
-                        },
-                        active_pane_index: if has_split_layout {
-                            snapshot.active_pane_index
-                        } else {
-                            None
-                        },
-                        pane_layout: if has_split_layout {
-                            Some(snapshot.pane_layout)
-                        } else {
-                            None
-                        },
+                        panes: Vec::new(),
+                        active_pane_index: None,
+                        pane_layout: None,
                     },
                 )
             })
@@ -1935,10 +1960,6 @@ fn session_state_for_tab_view(
 
 fn restorable_path(path: &str) -> bool {
     !path.is_empty() && path != "GtkBox" && !editor::is_untitled_path(path)
-}
-
-fn default_terminal_directory() -> String {
-    impulse_core::shell::get_home_directory().unwrap_or_else(|_| "/".to_string())
 }
 
 fn non_empty_string(value: String) -> Option<String> {
@@ -1999,37 +2020,6 @@ fn palette_builtin_item(
         Some(shortcut.to_string())
     };
     item
-}
-
-pub(super) fn make_split_terminal(
-    tab_view: &adw::TabView,
-    setup_terminal_signals: &Rc<dyn Fn(&terminal::Terminal)>,
-    settings: &Rc<RefCell<crate::settings::Settings>>,
-    copy_on_select_flag: &Rc<Cell<bool>>,
-    shell_cache: &Rc<terminal::ShellSpawnCache>,
-) -> impl Fn(gtk4::Orientation) + Clone {
-    let tab_view = tab_view.clone();
-    let setup_terminal_signals = setup_terminal_signals.clone();
-    let settings = settings.clone();
-    let copy_on_select_flag = copy_on_select_flag.clone();
-    let shell_cache = shell_cache.clone();
-    move |orientation| {
-        if let Some(page) = tab_view.selected_page() {
-            let child = page.child();
-            let setup = setup_terminal_signals.clone();
-            let s = settings.borrow();
-            let theme = crate::theme::get_theme(&s.color_scheme);
-            terminal_container::split_terminal(
-                &child,
-                orientation,
-                &|term| setup(term),
-                &s,
-                theme,
-                copy_on_select_flag.clone(),
-                &shell_cache,
-            );
-        }
-    }
 }
 
 fn apply_font_size_to_all_terminals(tab_view: &adw::TabView, size: i32, font_family: &str) {

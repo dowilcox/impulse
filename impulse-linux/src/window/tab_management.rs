@@ -62,6 +62,15 @@ pub(super) fn make_setup_terminal_signals(
     let page_cache: Rc<RefCell<HashMap<usize, adw::TabPage>>> =
         Rc::new(RefCell::new(HashMap::new()));
     Rc::new(move |term: &terminal::Terminal| {
+        // Warp model: the grid declines keystrokes at the prompt — focus the
+        // input bar instead, forwarding the typed character.
+        {
+            let context_bar = context_bar.clone();
+            terminal::set_input_redirect(term, move |ch| {
+                context_bar.focus_input_with_char(ch);
+            });
+        }
+
         // Connect CWD change signal (OSC 7)
         {
             let status_bar = status_bar.clone();
@@ -129,41 +138,18 @@ pub(super) fn make_setup_terminal_signals(
             });
         }
 
-        // Connect child-exited to close the tab or remove the split pane
+        // Connect child-exited to close the tab
         {
             let tab_view = tab_view.clone();
             let term_clone = term.clone();
-            let status_bar = status_bar.clone();
-            let sidebar_state = sidebar_state.clone();
-            let project_search_root = project_search_root.clone();
             let page_cache = page_cache.clone();
             terminal::connect_child_exited(term, move |_terminal| {
                 run_guarded_ui("terminal-child-exited", || {
                     if let Some(page) = find_terminal_page(&term_clone, &tab_view, &page_cache) {
-                        let container = page.child();
-                        let terminals = crate::terminal_container::collect_terminals(&container);
-                        if terminals.len() <= 1 {
-                            // Remove all terminals in this page from the cache
-                            for t in &terminals {
-                                page_cache.borrow_mut().remove(&(t.as_ptr() as usize));
-                            }
-                            tab_view.close_page(&page);
-                        } else {
-                            page_cache
-                                .borrow_mut()
-                                .remove(&(term_clone.as_ptr() as usize));
-                            crate::terminal_container::remove_terminal(&container, &term_clone);
-                            // Update sidebar/status bar to the surviving terminal's CWD
-                            if let Some(active) =
-                                crate::terminal_container::get_active_terminal(&container)
-                            {
-                                if let Some(path) = terminal::current_directory(&active) {
-                                    status_bar.borrow().update_cwd(&path);
-                                    sidebar_state.load_directory(&path);
-                                    *project_search_root.borrow_mut() = path.to_string();
-                                }
-                            }
-                        }
+                        page_cache
+                            .borrow_mut()
+                            .remove(&(term_clone.as_ptr() as usize));
+                        tab_view.close_page(&page);
                     }
                 });
             });
@@ -693,9 +679,11 @@ pub(super) fn setup_tab_switch_handler(
     tab_view: &adw::TabView,
     status_bar: &Rc<RefCell<crate::status_bar::StatusBar>>,
     sidebar_state: &Rc<sidebar::SidebarState>,
+    settings: &Rc<RefCell<crate::settings::Settings>>,
 ) {
     let status_bar = status_bar.clone();
     let sidebar_state = sidebar_state.clone();
+    let settings = settings.clone();
     tab_view.connect_selected_page_notify(move |tv| {
         run_guarded_ui("tab-selected-page-notify", || {
             if let Some(page) = tv.selected_page() {
@@ -703,6 +691,17 @@ pub(super) fn setup_tab_switch_handler(
 
                 // Always save outgoing tab's tree state before switching
                 sidebar_state.save_active_tab_state();
+
+                // The bottom status bar is redundant on terminal tabs while
+                // the context bar shows shell/cwd/branch; it stays for editor
+                // tabs (cursor position, language, encoding, preview).
+                let is_terminal = terminal_container::get_active_terminal(&child).is_some();
+                let show_status_bar = if is_terminal {
+                    !settings.borrow().terminal_context_bar
+                } else {
+                    editor::is_editor(&child) || editor::is_image_preview(&child)
+                };
+                status_bar.borrow().widget.set_visible(show_status_bar);
 
                 if let Some(term) = terminal_container::get_active_terminal(&child) {
                     term.grab_focus();

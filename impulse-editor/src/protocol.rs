@@ -164,22 +164,18 @@ pub enum EditorEvent {
 /// Commands sent from the host to the stacked-diff "Review Changes" WebView.
 ///
 /// Mirrors the [`EditorCommand`] style: `#[serde(tag = "type")]` with a
-/// PascalCase variant name as the `type` tag and snake_case fields. These types
-/// document the wire format for the future Linux frontend; the macOS frontend
-/// mirrors them in Swift.
+/// PascalCase variant name as the `type` tag and snake_case fields. The Linux
+/// frontend serializes these directly; the macOS frontend mirrors them in
+/// Swift.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ReviewCommand {
     /// Rebuild the review list with one collapsible section per changed file.
     Render { files: Vec<ReviewFileEntry> },
-    /// Provide the diff contents for a single file's section.
-    SetDiff {
+    /// Provide the unified-diff hunks for a single file's section.
+    SetHunks {
         path: String,
-        original: String,
-        modified: String,
-        language: String,
-        is_binary: bool,
-        too_large: bool,
+        hunks: impulse_core::git::FileHunks,
     },
     /// Apply the Monaco theme to all live diff editors + section chrome.
     SetTheme { theme: Box<MonacoThemeDefinition> },
@@ -1705,33 +1701,30 @@ mod tests {
     }
 
     #[test]
-    fn review_command_roundtrip_set_diff() {
-        let cmd = ReviewCommand::SetDiff {
+    fn review_command_roundtrip_set_hunks() {
+        let cmd = ReviewCommand::SetHunks {
             path: "a.txt".to_string(),
-            original: "old".to_string(),
-            modified: "new".to_string(),
-            language: "plaintext".to_string(),
-            is_binary: false,
-            too_large: false,
+            hunks: impulse_core::git::FileHunks {
+                language: "plaintext".to_string(),
+                is_binary: false,
+                too_large: false,
+                truncated: false,
+                added: 1,
+                removed: 2,
+                hunks: Vec::new(),
+            },
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"type\":\"SetDiff\""));
+        assert!(json.contains("\"type\":\"SetHunks\""));
         let parsed: ReviewCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            ReviewCommand::SetDiff {
-                path,
-                original,
-                modified,
-                language,
-                is_binary,
-                too_large,
-            } => {
+            ReviewCommand::SetHunks { path, hunks } => {
                 assert_eq!(path, "a.txt");
-                assert_eq!(original, "old");
-                assert_eq!(modified, "new");
-                assert_eq!(language, "plaintext");
-                assert!(!is_binary);
-                assert!(!too_large);
+                assert_eq!(hunks.language, "plaintext");
+                assert_eq!(hunks.added, 1);
+                assert_eq!(hunks.removed, 2);
+                assert!(!hunks.is_binary);
+                assert!(!hunks.too_large);
             }
             _ => panic!("Wrong variant"),
         }

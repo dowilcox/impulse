@@ -90,28 +90,10 @@ const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["clipboard"],
     },
     BuiltinCommand {
-        id: "split_horizontal",
-        title: "Split Horizontally",
-        category: "Terminal",
-        keywords: &["pane", "terminal"],
-    },
-    BuiltinCommand {
-        id: "split_vertical",
-        title: "Split Vertically",
-        category: "Terminal",
-        keywords: &["pane", "terminal"],
-    },
-    BuiltinCommand {
-        id: "focus_prev_split",
-        title: "Focus Previous Split",
-        category: "Terminal",
-        keywords: &["pane", "terminal", "navigate"],
-    },
-    BuiltinCommand {
-        id: "focus_next_split",
-        title: "Focus Next Split",
-        category: "Terminal",
-        keywords: &["pane", "terminal", "navigate"],
+        id: "review_changes",
+        title: "Review Changes",
+        category: "Navigation",
+        keywords: &["git", "diff", "commit", "review"],
     },
     BuiltinCommand {
         id: "new_file",

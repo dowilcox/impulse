@@ -6,6 +6,7 @@ mod keybindings;
 mod lsp_completion;
 mod lsp_hover;
 mod project_search;
+mod review_tab;
 mod session_state;
 mod settings;
 mod settings_page;
@@ -187,6 +188,10 @@ fn main() {
         }
         StartupMode::RunGui => {}
     }
+
+    // Warm the input-completion caches (PATH executable scan) off the hot
+    // path so the first completion keystroke doesn't pay for it.
+    std::thread::spawn(impulse_core::completion::warm_cache);
 
     let devel = is_devel_mode();
     let app_id = if devel { APP_ID_DEVEL } else { APP_ID };

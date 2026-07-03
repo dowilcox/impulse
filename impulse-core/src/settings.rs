@@ -125,6 +125,11 @@ pub struct Settings {
 
     // ── Sidebar ────────────────────────────────────────────────────────
     pub sidebar_show_hidden: bool,
+    /// Height in px of the sidebar's vertical tab section. 0 = auto (size to
+    /// the tab count, capped so the file tree keeps most of the sidebar).
+    /// Set by dragging the divider under the tab list.
+    #[serde(default)]
+    pub sidebar_tab_section_height: i32,
 
     // ── Appearance ───────────────────────────────────────────────────────
     pub color_scheme: String,
@@ -212,6 +217,7 @@ impl Default for Settings {
 
             // Sidebar
             sidebar_show_hidden: false,
+            sidebar_tab_section_height: 0,
 
             // Appearance
             color_scheme: String::from("nord"),

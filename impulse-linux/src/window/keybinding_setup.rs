@@ -96,25 +96,7 @@ pub(super) fn setup_capture_phase_keys(
         }
     }
 
-    // Parse split-terminal accels for capture-phase matching (the terminal consumes
-    // these before the Global ShortcutController can see them).
     let capture_kb_overrides = settings.borrow().keybinding_overrides.clone();
-    let split_h_accel = keybindings::parse_accel(&keybindings::get_accel(
-        "split_horizontal",
-        &capture_kb_overrides,
-    ));
-    let split_v_accel = keybindings::parse_accel(&keybindings::get_accel(
-        "split_vertical",
-        &capture_kb_overrides,
-    ));
-    let focus_prev_accel = keybindings::parse_accel(&keybindings::get_accel(
-        "focus_prev_split",
-        &capture_kb_overrides,
-    ));
-    let focus_next_accel = keybindings::parse_accel(&keybindings::get_accel(
-        "focus_next_split",
-        &capture_kb_overrides,
-    ));
 
     let new_file_accel =
         keybindings::parse_accel(&keybindings::get_accel("new_file", &capture_kb_overrides));
@@ -127,14 +109,6 @@ pub(super) fn setup_capture_phase_keys(
     let md_preview_settings = settings.clone();
     let md_preview_tab_view = tab_view.clone();
     let md_preview_status_bar = ctx.status_bar.clone();
-
-    let capture_split = super::make_split_terminal(
-        &tab_view,
-        setup_terminal_signals,
-        settings,
-        &term_ctx.copy_on_select,
-        &term_ctx.shell_cache,
-    );
 
     let capture_key_ctrl = gtk4::EventControllerKey::new();
     capture_key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -172,37 +146,6 @@ pub(super) fn setup_capture_phase_keys(
                                 .borrow()
                                 .show_preview_button(is_previewing);
                         }
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                }
-            }
-        }
-
-        // Split terminal keybindings (the terminal consumes Ctrl+Shift+E/O)
-        if let Some(page) = tab_view.selected_page() {
-            let child = page.child();
-            if terminal_container::get_active_terminal(&child).is_some() {
-                if let Some(ref accel) = split_h_accel {
-                    if keybindings::matches_key(accel, key, modifiers) {
-                        capture_split(gtk4::Orientation::Vertical);
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                }
-                if let Some(ref accel) = split_v_accel {
-                    if keybindings::matches_key(accel, key, modifiers) {
-                        capture_split(gtk4::Orientation::Horizontal);
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                }
-                if let Some(ref accel) = focus_prev_accel {
-                    if keybindings::matches_key(accel, key, modifiers) {
-                        terminal_container::focus_prev_terminal(&child);
-                        return gtk4::glib::Propagation::Stop;
-                    }
-                }
-                if let Some(ref accel) = focus_next_accel {
-                    if keybindings::matches_key(accel, key, modifiers) {
-                        terminal_container::focus_next_terminal(&child);
                         return gtk4::glib::Propagation::Stop;
                     }
                 }
@@ -300,6 +243,7 @@ pub(super) fn setup_shortcut_controller(
     command_recents: &Rc<RefCell<RecentCommandStore>>,
     create_tab: &(impl Fn() + Clone + 'static),
     reopen_tab: &Rc<dyn Fn()>,
+    open_review_tab: &Rc<dyn Fn()>,
 ) {
     let window = &ctx.window;
     let tab_view = &ctx.tab_view;
@@ -689,6 +633,16 @@ pub(super) fn setup_shortcut_controller(
         );
     }
 
+    // Ctrl+Shift+G: Review Changes
+    {
+        let open_review_tab = open_review_tab.clone();
+        add_shortcut(
+            &shortcut_controller,
+            &keybindings::get_accel("review_changes", &kb_overrides),
+            move || open_review_tab(),
+        );
+    }
+
     // Ctrl+,: Open Settings
     {
         let open_settings = open_settings.clone();
@@ -945,66 +899,6 @@ pub(super) fn setup_shortcut_controller(
                             }
                         }
                     }
-                }
-            },
-        );
-    }
-
-    // Ctrl+Shift+E: Split terminal horizontally (top/bottom)
-    {
-        let split = super::make_split_terminal(
-            tab_view,
-            setup_terminal_signals,
-            settings,
-            &term_ctx.copy_on_select,
-            &term_ctx.shell_cache,
-        );
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("split_horizontal", &kb_overrides),
-            move || split(gtk4::Orientation::Vertical),
-        );
-    }
-
-    // Ctrl+Shift+O: Split terminal vertically (side by side)
-    {
-        let split = super::make_split_terminal(
-            tab_view,
-            setup_terminal_signals,
-            settings,
-            &term_ctx.copy_on_select,
-            &term_ctx.shell_cache,
-        );
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("split_vertical", &kb_overrides),
-            move || split(gtk4::Orientation::Horizontal),
-        );
-    }
-
-    // Alt+Left: Focus previous split pane
-    {
-        let tab_view = tab_view.clone();
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("focus_prev_split", &kb_overrides),
-            move || {
-                if let Some(page) = tab_view.selected_page() {
-                    terminal_container::focus_prev_terminal(&page.child());
-                }
-            },
-        );
-    }
-
-    // Alt+Right: Focus next split pane
-    {
-        let tab_view = tab_view.clone();
-        add_shortcut(
-            &shortcut_controller,
-            &keybindings::get_accel("focus_next_split", &kb_overrides),
-            move || {
-                if let Some(page) = tab_view.selected_page() {
-                    terminal_container::focus_next_terminal(&page.child());
                 }
             },
         );

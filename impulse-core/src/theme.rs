@@ -934,13 +934,21 @@ mod tests {
                 }
             };
             // Core text on every surface.
-            for (bn, bg) in [("bg", &t.bg), ("bg_dark", &t.bg_dark), ("bg_surface", &t.bg_surface)] {
+            for (bn, bg) in [
+                ("bg", &t.bg),
+                ("bg_dark", &t.bg_dark),
+                ("bg_surface", &t.bg_surface),
+            ] {
                 check(&format!("fg/{bn}"), &t.fg, bg);
                 check(&format!("fg_muted/{bn}"), &t.fg_muted, bg);
             }
             check("fg_comment/bg", &t.fg_comment, &t.bg);
             check("fg_comment/bg_dark", &t.fg_comment, &t.bg_dark);
-            for (bn, bg) in [("bg", &t.bg), ("bg_dark", &t.bg_dark), ("bg_surface", &t.bg_surface)] {
+            for (bn, bg) in [
+                ("bg", &t.bg),
+                ("bg_dark", &t.bg_dark),
+                ("bg_surface", &t.bg_surface),
+            ] {
                 check(&format!("accent/{bn}"), &t.accent, bg);
             }
             // Git tones render as sidebar file names / badges on bg_dark.

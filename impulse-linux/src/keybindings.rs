@@ -53,30 +53,6 @@ pub const BUILTIN_KEYBINDINGS: &[BuiltinKeybinding] = &[
         category: "Terminal",
         default_accel: "<Ctrl><Shift>c",
     },
-    BuiltinKeybinding {
-        id: "split_horizontal",
-        description: "Split Horizontally",
-        category: "Terminal",
-        default_accel: "<Ctrl><Shift>e",
-    },
-    BuiltinKeybinding {
-        id: "split_vertical",
-        description: "Split Vertically",
-        category: "Terminal",
-        default_accel: "<Ctrl><Shift>o",
-    },
-    BuiltinKeybinding {
-        id: "focus_prev_split",
-        description: "Focus Previous Split",
-        category: "Terminal",
-        default_accel: "<Alt>Left",
-    },
-    BuiltinKeybinding {
-        id: "focus_next_split",
-        description: "Focus Next Split",
-        category: "Terminal",
-        default_accel: "<Alt>Right",
-    },
     // Editor
     BuiltinKeybinding {
         id: "new_file",
@@ -126,6 +102,12 @@ pub const BUILTIN_KEYBINDINGS: &[BuiltinKeybinding] = &[
         description: "Command Palette",
         category: "Navigation",
         default_accel: "<Ctrl><Shift>p",
+    },
+    BuiltinKeybinding {
+        id: "review_changes",
+        description: "Review Changes",
+        category: "Navigation",
+        default_accel: "<Ctrl><Shift>g",
     },
     BuiltinKeybinding {
         id: "open_settings",

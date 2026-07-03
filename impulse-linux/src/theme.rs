@@ -613,33 +613,6 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             border-radius: 0;
             box-shadow: none;
         }}
-        .sidebar-switcher {{
-            margin: 0;
-            padding: 6px 8px;
-            background-color: {bg_dark};
-            border: none;
-            border-radius: 0;
-        }}
-        .sidebar-tab {{
-            border-radius: 6px;
-            padding: 4px 14px;
-            font-size: 12px;
-            font-weight: 600;
-            color: {fg_dark};
-            background: transparent;
-            border: none;
-            box-shadow: none;
-            min-height: 26px;
-        }}
-        .sidebar-tab:hover {{
-            color: {fg};
-            background-color: alpha({fg}, 0.06);
-        }}
-        .sidebar-tab-active {{
-            color: {fg};
-            background-color: alpha({fg}, 0.10);
-            box-shadow: inset 0 0 0 1px alpha({fg}, 0.06);
-        }}
         .sidebar-project-header {{
             padding: 4px 8px;
             border-bottom: none;
@@ -1077,28 +1050,17 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-family: 'JetBrains Mono', monospace;
         }}
         /* --- Vertical tab list (sidebar) --- */
-        .vertical-tabs-header {{
-            padding: 8px 12px 4px 12px;
-        }}
-        .vertical-tabs-header label {{
-            font-size: 11px;
-            font-weight: 600;
-            color: {fg_dark};
-        }}
-        .vertical-tabs-header button {{
-            min-width: 20px;
-            min-height: 20px;
-            padding: 1px;
-            border-radius: 6px;
-            color: {fg_dark};
-        }}
-        .vertical-tabs-header button:hover {{
-            color: {fg};
-            background-color: alpha({fg}, 0.08);
-        }}
         .vertical-tabs-list {{
             background-color: transparent;
-            padding: 0 8px 6px 8px;
+            padding: 6px 8px 6px 8px;
+        }}
+        .vertical-tabs-resize-handle {{
+            min-height: 7px;
+            padding: 3px 0;
+        }}
+        .vertical-tabs-resize-handle:hover separator {{
+            background-color: alpha({fg}, 0.35);
+            min-height: 2px;
         }}
         .vertical-tabs-list row {{
             border-radius: 6px;
@@ -1134,7 +1096,16 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
         .context-bar {{
             background-color: {bg};
             border-top: 1px solid alpha({fg}, 0.10);
-            padding: 6px 10px;
+            padding: 8px 12px;
+        }}
+        .context-prompt-arrow {{
+            color: {blue};
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        .context-bar button.context-stop {{
+            color: {red};
         }}
         .context-chip {{
             font-size: 11px;
@@ -1143,6 +1114,34 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             background-color: {bg_highlight};
             border-radius: 999px;
             padding: 2px 10px;
+        }}
+        .context-bar menubutton.context-chip-button > button,
+        .context-bar button.context-chip-button {{
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {fg_dark};
+            background-color: {bg_highlight};
+            background-image: none;
+            border: none;
+            box-shadow: none;
+            border-radius: 999px;
+            padding: 2px 10px;
+            min-height: 0;
+            min-width: 0;
+        }}
+        .context-bar menubutton.context-chip-button > button:hover,
+        .context-bar button.context-chip-button:hover {{
+            color: {fg};
+            background-color: alpha({fg}, 0.15);
+        }}
+        .branch-popover searchentry {{
+            margin: 6px;
+        }}
+        .branch-popover .branch-list {{
+            background: transparent;
+        }}
+        .branch-popover .branch-list row {{
+            border-radius: 6px;
         }}
         .context-chip-ok {{
             color: {green};
@@ -1154,6 +1153,65 @@ pub fn load_css(theme: &ThemeColors) -> gtk4::CssProvider {
             font-family: 'JetBrains Mono', monospace;
             font-size: 12px;
             min-height: 28px;
+            padding-left: 8px;
+            padding-right: 8px;
+        }}
+        /* Ghost suggestion overlay: must use the same font metrics and
+           horizontal inset as .context-input so the suffix lines up. */
+        .context-ghost {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            margin-left: 8px;
+            color: alpha({fg}, 0.45);
+        }}
+        .completion-popover contents {{
+            padding: 4px;
+        }}
+        .completion-list {{
+            background: transparent;
+        }}
+        .completion-list row {{
+            border-radius: 6px;
+            padding: 2px 4px;
+        }}
+        .completion-label {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }}
+        /* --- Review Changes tab --- */
+        .review-header {{
+            padding: 8px 14px;
+            background-color: {bg_dark};
+        }}
+        .review-repo {{
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        .review-branch {{
+            font-size: 12px;
+            color: {blue};
+        }}
+        .review-count {{
+            font-size: 12px;
+            color: {fg_dark};
+        }}
+        .review-added {{
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {green};
+        }}
+        .review-removed {{
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: {red};
+        }}
+        .review-commit-bar {{
+            padding: 8px 14px;
+            background-color: {bg_dark};
+        }}
+        .review-confirmation {{
+            font-size: 12px;
+            color: {green};
         }}
         .context-bar button.flat {{
             min-width: 24px;
