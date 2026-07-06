@@ -147,6 +147,9 @@ struct TerminalState {
     blocks_enabled: Cell<bool>,
     block_style: Cell<BlockStyle>,
     is_command_running: Cell<bool>,
+    /// The running program is reading password-style input (termios ECHO off
+    /// — sudo, ssh, `read -s`); the input bar must mask what's typed.
+    is_password_input: Cell<bool>,
     last_command_exit: Cell<Option<i32>>,
     last_command_duration_ms: Cell<Option<u64>>,
     cwd_callbacks: RefCell<Vec<TerminalCallback>>,
@@ -193,6 +196,7 @@ impl TerminalState {
             blocks_enabled: Cell::new(true),
             block_style: Cell::new(block_style_from_theme(crate::theme::get_theme("kanagawa"))),
             is_command_running: Cell::new(false),
+            is_password_input: Cell::new(false),
             last_command_exit: Cell::new(None),
             last_command_duration_ms: Cell::new(None),
             cwd_callbacks: RefCell::new(Vec::new()),
@@ -473,6 +477,12 @@ pub fn title(terminal: &Terminal) -> String {
 /// Whether a command is currently executing (between OSC 133;C and ;D).
 pub fn is_command_running(terminal: &Terminal) -> bool {
     state(terminal).is_some_and(|state| state.is_command_running.get())
+}
+
+/// Whether the running program is reading password-style input (termios ECHO
+/// off — sudo, ssh, `read -s`), so the input bar must mask keystrokes.
+pub fn is_password_input(terminal: &Terminal) -> bool {
+    state(terminal).is_some_and(|state| state.is_password_input.get())
 }
 
 /// Wire the callback invoked when the read-only grid declines a keystroke.
@@ -2077,7 +2087,22 @@ fn poll_events(terminal: &Terminal) -> bool {
             | TerminalEvent::AttentionRequest(_)
             | TerminalEvent::Notification { .. }
             | TerminalEvent::PtyWrite(_) => {}
+            TerminalEvent::PasswordInputChanged(active) => {
+                state.is_password_input.set(active);
+                // The context bar listens on the command-block callbacks; let
+                // it re-evaluate so the entry masks/unmasks promptly.
+                for callback in state.command_block_callbacks.borrow().iter() {
+                    callback(terminal);
+                }
+            }
             TerminalEvent::PromptStart => {
+                // Back at the prompt no program is reading a password;
+                // defensively drop the mask if the echo-restore flip was missed.
+                if state.is_password_input.replace(false) {
+                    for callback in state.command_block_callbacks.borrow().iter() {
+                        callback(terminal);
+                    }
+                }
                 // The live prompt region moved; repaint block decorations.
                 needs_draw = true;
             }
@@ -2092,6 +2117,7 @@ fn poll_events(terminal: &Terminal) -> bool {
             TerminalEvent::CommandBlockEnded(block) => {
                 state.selected_command_block_id.set(None);
                 state.is_command_running.set(false);
+                state.is_password_input.set(false);
                 state.last_command_exit.set(block.exit_code);
                 state.last_command_duration_ms.set(
                     block

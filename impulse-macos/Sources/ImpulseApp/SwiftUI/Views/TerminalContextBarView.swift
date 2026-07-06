@@ -66,6 +66,23 @@ struct TerminalContextBarView: View {
     .onChange(of: model.inputBarFocusToken) {
       inputFocused = true
     }
+    .onChange(of: model.passwordInputActive) {
+      // Entering password mode: a half-typed command draft must not be sent
+      // as (part of) the password. Leaving it: a half-typed password must not
+      // become visible in the plain field. Drop the draft on both flips.
+      text = ""
+      suggestion = nil
+      historyIndex = nil
+      savedDraft = ""
+      closeDropdown()
+      // The flip swaps the plain field for the secure one (or back), tearing
+      // down the focused NSTextField — AppKit drops first responder after
+      // this update, so a same-transaction focus write loses the race.
+      // Re-grab focus once the responder churn has settled.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        inputFocused = true
+      }
+    }
     .onChange(of: inputFocused) { _, focused in
       // Focus loss (clicking the grid, a sheet, another tab) dismisses the
       // dropdown so it never lingers detached from an editable field.
@@ -174,7 +191,13 @@ struct TerminalContextBarView: View {
   /// The leading glyph and trailing accessory reflect the running state.
   private var inputRow: some View {
     HStack(spacing: 8) {
-      if model.commandRunning {
+      if model.passwordInputActive {
+        Image(systemName: "lock.fill")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(model.theme.colorYellow)
+          .frame(width: 14)
+          .accessibilityHidden(true)
+      } else if model.commandRunning {
         ProgressView()
           .controlSize(.small)
           .scaleEffect(0.8)
@@ -199,78 +222,103 @@ struct TerminalContextBarView: View {
             .allowsHitTesting(false)
         }
 
-        TextField(inputPlaceholder, text: $text)
-          .textFieldStyle(.plain)
-          .font(monoFont)
-          .foregroundStyle(model.theme.colorFg)
-          .tint(model.theme.colorAccent)
-          .focused($inputFocused)
-          .onSubmit(handleSubmit)
-          .onChange(of: text) { _, newValue in
-            if historyIndex == nil || newValue != currentHistoryEntry() {
-              historyIndex = nil
-            }
-            suggestion =
-              (newValue.isEmpty || model.commandRunning)
-              ? nil : model.onInputSuggestion?(newValue)
-            // Tab-only dropdown: typing never opens it. While it's already
-            // open, re-fetch so the list narrows/widens to the new prefix.
-            if isDropdownOpen {
-              scheduleCompletions(for: newValue)
-            }
-          }
-          .onKeyPress(.upArrow) {
-            // When the dropdown is open, ↑ moves the highlight (wrap); else it
-            // cycles command history.
-            if isDropdownOpen {
-              moveSelection(by: -1)
+        if model.passwordInputActive {
+          // The running program disabled terminal echo (sudo, ssh, `read -s`):
+          // mask keystrokes so the password is never rendered. No suggestions,
+          // history, or completions apply — the text is a secret, not a command.
+          SecureField(inputPlaceholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(monoFont)
+            .foregroundStyle(model.theme.colorFg)
+            .tint(model.theme.colorAccent)
+            .focused($inputFocused)
+            .onSubmit(handleSubmit)
+            .onKeyPress(.escape) {
+              model.onFocusTerminal?()
               return .handled
             }
-            return cycleHistory(direction: 1)
-          }
-          .onKeyPress(.downArrow) {
-            if isDropdownOpen {
-              moveSelection(by: 1)
+            .onKeyPress(phases: .down) { press in
+              guard press.modifiers.contains(.control),
+                press.key == KeyEquivalent("c")
+              else { return .ignored }
+              model.onSendInterrupt?()
               return .handled
             }
-            return cycleHistory(direction: -1)
-          }
-          .onKeyPress(.tab) {
-            // Tab is the dropdown trigger. When it's already open, Tab accepts
-            // the highlighted candidate. When closed, try to open it: fetch
-            // candidates and, with two or more, show the panel (row 0 selected).
-            // With zero/one candidate, fall back to accepting the inline ghost
-            // suggestion. Always swallow Tab so it never triggers focus
-            // traversal.
-            if isDropdownOpen {
-              acceptCompletion()
+            .accessibilityLabel("Password input")
+        } else {
+          TextField(inputPlaceholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(monoFont)
+            .foregroundStyle(model.theme.colorFg)
+            .tint(model.theme.colorAccent)
+            .focused($inputFocused)
+            .onSubmit(handleSubmit)
+            .onChange(of: text) { _, newValue in
+              if historyIndex == nil || newValue != currentHistoryEntry() {
+                historyIndex = nil
+              }
+              suggestion =
+                (newValue.isEmpty || model.commandRunning)
+                ? nil : model.onInputSuggestion?(newValue)
+              // Tab-only dropdown: typing never opens it. While it's already
+              // open, re-fetch so the list narrows/widens to the new prefix.
+              if isDropdownOpen {
+                scheduleCompletions(for: newValue)
+              }
+            }
+            .onKeyPress(.upArrow) {
+              // When the dropdown is open, ↑ moves the highlight (wrap); else it
+              // cycles command history.
+              if isDropdownOpen {
+                moveSelection(by: -1)
+                return .handled
+              }
+              return cycleHistory(direction: 1)
+            }
+            .onKeyPress(.downArrow) {
+              if isDropdownOpen {
+                moveSelection(by: 1)
+                return .handled
+              }
+              return cycleHistory(direction: -1)
+            }
+            .onKeyPress(.tab) {
+              // Tab is the dropdown trigger. When it's already open, Tab accepts
+              // the highlighted candidate. When closed, try to open it: fetch
+              // candidates and, with two or more, show the panel (row 0 selected).
+              // With zero/one candidate, fall back to accepting the inline ghost
+              // suggestion. Always swallow Tab so it never triggers focus
+              // traversal.
+              if isDropdownOpen {
+                acceptCompletion()
+                return .handled
+              }
+              if openCompletionsFromTab() {
+                return .handled
+              }
+              _ = acceptSuggestion()
               return .handled
             }
-            if openCompletionsFromTab() {
+            .onKeyPress(.rightArrow) { acceptSuggestionWord() }
+            .onKeyPress(.escape) {
+              // First Esc closes the dropdown; a second Esc (dropdown already
+              // closed) moves focus into the terminal grid.
+              if isDropdownOpen {
+                closeDropdown()
+                return .handled
+              }
+              model.onFocusTerminal?()
               return .handled
             }
-            _ = acceptSuggestion()
-            return .handled
-          }
-          .onKeyPress(.rightArrow) { acceptSuggestionWord() }
-          .onKeyPress(.escape) {
-            // First Esc closes the dropdown; a second Esc (dropdown already
-            // closed) moves focus into the terminal grid.
-            if isDropdownOpen {
-              closeDropdown()
+            .onKeyPress(phases: .down) { press in
+              guard press.modifiers.contains(.control),
+                press.key == KeyEquivalent("c")
+              else { return .ignored }
+              model.onSendInterrupt?()
               return .handled
             }
-            model.onFocusTerminal?()
-            return .handled
-          }
-          .onKeyPress(phases: .down) { press in
-            guard press.modifiers.contains(.control),
-              press.key == KeyEquivalent("c")
-            else { return .ignored }
-            model.onSendInterrupt?()
-            return .handled
-          }
-          .accessibilityLabel("Command input")
+            .accessibilityLabel("Command input")
+        }
       }
       // Tracks the input field's screen rect so the floating completion panel
       // can anchor itself just above the field. Transparent / non-interactive.
@@ -313,7 +361,8 @@ struct TerminalContextBarView: View {
   }
 
   private var inputPlaceholder: String {
-    model.commandRunning ? "Send input to the running command…" : "Run a command…"
+    if model.passwordInputActive { return "Password (input hidden)…" }
+    return model.commandRunning ? "Send input to the running command…" : "Run a command…"
   }
 
   // MARK: - Actions
@@ -321,6 +370,13 @@ struct TerminalContextBarView: View {
   /// Enter handler: accept the highlighted candidate when the dropdown is open,
   /// otherwise run the typed command.
   private func handleSubmit() {
+    if model.passwordInputActive {
+      // Password replies go through verbatim: no trimming (passwords may
+      // carry whitespace) and an empty line is a valid empty password.
+      model.onSendSecureInput?(text)
+      text = ""
+      return
+    }
     if isDropdownOpen {
       // Enter commits the highlighted candidate and closes the dropdown (it
       // stays closed until Tab re-opens it) — unlike Tab, it does not drill into

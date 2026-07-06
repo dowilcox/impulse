@@ -396,6 +396,19 @@ impl SelectionKind {
     }
 }
 
+/// Whether the PTY is in password-input mode: termios ECHO disabled with
+/// ICANON still on — the shape used by sudo, ssh, and `read -s`. Raw-mode
+/// programs (shell line editors, TUIs) clear ICANON too and are excluded.
+#[cfg(unix)]
+fn pty_password_input(fd: std::os::unix::io::RawFd) -> bool {
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let lflag = unsafe { termios.assume_init() }.c_lflag;
+    (lflag & libc::ECHO) == 0 && (lflag & libc::ICANON) != 0
+}
+
 fn spawn_pty(pty_options: &PtyOptions, window_size: WindowSize) -> io::Result<tty::Pty> {
     let _guard = CHILD_ENV_LOCK
         .lock()
@@ -499,6 +512,9 @@ pub struct TerminalBackend {
     blocks: Arc<Mutex<CommandBlockTracker>>,
     history: Arc<Mutex<CommandHistoryStore>>,
     wakeup_pending: Arc<AtomicBool>,
+    /// Whether the foreground program is reading password-style input
+    /// (termios ECHO off with ICANON on). Updated by the read thread.
+    password_input: Arc<AtomicBool>,
     /// Forces the next `take_damage()` to report full damage. Set by state
     /// changes alacritty's damage tracker does not cover (selection, search
     /// highlights, colors, focus). Starts true so the first frame paints fully.
@@ -517,6 +533,7 @@ impl TerminalBackend {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
         let wakeup_pending = Arc::new(AtomicBool::new(false));
+        let password_input = Arc::new(AtomicBool::new(false));
 
         let colors = ConfiguredColors::from_config(&config);
         let query_colors = Arc::new(RwLock::new(colors.palette));
@@ -560,6 +577,7 @@ impl TerminalBackend {
         let blocks_clone = Arc::clone(&blocks);
         let history_clone = Arc::clone(&history);
         let wakeup_pending_clone = Arc::clone(&wakeup_pending);
+        let password_input_clone = Arc::clone(&password_input);
         let poller_clone = Arc::clone(&poller);
         let max_scrollback = config.scrollback_lines;
         let read_thread = std::thread::Builder::new()
@@ -575,6 +593,7 @@ impl TerminalBackend {
                     history_clone,
                     history_context,
                     wakeup_pending_clone,
+                    password_input_clone,
                     max_scrollback,
                 );
             })
@@ -597,6 +616,7 @@ impl TerminalBackend {
             blocks,
             history,
             wakeup_pending,
+            password_input,
             force_full_damage: AtomicBool::new(true),
         })
     }
@@ -617,11 +637,19 @@ impl TerminalBackend {
         history: Arc<Mutex<CommandHistoryStore>>,
         history_context: CommandHistoryContext,
         wakeup_pending: Arc<AtomicBool>,
+        password_input: Arc<AtomicBool>,
         max_scrollback: usize,
     ) {
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
         let mut scanner = crate::osc_scanner::OscScanner::new();
+
+        #[cfg(unix)]
+        let master_fd = {
+            use std::os::unix::io::AsRawFd;
+            pty.reader().as_raw_fd()
+        };
+        let mut password_input_active = false;
 
         let mut pending_input: VecDeque<u8> = VecDeque::new();
 
@@ -904,6 +932,21 @@ impl TerminalBackend {
                             break 'event_loop;
                         }
                     };
+                }
+            }
+
+            // Password prompts (sudo, ssh, `read -s`) disable termios ECHO
+            // while keeping canonical mode. The prompt bytes that accompany
+            // the tcsetattr wake this loop, so checking once per wake flips
+            // the flag in the same frame the prompt appears.
+            #[cfg(unix)]
+            {
+                let active = pty_password_input(master_fd);
+                if active != password_input_active {
+                    password_input_active = active;
+                    password_input.store(active, Ordering::Release);
+                    let _ = event_tx.send(TerminalEvent::PasswordInputChanged(active));
+                    send_wakeup(&event_tx, &wakeup_pending);
                 }
             }
         }
@@ -1509,6 +1552,13 @@ impl TerminalBackend {
     /// Get the PID of the child shell process.
     pub fn child_pid(&self) -> u32 {
         self.child_pid
+    }
+
+    /// Whether the foreground program is currently reading password-style
+    /// input (termios ECHO off with ICANON on — sudo, ssh, `read -s`).
+    /// Frontends should mask the input bar while this is true.
+    pub fn password_input(&self) -> bool {
+        self.password_input.load(Ordering::Acquire)
     }
 
     /// Notify the terminal about focus change.

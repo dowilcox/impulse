@@ -118,6 +118,11 @@ extension Notification.Name {
     /// Posted when the read-only terminal grid is clicked and keyboard focus
     /// should move to the input bar.
     static let terminalRequestInputFocus = Notification.Name("impulse.terminalRequestInputFocus")
+    /// Posted when the foreground program toggles password-style input on the
+    /// PTY (termios ECHO off) and the input bar should mask what's typed
+    /// (userInfo["active"]: Bool).
+    static let terminalPasswordInputChanged = Notification.Name(
+      "impulse.terminalPasswordInputChanged")
 
     // MARK: UI Commands
 

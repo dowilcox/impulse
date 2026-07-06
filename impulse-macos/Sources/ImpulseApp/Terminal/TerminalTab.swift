@@ -28,6 +28,10 @@ class TerminalTab: NSView {
   /// Whether a command is currently executing (between OSC 133;C and ;D).
   private(set) var isCommandRunning: Bool = false
 
+  /// Whether the foreground program is reading password-style input (termios
+  /// ECHO off — sudo, ssh, `read -s`), so the input bar must mask keystrokes.
+  private(set) var isPasswordInput: Bool = false
+
   /// Exit code and duration of the most recently completed command, shown
   /// in the terminal context bar.
   private(set) var lastCommandExitCode: Int32?
@@ -237,6 +241,9 @@ class TerminalTab: NSView {
       // otherwise keep the gate stuck true.
       isCommandRunning = false
       renderer.commandRunning = false
+      // Back at the prompt no program is reading a password; defensively drop
+      // the mask in case the echo-restore flip was missed.
+      setPasswordInput(false)
       // The live prompt region moved; chips/separators may sit on rows the
       // damage tracker doesn't cover, so repaint fully.
       renderer.needsDisplay = true
@@ -260,6 +267,7 @@ class TerminalTab: NSView {
     case .commandBlockEnded(let block):
       isCommandRunning = false
       renderer.commandRunning = false
+      setPasswordInput(false)
       lastCommandExitCode = block.exitCode
       lastCommandDurationMs = block.endedAtMs.map { ended in
         ended >= block.startedAtMs ? ended - block.startedAtMs : 0
@@ -275,6 +283,8 @@ class TerminalTab: NSView {
         object: self,
         userInfo: ["block": block]
       )
+    case .passwordInputChanged(let active):
+      setPasswordInput(active)
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
@@ -285,6 +295,16 @@ class TerminalTab: NSView {
         }
       }
     }
+  }
+
+  private func setPasswordInput(_ active: Bool) {
+    guard isPasswordInput != active else { return }
+    isPasswordInput = active
+    NotificationCenter.default.post(
+      name: .terminalPasswordInputChanged,
+      object: self,
+      userInfo: ["active": active]
+    )
   }
 
   private func handleCommandEnd(exitCode: Int32) {
@@ -617,6 +637,14 @@ class TerminalTab: NSView {
     // history; snap to the bottom so the command's output is visible.
     backend?.scrollToBottom()
     backend?.write(trimmed + "\n")
+  }
+
+  /// Send a line to the running program verbatim (password prompts): no
+  /// trimming — passwords may begin or end with whitespace — and an empty
+  /// line is a valid empty password.
+  func sendSecureLine(_ text: String) {
+    backend?.scrollToBottom()
+    backend?.write(text + "\n")
   }
 
   /// Best inline completion for `text` (input-bar ghost text): history

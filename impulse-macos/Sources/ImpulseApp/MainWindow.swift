@@ -321,6 +321,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     windowModel.onRunCommand = { [weak self] command in
       self?.tabManager.selectedTerminal?.activeTerminal?.runCommand(command)
     }
+    windowModel.onSendSecureInput = { [weak self] text in
+      self?.tabManager.selectedTerminal?.activeTerminal?.sendSecureLine(text)
+    }
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
     }
@@ -1014,6 +1017,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       windowModel.isPreviewing = false
       let active = tabManager.selectedTerminal?.activeTerminal
       windowModel.commandRunning = active?.isCommandRunning ?? false
+      windowModel.passwordInputActive = active?.isPasswordInput ?? false
       windowModel.lastCommandExitCode = active?.lastCommandExitCode
       windowModel.lastCommandDurationMs = active?.lastCommandDurationMs
       windowModel.terminalDirectInteraction = active?.isDirectInteraction ?? false
@@ -1547,6 +1551,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           self.tabManager.selectedTerminal?.activeTerminal === tab
         else { return }
         self.windowModel.inputBarFocusToken += 1
+      })
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalPasswordInputChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self,
+          let tab = notification.object as? TerminalTab,
+          self.tabManager.selectedTerminal?.activeTerminal === tab,
+          let active = notification.userInfo?["active"] as? Bool
+        else { return }
+        self.windowModel.passwordInputActive = active
+        // Focus is re-grabbed by the input bar itself: it must wait out the
+        // plain↔secure field swap, so a token bump here would fire too early.
       })
     notificationObservers.append(
       nc.addObserver(forName: .terminalCwdChanged, object: nil, queue: .main) {

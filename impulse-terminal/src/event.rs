@@ -42,6 +42,10 @@ pub enum TerminalEvent {
     AttentionRequest(String),
     /// Terminal requested a user notification (OSC 9 or OSC 777 notify).
     Notification { title: String, body: String },
+    /// The foreground program toggled password-style input on the PTY
+    /// (termios ECHO off with ICANON on — sudo, ssh, `read -s`). Frontends
+    /// should mask the input bar while true so the password isn't shown.
+    PasswordInputChanged(bool),
     /// Internal: Term sends PtyWrite for device query responses (e.g., DA1).
     /// Filtered out in poll_events() and forwarded back to the PTY as input.
     PtyWrite(String),

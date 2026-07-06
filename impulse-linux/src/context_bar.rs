@@ -73,6 +73,9 @@ pub struct ContextBar {
     /// Whether a command was running at the last refresh, for detecting the
     /// running→idle transition (which reclaims focus for the input).
     last_running: Cell<bool>,
+    /// Whether the entry was masked for password input at the last refresh,
+    /// for detecting flips (which drop the draft and toggle visibility).
+    last_password: Cell<bool>,
     entry: gtk4::Entry,
     ghost: gtk4::Label,
     completion_popover: gtk4::Popover,
@@ -554,14 +557,23 @@ pub fn build_context_bar(
     {
         let tab_view = tab_view.clone();
         entry.connect_activate(move |entry| {
+            let Some(term) = active_terminal(&tab_view) else {
+                return;
+            };
             let text = entry.text();
+            if terminal::is_password_input(&term) {
+                // Password replies go through verbatim: no trimming (passwords
+                // may carry whitespace) and an empty line is a valid empty
+                // password.
+                terminal::write_text(&term, &format!("{text}\n"));
+                entry.set_text("");
+                return;
+            }
             let command = text.trim();
             if command.is_empty() {
                 return;
             }
-            if let Some(term) = active_terminal(&tab_view) {
-                terminal::write_text(&term, &format!("{command}\n"));
-            }
+            terminal::write_text(&term, &format!("{command}\n"));
             entry.set_text("");
         });
     }
@@ -603,6 +615,7 @@ pub fn build_context_bar(
         run_hint: run_hint.clone(),
         stop_btn,
         last_running: Cell::new(false),
+        last_password: Cell::new(false),
         entry,
         ghost,
         completion_popover,
@@ -1182,6 +1195,27 @@ impl ContextBar {
         // checkout typed into the terminal would land in the running program.
         let running = terminal::is_command_running(&term);
         let was_running = self.last_running.replace(running);
+
+        // Password prompts (sudo, ssh, `read -s`): the program disabled
+        // terminal echo, so mask the entry (bullets) and hint IMEs via the
+        // input purpose. Flipping either way drops the draft — a half-typed
+        // command must not be sent as the password, and a half-typed password
+        // must not become visible in the plain entry.
+        let password = running && terminal::is_password_input(&term);
+        if self.last_password.replace(password) != password {
+            self.entry.set_text("");
+            self.entry.set_visibility(!password);
+            self.entry.set_input_purpose(if password {
+                gtk4::InputPurpose::Password
+            } else {
+                gtk4::InputPurpose::FreeForm
+            });
+            if password {
+                self.dismiss_input_overlays();
+                self.entry.grab_focus_without_selecting();
+            }
+        }
+
         if running {
             self.branch_btn.set_sensitive(false);
             self.status_chip.set_visible(false);
@@ -1191,8 +1225,11 @@ impl ContextBar {
             self.running_spinner.set_spinning(true);
             self.run_hint.set_visible(false);
             self.dismiss_input_overlays();
-            self.entry
-                .set_placeholder_text(Some("Send input to the running command…"));
+            self.entry.set_placeholder_text(Some(if password {
+                "Password (input hidden)…"
+            } else {
+                "Send input to the running command…"
+            }));
         } else {
             self.prompt_arrow.set_visible(true);
             self.running_spinner.set_spinning(false);

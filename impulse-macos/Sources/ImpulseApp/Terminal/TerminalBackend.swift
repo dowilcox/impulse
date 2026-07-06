@@ -85,6 +85,7 @@ enum TerminalBackendEvent {
     case commandBlockEnded(TerminalCommandBlock)
     case attentionRequest(String)
     case notification(title: String, body: String)
+    case passwordInputChanged(Bool)
 }
 
 /// Command block metadata emitted by the Rust terminal backend.
@@ -494,6 +495,8 @@ final class TerminalBackend {
                     let title = payload["title"] as? String ?? "Terminal"
                     let body = payload["body"] as? String ?? ""
                     events.append(.notification(title: title, body: body))
+                } else if let active = dict["PasswordInputChanged"] as? Bool {
+                    events.append(.passwordInputChanged(active))
                 }
             }
         }

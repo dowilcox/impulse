@@ -108,6 +108,10 @@ final class WindowModel {
   var contextBarEnabled: Bool = true
   /// True while the active terminal is executing a command.
   var commandRunning: Bool = false
+  /// True while the running program is reading password-style input (termios
+  /// ECHO off — sudo, ssh, `read -s`). The input bar masks keystrokes and
+  /// suspends history/suggestions so the password is never shown or stored.
+  var passwordInputActive: Bool = false
   /// Exit code and duration of the active terminal's last command.
   var lastCommandExitCode: Int32? = nil
   var lastCommandDurationMs: UInt64? = nil
@@ -160,6 +164,8 @@ final class WindowModel {
   var onClearTerminal: (() -> Void)?
   /// Run a command from the input bar in the active terminal.
   var onRunCommand: ((String) -> Void)?
+  /// Send a password-prompt reply verbatim (no trimming; empty allowed).
+  var onSendSecureInput: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
   /// Resolve path-completion candidates for the active token of the typed
