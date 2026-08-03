@@ -69,7 +69,7 @@ class TerminalTab: NSView {
   // MARK: Initializer
 
   override init(frame frameRect: NSRect) {
-    let shellName = ImpulseCore.getUserLoginShellName()
+    let shellName = LoginShell.defaultShellName()
     self.tabTitle = shellName
     self.currentWorkingDirectory = NSHomeDirectory()
 
@@ -188,7 +188,7 @@ class TerminalTab: NSView {
         userInfo: ["title": title]
       )
     case .resetTitle:
-      tabTitle = ImpulseCore.getUserLoginShellName()
+      tabTitle = LoginShell.defaultShellName()
       NotificationCenter.default.post(
         name: .terminalTitleChanged,
         object: self,
@@ -955,7 +955,7 @@ class TerminalTab: NSView {
   /// If `initialCommand` is provided, it is sent to the PTY immediately after
   /// the process starts.
   func spawnShell(initialDirectory: String? = nil, initialCommand: String? = nil) {
-    let shellPath = ImpulseCore.getUserLoginShell()
+    let shellPath = LoginShell.defaultShellPath()
     let shellName = (shellPath as NSString).lastPathComponent
 
     var envDict: [String: String] = [
@@ -988,13 +988,13 @@ class TerminalTab: NSView {
     // Add shell integration (OSC 7 CWD tracking, OSC 133 command boundaries).
     let shellType = shellName.lowercased()
     if shellType == "fish" {
-      if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
+      if let script = shellIntegrationScript(forShell: shellType) {
         args.append(contentsOf: ["--login", "--init-command", script])
       } else {
         args.append("--login")
       }
     } else if shellType == "zsh" {
-      if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
+      if let script = shellIntegrationScript(forShell: shellType) {
         let home = NSHomeDirectory()
         let zdotdir = FileManager.default.temporaryDirectory
           .appendingPathComponent(
@@ -1034,7 +1034,7 @@ class TerminalTab: NSView {
         args.append("--login")
       }
     } else if shellType == "bash" {
-      if let script = ImpulseCore.getShellIntegrationScript(shell: shellType) {
+      if let script = shellIntegrationScript(forShell: shellType) {
         let home = NSHomeDirectory()
         let rcPath = FileManager.default.temporaryDirectory
           .appendingPathComponent(

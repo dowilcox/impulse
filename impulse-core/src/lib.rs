@@ -1,15 +1,9 @@
-pub mod close_risk;
-pub mod command_palette;
 pub mod completion;
 pub mod file_tree;
 pub mod filesystem;
 pub mod git;
 pub mod lsp;
 pub mod search;
-pub mod session_state;
-pub mod settings;
-pub mod shell;
 pub mod shell_parser;
 pub mod theme;
-pub mod update;
 pub mod util;

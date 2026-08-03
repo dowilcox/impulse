@@ -62,9 +62,9 @@ enum TabEntry {
     case .terminal(let container):
       if let active = container.activeTerminal {
         let title = active.tabTitle
-        return title.isEmpty ? ImpulseCore.getUserLoginShellName() : title
+        return title.isEmpty ? LoginShell.defaultShellName() : title
       }
-      return ImpulseCore.getUserLoginShellName()
+      return LoginShell.defaultShellName()
     case .editor(let editor):
       if let path = editor.filePath {
         let name = (path as NSString).lastPathComponent
@@ -96,7 +96,7 @@ enum TabEntry {
       return TabInfo(
         cwd: container.activeTerminal?.currentWorkingDirectory,
         gitBranch: nil,
-        shellName: ImpulseCore.getUserLoginShellName(),
+        shellName: LoginShell.defaultShellName(),
         cursorLine: nil, cursorCol: nil,
         language: nil, encoding: nil, indentInfo: nil
       )
@@ -814,7 +814,7 @@ final class TabManager: NSObject {
         // Review tabs are not persisted across sessions.
         sessionTab = nil
       case .terminal(let container):
-        let shellName = ImpulseCore.getUserLoginShellName()
+        let shellName = LoginShell.defaultShellName()
         if let snapshot = container.sessionSnapshot(shellName: shellName) {
           let activePane: SessionTerminalPaneState?
           if let index = snapshot.activePaneIndex, snapshot.panes.indices.contains(index) {

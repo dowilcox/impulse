@@ -2559,7 +2559,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     invalidateGitBranchCache()
 
     // Immediate UI update with no branch yet.
-    let shellName = ImpulseCore.getUserLoginShellName()
+    let shellName = LoginShell.defaultShellName()
     if updateStatusBar {
       windowModel.currentCwd = dir
       windowModel.gitBranch = nil
@@ -2751,7 +2751,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       nowMs: currentUnixTimeMs(),
       longCommandThresholdSeconds: UInt64(max(1, settings.terminalLongCommandSeconds))
     )
-    return ImpulseCore.closeRiskSummary(input: input)
+    return input.summarize()
   }
 
   private func confirmClosingTerminalProcessesIfNeeded() -> Bool {

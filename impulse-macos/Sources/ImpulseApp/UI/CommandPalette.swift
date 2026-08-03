@@ -169,7 +169,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
   func registerBuiltinCommands(overrides: [String: String] = [:]) {
     var result: [PaletteCommand] = []
 
-    for item in ImpulseCore.commandPaletteBuiltinItems() {
+    for item in CommandPalette.builtinItems() {
       let shortcut = item.shortcut ?? Keybindings.shortcutDisplay(forId: item.id, overrides: overrides)
       let action = Self.builtinAction(for: item.id)
 
@@ -247,19 +247,11 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
       let command = custom.command
       let args = custom.args
 
-      let item = ImpulseCore.commandPaletteCustomItem(
+      let item = CommandPalette.customCommandItem(
         name: custom.name,
         shortcut: shortcut,
         command: command,
         args: args
-      ) ?? CommandPaletteItem(
-        id: "custom_\(custom.name)",
-        title: custom.name,
-        category: "Custom",
-        keywords: [command],
-        source: "custom",
-        shortcut: shortcut,
-        payload: nil
       )
 
       commands.append(
@@ -402,7 +394,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     for command in allCommands {
       commandsById[command.id] = command
     }
-    return ImpulseCore.filterCommandPaletteItems(
+    return CommandPalette.filterItems(
       allCommands.map(\.item),
       recents: recentCommands,
       query: query
@@ -425,7 +417,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     }
 
     dynamicSearchQueue.async {
-      let items = ImpulseCore.commandPaletteSearchItems(root: root, query: query, limit: 20)
+      let items = Self.paletteSearchItems(root: root, query: query, limit: 20)
       DispatchQueue.main.async { [weak self] in
         guard let self,
           generation == self.dynamicSearchGeneration,
@@ -437,6 +429,26 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
         self.refreshFilteredCommands(for: query)
       }
     }
+  }
+
+  /// File/content search feeding the palette's dynamic section, mirroring the
+  /// Rust `command_palette::search_items`: filenames first (capped at 12),
+  /// then content matches for queries of 3+ characters.
+  private static func paletteSearchItems(root: String, query: String, limit: Int)
+    -> [CommandPaletteItem]
+  {
+    let query = query.trimmingCharacters(in: .whitespaces)
+    guard query.count >= 2, limit > 0 else { return [] }
+
+    var results = Array(
+      ImpulseCore.searchFiles(root: root, query: query).prefix(min(limit, 12)))
+    let remaining = limit - results.count
+    if remaining > 0, query.count >= 3 {
+      results.append(
+        contentsOf: ImpulseCore.searchContent(root: root, query: query, caseSensitive: false)
+          .prefix(remaining))
+    }
+    return CommandPalette.searchResultItems(root: root, results: results)
   }
 
   private func dynamicCommand(for item: CommandPaletteItem) -> PaletteCommand? {
@@ -469,7 +481,7 @@ final class CommandPaletteWindow: NSPanel, NSTextFieldDelegate, NSTableViewDataS
     let row = tableView.selectedRow
     guard row >= 0, row < filteredCommands.count else { return }
     let command = filteredCommands[row]
-    recentCommands = ImpulseCore.recordRecentCommand(recentCommands, item: command.item)
+    recentCommands.record(command.item, nowMs: currentUnixTimeMs(), maxItems: 20)
     dismiss()
     command.action()
   }

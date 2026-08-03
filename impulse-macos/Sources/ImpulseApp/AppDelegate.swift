@@ -117,7 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Check for updates in background if enabled.
     if settings.checkForUpdates {
       DispatchQueue.global(qos: .utility).async {
-        guard let update = ImpulseCore.checkForUpdate() else { return }
+        guard let update = UpdateChecker.checkForUpdate(currentVersion: AppVersion.current)
+        else { return }
         DispatchQueue.main.async {
           NotificationCenter.default.post(
             name: .impulseUpdateAvailable,
@@ -255,7 +256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       nowMs: currentUnixTimeMs(),
       longCommandThresholdSeconds: UInt64(max(1, settings.terminalLongCommandSeconds))
     )
-    guard let summary = ImpulseCore.closeRiskSummary(input: input), summary.hasRisk else {
+    let summary = input.summarize()
+    guard summary.hasRisk else {
       return true
     }
 

@@ -34,9 +34,9 @@ fn main() {
 
     dump_themes(&kit);
     dump_shell_parser(&kit);
-    dump_close_risk(&kit);
-    dump_palette(&kit);
-    dump_glob(&kit);
+    // dump_close_risk / dump_palette / dump_glob were removed along with the
+    // Rust modules they exercised (ported to ImpulseKit in Phase 1); their
+    // fixtures remain committed under Tests/ImpulseKitTests/Fixtures.
     dump_util(&kit);
     dump_file_tree(&kit);
     dump_git(&git);
@@ -197,144 +197,6 @@ fn dump_shell_parser(out: &Path) {
         })
         .collect();
     write_json(&out.join("shell_parser.json"), &Value::Array(results));
-}
-
-// ---------------------------------------------------------------------------
-// Close risk (Phase 1 parity)
-// ---------------------------------------------------------------------------
-
-fn dump_close_risk(out: &Path) {
-    let now_ms: u64 = 1_700_000_000_000;
-    let inputs = vec![
-        json!({
-            "action": "quit",
-            "unsaved_editor_count": 2,
-            "running_terminal_process_count": 1,
-            "running_commands": [
-                { "command": "cargo build --release", "cwd": "/work/impulse", "started_at_ms": now_ms - 125_000 },
-                { "command": "sleep 5", "cwd": null, "started_at_ms": now_ms - 2_000 }
-            ],
-            "now_ms": now_ms
-        }),
-        json!({ "action": "close_tab", "now_ms": now_ms }),
-        json!({
-            "action": "close_window",
-            "unsaved_editor_count": 0,
-            "running_terminal_process_count": 1,
-            "running_commands": [
-                { "command": null, "cwd": "/tmp", "started_at_ms": now_ms - 500 }
-            ],
-            "now_ms": now_ms
-        }),
-        json!({
-            "action": "quit",
-            "unsaved_editor_count": 1,
-            "now_ms": now_ms,
-            "long_command_threshold_seconds": 10
-        }),
-    ];
-
-    let cases: Vec<Value> = inputs
-        .into_iter()
-        .map(|raw| {
-            let input: impulse_core::close_risk::CloseRiskInput =
-                serde_json::from_value(raw.clone()).expect("close risk input parses");
-            json!({ "input": raw, "summary": to_value(&input.summarize()) })
-        })
-        .collect();
-    write_json(&out.join("close_risk.json"), &Value::Array(cases));
-}
-
-// ---------------------------------------------------------------------------
-// Command palette (Phase 1 parity)
-// ---------------------------------------------------------------------------
-
-fn dump_palette(out: &Path) {
-    let items = impulse_core::command_palette::builtin_items();
-    write_json(&out.join("palette_items.json"), &to_value(&items));
-
-    let custom = impulse_core::command_palette::custom_command_item(
-        "Deploy Staging",
-        Some("cmd+shift+d"),
-        "./scripts/deploy.sh",
-        &["staging".to_string(), "--verbose".to_string()],
-    );
-    write_json(&out.join("palette_custom_item.json"), &to_value(&custom));
-
-    let empty_recents = impulse_core::command_palette::RecentCommandStore::default();
-    let queries = ["", "theme", "st", "close", "nw tb", "ZZZ-no-match"];
-    let filtered: Vec<Value> = queries
-        .iter()
-        .map(|q| {
-            json!({
-                "query": q,
-                "results": to_value(&impulse_core::command_palette::filter_items(
-                    &items,
-                    &empty_recents,
-                    q,
-                )),
-            })
-        })
-        .collect();
-    write_json(&out.join("palette_filter.json"), &Value::Array(filtered));
-
-    // MRU behavior: record two items at fixed times, then filter with an
-    // empty query so recents float to the top.
-    let mut recents = impulse_core::command_palette::RecentCommandStore::default();
-    let now_ms: u64 = 1_700_000_000_000;
-    if items.len() >= 5 {
-        recents.record(&items[4], now_ms - 60_000, 50);
-        recents.record(&items[1], now_ms, 50);
-    }
-    write_json(
-        &out.join("palette_recents.json"),
-        &json!({
-            "store": to_value(&recents),
-            "results": to_value(&impulse_core::command_palette::filter_items(
-                &items, &recents, "",
-            )),
-        }),
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Glob matching (Phase 1 parity)
-// ---------------------------------------------------------------------------
-
-fn dump_glob(out: &Path) {
-    let corpus: Vec<(&str, &str)> = vec![
-        ("src/main.rs", "*.rs"),
-        ("src/main.rs", "src/*"),
-        ("src/main.rs", "src/*.rs"),
-        ("src/nested/deep.rs", "src/*.rs"),
-        ("src/nested/deep.rs", "src/**/*.rs"),
-        ("a/b/c.txt", "**/*.txt"),
-        ("c.txt", "**/*.txt"),
-        ("Makefile", "Makefile"),
-        ("makefile", "Makefile"),
-        ("foo.test.ts", "*.test.ts"),
-        ("foo.spec.ts", "*.test.ts"),
-        ("/abs/path/file.py", "*.py"),
-        ("file.py", "file.??"),
-        ("file.py", "file.?"),
-        ("dir/file.json", "*.{json,yaml}"),
-        ("dir/file.yaml", "*.{json,yaml}"),
-        ("dir/file.toml", "*.{json,yaml}"),
-        ("noext", "*"),
-        ("", "*"),
-    ];
-
-    let results: Vec<Value> = corpus
-        .iter()
-        .map(|(path, pattern)| {
-            json!({
-                "path": path,
-                "pattern": pattern,
-                "matches": impulse_core::util::matches_file_pattern(path, pattern),
-            })
-        })
-        .collect();
-    write_json(&out.join("glob.json"), &Value::Array(results));
 }
 
 // ---------------------------------------------------------------------------

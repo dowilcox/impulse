@@ -193,29 +193,6 @@ pub fn language_from_uri(uri: &str) -> String {
     }
 }
 
-/// Check whether a file path matches a glob-like pattern.
-///
-/// Supports `"*"` (match all), `"*.ext"` (extension match), and exact
-/// filename suffix matching.
-#[must_use]
-pub fn matches_file_pattern(path: &str, pattern: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if let Some(ext_pattern) = pattern.strip_prefix("*.") {
-        if let Some(ext) = Path::new(path).extension() {
-            return ext.to_string_lossy().eq_ignore_ascii_case(ext_pattern);
-        }
-        return false;
-    }
-    // Exact filename match (e.g. "Makefile")
-    let filename = Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    filename == pattern
-}
-
 /// Validates that `path` is within `root` after canonicalization.
 /// Returns the canonicalized path on success, or an error if path escapes root.
 /// If the path does not exist, canonicalizes the parent directory instead and
@@ -446,30 +423,6 @@ mod tests {
     #[test]
     fn language_from_uri_no_extension_returns_empty() {
         assert_eq!(language_from_uri("file:///foo/SomeRandomFile"), "");
-    }
-
-    #[test]
-    fn matches_file_pattern_wildcard() {
-        assert!(matches_file_pattern("/any/path.rs", "*"));
-        assert!(matches_file_pattern("", "*"));
-    }
-
-    #[test]
-    fn matches_file_pattern_extension() {
-        assert!(matches_file_pattern("/src/main.rs", "*.rs"));
-        assert!(matches_file_pattern("/src/main.RS", "*.rs")); // case-insensitive
-        assert!(!matches_file_pattern("/src/main.py", "*.rs"));
-    }
-
-    #[test]
-    fn matches_file_pattern_exact_name() {
-        assert!(matches_file_pattern("/src/Makefile", "Makefile"));
-        assert!(!matches_file_pattern("/src/makefile", "Makefile"));
-    }
-
-    #[test]
-    fn matches_file_pattern_no_extension_no_match() {
-        assert!(!matches_file_pattern("/src/Makefile", "*.rs"));
     }
 
     #[test]

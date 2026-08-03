@@ -8,7 +8,6 @@ license = "GPL-3.0-only"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-schemars = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 ignore = "0.4"
 log = { workspace = true }
@@ -21,9 +20,7 @@ parking_lot = { workspace = true }
 lru = "0.12"
 regex = "1"
 toml = "0.8"
-ureq = "3"
 similar = "2"
 
 [dev-dependencies]
-jsonschema = { version = "0.18", default-features = false }
 tempfile = "3"

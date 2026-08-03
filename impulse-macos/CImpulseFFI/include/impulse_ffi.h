@@ -18,11 +18,6 @@ void impulse_completion_warm_cache(void);
 char *impulse_ensure_monaco_extracted(void);
 const char *impulse_get_editor_html(void);
 
-// Shell integration
-char *impulse_get_shell_integration_script(const char *shell);
-char *impulse_get_user_login_shell(void);
-char *impulse_get_user_login_shell_name(void);
-
 // Search
 char *impulse_search_files(const char *root, const char *query);
 char *impulse_search_content(const char *root, const char *query, bool case_sensitive);
@@ -95,31 +90,12 @@ char *impulse_git_commit_all(const char *repo_path, const char *message);
 // delete for untracked/new). Returns 0 on success or -1 on error.
 int32_t impulse_git_discard_path(const char *repo_path, const char *file_path);
 
-// Settings
-char *impulse_settings_default_json(void);
-char *impulse_settings_schema_json(void);
-char *impulse_settings_load_json(const char *json);
-char *impulse_settings_validate_json(const char *json);
-bool impulse_matches_file_pattern(const char *path, const char *pattern);
-char *impulse_close_risk_summary(const char *input_json);
-
-// Command palette
-char *impulse_command_palette_builtin_items_json(void);
-char *impulse_command_palette_custom_item_json(const char *name, const char *shortcut, const char *command, const char *args_json);
-char *impulse_command_palette_filter_json(const char *items_json, const char *recents_json, const char *query);
-char *impulse_command_palette_record_recent_json(const char *recents_json, const char *item_json, uint64_t now_ms, unsigned long max_items);
-char *impulse_command_palette_search_items_json(const char *root, const char *query, unsigned long limit);
-
 // Theme API
 char *impulse_available_themes(void);
 char *impulse_theme_display_name(const char *id);
 char *impulse_get_theme(const char *name);
 char *impulse_get_monaco_theme(const char *name);
 char *impulse_get_markdown_theme(const char *name);
-
-// Update checking
-char *impulse_check_for_update(void);
-const char *impulse_get_version(void);
 
 // Terminal backend API
 void *impulse_terminal_create(const char *config_json, unsigned short cols, unsigned short rows, unsigned short cell_width, unsigned short cell_height);

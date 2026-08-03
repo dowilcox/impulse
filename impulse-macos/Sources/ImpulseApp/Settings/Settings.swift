@@ -799,6 +799,6 @@ extension Settings {
     /// Delegates to the shared Rust implementation in impulse-core for
     /// consistent behaviour across platforms.
     static func matchesFilePattern(_ path: String, pattern: String) -> Bool {
-        return ImpulseCore.matchesFilePattern(path: path, pattern: pattern)
+        return Glob.matchesFilePattern(path: path, pattern: pattern)
     }
 }

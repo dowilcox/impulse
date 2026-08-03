@@ -19,6 +19,9 @@ let package = Package(
             name: "ImpulseKit",
             dependencies: [],
             path: "Sources/ImpulseKit",
+            resources: [
+                .copy("Resources"),
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
             ]
