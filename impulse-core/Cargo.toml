@@ -19,7 +19,6 @@ dirs = { workspace = true }
 parking_lot = { workspace = true }
 lru = "0.12"
 regex = "1"
-toml = "0.8"
 similar = "2"
 
 [dev-dependencies]

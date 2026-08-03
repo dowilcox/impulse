@@ -166,20 +166,17 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: Loading
 
-    /// Extract Monaco assets via the FFI bridge and load the editor HTML.
+    /// Load the editor HTML from the bundled Monaco assets.
     /// This is a no-op if the editor is already ready (e.g. from a pre-warmed WebView).
     func loadEditor() {
         guard !isEditorReady else { return }
 
-        switch ImpulseCore.ensureMonacoExtracted() {
-        case .failure(let error):
-            os_log(.error, log: Self.log, "Failed to extract Monaco: %{public}@", error.message)
+        guard let monacoDir = EditorAssets.monacoDirectory else {
+            os_log(.error, log: Self.log, "Bundled Monaco assets missing; cannot load editor")
             return
-        case .success(let pathString):
-            let monacoDir = URL(fileURLWithPath: pathString, isDirectory: true)
-            let editorHTML = monacoDir.appendingPathComponent("editor.html")
-            webView?.loadFileURL(editorHTML, allowingReadAccessTo: monacoDir)
         }
+        let editorHTML = monacoDir.appendingPathComponent("editor.html")
+        webView?.loadFileURL(editorHTML, allowingReadAccessTo: monacoDir)
     }
 
     // MARK: WKScriptMessageHandler
@@ -766,19 +763,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     // MARK: - Preview (Markdown / SVG)
 
     /// Check whether a file path is a markdown file.
-    /// Delegates to the canonical extension list in impulse-editor via FFI.
     static func isMarkdownFile(_ path: String) -> Bool {
-        return ImpulseCore.isMarkdownFile(path)
+        return MarkdownPreview.isMarkdownFile(path)
     }
 
     /// Check whether a file path is an SVG file.
     static func isSvgFile(_ path: String) -> Bool {
-        return ImpulseCore.isSvgFile(path)
+        return SVGPreview.isSVGFile(path)
     }
 
     /// Check whether a file path is a previewable type (markdown or SVG).
     static func isPreviewableFile(_ path: String) -> Bool {
-        return ImpulseCore.isPreviewableFile(path)
+        return MarkdownPreview.isPreviewableFile(path)
     }
 
     /// Toggle between Monaco editor and rendered preview (markdown or SVG).
@@ -848,21 +844,20 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// or if the source exceeds size limits.
     private func renderPreviewHTML(filePath fp: String, themeJSON: String, bgColor: String) -> String? {
         if EditorTab.isSvgFile(fp) {
-            return ImpulseCore.renderSvgPreview(source: content, bgColor: bgColor)
+            return SVGPreview.render(source: content, bgColor: bgColor)
         }
         // Markdown preview
-        let hljs: String
-        if case .success(let monacoDir) = ImpulseCore.ensureMonacoExtracted() {
-            hljs = URL(fileURLWithPath: monacoDir, isDirectory: true)
-                .appendingPathComponent("highlight/highlight.min.js")
-                .absoluteString
-        } else {
-            hljs = ""
-        }
-        return ImpulseCore.renderMarkdownPreview(
+        let hljs =
+            EditorAssets.monacoDirectory?
+            .appendingPathComponent("highlight/highlight.min.js")
+            .absoluteString ?? ""
+        let theme =
+            (try? JSONDecoder().decode(MarkdownThemeColors.self, from: Data(themeJSON.utf8)))
+            ?? MarkdownThemeColors.fallback
+        return MarkdownPreview.render(
             source: content,
-            themeJSON: themeJSON,
-            highlightJsPath: hljs
+            theme: theme,
+            highlightJSPath: hljs
         )
     }
 

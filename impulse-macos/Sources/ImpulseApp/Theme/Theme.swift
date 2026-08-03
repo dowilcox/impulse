@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import SwiftUI
 
 // MARK: - App Font Helper
@@ -325,29 +326,33 @@ struct Theme: Codable {
     var base: String { isLight ? "vs" : "vs-dark" }
 }
 
-// MARK: - ThemeManager (FFI-backed)
+// MARK: - ThemeManager (ImpulseKit-backed)
 
 enum ThemeManager {
 
-    /// JSON decoder configured for snake_case keys from the Rust backend.
-    private static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        return d
-    }()
+    private static let decoder = JSONDecoder()
+    private static let encoder = JSONEncoder()
+
+    /// Encode an ImpulseKit value to the same JSON the Rust FFI used to
+    /// return, so the app-side Codable models keep working unchanged.
+    private static func json<T: Encodable>(_ value: T) -> String {
+        guard let data = try? encoder.encode(value) else { return "{}" }
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
 
     /// Returns the list of all available theme names (built-in + user).
     static func availableThemes() -> [String] {
-        return ImpulseCore.availableThemes()
+        return ImpulseKit.ThemeStore.availableThemes()
     }
 
     /// Returns the display name for a theme ID.
     static func displayName(for id: String) -> String {
-        return ImpulseCore.themeDisplayName(id: id)
+        return ImpulseKit.ThemeStore.themeDisplayName(id)
     }
 
     /// Returns the theme matching `name`. Falls back to Nord on decode failure.
     static func theme(forName name: String) -> Theme {
-        let json = ImpulseCore.getTheme(name: name)
+        let json = json(ImpulseKit.ThemeStore.getTheme(name))
         guard let data = json.data(using: .utf8),
               let theme = try? decoder.decode(Theme.self, from: data) else {
             // If decoding fails and we're not already requesting nord, try nord
@@ -355,7 +360,7 @@ enum ThemeManager {
                 return theme(forName: "nord")
             }
             // Ultimate fallback — should never happen
-            fatalError("Failed to decode fallback theme 'nord' from FFI")
+            fatalError("Failed to decode fallback theme 'nord'")
         }
         return theme
     }
@@ -365,9 +370,9 @@ enum ThemeManager {
         theme(forName: settings.colorScheme)
     }
 
-    /// Returns a `MonacoThemeDefinition` for the named theme, decoded from FFI JSON.
+    /// Returns a `MonacoThemeDefinition` for the named theme.
     static func monacoTheme(forName name: String) -> MonacoThemeDefinition {
-        let json = ImpulseCore.getMonacoTheme(name: name)
+        let json = json(ImpulseKit.themeToMonaco(ImpulseKit.ThemeStore.getTheme(name)))
         guard let data = json.data(using: .utf8),
               let theme = try? decoder.decode(MonacoThemeDefinition.self, from: data) else {
             // Fallback: return a minimal definition
@@ -400,6 +405,6 @@ enum ThemeManager {
 
     /// Returns the markdown theme JSON string for the named theme.
     static func markdownThemeJSON(forName name: String) -> String {
-        return ImpulseCore.getMarkdownTheme(name: name)
+        return json(ImpulseKit.themeToMarkdownColors(ImpulseKit.ThemeStore.getTheme(name)))
     }
 }

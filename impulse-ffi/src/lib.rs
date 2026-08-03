@@ -91,49 +91,6 @@ pub extern "C" fn impulse_free_string(s: *mut c_char) {
 }
 
 // ---------------------------------------------------------------------------
-// Monaco assets
-// ---------------------------------------------------------------------------
-
-/// Ensure Monaco editor files are extracted to the platform data directory.
-///
-/// Returns the extraction path on success or an error string on failure.
-/// The caller must free the returned string with `impulse_free_string`.
-#[no_mangle]
-pub extern "C" fn impulse_ensure_monaco_extracted() -> *mut c_char {
-    ffi_catch(
-        std::ptr::null_mut(),
-        AssertUnwindSafe(|| match impulse_editor::assets::ensure_monaco_extracted() {
-            Ok(path) => to_c_string(&path.to_string_lossy()),
-            Err(e) => to_c_string(&format!("ERROR:{}", e)),
-        }),
-    )
-}
-
-/// Return the embedded editor HTML content as a static string.
-///
-/// The returned pointer is valid for the lifetime of the process and must
-/// NOT be freed.
-#[no_mangle]
-pub extern "C" fn impulse_get_editor_html() -> *const c_char {
-    ffi_catch(
-        std::ptr::null(),
-        AssertUnwindSafe(|| {
-            static CACHED: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
-            CACHED
-                .get_or_init(|| {
-                    CString::new(impulse_editor::assets::EDITOR_HTML).unwrap_or_else(|e| {
-                        log::warn!("EDITOR_HTML contains NUL at byte {}", e.nul_position());
-                        let html = impulse_editor::assets::EDITOR_HTML;
-                        let sanitized: String = html.chars().filter(|&c| c != '\0').collect();
-                        CString::new(sanitized).unwrap_or_default()
-                    })
-                })
-                .as_ptr()
-        }),
-    )
-}
-
-// ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
 
@@ -1174,30 +1131,20 @@ pub extern "C" fn impulse_git_diff_markers(file_path: *const c_char) -> *mut c_c
                 "git diff",
                 move || {
                     let diff = impulse_core::git::get_file_diff(&file_path)?;
-                    let mut markers: Vec<impulse_editor::protocol::DiffDecoration> = diff
+                    let mut markers: Vec<serde_json::Value> = diff
                         .changed_lines
                         .iter()
                         .filter_map(|(&line, status)| {
                             let diff_status = match status {
-                                impulse_core::git::DiffLineStatus::Added => {
-                                    impulse_editor::protocol::DiffStatus::Added
-                                }
-                                impulse_core::git::DiffLineStatus::Modified => {
-                                    impulse_editor::protocol::DiffStatus::Modified
-                                }
+                                impulse_core::git::DiffLineStatus::Added => "added",
+                                impulse_core::git::DiffLineStatus::Modified => "modified",
                                 impulse_core::git::DiffLineStatus::Unchanged => return None,
                             };
-                            Some(impulse_editor::protocol::DiffDecoration {
-                                line,
-                                status: diff_status,
-                            })
+                            Some(serde_json::json!({ "line": line, "status": diff_status }))
                         })
                         .collect();
                     for &line in &diff.deleted_lines {
-                        markers.push(impulse_editor::protocol::DiffDecoration {
-                            line,
-                            status: impulse_editor::protocol::DiffStatus::Deleted,
-                        });
+                        markers.push(serde_json::json!({ "line": line, "status": "deleted" }));
                     }
                     serde_json::to_string(&markers)
                         .map_err(|e| format!("serialization failed: {}", e))
@@ -1369,216 +1316,6 @@ pub extern "C" fn impulse_git_discard_path(
                 Ok(()) => 0,
                 Err(_) => -1,
             }
-        }),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Markdown preview
-// ---------------------------------------------------------------------------
-
-/// Render markdown source to a full HTML document with themed CSS and highlight.js.
-///
-/// `source` — the markdown text to render.
-/// `theme_json` — JSON-serialized `MarkdownThemeColors`.
-/// `highlight_js_path` — absolute file:// path or URL to highlight.min.js.
-///
-/// Returns a newly allocated HTML string (caller must free with `impulse_free_string`),
-/// or null on failure.
-#[no_mangle]
-pub extern "C" fn impulse_render_markdown_preview(
-    source: *const c_char,
-    theme_json: *const c_char,
-    highlight_js_path: *const c_char,
-) -> *mut c_char {
-    ffi_catch(
-        std::ptr::null_mut(),
-        AssertUnwindSafe(|| {
-            let source = match to_rust_str(source) {
-                Some(s) => s,
-                None => return std::ptr::null_mut(),
-            };
-            let theme_json = match to_rust_str(theme_json) {
-                Some(s) => s,
-                None => return std::ptr::null_mut(),
-            };
-            let hljs_path = match to_rust_str(highlight_js_path) {
-                Some(s) => s,
-                None => return std::ptr::null_mut(),
-            };
-            let theme: impulse_editor::markdown::MarkdownThemeColors =
-                match serde_json::from_str(&theme_json) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        log::error!("Failed to parse MarkdownThemeColors: {}", e);
-                        return std::ptr::null_mut();
-                    }
-                };
-            let html = match impulse_editor::markdown::render_markdown_preview(
-                &source, &theme, &hljs_path,
-            ) {
-                Some(h) => h,
-                None => return std::ptr::null_mut(),
-            };
-            to_c_string(&html)
-        }),
-    )
-}
-
-/// Check whether a file path has a markdown extension.
-#[no_mangle]
-pub extern "C" fn impulse_is_markdown_file(path: *const c_char) -> bool {
-    ffi_catch(
-        false,
-        AssertUnwindSafe(|| {
-            let path = match to_rust_str(path) {
-                Some(s) => s,
-                None => return false,
-            };
-            impulse_editor::markdown::is_markdown_file(&path)
-        }),
-    )
-}
-
-/// Render an SVG source string to a themed HTML preview document.
-///
-/// Returns a newly allocated HTML string (caller must free with `impulse_free_string`),
-/// or null on failure.
-#[no_mangle]
-pub extern "C" fn impulse_render_svg_preview(
-    source: *const c_char,
-    bg_color: *const c_char,
-) -> *mut c_char {
-    ffi_catch(
-        std::ptr::null_mut(),
-        AssertUnwindSafe(|| {
-            let source = match to_rust_str(source) {
-                Some(s) => s,
-                None => return std::ptr::null_mut(),
-            };
-            let bg_color = match to_rust_str(bg_color) {
-                Some(s) => s,
-                None => return std::ptr::null_mut(),
-            };
-            let html = match impulse_editor::svg::render_svg_preview(&source, &bg_color) {
-                Some(h) => h,
-                None => return std::ptr::null_mut(),
-            };
-            to_c_string(&html)
-        }),
-    )
-}
-
-/// Check whether a file path has an SVG extension.
-#[no_mangle]
-pub extern "C" fn impulse_is_svg_file(path: *const c_char) -> bool {
-    ffi_catch(
-        false,
-        AssertUnwindSafe(|| {
-            let path = match to_rust_str(path) {
-                Some(s) => s,
-                None => return false,
-            };
-            impulse_editor::svg::is_svg_file(&path)
-        }),
-    )
-}
-
-/// Check whether a file path is a previewable type (markdown or SVG).
-#[no_mangle]
-pub extern "C" fn impulse_is_previewable_file(path: *const c_char) -> bool {
-    ffi_catch(
-        false,
-        AssertUnwindSafe(|| {
-            let path = match to_rust_str(path) {
-                Some(s) => s,
-                None => return false,
-            };
-            impulse_editor::is_previewable_file(&path)
-        }),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Theme API
-// ---------------------------------------------------------------------------
-
-/// Return a JSON array of all available theme names (built-in + user).
-#[no_mangle]
-pub extern "C" fn impulse_available_themes() -> *mut c_char {
-    ffi_catch(
-        to_c_string("[]"),
-        AssertUnwindSafe(|| {
-            let names = impulse_core::theme::available_themes();
-            let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string());
-            to_c_string(&json)
-        }),
-    )
-}
-
-/// Return the display name for a theme ID.
-#[no_mangle]
-pub extern "C" fn impulse_theme_display_name(id: *const c_char) -> *mut c_char {
-    ffi_catch(
-        to_c_string(""),
-        AssertUnwindSafe(|| {
-            let id = match to_rust_str(id) {
-                Some(s) => s,
-                None => return to_c_string(""),
-            };
-            to_c_string(&impulse_core::theme::theme_display_name(&id))
-        }),
-    )
-}
-
-/// Resolve a theme by name and return the full `ResolvedTheme` as JSON.
-#[no_mangle]
-pub extern "C" fn impulse_get_theme(name: *const c_char) -> *mut c_char {
-    ffi_catch(
-        to_c_string("{}"),
-        AssertUnwindSafe(|| {
-            let name = match to_rust_str(name) {
-                Some(s) => s,
-                None => "nord".to_string(),
-            };
-            let theme = impulse_core::theme::get_theme(&name);
-            to_c_string(&impulse_core::theme::theme_to_json(&theme))
-        }),
-    )
-}
-
-/// Resolve a theme by name and return the `MonacoThemeDefinition` as JSON.
-#[no_mangle]
-pub extern "C" fn impulse_get_monaco_theme(name: *const c_char) -> *mut c_char {
-    ffi_catch(
-        to_c_string("{}"),
-        AssertUnwindSafe(|| {
-            let name = match to_rust_str(name) {
-                Some(s) => s,
-                None => "nord".to_string(),
-            };
-            let theme = impulse_core::theme::get_theme(&name);
-            let monaco = impulse_editor::protocol::theme_to_monaco(&theme);
-            let json = serde_json::to_string(&monaco).unwrap_or_else(|_| "{}".to_string());
-            to_c_string(&json)
-        }),
-    )
-}
-
-/// Resolve a theme by name and return the `MarkdownThemeColors` as JSON.
-#[no_mangle]
-pub extern "C" fn impulse_get_markdown_theme(name: *const c_char) -> *mut c_char {
-    ffi_catch(
-        to_c_string("{}"),
-        AssertUnwindSafe(|| {
-            let name = match to_rust_str(name) {
-                Some(s) => s,
-                None => "nord".to_string(),
-            };
-            let theme = impulse_core::theme::get_theme(&name);
-            let md_colors = impulse_editor::markdown::theme_to_markdown_colors(&theme);
-            let json = serde_json::to_string(&md_colors).unwrap_or_else(|_| "{}".to_string());
-            to_c_string(&json)
         }),
     )
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vendor-monaco.sh — Download and vendor Monaco Editor for offline bundling.
-# Output: impulse-editor/vendor/monaco/vs/
+# Output: vendor/monaco/vs/
 # Run once, or when upgrading Monaco version.
 set -euo pipefail
 
@@ -10,7 +10,7 @@ MONACO_VERSION="0.55.1"
 MONACO_SHA256=""
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-VENDOR_DIR="$PROJECT_ROOT/impulse-editor/vendor/monaco"
+VENDOR_DIR="$PROJECT_ROOT/vendor/monaco"
 
 echo "Vendoring Monaco Editor v${MONACO_VERSION}..."
 
@@ -70,4 +70,4 @@ echo "Vendored Monaco files:"
 du -sh "$VENDOR_DIR"
 echo "$(find "$VENDOR_DIR" -type f | wc -l) files"
 echo ""
-echo "Done! Vendored Monaco Editor v${MONACO_VERSION} to impulse-editor/vendor/monaco/"
+echo "Done! Vendored Monaco Editor v${MONACO_VERSION} to vendor/monaco/"

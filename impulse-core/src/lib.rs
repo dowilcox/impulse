@@ -5,5 +5,4 @@ pub mod git;
 pub mod lsp;
 pub mod search;
 pub mod shell_parser;
-pub mod theme;
 pub mod util;

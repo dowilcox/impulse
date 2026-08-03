@@ -59,15 +59,13 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDel
     func warmUp() {
         guard warmWebView == nil else { return }
 
-        // Ensure Monaco assets are extracted (cached after first run).
+        // Monaco ships in the app bundle.
         if monacoDir == nil {
-            switch ImpulseCore.ensureMonacoExtracted() {
-            case .failure(let error):
-                os_log(.error, log: Self.log, "Failed to extract Monaco for pre-warm: %{public}@", error.message)
+            guard let bundled = EditorAssets.monacoDirectory else {
+                os_log(.error, log: Self.log, "Bundled Monaco assets missing; cannot pre-warm")
                 return
-            case .success(let pathString):
-                monacoDir = URL(fileURLWithPath: pathString, isDirectory: true)
             }
+            monacoDir = bundled
         }
 
         guard let monacoDir = monacoDir else { return }

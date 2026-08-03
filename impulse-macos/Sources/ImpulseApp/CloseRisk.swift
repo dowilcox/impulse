@@ -17,6 +17,9 @@ typealias Glob = ImpulseKit.Glob
 typealias LoginShell = ImpulseKit.LoginShell
 typealias ShellIntegration = ImpulseKit.ShellIntegration
 typealias UpdateChecker = ImpulseKit.UpdateChecker
+typealias MarkdownPreview = ImpulseKit.MarkdownPreview
+typealias SVGPreview = ImpulseKit.SVGPreview
+typealias MarkdownThemeColors = ImpulseKit.MarkdownThemeColors
 
 extension ImpulseKit.SearchResult {
   /// Stable identity for SwiftUI ForEach diffing. Combines path, line, and

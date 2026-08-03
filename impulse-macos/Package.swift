@@ -7,6 +7,12 @@ let package = Package(
         .macOS(.v26)
     ],
     dependencies: [
+        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
+        // Pinned to an exact gfm-branch revision (Package.resolved is not
+        // committed in this repo, so a bare branch ref would drift).
+        .package(
+            url: "https://github.com/apple/swift-cmark.git",
+            revision: "7898f1b3e4befeecee56cb4a3bc8eebd2cb63219"),
     ],
     targets: [
         .systemLibrary(
@@ -17,7 +23,11 @@ let package = Package(
         // Foundation-only: no AppKit, no FFI, so it stays headless-testable.
         .target(
             name: "ImpulseKit",
-            dependencies: [],
+            dependencies: [
+                .product(name: "TOMLKit", package: "TOMLKit"),
+                .product(name: "cmark-gfm", package: "swift-cmark"),
+                .product(name: "cmark-gfm-extensions", package: "swift-cmark"),
+            ],
             path: "Sources/ImpulseKit",
             resources: [
                 .copy("Resources"),

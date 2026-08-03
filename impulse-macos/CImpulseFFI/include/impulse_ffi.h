@@ -14,10 +14,6 @@ void impulse_free_string(char *s);
 // Input completion
 void impulse_completion_warm_cache(void);
 
-// Monaco assets
-char *impulse_ensure_monaco_extracted(void);
-const char *impulse_get_editor_html(void);
-
 // Search
 char *impulse_search_files(const char *root, const char *query);
 char *impulse_search_content(const char *root, const char *query, bool case_sensitive);
@@ -37,17 +33,6 @@ char *impulse_lsp_check_status(void);
 char *impulse_lsp_install(void);
 bool impulse_npm_is_available(void);
 char *impulse_system_lsp_status(void);
-
-// Markdown preview
-char *impulse_render_markdown_preview(const char *source, const char *theme_json, const char *highlight_js_path);
-bool impulse_is_markdown_file(const char *path);
-
-// SVG preview
-char *impulse_render_svg_preview(const char *source, const char *bg_color);
-bool impulse_is_svg_file(const char *path);
-
-// Previewable file detection (markdown or SVG)
-bool impulse_is_previewable_file(const char *path);
 
 // Git
 char *impulse_git_branch(const char *path);
@@ -89,13 +74,6 @@ char *impulse_git_commit_all(const char *repo_path, const char *message);
 // Discards changes for one REPO-RELATIVE file_path (checkout HEAD for tracked,
 // delete for untracked/new). Returns 0 on success or -1 on error.
 int32_t impulse_git_discard_path(const char *repo_path, const char *file_path);
-
-// Theme API
-char *impulse_available_themes(void);
-char *impulse_theme_display_name(const char *id);
-char *impulse_get_theme(const char *name);
-char *impulse_get_monaco_theme(const char *name);
-char *impulse_get_markdown_theme(const char *name);
 
 // Terminal backend API
 void *impulse_terminal_create(const char *config_json, unsigned short cols, unsigned short rows, unsigned short cell_width, unsigned short cell_height);

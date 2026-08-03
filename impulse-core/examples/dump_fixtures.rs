@@ -5,7 +5,7 @@
 //! macOS from the workspace root:
 //!
 //! ```sh
-//! cargo run -p impulse-editor --example dump_fixtures -- /tmp/fixtures
+//! cargo run -p impulse-core --example dump_fixtures -- /tmp/fixtures
 //! ```
 //!
 //! Writes two subdirectories:
@@ -32,7 +32,6 @@ fn main() {
     fs::create_dir_all(&kit).expect("create kit dir");
     fs::create_dir_all(&git).expect("create git dir");
 
-    dump_themes(&kit);
     dump_shell_parser(&kit);
     // dump_close_risk / dump_palette / dump_glob were removed along with the
     // Rust modules they exercised (ported to ImpulseKit in Phase 1); their
@@ -114,48 +113,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Themes (Phase 2 parity)
-// ---------------------------------------------------------------------------
-
-fn dump_themes(out: &Path) {
-    for name in impulse_core::theme::builtin_theme_names() {
-        let theme = impulse_core::theme::builtin_theme(name)
-            .unwrap_or_else(|| panic!("builtin theme {name} missing"));
-
-        let resolved: Value = serde_json::from_str(&impulse_core::theme::theme_to_json(&theme))
-            .expect("theme json parses");
-        write_json(&out.join(format!("themes/{name}.theme.json")), &resolved);
-
-        let monaco = impulse_editor::protocol::theme_to_monaco(&theme);
-        write_json(
-            &out.join(format!("themes/{name}.monaco.json")),
-            &to_value(&monaco),
-        );
-
-        let markdown = impulse_editor::markdown::theme_to_markdown_colors(&theme);
-        write_json(
-            &out.join(format!("themes/{name}.markdown.json")),
-            &to_value(&markdown),
-        );
-    }
-
-    write_json(
-        &out.join("themes/display_names.json"),
-        &Value::Object(
-            impulse_core::theme::builtin_theme_names()
-                .iter()
-                .map(|n| {
-                    (
-                        n.to_string(),
-                        Value::String(impulse_core::theme::theme_display_name(n)),
-                    )
-                })
-                .collect(),
-        ),
-    );
 }
 
 // ---------------------------------------------------------------------------

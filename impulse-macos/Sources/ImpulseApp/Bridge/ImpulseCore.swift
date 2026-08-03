@@ -84,31 +84,6 @@ final class ImpulseCore {
         return result
     }
 
-    // MARK: - Monaco Assets
-
-    /// Ensures Monaco editor files are extracted to the platform cache
-    /// directory. Returns the extraction directory path on success, or a
-    /// descriptive error string on failure.
-    static func ensureMonacoExtracted() -> Result<String, ImpulseError> {
-        guard let raw = impulse_ensure_monaco_extracted() else {
-            return .failure(ImpulseError(message: "impulse_ensure_monaco_extracted returned null"))
-        }
-        let str = String(cString: raw)
-        impulse_free_string(raw)
-        if str.hasPrefix("ERROR:") {
-            return .failure(ImpulseError(message: String(str.dropFirst(6))))
-        }
-        return .success(str)
-    }
-
-    /// Returns the embedded editor HTML content that hosts Monaco inside a
-    /// WKWebView. The returned pointer is process-static on the Rust side
-    /// and must NOT be freed.
-    static func getEditorHTML() -> String {
-        guard let cStr = impulse_get_editor_html() else { return "" }
-        return String(cString: cStr)
-    }
-
     // MARK: - Search
 
     /// Searches for files by name under `root` matching `query`.
@@ -187,42 +162,6 @@ final class ImpulseCore {
         }
         combined.append(contentsOf: contentResults)
         return combined
-    }
-
-    // MARK: - Markdown Preview
-
-    /// Render markdown source into a full HTML document with themed CSS and
-    /// highlight.js code highlighting.
-    ///
-    /// - Parameters:
-    ///   - source: The markdown text to render.
-    ///   - themeJSON: JSON-serialized `MarkdownThemeColors`.
-    ///   - highlightJsPath: Absolute file:// path to highlight.min.js.
-    /// - Returns: A full HTML string, or `nil` on failure.
-    static func renderMarkdownPreview(source: String, themeJSON: String, highlightJsPath: String) -> String? {
-        return consumeCString(impulse_render_markdown_preview(source, themeJSON, highlightJsPath))
-    }
-
-    /// Check whether a file path has a markdown extension.
-    /// Uses the canonical extension list defined in impulse-editor.
-    static func isMarkdownFile(_ path: String) -> Bool {
-        return impulse_is_markdown_file(path)
-    }
-
-    /// Check whether a file path has an SVG extension.
-    static func isSvgFile(_ path: String) -> Bool {
-        return impulse_is_svg_file(path)
-    }
-
-    /// Check whether a file path is a previewable type (markdown or SVG).
-    static func isPreviewableFile(_ path: String) -> Bool {
-        return impulse_is_previewable_file(path)
-    }
-
-    /// Render an SVG source string to a themed HTML preview document.
-    /// Returns `nil` if the source exceeds the size limit.
-    static func renderSvgPreview(source: String, bgColor: String) -> String? {
-        return consumeCString(impulse_render_svg_preview(source, bgColor))
     }
 
     // MARK: - Git
@@ -696,20 +635,6 @@ final class ImpulseCore {
 
     // MARK: - Instance convenience wrappers for non-LSP calls
 
-    /// Extracts Monaco assets. Instance wrapper around the static method.
-    func ensureMonacoExtracted() -> String? {
-        switch ImpulseCore.ensureMonacoExtracted() {
-        case .success(let path): return path
-        case .failure: return nil
-        }
-    }
-
-    /// Returns the editor HTML. Instance wrapper around the static method.
-    func editorHTML() -> String? {
-        let html = ImpulseCore.getEditorHTML()
-        return html.isEmpty ? nil : html
-    }
-
     /// Searches for files by name. Instance wrapper.
     func searchFiles(root: String, query: String) -> String? {
         let results = ImpulseCore.searchFiles(root: root, query: query)
@@ -1030,34 +955,5 @@ final class ImpulseCore {
         }
     }
 
-    // MARK: - Theme API
-
-    /// Returns the list of all available theme names (built-in + user).
-    static func availableThemes() -> [String] {
-        guard let json = consumeCString(impulse_available_themes()) else { return [] }
-        guard let data = json.data(using: .utf8),
-              let names = try? JSONSerialization.jsonObject(with: data) as? [String] else { return [] }
-        return names
-    }
-
-    /// Returns the display name for a theme ID.
-    static func themeDisplayName(id: String) -> String {
-        return consumeCString(impulse_theme_display_name(id)) ?? id
-    }
-
-    /// Returns the full ResolvedTheme as a JSON string for decoding into `Theme`.
-    static func getTheme(name: String) -> String {
-        return consumeCString(impulse_get_theme(name)) ?? "{}"
-    }
-
-    /// Returns the MonacoThemeDefinition as a JSON string.
-    static func getMonacoTheme(name: String) -> String {
-        return consumeCString(impulse_get_monaco_theme(name)) ?? "{}"
-    }
-
-    /// Returns the MarkdownThemeColors as a JSON string.
-    static func getMarkdownTheme(name: String) -> String {
-        return consumeCString(impulse_get_markdown_theme(name)) ?? "{}"
-    }
 
 }

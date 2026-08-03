@@ -49,9 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
     EditorWebViewPool.shared.warmUp()
 
-    // Pre-scan PATH so the first input-bar completion keystroke is instant.
+    // Pre-scan PATH so the first input-bar completion keystroke is instant,
+    // and install the bundled terminal/UI fonts into ~/Library/Fonts.
     DispatchQueue.global(qos: .utility).async {
       ImpulseCore.warmCompletionCache()
+      EditorAssets.installUserFontsIfNeeded()
     }
 
     // Initialize LSP with the last known directory, or home.

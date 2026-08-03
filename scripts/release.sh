@@ -73,7 +73,7 @@ fi
 echo "Setting version to ${VERSION}..."
 # BSD sed (macOS) requires -i '' and doesn't support 0,/pat/ addressing.
 # Use a portable approach: replace only the first ^version line in each file.
-for toml in impulse-core/Cargo.toml impulse-editor/Cargo.toml impulse-linux/Cargo.toml impulse-ffi/Cargo.toml; do
+for toml in impulse-core/Cargo.toml impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml; do
     awk -v ver="$VERSION" '!done && /^version = "/ { sub(/^version = ".*"/, "version = \"" ver "\""); done=1 } 1' "$toml" > "$toml.tmp" && mv "$toml.tmp" "$toml"
 done
 
@@ -86,7 +86,7 @@ if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
     # Only enforce clean tree when we're committing/tagging (version bump
     # changes are expected and will be committed below). Check for changes
     # beyond the Cargo.toml/lockfile version bump.
-    PRE_BUMP_DIRTY=$(git diff --name-only -- ':!Cargo.lock' ':!impulse-core/Cargo.toml' ':!impulse-editor/Cargo.toml' ':!impulse-linux/Cargo.toml' ':!impulse-ffi/Cargo.toml')
+    PRE_BUMP_DIRTY=$(git diff --name-only -- ':!Cargo.lock' ':!impulse-core/Cargo.toml' '':!impulse-ffi/Cargo.toml')
     if [[ -n "$PRE_BUMP_DIRTY" ]]; then
         echo "Error: working tree has uncommitted changes beyond version files:" >&2
         echo "$PRE_BUMP_DIRTY" >&2
@@ -95,7 +95,7 @@ if [[ "$MACOS_ONLY" == false && "$LINUX_ONLY" == false ]]; then
     fi
     # Commit version bump if anything changed
     if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-        git add impulse-core/Cargo.toml impulse-editor/Cargo.toml impulse-linux/Cargo.toml impulse-ffi/Cargo.toml Cargo.lock
+        git add impulse-core/Cargo.toml impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml Cargo.lock
         git commit -m "Release ${TAG}"
     fi
 

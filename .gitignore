@@ -9,3 +9,6 @@
 impulse-macos/.build/
 impulse-macos/Package.resolved
 impulse-macos/Sources/ImpulseApp/Resources/
+
+# Vendored libgit2 build output (built by scripts/build-libgit2.sh)
+impulse-macos/.libgit2/

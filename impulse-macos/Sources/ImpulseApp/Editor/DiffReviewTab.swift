@@ -175,18 +175,15 @@ final class DiffReviewTab: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     // MARK: Loading
 
     private func loadReview() {
-        switch ImpulseCore.ensureMonacoExtracted() {
-        case .failure(let error):
-            os_log(.error, log: Self.log, "Failed to extract Monaco: %{public}@", error.message)
+        guard let monacoDir = EditorAssets.monacoDirectory else {
             // Surface the failure inline instead of leaving a perpetual
             // "Loading changes…" dead-end (the WebView never gets a URL, so
             // review.js never becomes ready).
-            showLoadError(message: error.message)
-        case .success(let pathString):
-            let monacoDir = URL(fileURLWithPath: pathString, isDirectory: true)
-            let reviewHTML = monacoDir.appendingPathComponent("review.html")
-            webView?.loadFileURL(reviewHTML, allowingReadAccessTo: monacoDir)
+            showLoadError(message: "Bundled Monaco assets are missing")
+            return
         }
+        let reviewHTML = monacoDir.appendingPathComponent("review.html")
+        webView?.loadFileURL(reviewHTML, allowingReadAccessTo: monacoDir)
     }
 
     /// Replace the WebView with a visible, themed error message describing why
