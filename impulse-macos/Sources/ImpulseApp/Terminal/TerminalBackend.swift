@@ -566,21 +566,28 @@ final class TerminalBackend {
         return ImpulseCore.terminalRerunCommand(handle: handle, command: command)
     }
 
+    /// Recent command strings (newest first) from the Rust terminal's block
+    /// history, feeding the Swift-side completion engine.
+    private func recentCommandHistory() -> [String] {
+        guard let handle, !isShutdown else { return [] }
+        return ImpulseCore.terminalRecentCommands(handle: handle, limit: 500)
+    }
+
     /// Best inline completion for the input bar (history continuation, then
     /// PATH executables / subcommands / flags / filesystem paths), or nil.
     func completeInput(_ input: String, cwd: String?) -> String? {
-        guard let handle, !isShutdown, !input.isEmpty else { return nil }
-        return ImpulseCore.terminalCompleteInput(handle: handle, input: input, cwd: cwd)
+        guard handle != nil, !isShutdown, !input.isEmpty else { return nil }
+        return InputCompletion.complete(input: input, cwd: cwd, history: recentCommandHistory())
     }
 
     /// Path-completion candidates for the active argument token of `input`,
     /// capped at `limit`. Returns `nil` on error or when the active token is
-    /// not a path argument. Performs filesystem work in Rust — call off the
-    /// main thread.
+    /// not a path argument. Performs filesystem work — call off the main
+    /// thread.
     func completionCandidates(input: String, cwd: String?, limit: Int = 50) -> CompletionResult? {
-        guard let handle, !isShutdown, !input.isEmpty else { return nil }
-        return ImpulseCore.terminalCompletionCandidates(
-            handle: handle, input: input, cwd: cwd, limit: limit)
+        guard handle != nil, !isShutdown, !input.isEmpty else { return nil }
+        return InputCompletion.completeCandidates(
+            input: input, cwd: cwd, history: recentCommandHistory(), limit: limit)
     }
 
     private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {

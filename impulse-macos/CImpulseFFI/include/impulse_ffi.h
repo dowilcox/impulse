@@ -11,8 +11,6 @@ typedef struct LspRegistryHandle LspRegistryHandle;
 // Memory management
 void impulse_free_string(char *s);
 
-// Input completion
-void impulse_completion_warm_cache(void);
 
 // LSP management
 LspRegistryHandle *impulse_lsp_registry_new(const char *root_uri);
@@ -43,13 +41,7 @@ char *impulse_terminal_command_blocks(void *handle);
 char *impulse_terminal_block_overlay(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);
 char *impulse_terminal_command_history_search(void *handle, const char *query_json);
-char *impulse_terminal_complete_input(void *handle, const char *input, const char *cwd);
-// Path completion candidates for the input-bar dropdown. Returns JSON:
-//   { "span": { "start": usize, "end": usize },
-//     "candidates": [ { "value": string, "display": string, "kind": "path",
-//                       "is_dir": bool, "git_status": string|null } ] }
-// Returns NULL on error. Caller frees with impulse_free_string.
-char *impulse_terminal_completion_candidates(void *handle, const char *input, const char *cwd, unsigned long limit);
+char *impulse_terminal_recent_commands(void *handle, unsigned long limit);
 _Bool impulse_terminal_rerun_command(void *handle, const char *command);
 void impulse_terminal_start_selection(void *handle, unsigned short col, unsigned short row, unsigned char kind);
 void impulse_terminal_update_selection(void *handle, unsigned short col, unsigned short row);

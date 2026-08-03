@@ -996,82 +996,24 @@ pub extern "C" fn impulse_terminal_command_history_search(
     )
 }
 
-/// Warm the input-completion caches (PATH executable scan) off the hot path.
-/// Safe to call from a background thread at startup.
+/// Return up to `limit` recent command strings from the terminal's block
+/// history (newest first) as a JSON string array. Used by the Swift-side
+/// input completion. Caller frees with `impulse_free_string`.
 #[no_mangle]
-pub extern "C" fn impulse_completion_warm_cache() {
-    ffi_catch((), AssertUnwindSafe(impulse_core::completion::warm_cache));
-}
-
-/// Best inline completion for the input bar. `input` is the current text,
-/// `cwd` the terminal's working directory (may be NULL). Returns the full
-/// completed line (always starts with `input`), or NULL when there's none.
-/// Caller frees with `impulse_free_string`.
-#[no_mangle]
-pub extern "C" fn impulse_terminal_complete_input(
+pub extern "C" fn impulse_terminal_recent_commands(
     handle: *mut TerminalHandle,
-    input: *const c_char,
-    cwd: *const c_char,
-) -> *mut c_char {
-    ffi_catch(
-        std::ptr::null_mut(),
-        AssertUnwindSafe(|| {
-            if handle.is_null() {
-                return std::ptr::null_mut();
-            }
-            let Some(input) = to_rust_str(input) else {
-                return std::ptr::null_mut();
-            };
-            let cwd = to_rust_str(cwd);
-            let h = unsafe { &*handle };
-            let history = h.backend.recent_command_strings(500);
-            match impulse_core::completion::complete(&input, cwd.as_deref(), &history) {
-                Some(completed) => to_c_string(&completed),
-                None => std::ptr::null_mut(),
-            }
-        }),
-    )
-}
-
-/// Path completion candidates for the terminal input bar's dropdown. `input` is
-/// the current text, `cwd` the terminal's working directory (may be NULL), and
-/// `limit` the maximum number of candidates to return. Returns a JSON
-/// `CompletionResult`:
-///   { "span": { "start": usize, "end": usize },
-///     "candidates": [ { "value": string, "display": string, "kind": "path",
-///                       "is_dir": bool, "git_status": string|null } ] }
-/// Returns NULL on error. Caller frees with `impulse_free_string`.
-#[no_mangle]
-pub extern "C" fn impulse_terminal_completion_candidates(
-    handle: *mut TerminalHandle,
-    input: *const c_char,
-    cwd: *const c_char,
     limit: usize,
 ) -> *mut c_char {
     ffi_catch(
         std::ptr::null_mut(),
         AssertUnwindSafe(|| {
             if handle.is_null() {
-                return std::ptr::null_mut();
+                return to_c_string("[]");
             }
-            let Some(input) = to_rust_str(input) else {
-                return std::ptr::null_mut();
-            };
-            let cwd = to_rust_str(cwd);
             let h = unsafe { &*handle };
-            let history = h.backend.recent_command_strings(500);
-            let result = impulse_core::completion::complete_candidates(
-                &input,
-                cwd.as_deref(),
-                &history,
-                limit,
-            );
-            match serde_json::to_string(&result) {
+            match serde_json::to_string(&h.backend.recent_command_strings(limit)) {
                 Ok(json) => to_c_string(&json),
-                Err(e) => {
-                    log::error!("JSON serialization failed: {}", e);
-                    std::ptr::null_mut()
-                }
+                Err(_) => to_c_string("[]"),
             }
         }),
     )

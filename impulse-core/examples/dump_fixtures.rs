@@ -30,7 +30,6 @@ fn main() {
     fs::create_dir_all(&kit).expect("create kit dir");
     fs::create_dir_all(&git).expect("create git dir");
 
-    dump_shell_parser(&kit);
     // dump_close_risk / dump_palette / dump_glob were removed along with the
     // Rust modules they exercised (ported to ImpulseKit in Phase 1); their
     // fixtures remain committed under Tests/ImpulseKitTests/Fixtures.
@@ -54,47 +53,6 @@ fn write_json(path: &Path, value: &Value) {
 
 fn to_value<T: serde::Serialize>(v: &T) -> Value {
     serde_json::to_value(v).expect("to_value")
-}
-
-// ---------------------------------------------------------------------------
-// Shell parser (Phase 5 parity)
-// ---------------------------------------------------------------------------
-
-fn dump_shell_parser(out: &Path) {
-    // (input, cursor). usize::MAX means "cursor at end of input".
-    let corpus: Vec<(&str, usize)> = vec![
-        ("", 0),
-        ("ls", usize::MAX),
-        ("ls -la ./src", usize::MAX),
-        ("git commit -m 'hello world'", usize::MAX),
-        ("FOO=bar BAZ=qux cargo build --release", usize::MAX),
-        ("echo \"a b\" | grep a > out.txt 2>&1", usize::MAX),
-        ("cat < in.txt >> out.log", usize::MAX),
-        ("cd ~/pro", usize::MAX),
-        ("echo 'unclosed", usize::MAX),
-        ("echo \"unclosed double", usize::MAX),
-        ("a | b | c", 6),
-        ("git checkout main", 7),
-        ("git checkout main", 3),
-        ("echo héllo wörld", usize::MAX),
-        ("./run.sh --flag=value", usize::MAX),
-        ("VAR=1", usize::MAX),
-        ("ls  ", usize::MAX),
-        ("grep -r \"needle\" src/", usize::MAX),
-    ];
-
-    let results: Vec<Value> = corpus
-        .iter()
-        .map(|(input, cursor)| {
-            let cursor = if *cursor == usize::MAX {
-                input.len()
-            } else {
-                *cursor
-            };
-            to_value(&impulse_core::shell_parser::parse_shell_input(input, cursor))
-        })
-        .collect();
-    write_json(&out.join("shell_parser.json"), &Value::Array(results));
 }
 
 // ---------------------------------------------------------------------------

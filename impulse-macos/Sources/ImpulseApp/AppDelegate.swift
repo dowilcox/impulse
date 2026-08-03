@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Pre-scan PATH so the first input-bar completion keystroke is instant,
     // and install the bundled terminal/UI fonts into ~/Library/Fonts.
     DispatchQueue.global(qos: .utility).async {
-      ImpulseCore.warmCompletionCache()
+      InputCompletion.warmCache()
       EditorAssets.installUserFontsIfNeeded()
     }
 

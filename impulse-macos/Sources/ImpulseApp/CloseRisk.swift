@@ -20,6 +20,10 @@ typealias UpdateChecker = ImpulseKit.UpdateChecker
 typealias MarkdownPreview = ImpulseKit.MarkdownPreview
 typealias SVGPreview = ImpulseKit.SVGPreview
 typealias MarkdownThemeColors = ImpulseKit.MarkdownThemeColors
+typealias TextSpan = ImpulseKit.TextSpan
+typealias CompletionCandidate = ImpulseKit.CompletionCandidate
+typealias CompletionResult = ImpulseKit.CompletionResult
+typealias InputCompletion = ImpulseKit.InputCompletion
 
 extension ImpulseKit.SearchResult {
   /// Stable identity for SwiftUI ForEach diffing. Combines path, line, and

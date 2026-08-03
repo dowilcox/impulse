@@ -3,46 +3,6 @@ import Foundation
 import ImpulseGit
 import ImpulseKit
 
-// MARK: - Terminal Completion
-
-/// A byte range within the input text to be replaced by a completion.
-/// Mirrors the Rust `TextSpan` serialization (`{start, end}`) used by the
-/// shell parser and consumed by the completion bridge.
-struct TextSpan: Codable, Equatable {
-    let start: Int
-    let end: Int
-}
-
-/// A single path-completion candidate for the terminal input bar. Mirrors the
-/// Rust `CompletionCandidate` serialization (snake_case keys: `is_dir`,
-/// `git_status`).
-struct CompletionCandidate: Codable, Equatable {
-    /// Full replacement text for the active token. Directories carry a
-    /// trailing `/`.
-    let value: String
-    /// Label shown in the dropdown (the basename).
-    let display: String
-    /// Candidate kind. v1 always `"path"`.
-    let kind: String
-    /// Whether the candidate is a directory.
-    let isDir: Bool
-    /// Optional git status code (e.g. `"M"`, `"?"`); `nil` on the hot path.
-    let gitStatus: String?
-
-    enum CodingKeys: String, CodingKey {
-        case value, display, kind
-        case isDir = "is_dir"
-        case gitStatus = "git_status"
-    }
-}
-
-/// The result of a completion request: the token span to replace plus the
-/// ranked candidate list. Mirrors the Rust `CompletionResult` serialization.
-struct CompletionResult: Codable, Equatable {
-    let span: TextSpan
-    let candidates: [CompletionCandidate]
-}
-
 // MARK: - Error Type
 
 /// Simple error wrapper so we can use `Result<String, ImpulseError>` (Swift
@@ -787,44 +747,13 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
-    /// Pre-scan PATH so the first input-bar completion is instant.
-    static func warmCompletionCache() {
-        impulse_completion_warm_cache()
-    }
-
-    /// Returns the best inline completion for the input bar, or nil.
-    static func terminalCompleteInput(handle: OpaquePointer, input: String, cwd: String?) -> String? {
-        let ptr = input.withCString { inputPtr in
-            if let cwd {
-                return cwd.withCString { cwdPtr in
-                    impulse_terminal_complete_input(UnsafeMutableRawPointer(handle), inputPtr, cwdPtr)
-                }
-            }
-            return impulse_terminal_complete_input(UnsafeMutableRawPointer(handle), inputPtr, nil)
-        }
-        guard let ptr else { return nil }
-        return consumeCString(ptr)
-    }
-
-    /// Returns the path-completion candidates for the active argument token of
-    /// `input`, capped at `limit`. Decodes the JSON `CompletionResult` produced
-    /// by impulse-core, or `nil` on error / empty handle. Runs filesystem work
-    /// in Rust — call off the main thread.
-    static func terminalCompletionCandidates(
-        handle: OpaquePointer, input: String, cwd: String?, limit: Int
-    ) -> CompletionResult? {
-        let ptr = input.withCString { inputPtr -> UnsafeMutablePointer<CChar>? in
-            if let cwd {
-                return cwd.withCString { cwdPtr in
-                    impulse_terminal_completion_candidates(
-                        UnsafeMutableRawPointer(handle), inputPtr, cwdPtr, CUnsignedLong(limit))
-                }
-            }
-            return impulse_terminal_completion_candidates(
-                UnsafeMutableRawPointer(handle), inputPtr, nil, CUnsignedLong(limit))
-        }
-        guard let json = consumeCString(ptr), let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(CompletionResult.self, from: data)
+    /// Returns up to `limit` recent command strings from the terminal's block
+    /// history (newest first), for the Swift-side input completion.
+    static func terminalRecentCommands(handle: OpaquePointer, limit: Int) -> [String] {
+        let ptr = impulse_terminal_recent_commands(
+            UnsafeMutableRawPointer(handle), CUnsignedLong(limit))
+        guard let json = consumeCString(ptr), let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
     }
 
     /// Searches completed terminal command history and returns a JSON array string.
