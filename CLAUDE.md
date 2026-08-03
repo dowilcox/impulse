@@ -4,285 +4,90 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Impulse?
 
-Impulse is a terminal-first development environment built with Rust. It combines a terminal emulator with a Monaco-powered code editor in a tabbed interface, with native frontends for Linux (GTK4/libadwaita) and macOS (AppKit/SwiftUI).
-
-## Cross-Platform Development
-
-Frontend changes do **not** need to land on both platforms at once. The Linux (`impulse-linux`) and macOS (`impulse-macos`) frontends can intentionally diverge — a feature may ship on one platform and never come to the other. Implement a change on whichever frontend the task targets; do not auto-port it to the other unless explicitly asked.
-
-Guidance:
-
-- Put logic that genuinely belongs to both platforms (PTY, shell detection, OSC parsing, filesystem, git, LSP, search, settings schema, terminal backend) in `impulse-core` / `impulse-editor` / `impulse-terminal` / `impulse-ffi` so either frontend _can_ use it — but adding it to one frontend's UI does not obligate the other.
-- Platform-specific UI code lives in the respective frontend crate.
-- When a feature exists on one platform but not the other, that's fine and does not require a TODO. Only add a TODO if you started parity work and left it unfinished.
-
-## Build & Development Commands
-
-**Note:** `cargo build` (all workspace members) only works on Linux where GTK4, libadwaita, VTE, and WebKitGTK libraries are available. On macOS, build specific crates or use the macOS build script.
-
-```bash
-# Rust workspace (impulse-core, impulse-editor, impulse-linux, impulse-ffi)
-cargo build                        # Build all workspace members (Linux only — needs GTK4 stack)
-cargo build -p impulse-core        # Build only the core library (cross-platform)
-cargo build -p impulse-editor      # Build only the editor crate (cross-platform)
-cargo build -p impulse-linux       # Build only the Linux frontend (Linux only)
-cargo build -p impulse-ffi         # Build only the FFI static library (cross-platform)
-cargo run -p impulse-linux         # Run the Linux app (Linux only)
-cargo run -p impulse-linux -- --dev  # Run in dev mode (uses separate app ID + config)
-cargo check                        # Type-check without full compilation
-cargo fmt                          # Format all code
-cargo clippy                       # Lint
-cargo test                         # Run tests
-cargo test -p impulse-core         # Test only the core crate
-
-# macOS (Swift Package, built separately)
-./impulse-macos/build.sh           # Build .app bundle (builds impulse-ffi + Swift app)
-./impulse-macos/build.sh --dev     # Build dev variant (separate bundle ID, runs side-by-side)
-./impulse-macos/build.sh --dmg     # Build .app + .dmg disk image
-./impulse-macos/build.sh --sign    # Build + codesign with Developer ID
-./impulse-macos/build.sh --sign --notarize --dmg  # Full release build
-```
-
-### Platform-aware build verification
-
-When verifying builds, use the right commands for the current platform:
-
-- **On macOS:** Build cross-platform crates with `cargo build -p impulse-core -p impulse-editor -p impulse-ffi`, run tests with `cargo test -p impulse-core -p impulse-editor -p impulse-ffi`, and build the macOS app with `./impulse-macos/build.sh`. Do NOT attempt `cargo build -p impulse-linux` or `cargo check -p impulse-linux` — it will fail due to missing GTK4 system libraries.
-- **On Linux:** `cargo build` works for all Cargo workspace members. The macOS frontend (`impulse-macos`) cannot be built on Linux.
+Impulse is a Mac-first terminal IDE: a terminal emulator with Warp-style command blocks combined with a Monaco-powered code editor in a tabbed interface. The app is Swift (AppKit + SwiftUI); the only remaining Rust is the terminal emulation core, reached through a small C FFI.
 
 ## Architecture
 
-The Cargo workspace has four Rust crates (`impulse-core`, `impulse-editor`, `impulse-linux`, `impulse-ffi`) plus one Swift package (`impulse-macos`). Dependency direction is strictly one-way: frontend code depends on `impulse-core` and `impulse-editor`, never the reverse. The macOS frontend links against `impulse-ffi` (a C-compatible static library wrapping `impulse-core` and `impulse-editor`). The two frontends are independent of each other.
+```
+impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
+  Sources/ImpulseApp      executable: AppKit/SwiftUI UI, terminal renderer,
+                          Monaco WebViews, LSP/git/search wiring
+  Sources/ImpulseKit      pure logic (Foundation-only): themes, previews,
+                          palette, completion + shell parser, file tree,
+                          search results, close risk, glob, update checker
+  Sources/ImpulseGit      libgit2-backed git layer + gitignore-aware search
+  Sources/ImpulseLSP      LSP client: server processes, JSON-RPC framing,
+                          registry, document cache, managed npm installs
+  Clibgit2/               module map for the vendored static libgit2
+  CImpulseFFI/            C header for the Rust terminal FFI
+  web/                    editor.html/js + review.html/js (Monaco glue)
+impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
+                          OSC 133/7/6973 scanning, command blocks, history
+impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
+vendor/                   Monaco editor, fonts, highlight.js (committed)
+scripts/                  build-libgit2.sh, vendor-monaco.sh, release.sh
+```
 
-### impulse-core (library, no GUI dependencies)
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit. The Rust workspace is `impulse-terminal` + `impulse-ffi` only, and the FFI surface is terminal-only (~33 functions; JSON strings for complex data, a binary buffer for grid snapshots, `impulse_free_string` for cleanup).
 
-Platform-agnostic backend logic.
+### Why the split
 
-- **pty.rs** — `PtyManager` owns PTY sessions in an `Arc<Mutex<HashMap>>`. Each session spawns a reader thread that runs an `OscParser` to detect shell integration escape sequences (OSC 133 for command start/end, OSC 7 for CWD changes) and forwards `PtyMessage` events through a `PtyEventSender` trait.
-- **shell.rs** — Detects the user's shell from `/etc/passwd`/`$SHELL`, injects integration scripts via temp rc files (bash `--rcfile`, zsh `ZDOTDIR` wrapper, fish `--init-command`). The `prepare_shell_spawn()` function is the main entry point.
-- **filesystem.rs** — Directory listing sorted dirs-first with git status enrichment via `git status --porcelain`.
-- **git.rs** — Git operations: branch detection, diff computation for gutter markers.
-- **lsp.rs** — LSP client management: spawning language servers, JSON-RPC communication, managed web LSP installation/status.
-- **search.rs** — File name and content search using the `ignore` crate for gitignore-aware walking.
-- **util.rs** — Shared utilities: `language_from_uri()` for language ID detection, `file_path_to_uri()` / `uri_to_file_path()` conversions, file pattern matching for settings overrides.
-- **shell_integration/\*.sh** — Shell scripts emitting OSC 133 and OSC 7 escape sequences.
+- **ImpulseKit** is Foundation-only so its logic is headless-testable. No AppKit/WebKit imports there.
+- **ImpulseGit** wraps a vendored static libgit2 1.9.1 built WITHOUT network transports (local operations only — status, diff/hunks with word-level spans, blame, commit, discard, branches, ignore checks). No OpenSSL anywhere.
+- **ImpulseLSP** owns language-server processes with hand-rolled Content-Length framing and a poll-shaped facade (`pollEvent()` returns the same JSON envelopes the app has always decoded).
+- **impulse-terminal (Rust)** stays because alacritty_terminal is a complete, battle-tested VT emulator. It owns the PTY, grid/scrollback, damage tracking, selection, scrollback search, and OSC 133/7/6973 command-block tracking. Swift owns all rendering (CoreText in `TerminalRenderer.swift`) and input encoding.
+- `Bridge/ImpulseCore.swift` is the single seam: terminal calls go through the C FFI; everything else delegates to the Swift libraries. Keep new backend logic OUT of the bridge — put it in the right library target.
 
-### impulse-editor (library, Monaco assets)
+### Golden-fixture parity (important)
 
-Bundles the vendored Monaco editor and defines the WebView communication protocol.
+The Swift ports were verified against fixtures generated from the original Rust implementation, committed under `impulse-macos/Tests/ImpulseKitTests/Fixtures/` and `Tests/ImpulseGitTests/Fixtures/` (themes → Monaco JSON, git hunks/word-diff/blame/status, shell-parser tokenizations, file-tree patches, palette filtering, glob, close risk). Treat fixtures as the spec: never regenerate them from Swift output. If behavior changes intentionally, update the affected fixture explicitly in the same commit and say why.
 
-- **assets.rs** — Embeds the Monaco vendor directory and editor HTML via `include_dir!` / `include_str!`.
-- **protocol.rs** — `EditorCommand` and `EditorEvent` enums for bidirectional JSON messaging between Rust and the Monaco WebView.
-- **css.rs** — CSS color sanitizer validating `#hex`, `rgb()`, and `rgba()` color formats with fallbacks for theme customization.
-- **markdown.rs** — Markdown preview renderer using `pulldown_cmark` with themed HTML output and highlight.js syntax highlighting.
-- **svg.rs** — SVG preview renderer embedding SVG sources in themed HTML documents with centered layout.
+## Build & Development Commands
 
-### impulse-linux (binary, GTK4/libadwaita frontend)
+```bash
+# macOS app (canonical build — produces dist/Impulse.app)
+./impulse-macos/build.sh             # release .app bundle
+./impulse-macos/build.sh --dev       # "Impulse Dev.app" (separate bundle ID, runs side-by-side)
+./impulse-macos/build.sh --dmg       # + disk image
+./impulse-macos/build.sh --sign --notarize --dmg   # full release build
 
-Uses GTK4/libadwaita for application chrome, the in-tree `impulse-terminal` backend (alacritty_terminal) rendered via cairo for terminal tabs, and WebKitGTK for the Monaco editor WebView. Keep Linux UI work in Rust GTK modules under `impulse-linux/src`; do not reintroduce QML/CXX-Qt for this frontend.
+# Swift package directly (from impulse-macos/)
+swift build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+#   ^ plain CommandLineTools lacks the Testing module; tests are guarded with
+#     #if canImport(Testing) and silently no-op without full Xcode.
 
-- **main.rs** — `adw::Application` setup with app ID `dev.impulse.Impulse`, CLI flags (`--install-lsp-servers`, `--check-lsp-servers`).
-- **window/** — Main window module split into context structs, tab management, keybinding setup, sidebar signals, and dialogs.
-- **keybindings.rs** — Built-in keybinding registry, accel parsing, and override resolution.
-- **terminal.rs** — Terminal widget backed by `impulse_terminal::TerminalBackend`, drawn with cairo (grid cells plus Warp-style command-block decorations: separators, status chips, failure stripes).
-- **terminal_container.rs** — Wraps terminals and handles horizontal/vertical splitting via `gtk4::Paned`.
-- **editor.rs** — GtkSourceView editor fallback with auto-detected language and indentation.
-- **editor_webview.rs** — Monaco editor via WebKitGTK WebView. Handles bidirectional JSON messaging with the embedded Monaco instance.
-- **sidebar.rs** — File tree with lazy-loaded directory expansion plus a search panel.
-- **file_icons.rs** — Maps file extensions to bundled SVG icons.
-- **project_search.rs** — Project-wide file and content search UI.
-- **lsp_completion.rs** / **lsp_hover.rs** — LSP autocomplete and hover info integration.
-- **status_bar.rs** — Status bar labels for CWD, git branch, shell name, cursor position, language, encoding, and indentation.
-- **settings.rs** — Settings serialized to `~/.config/impulse/settings.json`.
-- **settings_page.rs** — `adw::PreferencesWindow` for Editor, Terminal, Appearance, Automation, and Keybindings.
-- **theme.rs** — Color theme constants and CSS generation.
+# Rust terminal core
+cargo build -p impulse-ffi           # staticlib the Swift app links
+cargo test -p impulse-terminal       # block/OSC/history tests
+cargo fmt && cargo clippy
 
-### impulse-ffi (static library, C-compatible FFI)
+# One-time / occasional
+./scripts/build-libgit2.sh           # vendored libgit2 (cached; build.sh runs it)
+./scripts/vendor-monaco.sh           # refresh vendor/monaco
+```
 
-C-compatible wrappers around `impulse-core` and `impulse-editor` for the macOS Swift frontend. Compiled as a static library (`libimpulse_ffi.a`). All functions use C strings for input/output and JSON encoding for complex types. Callers must free returned strings with `impulse_free_string`.
+Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo build --release -p impulse-ffi` first on a fresh checkout (build.sh does all of this in order). SwiftPM does not track `.a` mtimes; build.sh has a relink hack for that.
 
-- **lib.rs** — `extern "C"` functions exposing filesystem, git, search, LSP, PTY, shell detection, and editor asset operations to Swift via the `CImpulseFFI` module.
+## Key patterns
 
-### impulse-macos (Swift Package, macOS frontend)
-
-The macOS frontend, built as a Swift Package (not a Cargo crate). Requires **macOS 26+ (Tahoe)**. Communicates with the Rust backend via `impulse-ffi` C FFI. Built with `./impulse-macos/build.sh`.
-
-**Architecture:** The window uses a hybrid AppKit/SwiftUI approach. `MainWindowController` (AppKit) owns the window, NSToolbar, and tab content lifecycle. A single `NSHostingView` fills the window content area with a SwiftUI `NavigationSplitView` that renders the sidebar, tab bar, and status bar. Terminal and editor views remain AppKit (`NSView`) and are embedded via `NSViewRepresentable`. The `@Observable WindowModel` class is the bridge — AppKit mutates it, SwiftUI observes it.
-
-#### App lifecycle & wiring
-
-- **ImpulseApp.swift** — App entry point.
-- **AppState.swift** — Global static flags (`isDev`) set once at startup.
-- **AppDelegate.swift** — NSApplication delegate, app lifecycle.
-- **MainWindow.swift** — `MainWindowController`: window setup, `NSToolbarDelegate` (sidebar toggle, new file/folder, refresh, collapse, hidden files, new tab, search — placed in titlebar like Apple apps using `.sidebarTrackingSeparator`), `NSHostingView` creation, `WindowModel` callback wiring, status bar syncing, file tree syncing. Uses `titlebarAppearsTransparent = true` and `titlebarSeparatorStyle = .none` for seamless toolbar/tab bar integration.
-- **MainWindowController+LSP.swift** — LSP integration extension: background polling of LSP events (diagnostics, completions), batched processing, and main-thread dispatch.
-- **TabManager.swift** — Tab management: tab creation/selection/close/reorder, content view lifecycle, `syncToWindowModel()` pushes tab info and `activeFilePath` to `WindowModel`.
-- **Notifications.swift** — Centralized `NSNotification.Name` constants for theme/settings changes, tab management events, and search operations.
-- **ResourceBundle.swift** — Bundle resource locator handling both packaged `.app` and development contexts for SwiftPM resources.
-- **ShellEscape.swift** — String extension for shell-escaping arguments.
-
-#### SwiftUI views (all visual chrome)
-
-- **SwiftUI/Models/WindowModel.swift** — `@Observable` state class shared between AppKit and SwiftUI. Contains tab display info, sidebar state, file tree nodes, status bar fields, theme, icon cache, active file path, and callback closures for SwiftUI→AppKit communication.
-- **SwiftUI/Views/MainContentView.swift** — Root SwiftUI view: `NavigationSplitView` with sidebar + detail (tab bar, content area, status bar).
-- **SwiftUI/Views/SidebarView.swift** — Switches between `FileTreeListView` and `SearchPanelView` based on search state.
-- **SwiftUI/Views/FileTreeListView.swift** — Recursive file tree using `ScrollView` + `LazyVStack` (not `List`, to avoid NSOutlineView/DisclosureGroup click conflicts). Manual chevron expand/collapse, themed SVG icons via `IconCache`, git status colored file names and badges, hover highlighting, active file highlighting, context menus (new file, new folder, rename, delete, reveal in Finder, copy path).
-- **SwiftUI/Views/TabBarView.swift** — Finder-style tab bar: full-width pill tabs, hidden with one tab, hover-reveal close buttons, drag-drop reordering via `DropDelegate`.
-- **SwiftUI/Views/StatusBarView.swift** — Bottom status bar: shell name, git branch, CWD, blame info, cursor position, language, encoding, indent, preview toggle.
-- **SwiftUI/Views/SearchPanelView.swift** — Search results display with case-sensitive toggle, result count, debounced search with generation counter to prevent stale results.
-- **SwiftUI/Representables/ContentAreaRepresentable.swift** — `NSViewRepresentable` wrapping `TabManager.contentView` in a `ContentContainer` that syncs frames and posts resize notifications for SwiftTerm sizing.
-
-#### AppKit components (terminal, editor, data loading)
-
-- **Terminal/TerminalContainer.swift** — Terminal view with splitting support.
-- **Terminal/TerminalTab.swift** — Terminal tab using SwiftTerm for terminal emulation.
-- **Editor/EditorTab.swift** — Monaco editor tab via WKWebView.
-- **Editor/EditorProtocol.swift** — Bidirectional JSON messaging with Monaco (mirrors `impulse-editor` protocol).
-- **Editor/EditorWebViewPool.swift** — WebView pooling for editor instances.
-
-#### Sidebar data (headless, not rendered)
-
-- **Sidebar/FileTreeDataController.swift** — Headless owner of the file tree data: root nodes, filesystem watchers (root + expanded subdirectories + `.git/index`), periodic git status polling (paused while the app is inactive), incremental tree patch application, and per-root expansion-state persistence in UserDefaults. Fires `onTreeRefreshed` so `MainWindowController` can sync nodes to `WindowModel`.
-- **Sidebar/FileTreeNode.swift** — `@Observable` tree node model. Lazy-loads children via `FileManager`, supports git status enrichment. `.DS_Store` files are always filtered out.
-- **Sidebar/FileIcons.swift** — `IconCache` class: loads SVG icons from bundle, recolors with theme colors, caches as `NSImage`. Used by both `FileTreeListView` and `TabManager` for file/folder/toolbar icons.
-
-#### Other AppKit UI
-
-- **UI/CommandPalette.swift** — Command palette (equivalent to Linux Ctrl+Shift+P).
-- **UI/MenuBuilder.swift** — macOS menu bar construction.
-- **UI/StatusBar.swift** — AppKit status bar (receives updates alongside `WindowModel` for compatibility; will be removed when fully migrated).
-- **Settings/Settings.swift** — `Settings` struct (Codable), stored at `~/Library/Application Support/impulse/settings.json`.
-- **Settings/SettingsFormSheet.swift** — Settings editor form.
-- **Settings/SettingsWindow.swift** — Settings window controller.
-- **Theme/Theme.swift** — Color theme constants matching the Linux themes. Includes `bgSurface`, `border`, `accent` fields for the SwiftUI UI.
-- **Keybindings/Keybindings.swift** — Keybinding registry and handling.
-- **Bridge/ImpulseCore.swift** — Swift wrapper calling `impulse-ffi` C functions.
-- **CImpulseFFI/** — C header module (`impulse_ffi.h` + `module.modulemap`) for Swift-to-Rust bridging.
-
-### Key patterns
-
-- **GTK UI pattern (Linux):** Rust owns the GTK widget tree directly. Keep shared state in `Rc<RefCell<T>>` context structs, wire GTK/libadwaita signals close to the widgets they affect, and push cross-platform behavior down into `impulse-core` or `impulse-editor`.
-- **GTK styling (Linux):** Visual styling is generated from `theme.rs` as CSS applied through `gtk4::CssProvider`; Monaco receives matching theme definitions through the WebKit editor bridge.
-- **SwiftUI/AppKit bridge (macOS):** `@Observable WindowModel` is the single source of truth for UI state. AppKit code (MainWindowController, TabManager) mutates it; SwiftUI views observe it for automatic re-rendering. Communication from SwiftUI back to AppKit uses callback closures on WindowModel (e.g., `onTabSelected`, `onOpenFile`, `onRefreshTree`). The NSToolbar uses `NSToolbarDelegate` with `.sidebarTrackingSeparator` to place items in the correct column. SwiftUI's `.toolbar {}` and `.searchable()` modifiers do NOT work inside `NSHostingView` — all toolbar items must be native `NSToolbarItem`.
-- **File tree (macOS):** Uses `ScrollView` + `LazyVStack` with a flat virtualized row list (`FileTreeListView`), NOT `List` + `DisclosureGroup` (which has known click-handling conflicts). `FileTreeNode` is `@Observable` so expand/collapse and git status changes trigger SwiftUI re-renders. Data loading, watchers, and expansion persistence live in the headless `FileTreeDataController`; name-input dialogs use `UI/NameInputDialog.swift`.
-- **Command blocks (Warp-style):** `impulse-terminal` records exact grid rows for OSC 133 prompt/command marks (interleaving the OSC scanner with alacritty's processor) in `blocks.rs`/`backend.rs`. `TerminalBackend::block_overlay()` returns viewport-mapped block regions (prompt row, end row, exit code, duration, running/failed flags) plus the live prompt region; both frontends draw the same decorations from it (separators, right-aligned status chips, failure stripe + wash, hover highlight on macOS). Suppressed on the alternate screen. Failure excludes exit 130/141 (SIGINT/SIGPIPE), following Warp.
-- **Terminal input bar:** a Warp-style command input pinned under the terminal (chips for shell/cwd/branch/last status + a command entry). macOS adds history ghost suggestions, ↑/↓ cycling, and dims the in-grid prompt while the bar has focus. Gated by the `terminal_context_bar` setting. When the running program reads password-style input (termios ECHO off with ICANON on — detected by `tcgetattr` polling in the `impulse-terminal` read loop, surfaced as `TerminalEvent::PasswordInputChanged`), both frontends mask the entry (SecureField on macOS, `Entry::set_visibility(false)` on Linux), send the reply verbatim (no trim, empty allowed), and drop the draft on mode flips.
-- **Vertical tabs:** tabs render as a Warp-style vertical list at the top of the sidebar by default (`tab_bar_position` = "sidebar"); the classic horizontal bar remains available via "top".
-- **Error handling:** Public APIs in `impulse-core` return `Result<T, String>`. Non-fatal errors use `log::warn!`.
-- **Shell integration flow:** Shell scripts emit OSC escapes -> terminal emulator passes raw bytes -> `OscParser` in pty.rs strips and interprets them -> `PtyMessage` events sent to frontend via `PtyEventSender`. This flow is identical on both platforms.
-- **Settings schema:** Both platforms use the same `Settings` struct and JSON format. The `settings.rs` module in each frontend should share the same data model (or it should be moved to `impulse-core` if divergence becomes a problem).
-
-### What belongs where
-
-| Logic                                        | Crate                              |
-| -------------------------------------------- | ---------------------------------- |
-| PTY management, shell detection, OSC parsing | `impulse-core`                     |
-| Filesystem listing, git status, search       | `impulse-core`                     |
-| LSP client, JSON-RPC, server management      | `impulse-core`                     |
-| Monaco assets, editor HTML, WebView protocol | `impulse-editor`                   |
-| C FFI wrappers for macOS Swift frontend      | `impulse-ffi`                      |
-| Window management, tab UI, native widgets    | `impulse-linux` or `impulse-macos` |
-| Terminal widget creation and configuration   | `impulse-linux` or `impulse-macos` |
-| Keybinding registration and UI               | `impulse-linux` or `impulse-macos` |
-| Theme/styling                                | `impulse-linux` or `impulse-macos` |
+- **SwiftUI/AppKit bridge:** `@Observable WindowModel` is the single source of truth for UI state. AppKit (MainWindowController, TabManager) mutates it; SwiftUI observes it. SwiftUI→AppKit communication uses callback closures on WindowModel. NSToolbar items must be native `NSToolbarItem` (SwiftUI `.toolbar {}` does not work inside `NSHostingView`).
+- **Terminal:** poll-based. `TerminalRenderer` runs an adaptive DispatchSource timer: `pollEvents()` → `takeDamage()` → invalidate rows → `draw` pulls a binary grid snapshot (16-byte header + 12-byte cells) parsed zero-copy by `GridBufferReader`. Command-block decorations come from `impulse_terminal_block_overlay`. Input completion is Swift (`ImpulseKit.InputCompletion`) fed by `impulse_terminal_recent_commands`.
+- **Editor:** Monaco in WKWebView, loaded from the app bundle (`EditorAssets.monacoDirectory`; build.sh copies vendor/ + impulse-macos/web/ into `Sources/ImpulseApp/Resources/monaco`). `EditorWebViewPool` pre-warms one WebView. Markdown preview renders with cmark-gfm in safe mode (raw HTML is elided by design — do not re-enable `CMARK_OPT_UNSAFE`).
+- **Themes:** TOML files in `Sources/ImpulseKit/Resources/Themes/` (user themes in `~/Library/Application Support/impulse/themes`). `ThemeStore` resolves them; `themeToMonaco` / `themeToMarkdownColors` derive editor/preview themes. New built-in themes: add the TOML resource and its name to `ThemeStore.builtinThemeNames()`.
+- **File tree:** `FileTreeDataController` (headless) owns watchers and data; patches computed by `ImpulseKit.FileTreePatcher` with git-status enrichment composed from `ImpulseGit.GitClient`; rendered by `FileTreeListView` (ScrollView + LazyVStack, NOT List/DisclosureGroup).
+- **Version:** the top-level `VERSION` file is the single source of truth. build.sh stamps it into Info.plist; the app reads `CFBundleShortVersionString` (`AppVersion.current`). Never version-bump by hand — `scripts/release.sh` does it.
+- **Error handling:** library targets return optionals/Results with descriptive messages; NSLog/os_log for non-fatal issues.
 
 ## Scripts
 
-**IMPORTANT: Always use the existing scripts for their intended tasks. Do NOT manually replicate what a script does with ad-hoc commands.**
+**Always use the existing scripts for their intended tasks — do not replicate their steps manually.**
 
-- **scripts/release.sh** — The **only** way to create releases. Handles version bumping, git tagging, building, packaging, checksum generation, and GitHub release creation. See the "Release Process" section below for details.
-- **scripts/install-lsp-servers.sh** — Installs managed web LSP servers (typescript-language-server, etc.) to `~/.local/share/impulse/lsp/`. Invoked via `--install-lsp-servers` CLI flag.
-- **scripts/vendor-monaco.sh** — Downloads and vendors Monaco Editor into `impulse-editor/vendor/monaco/`. Run once or when upgrading Monaco.
-- **impulse-macos/build.sh** — Builds the macOS `.app` bundle. Handles compiling `impulse-ffi`, copying Monaco assets, building Swift, creating the `.app` bundle, and optionally signing/notarizing/creating a `.dmg`. Called by `scripts/release.sh` during macOS releases — do NOT replicate its steps manually.
+- **scripts/release.sh <version> [--push]** — the ONLY way to release: writes VERSION, syncs crate versions, commits, tags, builds signed+notarized .app/.dmg, checksums, and (with --push) pushes and creates the GitHub release. Never run `gh release create`, `git tag`, or manual version edits.
+- **scripts/build-libgit2.sh** — pinned libgit2 static build into `impulse-macos/.libgit2/` (checksum-verified; idempotent).
+- **scripts/vendor-monaco.sh** — refreshes `vendor/monaco`.
+- **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 
-## Release Process
+## History
 
-**CRITICAL: All releases MUST go through `scripts/release.sh`. Never manually run `gh release create`, `gh release upload`, `git tag`, or version-bump Cargo.toml files. The release script handles all of this correctly and consistently.**
-
-### What the release script does
-
-Every invocation of `scripts/release.sh <version>` performs these steps:
-
-1. Bumps the version in all four `Cargo.toml` files and updates `Cargo.lock`
-2. Commits the version bump and creates an annotated git tag (`vX.Y.Z`) — skipped if the tag already exists, or if `--macos-only`/`--linux-only` is passed
-3. **Cleans `dist/`** to remove stale artifacts from previous releases
-4. Builds platform-appropriate packages (Linux: `.deb`/`.rpm`/`.pkg.tar.zst`, macOS: signed+notarized `.app`/`.dmg`)
-5. Generates SHA256 checksums for all artifacts in `dist/`
-6. **Only with `--push`:** pushes the commit + tag to GitHub, then creates the GitHub release (or uploads to it if it already exists) with everything in `dist/`
-
-**Important:** `--push` is additive — it does the full build first, then pushes. If the GitHub release already exists (e.g., created from another machine), it uploads artifacts with `--clobber` instead of failing.
-
-### Flags
-
-| Flag                  | Version bump & tag | Builds           | Pushes to GitHub |
-| --------------------- | ------------------ | ---------------- | ---------------- |
-| _(none)_              | Yes                | Current platform | No               |
-| `--push`              | Yes                | Current platform | Yes              |
-| `--macos-only`        | No                 | macOS only       | No               |
-| `--linux-only`        | No                 | Linux only       | No               |
-| `--macos-only --push` | No                 | macOS only       | Yes              |
-| `--linux-only --push` | No                 | Linux only       | Yes              |
-
-### Single-platform release (simplest)
-
-If you only need to release from one machine:
-
-```bash
-./scripts/release.sh 0.8.0 --push
-```
-
-This bumps versions, tags, builds for the current platform, pushes, and creates the GitHub release in one step.
-
-### Cross-platform release
-
-Releases need artifacts from both macOS and Linux. The first platform creates the tag and GitHub release; the second platform builds its artifacts and uploads them to the existing release.
-
-**Starting from macOS (recommended — signing/notarization is slow):**
-
-```bash
-# 1. On macOS — bump version, tag, build + sign + notarize, push + create release:
-./scripts/release.sh 0.8.0 --push
-
-# 2. On Linux — pull the tag, build Linux packages, upload to existing release:
-git pull origin main
-./scripts/release.sh 0.8.0 --linux-only --push
-```
-
-**Starting from Linux:**
-
-```bash
-# 1. On Linux — bump version, tag, build Linux packages, push + create release:
-./scripts/release.sh 0.8.0 --push
-
-# 2. On macOS — pull the tag, build + sign + notarize, upload to existing release:
-git pull origin main
-./scripts/release.sh 0.8.0 --macos-only --push
-```
-
-### What NOT to do for releases
-
-- Do NOT run `gh release create` or `gh release upload` directly — use `./scripts/release.sh <version> --push`
-- Do NOT manually edit version numbers in `Cargo.toml` files — the release script handles this
-- Do NOT manually create git tags — the release script creates annotated tags
-- Do NOT manually run `./impulse-macos/build.sh --sign --notarize --dmg` for releases — `scripts/release.sh` calls it with the correct flags
-- Do NOT manually compute or upload checksums — the release script generates `SHA256SUMS`
-
-## Project Directories
-
-- **assets/** — App logo SVG (`impulse-logo.svg`), `.desktop` file, screenshots, and `icons/` subdirectory with file type SVG icons.
-- **pkg/arch/** — PKGBUILD for Arch Linux packaging.
-- **dist/** — Built distribution packages (.deb, .rpm, .pkg.tar.zst for Linux; .app, .dmg for macOS).
-
-## System Dependencies
-
-### Linux (GTK4 stack)
-
-Building `impulse-linux` requires GTK4, libadwaita, VTE4, GtkSourceView5, and WebKitGTK development libraries. On Arch/CachyOS:
-
-```bash
-sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkitgtk-6.0
-```
-
-### macOS
-
-Requires **macOS 26 (Tahoe) or later**. Building `impulse-macos` requires Xcode command line tools and a Rust toolchain. The build script (`./impulse-macos/build.sh`) first compiles `impulse-ffi` as a static library via Cargo, then builds the Swift package via SwiftPM. AppKit, SwiftUI, and WKWebView are provided by the system frameworks. Terminal emulation uses an in-tree backend (`impulse-terminal`) wrapping `alacritty_terminal`, rendered via CoreText + CoreGraphics in `TerminalRenderer.swift`. OpenSSL is vendored (statically linked) via `impulse-ffi` so Homebrew is not required.
+Impulse was originally a Rust workspace with a GTK4 Linux frontend and most backend logic in Rust crates (`impulse-core`, `impulse-editor`) behind an 88-function FFI. It was rewritten Mac-first in Swift in 2026; the last Rust-era release (including the Linux app) is tag `v0.29.0`. If you need old behavior for reference, read the Rust sources at that tag — the fixtures under Tests/\*/Fixtures were generated from it.

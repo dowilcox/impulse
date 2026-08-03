@@ -5,7 +5,7 @@
 <h1 align="center">Impulse</h1>
 
 <p align="center">
-  A terminal-first development environment built with Rust.
+  A terminal-first development environment for the Mac.
 </p>
 
 <p align="center">
@@ -19,21 +19,20 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshot.png" width="800" alt="Impulse on Linux (GTK4)">
-</p>
-
-<p align="center">
-  <img src="assets/screenshot-mac.png" width="800" alt="Impulse on macOS (AppKit)">
+  <img src="assets/screenshot-mac.png" width="800" alt="Impulse on macOS">
 </p>
 
 Impulse combines a terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
+
+The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust core built on `alacritty_terminal`.
 
 ## Features
 
 **Terminal**
 
 - Terminal emulator with shell integration (bash, zsh, fish)
-- Horizontal and vertical terminal splitting
+- Warp-style command blocks with exit status, duration, and jump-to-block navigation
+- Command input bar with history ghost suggestions and path completion
 - OSC 133/7 escape sequence support for prompt/command/CWD tracking
 - Configurable scrollback, cursor shape, copy-on-select, and more
 
@@ -45,6 +44,7 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 - Auto-detected indentation, configurable tab width and spaces/tabs
 - Code folding, minimap, bracket pair colorization, indent guides
 - Git diff gutter showing added/modified/deleted lines
+- Review Changes tab with per-file diffs, word-level highlights, commit and discard
 - Markdown preview with syntax-highlighted code blocks
 - SVG preview with themed background
 - Bundled JetBrains Mono font for editor and terminal
@@ -54,8 +54,8 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 - File sidebar with lazy-loaded directory tree
 - File icons for 50+ languages and file types
 - Git status coloring on filenames (added, modified, untracked, etc.)
-- Project-wide file name and content search
-- Quick-open file picker (Ctrl+P / Cmd+P)
+- Project-wide file name and content search (gitignore-aware)
+- Quick-open file picker (Cmd+P)
 
 **Automation**
 
@@ -66,74 +66,22 @@ Impulse combines a terminal emulator with a Monaco-powered code editor in a mode
 **Interface**
 
 - Tabbed interface with command palette and pin tab support
-- New tabs open next to the active tab (browser/VS Code behavior)
-- Seven built-in color themes: Kanagawa, Nord, Gruvbox, Tokyo Night, Tokyo Night Storm, Catppuccin Mocha, Rose Pine
+- 19 built-in color themes (Kanagawa, Nord, Gruvbox, Tokyo Night, Catppuccin, Rose Pine, ...) plus user themes
 - Settings UI with live-updating preferences for editor, terminal, appearance, automation, and keybindings
 - Full keybinding visibility and customization UI — click any shortcut to rebind it
 - Drag-and-drop file opening
-- Image file preview
-
-## Platform Support
-
-| Platform | Status    | UI Framework      |
-| -------- | --------- | ----------------- |
-| Linux    | Available | GTK4 / libadwaita |
-| macOS    | Available | AppKit / SwiftUI  |
 
 ## Installation
 
-Download the latest package for your platform from [GitHub Releases](https://github.com/dowilcox/impulse/releases).
-
-### macOS
-
-Download `Impulse-X.Y.Z.dmg`, open it, and drag **Impulse.app** to your **Applications** folder.
+Download `Impulse-X.Y.Z.dmg` from [GitHub Releases](https://github.com/dowilcox/impulse/releases), open it, and drag **Impulse.app** to your **Applications** folder.
 
 Requires **macOS 26 (Tahoe)** or later.
 
-### Linux
+> Looking for the old Linux (GTK4) app? It shipped through `v0.29.0` — grab those packages from the corresponding release. Impulse is Mac-first as of the Swift rewrite.
 
-<details>
-<summary><strong>Arch / CachyOS / Manjaro</strong></summary>
+## Building from Source
 
-```bash
-sudo pacman -U impulse-0.11.0-1-x86_64.pkg.tar.zst
-```
-
-</details>
-
-<details>
-<summary><strong>Debian / Ubuntu</strong></summary>
-
-```bash
-sudo dpkg -i impulse_0.11.0-1_amd64.deb
-sudo apt install -f   # install any missing dependencies
-```
-
-</details>
-
-<details>
-<summary><strong>Fedora / RHEL / openSUSE</strong></summary>
-
-```bash
-sudo rpm -i impulse-0.11.0-1.x86_64.rpm
-```
-
-</details>
-
-### Building from Source
-
-Impulse requires [Rust](https://rustup.rs/) and platform-specific system libraries.
-
-<details>
-<summary><strong>macOS</strong></summary>
-
-Requires Xcode command line tools:
-
-```bash
-xcode-select --install
-```
-
-Clone and build using the macOS build script:
+Requires [Rust](https://rustup.rs/), Xcode (for the Swift toolchain), and CMake (`brew install cmake`, for the vendored libgit2).
 
 ```bash
 git clone https://github.com/dowilcox/impulse.git
@@ -145,49 +93,15 @@ cd impulse
 ./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
 ```
 
-The build script handles all steps automatically: building the Rust FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle. Code signing auto-detects your Developer ID from the keychain, or you can set `IMPULSE_SIGN_IDENTITY` explicitly.
+The build script handles all steps automatically: building the vendored libgit2, the Rust terminal FFI library, copying Monaco editor assets, compiling the Swift app, and assembling the `.app` bundle. Code signing auto-detects your Developer ID from the keychain, or you can set `IMPULSE_SIGN_IDENTITY` explicitly.
 
-The `--dev` flag builds with bundle ID `dev.impulse.Impulse.Devel`, allowing the dev build to run side-by-side with an installed release. The dev instance shows "[DEV]" in the window title.
+The `--dev` flag builds with bundle ID `dev.impulse.Impulse.Devel`, allowing the dev build to run side-by-side with an installed release.
 
 To run the built app:
 
 ```bash
 open dist/Impulse.app
 ```
-
-</details>
-
-<details>
-<summary><strong>Linux (Arch / CachyOS)</strong></summary>
-
-```bash
-sudo pacman -S gtk4 libadwaita vte4 gtksourceview5 webkitgtk-6.0
-```
-
-```bash
-git clone https://github.com/dowilcox/impulse.git
-cd impulse
-cargo build --release -p impulse-linux
-cargo run --release -p impulse-linux
-```
-
-</details>
-
-<details>
-<summary><strong>Linux (Debian / Ubuntu)</strong></summary>
-
-```bash
-sudo apt install libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev libwebkitgtk-6.0-dev
-```
-
-```bash
-git clone https://github.com/dowilcox/impulse.git
-cd impulse
-cargo build --release -p impulse-linux
-cargo run --release -p impulse-linux
-```
-
-</details>
 
 **Optional — install managed LSP servers** (for web language support):
 
@@ -198,61 +112,36 @@ cargo run --release -p impulse-linux
 ## Testing
 
 ```bash
-cargo test                         # Run all tests
-cargo test -p impulse-core         # Run only impulse-core tests
-cargo test -p impulse-editor       # Run only impulse-editor tests
+# Swift (from impulse-macos/; needs full Xcode, not just CommandLineTools)
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+
+# Rust terminal core
+cargo test -p impulse-terminal
 ```
 
 ## Architecture
 
-Impulse is a Rust workspace. Platform-agnostic logic lives in shared crates, with native frontends per platform.
+The app is a Swift package with a small Rust core for terminal emulation.
 
-| Crate            | Role                                                                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| `impulse-core`   | Platform-agnostic backend: PTY management, shell integration, filesystem, search, git, LSP          |
-| `impulse-editor` | Monaco editor assets, WebView protocol, and preview renderers (markdown, SVG)                       |
-| `impulse-ffi`    | C-compatible FFI static library wrapping `impulse-core` and `impulse-editor` for non-Rust frontends |
-| `impulse-linux`  | Linux frontend (GTK4 / libadwaita)                                                                  |
-| `impulse-macos`  | macOS frontend (AppKit / SwiftUI, linked via `impulse-ffi`)                                         |
+| Component          | Role                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `ImpulseApp`       | The app: AppKit/SwiftUI UI, CoreText terminal renderer, Monaco WebViews                    |
+| `ImpulseKit`       | Pure logic: themes, previews, command palette, input completion, file tree, settings logic |
+| `ImpulseGit`       | Git layer on a vendored static libgit2 (status, diffs, blame, commit, search)              |
+| `ImpulseLSP`       | LSP client: server processes, JSON-RPC framing, document sync, managed installs            |
+| `impulse-terminal` | Rust: terminal emulation (`alacritty_terminal`), OSC parsing, command blocks, history      |
+| `impulse-ffi`      | Rust: C FFI static library exposing the terminal core to Swift                             |
 
-Dependency direction is strictly one-way: frontends depend on `impulse-core` and `impulse-editor`, never the reverse.
+Much of the Swift logic is verified against golden fixtures generated from the original Rust implementation (see `impulse-macos/Tests/*/Fixtures`).
 
 ## Releasing
 
-The release script tags a version, builds platform-appropriate packages, and optionally creates a GitHub release. Since Linux and macOS can't cross-compile each other's packages, a full release runs on both platforms:
-
 ```bash
-# 1. On Linux — tag, build, and package Linux artifacts
-./scripts/release.sh 0.11.0
-
-# 2. On macOS — build signed + notarized macOS .app and .dmg (no tagging, tag already exists)
-./scripts/release.sh 0.11.0 --macos-only
-
-# 3. On either — push tag and upload all dist/ artifacts to GitHub
-./scripts/release.sh 0.11.0 --push
+./scripts/release.sh 0.30.0          # bump VERSION, tag, build signed+notarized .app/.dmg
+./scripts/release.sh 0.30.0 --push   # …then push and create the GitHub release
 ```
 
-If you only need one platform, you can combine steps:
-
-```bash
-./scripts/release.sh 0.11.0 --push             # Linux tag + build + push (on Linux)
-./scripts/release.sh 0.11.0 --linux-only        # Linux build only (skip tagging)
-./scripts/release.sh 0.11.0 --macos-only --push # macOS build + upload to existing release
-```
-
-The macOS build step automatically codesigns with your Developer ID and submits for Apple notarization. See the [macOS build script](#macos) for required environment variables.
-
-The `dist/` directory will contain:
-
-| Format         | Platform | Target                                      |
-| -------------- | -------- | ------------------------------------------- |
-| `.deb`         | Linux    | Debian, Ubuntu                              |
-| `.rpm`         | Linux    | Fedora, RHEL, openSUSE                      |
-| `.pkg.tar.zst` | Linux    | Arch, CachyOS, Manjaro (requires `makepkg`) |
-| `.dmg`         | macOS    | macOS 13+ (signed and notarized)            |
-| `SHA256SUMS`   | Both     | Checksums for all packages                  |
-
-The script automatically bumps the version in all `Cargo.toml` files, creates an annotated git tag, and installs `cargo-deb` / `cargo-generate-rpm` if needed on Linux.
+The script writes the top-level `VERSION` file (the single source of truth), syncs crate versions, commits, tags, builds via `impulse-macos/build.sh --dmg --sign --notarize`, generates `SHA256SUMS`, and uploads everything in `dist/`.
 
 ## License
 
