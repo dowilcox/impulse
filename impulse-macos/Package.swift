@@ -13,10 +13,21 @@ let package = Package(
             name: "CImpulseFFI",
             path: "CImpulseFFI"
         ),
+        // Pure logic ported from the Rust backend (impulse-core / impulse-editor).
+        // Foundation-only: no AppKit, no FFI, so it stays headless-testable.
+        .target(
+            name: "ImpulseKit",
+            dependencies: [],
+            path: "Sources/ImpulseKit",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
         .executableTarget(
             name: "ImpulseApp",
             dependencies: [
                 "CImpulseFFI",
+                "ImpulseKit",
             ],
             path: "Sources/ImpulseApp",
             resources: [
@@ -37,6 +48,19 @@ let package = Package(
                 .linkedLibrary("z"),
                 .linkedLibrary("iconv"),
                 .linkedFramework("Security"),
+            ]
+        ),
+        .testTarget(
+            name: "ImpulseKitTests",
+            dependencies: [
+                "ImpulseKit",
+            ],
+            path: "Tests/ImpulseKitTests",
+            resources: [
+                .copy("Fixtures"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
             ]
         ),
         .testTarget(

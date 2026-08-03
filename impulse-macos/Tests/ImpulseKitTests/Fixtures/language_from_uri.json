@@ -1,0 +1,66 @@
+[
+  {
+    "language": "rust",
+    "uri": "file:///a/b.rs"
+  },
+  {
+    "language": "typescript",
+    "uri": "file:///a/b.ts"
+  },
+  {
+    "language": "typescriptreact",
+    "uri": "file:///a/b.tsx"
+  },
+  {
+    "language": "python",
+    "uri": "file:///a/b.py"
+  },
+  {
+    "language": "swift",
+    "uri": "file:///a/b.swift"
+  },
+  {
+    "language": "md",
+    "uri": "file:///a/b.md"
+  },
+  {
+    "language": "json",
+    "uri": "file:///a/b.json"
+  },
+  {
+    "language": "yaml",
+    "uri": "file:///a/b.yml"
+  },
+  {
+    "language": "shellscript",
+    "uri": "file:///a/b.sh"
+  },
+  {
+    "language": "c",
+    "uri": "file:///a/b.c"
+  },
+  {
+    "language": "cpp",
+    "uri": "file:///a/b.cpp"
+  },
+  {
+    "language": "go",
+    "uri": "file:///a/b.go"
+  },
+  {
+    "language": "makefile",
+    "uri": "file:///a/Makefile"
+  },
+  {
+    "language": "dockerfile",
+    "uri": "file:///a/Dockerfile"
+  },
+  {
+    "language": "unknownext",
+    "uri": "file:///a/b.unknownext"
+  },
+  {
+    "language": "",
+    "uri": "file:///a/b"
+  }
+]

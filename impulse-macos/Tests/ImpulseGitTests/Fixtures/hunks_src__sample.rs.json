@@ -1,0 +1,210 @@
+{
+  "added": 10,
+  "hunks": [
+    {
+      "header": "@@ -1,10 +1,15 @@",
+      "lines": [
+        {
+          "content": "fn main() {",
+          "kind": "context",
+          "new_lineno": 1,
+          "old_lineno": 1,
+          "spans": []
+        },
+        {
+          "content": "    let message = \"hello world\";",
+          "kind": "removed",
+          "new_lineno": null,
+          "old_lineno": 2,
+          "spans": []
+        },
+        {
+          "content": "    let message = \"hello swift world\";",
+          "kind": "added",
+          "new_lineno": 2,
+          "old_lineno": null,
+          "spans": [
+            {
+              "end": 31,
+              "start": 25
+            }
+          ]
+        },
+        {
+          "content": "    println!(\"{}\", message);",
+          "kind": "context",
+          "new_lineno": 3,
+          "old_lineno": 3,
+          "spans": []
+        },
+        {
+          "content": "    let total = compute(1, 2);",
+          "kind": "removed",
+          "new_lineno": null,
+          "old_lineno": 4,
+          "spans": [
+            {
+              "end": 13,
+              "start": 8
+            },
+            {
+              "end": 30,
+              "start": 27
+            }
+          ]
+        },
+        {
+          "content": "    println!(\"total = {}\", total);",
+          "kind": "removed",
+          "new_lineno": null,
+          "old_lineno": 5,
+          "spans": [
+            {
+              "end": 19,
+              "start": 4
+            },
+            {
+              "end": 34,
+              "start": 27
+            }
+          ]
+        },
+        {
+          "content": "    let sum = compute(1, 2, 3);",
+          "kind": "added",
+          "new_lineno": 4,
+          "old_lineno": null,
+          "spans": [
+            {
+              "end": 11,
+              "start": 8
+            },
+            {
+              "end": 31,
+              "start": 25
+            }
+          ]
+        },
+        {
+          "content": "    println!(\"sum = {}\", sum);",
+          "kind": "added",
+          "new_lineno": 5,
+          "old_lineno": null,
+          "spans": [
+            {
+              "end": 17,
+              "start": 4
+            },
+            {
+              "end": 30,
+              "start": 25
+            }
+          ]
+        },
+        {
+          "content": "    log_result(sum);",
+          "kind": "added",
+          "new_lineno": 6,
+          "old_lineno": null,
+          "spans": []
+        },
+        {
+          "content": "}",
+          "kind": "context",
+          "new_lineno": 7,
+          "old_lineno": 6,
+          "spans": []
+        },
+        {
+          "content": "",
+          "kind": "context",
+          "new_lineno": 8,
+          "old_lineno": 7,
+          "spans": []
+        },
+        {
+          "content": "fn compute(a: i32, b: i32) -> i32 {",
+          "kind": "removed",
+          "new_lineno": null,
+          "old_lineno": 8,
+          "spans": []
+        },
+        {
+          "content": "    a + b",
+          "kind": "removed",
+          "new_lineno": null,
+          "old_lineno": 9,
+          "spans": []
+        },
+        {
+          "content": "fn compute(a: i32, b: i32, c: i32) -> i32 {",
+          "kind": "added",
+          "new_lineno": 9,
+          "old_lineno": null,
+          "spans": [
+            {
+              "end": 30,
+              "start": 22
+            }
+          ]
+        },
+        {
+          "content": "    a + b + c",
+          "kind": "added",
+          "new_lineno": 10,
+          "old_lineno": null,
+          "spans": [
+            {
+              "end": 13,
+              "start": 9
+            }
+          ]
+        },
+        {
+          "content": "}",
+          "kind": "added",
+          "new_lineno": 11,
+          "old_lineno": null,
+          "spans": []
+        },
+        {
+          "content": "",
+          "kind": "added",
+          "new_lineno": 12,
+          "old_lineno": null,
+          "spans": []
+        },
+        {
+          "content": "fn log_result(value: i32) {",
+          "kind": "added",
+          "new_lineno": 13,
+          "old_lineno": null,
+          "spans": []
+        },
+        {
+          "content": "    eprintln!(\"result: {}\", value);",
+          "kind": "added",
+          "new_lineno": 14,
+          "old_lineno": null,
+          "spans": []
+        },
+        {
+          "content": "}",
+          "kind": "context",
+          "new_lineno": 15,
+          "old_lineno": 10,
+          "spans": []
+        }
+      ],
+      "new_lines": 15,
+      "new_start": 1,
+      "old_lines": 10,
+      "old_start": 1
+    }
+  ],
+  "is_binary": false,
+  "language": "rust",
+  "removed": 5,
+  "too_large": false,
+  "truncated": false
+}

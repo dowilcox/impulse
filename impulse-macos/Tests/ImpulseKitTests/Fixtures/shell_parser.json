@@ -1,0 +1,1098 @@
+[
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": null,
+      "command_span": null,
+      "kind": "command",
+      "prefix": "",
+      "previous_word": null,
+      "quote_state": "none",
+      "span": {
+        "end": 0,
+        "start": 0
+      }
+    },
+    "cursor": 0,
+    "incomplete": false,
+    "input": "",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": []
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "ls",
+      "command_span": {
+        "end": 2,
+        "start": 0
+      },
+      "kind": "command",
+      "prefix": "ls",
+      "previous_word": null,
+      "quote_state": "none",
+      "span": {
+        "end": 2,
+        "start": 0
+      }
+    },
+    "cursor": 2,
+    "incomplete": false,
+    "input": "ls",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 2,
+          "start": 0
+        },
+        "terminated": false,
+        "text": "ls"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 1,
+      "command": "ls",
+      "command_span": {
+        "end": 2,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "./src",
+      "previous_word": "-la",
+      "quote_state": "none",
+      "span": {
+        "end": 12,
+        "start": 7
+      }
+    },
+    "cursor": 12,
+    "incomplete": false,
+    "input": "ls -la ./src",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 2,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "ls"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 6,
+          "start": 3
+        },
+        "terminated": true,
+        "text": "-la"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 12,
+          "start": 7
+        },
+        "terminated": false,
+        "text": "./src"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 2,
+      "command": "git",
+      "command_span": {
+        "end": 3,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "hello world",
+      "previous_word": "-m",
+      "quote_state": "none",
+      "span": {
+        "end": 27,
+        "start": 14
+      }
+    },
+    "cursor": 27,
+    "incomplete": false,
+    "input": "git commit -m 'hello world'",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 3,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "git"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 10,
+          "start": 4
+        },
+        "terminated": true,
+        "text": "commit"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 13,
+          "start": 11
+        },
+        "terminated": true,
+        "text": "-m"
+      },
+      {
+        "quote_state": "none",
+        "quoted": true,
+        "role": "argument",
+        "span": {
+          "end": 27,
+          "start": 14
+        },
+        "terminated": false,
+        "text": "hello world"
+      }
+    ]
+  },
+  {
+    "assignments": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 7,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "FOO=bar"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 15,
+          "start": 8
+        },
+        "terminated": true,
+        "text": "BAZ=qux"
+      }
+    ],
+    "completion": {
+      "argument_index": 1,
+      "command": "cargo",
+      "command_span": {
+        "end": 21,
+        "start": 16
+      },
+      "kind": "argument",
+      "prefix": "--release",
+      "previous_word": "build",
+      "quote_state": "none",
+      "span": {
+        "end": 37,
+        "start": 28
+      }
+    },
+    "cursor": 37,
+    "incomplete": false,
+    "input": "FOO=bar BAZ=qux cargo build --release",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 7,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "FOO=bar"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 15,
+          "start": 8
+        },
+        "terminated": true,
+        "text": "BAZ=qux"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 21,
+          "start": 16
+        },
+        "terminated": true,
+        "text": "cargo"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 27,
+          "start": 22
+        },
+        "terminated": true,
+        "text": "build"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 37,
+          "start": 28
+        },
+        "terminated": false,
+        "text": "--release"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 2,
+      "command": "grep",
+      "command_span": {
+        "end": 17,
+        "start": 13
+      },
+      "kind": "redirect_target",
+      "prefix": "1",
+      "previous_word": "out.txt",
+      "quote_state": "none",
+      "span": {
+        "end": 34,
+        "start": 33
+      }
+    },
+    "cursor": 34,
+    "incomplete": false,
+    "input": "echo \"a b\" | grep a > out.txt 2>&1",
+    "pipeline_index": 1,
+    "redirects": [
+      {
+        "operator": ">",
+        "operator_span": {
+          "end": 21,
+          "start": 20
+        },
+        "target": "out.txt",
+        "target_span": {
+          "end": 29,
+          "start": 22
+        }
+      },
+      {
+        "operator": "2>&",
+        "operator_span": {
+          "end": 33,
+          "start": 30
+        },
+        "target": "1",
+        "target_span": {
+          "end": 34,
+          "start": 33
+        }
+      }
+    ],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 4,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "echo"
+      },
+      {
+        "quote_state": "none",
+        "quoted": true,
+        "role": "argument",
+        "span": {
+          "end": 10,
+          "start": 5
+        },
+        "terminated": true,
+        "text": "a b"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "pipeline_separator",
+        "span": {
+          "end": 12,
+          "start": 11
+        },
+        "terminated": true,
+        "text": "|"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 17,
+          "start": 13
+        },
+        "terminated": true,
+        "text": "grep"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 19,
+          "start": 18
+        },
+        "terminated": true,
+        "text": "a"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_operator",
+        "span": {
+          "end": 21,
+          "start": 20
+        },
+        "terminated": true,
+        "text": ">"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_target",
+        "span": {
+          "end": 29,
+          "start": 22
+        },
+        "terminated": true,
+        "text": "out.txt"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_operator",
+        "span": {
+          "end": 33,
+          "start": 30
+        },
+        "terminated": true,
+        "text": "2>&"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_target",
+        "span": {
+          "end": 34,
+          "start": 33
+        },
+        "terminated": false,
+        "text": "1"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 1,
+      "command": "cat",
+      "command_span": {
+        "end": 3,
+        "start": 0
+      },
+      "kind": "redirect_target",
+      "prefix": "out.log",
+      "previous_word": "in.txt",
+      "quote_state": "none",
+      "span": {
+        "end": 23,
+        "start": 16
+      }
+    },
+    "cursor": 23,
+    "incomplete": false,
+    "input": "cat < in.txt >> out.log",
+    "pipeline_index": 0,
+    "redirects": [
+      {
+        "operator": "<",
+        "operator_span": {
+          "end": 5,
+          "start": 4
+        },
+        "target": "in.txt",
+        "target_span": {
+          "end": 12,
+          "start": 6
+        }
+      },
+      {
+        "operator": ">>",
+        "operator_span": {
+          "end": 15,
+          "start": 13
+        },
+        "target": "out.log",
+        "target_span": {
+          "end": 23,
+          "start": 16
+        }
+      }
+    ],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 3,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "cat"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_operator",
+        "span": {
+          "end": 5,
+          "start": 4
+        },
+        "terminated": true,
+        "text": "<"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_target",
+        "span": {
+          "end": 12,
+          "start": 6
+        },
+        "terminated": true,
+        "text": "in.txt"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_operator",
+        "span": {
+          "end": 15,
+          "start": 13
+        },
+        "terminated": true,
+        "text": ">>"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "redirection_target",
+        "span": {
+          "end": 23,
+          "start": 16
+        },
+        "terminated": false,
+        "text": "out.log"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "cd",
+      "command_span": {
+        "end": 2,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "~/pro",
+      "previous_word": "cd",
+      "quote_state": "none",
+      "span": {
+        "end": 8,
+        "start": 3
+      }
+    },
+    "cursor": 8,
+    "incomplete": false,
+    "input": "cd ~/pro",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 2,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "cd"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 8,
+          "start": 3
+        },
+        "terminated": false,
+        "text": "~/pro"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "echo",
+      "command_span": {
+        "end": 4,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "unclosed",
+      "previous_word": "echo",
+      "quote_state": "single",
+      "span": {
+        "end": 14,
+        "start": 5
+      }
+    },
+    "cursor": 14,
+    "incomplete": true,
+    "input": "echo 'unclosed",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 4,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "echo"
+      },
+      {
+        "quote_state": "single",
+        "quoted": true,
+        "role": "argument",
+        "span": {
+          "end": 14,
+          "start": 5
+        },
+        "terminated": false,
+        "text": "unclosed"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "echo",
+      "command_span": {
+        "end": 4,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "unclosed double",
+      "previous_word": "echo",
+      "quote_state": "double",
+      "span": {
+        "end": 21,
+        "start": 5
+      }
+    },
+    "cursor": 21,
+    "incomplete": true,
+    "input": "echo \"unclosed double",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 4,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "echo"
+      },
+      {
+        "quote_state": "double",
+        "quoted": true,
+        "role": "argument",
+        "span": {
+          "end": 21,
+          "start": 5
+        },
+        "terminated": false,
+        "text": "unclosed double"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "b",
+      "command_span": {
+        "end": 5,
+        "start": 4
+      },
+      "kind": "argument",
+      "prefix": "",
+      "previous_word": "b",
+      "quote_state": "none",
+      "span": {
+        "end": 6,
+        "start": 6
+      }
+    },
+    "cursor": 6,
+    "incomplete": false,
+    "input": "a | b | c",
+    "pipeline_index": 1,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 1,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "a"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "pipeline_separator",
+        "span": {
+          "end": 3,
+          "start": 2
+        },
+        "terminated": true,
+        "text": "|"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 5,
+          "start": 4
+        },
+        "terminated": true,
+        "text": "b"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "git",
+      "command_span": {
+        "end": 3,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "che",
+      "previous_word": "git",
+      "quote_state": "none",
+      "span": {
+        "end": 7,
+        "start": 4
+      }
+    },
+    "cursor": 7,
+    "incomplete": false,
+    "input": "git checkout main",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 3,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "git"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 7,
+          "start": 4
+        },
+        "terminated": false,
+        "text": "che"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "git",
+      "command_span": {
+        "end": 3,
+        "start": 0
+      },
+      "kind": "command",
+      "prefix": "git",
+      "previous_word": null,
+      "quote_state": "none",
+      "span": {
+        "end": 3,
+        "start": 0
+      }
+    },
+    "cursor": 3,
+    "incomplete": false,
+    "input": "git checkout main",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 3,
+          "start": 0
+        },
+        "terminated": false,
+        "text": "git"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 1,
+      "command": "echo",
+      "command_span": {
+        "end": 4,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "wörld",
+      "previous_word": "héllo",
+      "quote_state": "none",
+      "span": {
+        "end": 18,
+        "start": 12
+      }
+    },
+    "cursor": 18,
+    "incomplete": false,
+    "input": "echo héllo wörld",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 4,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "echo"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 11,
+          "start": 5
+        },
+        "terminated": true,
+        "text": "héllo"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 18,
+          "start": 12
+        },
+        "terminated": false,
+        "text": "wörld"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "./run.sh",
+      "command_span": {
+        "end": 8,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "--flag=value",
+      "previous_word": "./run.sh",
+      "quote_state": "none",
+      "span": {
+        "end": 21,
+        "start": 9
+      }
+    },
+    "cursor": 21,
+    "incomplete": false,
+    "input": "./run.sh --flag=value",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 8,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "./run.sh"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 21,
+          "start": 9
+        },
+        "terminated": false,
+        "text": "--flag=value"
+      }
+    ]
+  },
+  {
+    "assignments": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 5,
+          "start": 0
+        },
+        "terminated": false,
+        "text": "VAR=1"
+      }
+    ],
+    "completion": {
+      "argument_index": 0,
+      "command": null,
+      "command_span": null,
+      "kind": "env_assignment",
+      "prefix": "VAR=1",
+      "previous_word": null,
+      "quote_state": "none",
+      "span": {
+        "end": 5,
+        "start": 0
+      }
+    },
+    "cursor": 5,
+    "incomplete": false,
+    "input": "VAR=1",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "assignment",
+        "span": {
+          "end": 5,
+          "start": 0
+        },
+        "terminated": false,
+        "text": "VAR=1"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 0,
+      "command": "ls",
+      "command_span": {
+        "end": 2,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "",
+      "previous_word": "ls",
+      "quote_state": "none",
+      "span": {
+        "end": 4,
+        "start": 4
+      }
+    },
+    "cursor": 4,
+    "incomplete": false,
+    "input": "ls  ",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 2,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "ls"
+      }
+    ]
+  },
+  {
+    "assignments": [],
+    "completion": {
+      "argument_index": 2,
+      "command": "grep",
+      "command_span": {
+        "end": 4,
+        "start": 0
+      },
+      "kind": "argument",
+      "prefix": "src/",
+      "previous_word": "needle",
+      "quote_state": "none",
+      "span": {
+        "end": 21,
+        "start": 17
+      }
+    },
+    "cursor": 21,
+    "incomplete": false,
+    "input": "grep -r \"needle\" src/",
+    "pipeline_index": 0,
+    "redirects": [],
+    "tokens": [
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "command",
+        "span": {
+          "end": 4,
+          "start": 0
+        },
+        "terminated": true,
+        "text": "grep"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 7,
+          "start": 5
+        },
+        "terminated": true,
+        "text": "-r"
+      },
+      {
+        "quote_state": "none",
+        "quoted": true,
+        "role": "argument",
+        "span": {
+          "end": 16,
+          "start": 8
+        },
+        "terminated": true,
+        "text": "needle"
+      },
+      {
+        "quote_state": "none",
+        "quoted": false,
+        "role": "argument",
+        "span": {
+          "end": 21,
+          "start": 17
+        },
+        "terminated": false,
+        "text": "src/"
+      }
+    ]
+  }
+]

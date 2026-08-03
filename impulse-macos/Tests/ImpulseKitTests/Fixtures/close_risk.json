@@ -1,0 +1,133 @@
+[
+  {
+    "input": {
+      "action": "quit",
+      "now_ms": 1700000000000,
+      "running_commands": [
+        {
+          "command": "cargo build --release",
+          "cwd": "/work/impulse",
+          "started_at_ms": 1699999875000
+        },
+        {
+          "command": "sleep 5",
+          "cwd": null,
+          "started_at_ms": 1699999998000
+        }
+      ],
+      "running_terminal_process_count": 1,
+      "unsaved_editor_count": 2
+    },
+    "summary": {
+      "cancel_title": "Cancel",
+      "commands": [
+        {
+          "command": "cargo build --release",
+          "cwd": "/work/impulse",
+          "duration_seconds": 125,
+          "is_long_running": true
+        },
+        {
+          "command": "sleep 5",
+          "cwd": null,
+          "duration_seconds": 2,
+          "is_long_running": false
+        }
+      ],
+      "destructive_action_title": "Quit",
+      "detail_lines": [
+        "2 unsaved editors",
+        "1 running terminal process",
+        "cargo build --release running for 2m 05s",
+        "sleep 5 running for 2s"
+      ],
+      "has_risk": true,
+      "informative_text": "2 editors have unsaved changes that may be lost. 1 terminal process will be terminated. 2 running commands will be stopped.",
+      "long_running_command_count": 1,
+      "running_command_count": 2,
+      "running_terminal_process_count": 1,
+      "title": "Quit Impulse with unsaved changes and running terminal work?",
+      "unsaved_editor_count": 2
+    }
+  },
+  {
+    "input": {
+      "action": "close_tab",
+      "now_ms": 1700000000000
+    },
+    "summary": {
+      "cancel_title": "Cancel",
+      "commands": [],
+      "destructive_action_title": "Close Tab",
+      "detail_lines": [],
+      "has_risk": false,
+      "informative_text": "",
+      "long_running_command_count": 0,
+      "running_command_count": 0,
+      "running_terminal_process_count": 0,
+      "title": "",
+      "unsaved_editor_count": 0
+    }
+  },
+  {
+    "input": {
+      "action": "close_window",
+      "now_ms": 1700000000000,
+      "running_commands": [
+        {
+          "command": null,
+          "cwd": "/tmp",
+          "started_at_ms": 1699999999500
+        }
+      ],
+      "running_terminal_process_count": 1,
+      "unsaved_editor_count": 0
+    },
+    "summary": {
+      "cancel_title": "Cancel",
+      "commands": [
+        {
+          "command": "Running command",
+          "cwd": "/tmp",
+          "duration_seconds": 0,
+          "is_long_running": false
+        }
+      ],
+      "destructive_action_title": "Close Window",
+      "detail_lines": [
+        "1 running terminal process",
+        "Running command running for 0s"
+      ],
+      "has_risk": true,
+      "informative_text": "1 terminal process will be terminated. 1 running command will be stopped.",
+      "long_running_command_count": 0,
+      "running_command_count": 1,
+      "running_terminal_process_count": 1,
+      "title": "Close window with running terminal work?",
+      "unsaved_editor_count": 0
+    }
+  },
+  {
+    "input": {
+      "action": "quit",
+      "long_command_threshold_seconds": 10,
+      "now_ms": 1700000000000,
+      "unsaved_editor_count": 1
+    },
+    "summary": {
+      "cancel_title": "Cancel",
+      "commands": [],
+      "destructive_action_title": "Quit",
+      "detail_lines": [
+        "1 unsaved editor"
+      ],
+      "has_risk": true,
+      "informative_text": "1 editor has unsaved changes that may be lost.",
+      "long_running_command_count": 0,
+      "running_command_count": 0,
+      "running_terminal_process_count": 0,
+      "title": "Quit Impulse with unsaved changes?",
+      "unsaved_editor_count": 1
+    }
+  }
+]

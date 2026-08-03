@@ -1,0 +1,17 @@
+{
+  "bg": "#1a1a23",
+  "blockquote_fg": "#848379",
+  "border": "#2a2a3a",
+  "code_bg": "#111116",
+  "code_font_family": "'JetBrains Mono', monospace",
+  "fg": "#DCD7BA",
+  "font_family": "Inter, system-ui, sans-serif",
+  "heading": "#56C8B0",
+  "hljs_comment": "#848379",
+  "hljs_function": "#6EA0E8",
+  "hljs_keyword": "#B07FD8",
+  "hljs_number": "#FFA066",
+  "hljs_string": "#7EC850",
+  "hljs_type": "#F0C060",
+  "link": "#6EA0E8"
+}

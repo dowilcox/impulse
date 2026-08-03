@@ -1,0 +1,97 @@
+[
+  {
+    "matches": true,
+    "path": "src/main.rs",
+    "pattern": "*.rs"
+  },
+  {
+    "matches": false,
+    "path": "src/main.rs",
+    "pattern": "src/*"
+  },
+  {
+    "matches": false,
+    "path": "src/main.rs",
+    "pattern": "src/*.rs"
+  },
+  {
+    "matches": false,
+    "path": "src/nested/deep.rs",
+    "pattern": "src/*.rs"
+  },
+  {
+    "matches": false,
+    "path": "src/nested/deep.rs",
+    "pattern": "src/**/*.rs"
+  },
+  {
+    "matches": false,
+    "path": "a/b/c.txt",
+    "pattern": "**/*.txt"
+  },
+  {
+    "matches": false,
+    "path": "c.txt",
+    "pattern": "**/*.txt"
+  },
+  {
+    "matches": true,
+    "path": "Makefile",
+    "pattern": "Makefile"
+  },
+  {
+    "matches": false,
+    "path": "makefile",
+    "pattern": "Makefile"
+  },
+  {
+    "matches": false,
+    "path": "foo.test.ts",
+    "pattern": "*.test.ts"
+  },
+  {
+    "matches": false,
+    "path": "foo.spec.ts",
+    "pattern": "*.test.ts"
+  },
+  {
+    "matches": true,
+    "path": "/abs/path/file.py",
+    "pattern": "*.py"
+  },
+  {
+    "matches": false,
+    "path": "file.py",
+    "pattern": "file.??"
+  },
+  {
+    "matches": false,
+    "path": "file.py",
+    "pattern": "file.?"
+  },
+  {
+    "matches": false,
+    "path": "dir/file.json",
+    "pattern": "*.{json,yaml}"
+  },
+  {
+    "matches": false,
+    "path": "dir/file.yaml",
+    "pattern": "*.{json,yaml}"
+  },
+  {
+    "matches": false,
+    "path": "dir/file.toml",
+    "pattern": "*.{json,yaml}"
+  },
+  {
+    "matches": true,
+    "path": "noext",
+    "pattern": "*"
+  },
+  {
+    "matches": true,
+    "path": "",
+    "pattern": "*"
+  }
+]

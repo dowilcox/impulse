@@ -1,0 +1,145 @@
+{
+  "batch": {
+    "patches": [
+      {
+        "operations": [
+          {
+            "id": "$ROOT/beta.txt",
+            "type": "remove"
+          },
+          {
+            "index": 0,
+            "node": {
+              "git_status": null,
+              "id": "$ROOT/alpha",
+              "is_dir": true,
+              "is_symlink": false,
+              "name": "alpha",
+              "parent_id": "$ROOT",
+              "path": "$ROOT/alpha",
+              "size": 128
+            },
+            "parent_id": "$ROOT",
+            "type": "upsert"
+          },
+          {
+            "index": 2,
+            "node": {
+              "git_status": null,
+              "id": "$ROOT/gamma.txt",
+              "is_dir": false,
+              "is_symlink": false,
+              "name": "gamma.txt",
+              "parent_id": "$ROOT",
+              "path": "$ROOT/gamma.txt",
+              "size": 6
+            },
+            "parent_id": "$ROOT",
+            "type": "upsert"
+          }
+        ],
+        "parent_id": "$ROOT"
+      },
+      {
+        "operations": [
+          {
+            "index": 0,
+            "node": {
+              "git_status": null,
+              "id": "$ROOT/alpha/a1.txt",
+              "is_dir": false,
+              "is_symlink": false,
+              "name": "a1.txt",
+              "parent_id": "$ROOT/alpha",
+              "path": "$ROOT/alpha/a1.txt",
+              "size": 18
+            },
+            "parent_id": "$ROOT/alpha",
+            "type": "upsert"
+          },
+          {
+            "index": 1,
+            "node": {
+              "git_status": null,
+              "id": "$ROOT/alpha/a2.txt",
+              "is_dir": false,
+              "is_symlink": false,
+              "name": "a2.txt",
+              "parent_id": "$ROOT/alpha",
+              "path": "$ROOT/alpha/a2.txt",
+              "size": 10
+            },
+            "parent_id": "$ROOT/alpha",
+            "type": "upsert"
+          }
+        ],
+        "parent_id": "$ROOT/alpha"
+      }
+    ],
+    "root_id": "$ROOT"
+  },
+  "before_by_parent": {
+    "alpha": [
+      {
+        "git_status": null,
+        "is_dir": false,
+        "is_symlink": false,
+        "name": "a1.txt",
+        "path": "$ROOT/alpha/a1.txt",
+        "size": 10
+      }
+    ],
+    "root": [
+      {
+        "git_status": null,
+        "is_dir": true,
+        "is_symlink": false,
+        "name": "alpha",
+        "path": "$ROOT/alpha",
+        "size": 96
+      },
+      {
+        "git_status": null,
+        "is_dir": true,
+        "is_symlink": false,
+        "name": "zeta",
+        "path": "$ROOT/zeta",
+        "size": 96
+      },
+      {
+        "git_status": null,
+        "is_dir": false,
+        "is_symlink": false,
+        "name": "beta.txt",
+        "path": "$ROOT/beta.txt",
+        "size": 5
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "create",
+      "paths": [
+        "$ROOT/gamma.txt"
+      ]
+    },
+    {
+      "kind": "remove",
+      "paths": [
+        "$ROOT/beta.txt"
+      ]
+    },
+    {
+      "kind": "create",
+      "paths": [
+        "$ROOT/alpha/a2.txt"
+      ]
+    },
+    {
+      "kind": "modify",
+      "paths": [
+        "$ROOT/alpha/a1.txt"
+      ]
+    }
+  ]
+}

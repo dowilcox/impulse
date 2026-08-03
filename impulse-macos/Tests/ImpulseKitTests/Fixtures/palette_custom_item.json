@@ -1,0 +1,10 @@
+{
+  "category": "Custom",
+  "id": "custom:external:066640e94f04e184",
+  "keywords": [
+    "./scripts/deploy.sh"
+  ],
+  "shortcut": "cmd+shift+d",
+  "source": "custom",
+  "title": "Deploy Staging"
+}

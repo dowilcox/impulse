@@ -1,0 +1,10 @@
+{
+  "$ROOT": {
+    "extra.txt": "?",
+    "notes.txt": "D",
+    "src": "M"
+  },
+  "$ROOT/src": {
+    "sample.rs": "M"
+  }
+}

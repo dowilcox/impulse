@@ -1,0 +1,18 @@
+{
+  "author": {
+    "date": "2024-01-01T00:00:00 +0000",
+    "email": "fixture@impulse.dev",
+    "name": "Fixture"
+  },
+  "base_files": {
+    "keep.md": "# Keep\n\nUnchanged file.\n",
+    "notes.txt": "alpha\nbeta\ngamma\n",
+    "src/sample.rs": "fn main() {\n    let message = \"hello world\";\n    println!(\"{}\", message);\n    let total = compute(1, 2);\n    println!(\"total = {}\", total);\n}\n\nfn compute(a: i32, b: i32) -> i32 {\n    a + b\n}\n"
+  },
+  "description": "git init -b main; commit src/sample.rs + notes.txt + keep.md; then modify src/sample.rs (word-level line edits + added fn), delete notes.txt, add untracked extra.txt",
+  "worktree_changes": {
+    "extra.txt": "brand new file\n",
+    "notes.txt": null,
+    "src/sample.rs": "fn main() {\n    let message = \"hello swift world\";\n    println!(\"{}\", message);\n    let sum = compute(1, 2, 3);\n    println!(\"sum = {}\", sum);\n    log_result(sum);\n}\n\nfn compute(a: i32, b: i32, c: i32) -> i32 {\n    a + b + c\n}\n\nfn log_result(value: i32) {\n    eprintln!(\"result: {}\", value);\n}\n"
+  }
+}

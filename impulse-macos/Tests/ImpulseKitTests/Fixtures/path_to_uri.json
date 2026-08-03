@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/Users/dev/project/src/main.rs",
+    "uri": "file:///Users/dev/project/src/main.rs"
+  },
+  {
+    "path": "/tmp/with space/file.txt",
+    "uri": "file:///tmp/with%20space/file.txt"
+  },
+  {
+    "path": "/tmp/unicode/héllo.md",
+    "uri": "file:///tmp/unicode/h%C3%A9llo.md"
+  },
+  {
+    "path": "/tmp/percent%file.js",
+    "uri": "file:///tmp/percent%25file.js"
+  }
+]

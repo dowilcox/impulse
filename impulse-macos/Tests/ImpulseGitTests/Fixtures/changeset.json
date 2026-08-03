@@ -1,0 +1,32 @@
+{
+  "branch": "main",
+  "files": [
+    {
+      "added": 1,
+      "is_binary": false,
+      "old_path": null,
+      "path": "extra.txt",
+      "removed": 0,
+      "status": "?"
+    },
+    {
+      "added": 0,
+      "is_binary": false,
+      "old_path": null,
+      "path": "notes.txt",
+      "removed": 3,
+      "status": "D"
+    },
+    {
+      "added": 10,
+      "is_binary": false,
+      "old_path": null,
+      "path": "src/sample.rs",
+      "removed": 5,
+      "status": "M"
+    }
+  ],
+  "repo_root": "$ROOT",
+  "total_added": 11,
+  "total_removed": 8
+}

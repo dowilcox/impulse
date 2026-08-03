@@ -1,0 +1,26 @@
+{
+  "added": 1,
+  "hunks": [
+    {
+      "header": "@@ -0,0 +1 @@",
+      "lines": [
+        {
+          "content": "brand new file",
+          "kind": "added",
+          "new_lineno": 1,
+          "old_lineno": null,
+          "spans": []
+        }
+      ],
+      "new_lines": 1,
+      "new_start": 1,
+      "old_lines": 0,
+      "old_start": 0
+    }
+  ],
+  "is_binary": false,
+  "language": "txt",
+  "removed": 0,
+  "too_large": false,
+  "truncated": false
+}
