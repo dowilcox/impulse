@@ -1,7 +1,4 @@
 pub mod completion;
-pub mod file_tree;
-pub mod filesystem;
-pub mod git;
 pub mod lsp;
 pub mod search;
 pub mod shell_parser;

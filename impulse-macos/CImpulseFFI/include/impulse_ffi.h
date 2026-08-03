@@ -34,47 +34,6 @@ char *impulse_lsp_install(void);
 bool impulse_npm_is_available(void);
 char *impulse_system_lsp_status(void);
 
-// Git
-char *impulse_git_branch(const char *path);
-char *impulse_git_branches(const char *path);
-char *impulse_git_status_for_directory(const char *path);
-char *impulse_get_all_git_statuses(const char *path);
-char *impulse_read_directory_with_git_status(const char *path, bool show_hidden);
-char *impulse_build_file_tree_patch_batch(const char *root_path, const char *events_json, const char *before_by_parent_json, bool show_hidden);
-char *impulse_git_diff_markers(const char *file_path);
-char *impulse_git_blame(const char *file_path, uint32_t line);
-int32_t impulse_git_discard_changes(const char *file_path, const char *workspace_root);
-
-// Review Changes (git diff review)
-// Lists changed files as a JSON ChangeSet:
-//   { "repo_root": string, "branch": string|null, "total_added": u32,
-//     "total_removed": u32, "files": [ { "path": string, "status": string,
-//     "old_path": string|null, "added": u32, "removed": u32,
-//     "is_binary": bool } ] }
-// status letters: "A"|"M"|"D"|"R"|"?". Returns NULL on error.
-// Caller must free the returned string with impulse_free_string.
-char *impulse_git_list_changed_files(const char *repo_path);
-// Computes unified-diff hunks for one REPO-RELATIVE file_path as JSON:
-//   { "language": string, "is_binary": bool, "too_large": bool,
-//     "truncated": bool, "added": u32, "removed": u32,
-//     "hunks": [{ "old_start", "old_lines", "new_start", "new_lines",
-//                 "header": string,
-//                 "lines": [{ "kind": "context"|"added"|"removed",
-//                             "old_lineno": u32|null, "new_lineno": u32|null,
-//                             "content": string,
-//                             "spans": [{ "start": u32, "end": u32 }] }] }] }
-// Only changed regions plus context are materialized, never the whole file.
-// Returns NULL on error.
-// Caller must free the returned string with impulse_free_string.
-char *impulse_git_file_hunks(const char *repo_path, const char *file_path);
-// Stages all changes and commits with message. Returns JSON (never NULL unless
-// an input pointer is NULL): { "ok": bool, "oid": string|null, "error": string|null }.
-// Caller must free the returned string with impulse_free_string.
-char *impulse_git_commit_all(const char *repo_path, const char *message);
-// Discards changes for one REPO-RELATIVE file_path (checkout HEAD for tracked,
-// delete for untracked/new). Returns 0 on success or -1 on error.
-int32_t impulse_git_discard_path(const char *repo_path, const char *file_path);
-
 // Terminal backend API
 void *impulse_terminal_create(const char *config_json, unsigned short cols, unsigned short rows, unsigned short cell_width, unsigned short cell_height);
 void impulse_terminal_destroy(void *handle);

@@ -1,5 +1,7 @@
 import CImpulseFFI
 import Foundation
+import ImpulseGit
+import ImpulseKit
 
 // MARK: - Terminal Completion
 
@@ -164,33 +166,31 @@ final class ImpulseCore {
         return combined
     }
 
-    // MARK: - Git
+    // MARK: - Git (ImpulseGit-backed)
+
+    /// Re-encode an ImpulseGit/ImpulseKit value into the bridge's Codable
+    /// model via JSON — both sides pin the same serde-compatible keys.
+    private static func reencode<T: Encodable, U: Decodable>(_ value: T, as type: U.Type) -> U? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode(U.self, from: data)
+    }
 
     /// Returns the current git branch for the directory at `path`, or `nil`
     /// if the path is not inside a git repository.
     static func gitBranch(path: String) -> String? {
-        return consumeCString(impulse_git_branch(path))
+        return GitClient.branch(forPath: path)
     }
 
     /// Returns the repository's local branch names for the directory at `path`.
     static func gitBranches(path: String) -> [String] {
-        guard let json = consumeCString(impulse_git_branches(path)),
-            let data = json.data(using: .utf8),
-            let names = try? JSONSerialization.jsonObject(with: data) as? [String]
-        else { return [] }
-        return names
+        return GitClient.branches(forPath: path)
     }
 
     /// Returns git status for files in a directory as a dictionary mapping
     /// filenames to status codes (e.g. `["file.rs": "M", "new.txt": "?"]`).
-    ///
-    /// Uses libgit2 via impulse-core instead of shelling out to `git status`.
     /// Returns an empty dictionary if the path is not in a git repo.
     static func gitStatusForDirectory(path: String) -> [String: String] {
-        guard let json = consumeCString(impulse_git_status_for_directory(path)) else { return [:] }
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
-        return dict
+        return GitClient.statusForDirectory(path) ?? [:]
     }
 
     /// Batch-fetch git status for the entire repository in a single call.
@@ -199,10 +199,7 @@ final class ImpulseCore {
     /// inner key = filename, value = status code. Parent directories receive
     /// the highest-priority status among their descendants.
     static func getAllGitStatuses(repoPath: String) -> [String: [String: String]] {
-        guard let json = consumeCString(impulse_get_all_git_statuses(repoPath)) else { return [:] }
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]] else { return [:] }
-        return dict
+        return GitClient.allStatuses(root: repoPath) ?? [:]
     }
 
     /// Codable struct matching the Rust `FileEntry` serialization.
@@ -292,34 +289,67 @@ final class ImpulseCore {
         let paths: [String]
     }
 
-    /// Read directory contents with git status enrichment in a single FFI call.
-    ///
-    /// Returns an array of `FileEntryFFI` values, or `nil` on error.
+    /// Read directory contents (sorted dirs-first) with git status enrichment,
+    /// mirroring the Rust `read_directory_with_git_status`.
     static func readDirectoryWithGitStatus(path: String, showHidden: Bool) -> [FileEntryFFI]? {
-        guard let json = consumeCString(impulse_read_directory_with_git_status(path, showHidden)) else { return nil }
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode([FileEntryFFI].self, from: data)
+        guard let entries = readDirectoryEntriesEnriched(path: path, showHidden: showHidden)
+        else { return nil }
+        return entries.map {
+            FileEntryFFI(
+                name: $0.name, path: $0.path, is_dir: $0.isDir, is_symlink: $0.isSymlink,
+                size: $0.size, modified: $0.modified, git_status: $0.gitStatus)
+        }
     }
 
-    /// Build a shared Rust file-tree patch batch from watcher events and the
-    /// directories currently loaded by the UI.
+    private static func readDirectoryEntriesEnriched(path: String, showHidden: Bool)
+        -> [ImpulseKit.FileEntry]?
+    {
+        guard
+            var entries = try? DirectoryLister.readDirectoryEntries(
+                path: path, showHidden: showHidden)
+        else { return nil }
+        if let status = GitClient.statusForDirectory(path) {
+            for index in entries.indices {
+                if let code = status[entries[index].name] {
+                    entries[index].gitStatus = code
+                }
+            }
+        }
+        return entries
+    }
+
+    /// Build a file-tree patch batch from watcher events and the directories
+    /// currently loaded by the UI.
     static func buildFileTreePatchBatch(
         rootPath: String,
         events: [FileTreeWatchEvent],
         beforeByParent: [String: [FileEntryFFI]],
         showHidden: Bool
     ) -> FileTreePatchBatch? {
-        guard let eventsData = try? JSONEncoder().encode(events),
-              let eventsJSON = String(data: eventsData, encoding: .utf8),
-              let snapshotsData = try? JSONEncoder().encode(beforeByParent),
-              let snapshotsJSON = String(data: snapshotsData, encoding: .utf8) else {
-            return nil
+        let kitEvents = events.map { event in
+            ImpulseKit.FileTreeWatchEvent(
+                kind: ImpulseKit.FileTreeWatchEventKind(rawValue: event.kind) ?? .any,
+                paths: event.paths)
         }
-        guard let json = consumeCString(
-            impulse_build_file_tree_patch_batch(rootPath, eventsJSON, snapshotsJSON, showHidden)
-        ) else { return nil }
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(FileTreePatchBatch.self, from: data)
+        let kitBefore = beforeByParent.mapValues { entries in
+            entries.map { entry in
+                ImpulseKit.FileEntry(
+                    name: entry.name, path: entry.path, isDir: entry.is_dir,
+                    isSymlink: entry.is_symlink, size: entry.size, modified: entry.modified,
+                    gitStatus: entry.git_status)
+            }
+        }
+        guard
+            let batch = FileTreePatcher.buildPatchBatchFromFilesystem(
+                rootPath: rootPath,
+                events: kitEvents,
+                beforeByParent: kitBefore,
+                showHidden: showHidden,
+                readDirectory: { path, showHidden in
+                    readDirectoryEntriesEnriched(path: path, showHidden: showHidden)
+                })
+        else { return nil }
+        return reencode(batch, as: FileTreePatchBatch.self)
     }
 
     /// Returns git blame info for a specific 1-based line in a file.
@@ -330,10 +360,13 @@ final class ImpulseCore {
     /// - Returns: A dictionary with `author`, `date`, `commitHash`, and
     ///   `summary` keys, or `nil` if blame info is unavailable.
     static func gitBlame(filePath: String, line: UInt32) -> [String: String]? {
-        guard let json = consumeCString(impulse_git_blame(filePath, line)) else { return nil }
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
-        return dict
+        guard let blame = GitClient.lineBlame(filePath: filePath, line: line) else { return nil }
+        return [
+            "author": blame.author,
+            "date": blame.date,
+            "commitHash": blame.commitHash,
+            "summary": blame.summary,
+        ]
     }
 
     /// Discards uncommitted changes to a file, restoring it to the HEAD version.
@@ -342,7 +375,8 @@ final class ImpulseCore {
     /// - Parameter workspaceRoot: The workspace root directory for path validation.
     /// - Returns: `true` if the discard succeeded, `false` on error.
     static func gitDiscardChanges(filePath: String, workspaceRoot: String) -> Bool {
-        return impulse_git_discard_changes(filePath, workspaceRoot) == 0
+        return (try? GitClient.discardFileChanges(filePath: filePath, workspaceRoot: workspaceRoot))
+            != nil
     }
 
     /// Returns diff markers for the file at `path` as a `DiffDecoration` array.
@@ -350,9 +384,8 @@ final class ImpulseCore {
     /// Each element contains a 1-based line number and a status string
     /// (`"added"`, `"modified"`, or `"deleted"`).
     static func gitDiffMarkers(filePath: String) -> [DiffDecoration] {
-        guard let json = consumeCString(impulse_git_diff_markers(filePath)) else { return [] }
-        guard let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([DiffDecoration].self, from: data)) ?? []
+        guard let markers = GitClient.diffMarkers(filePath: filePath) else { return [] }
+        return reencode(markers, as: [DiffDecoration].self) ?? []
     }
 
     // MARK: - Review Changes (git diff review)
@@ -464,21 +497,17 @@ final class ImpulseCore {
     /// containing `repoPath`. Returns `nil` if `repoPath` is not in a git
     /// repository or on error. Call off the main thread — libgit2 work blocks.
     static func listChangedFiles(repoPath: String) -> ChangeSet? {
-        guard let json = consumeCString(impulse_git_list_changed_files(repoPath)) else {
-            return nil
-        }
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(ChangeSet.self, from: data)
+        guard let changeSet = GitClient.changedFiles(repoPath: repoPath) else { return nil }
+        return reencode(changeSet, as: ChangeSet.self)
     }
 
     /// Computes unified-diff hunks for one REPO-RELATIVE `filePath`. Returns
     /// `nil` on error. Call off the main thread — file reads + libgit2 work block.
     static func fileHunks(repoPath: String, filePath: String) -> FileHunks? {
-        guard let json = consumeCString(impulse_git_file_hunks(repoPath, filePath)) else {
+        guard let hunks = GitClient.fileHunks(repoPath: repoPath, filePath: filePath) else {
             return nil
         }
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(FileHunks.self, from: data)
+        return reencode(hunks, as: FileHunks.self)
     }
 
     /// Stages all changes and commits with `message`. Always returns a
@@ -486,21 +515,19 @@ final class ImpulseCore {
     /// which case a synthetic failure result is returned. Call off the main
     /// thread — libgit2 work blocks.
     static func commitAll(repoPath: String, message: String) -> CommitResult {
-        guard let json = consumeCString(impulse_git_commit_all(repoPath, message)) else {
-            return CommitResult(ok: false, oid: nil, error: "Commit failed (null result)")
+        switch GitClient.commitAll(repoPath: repoPath, message: message) {
+        case .success(let oid):
+            return CommitResult(ok: true, oid: oid, error: nil)
+        case .failure(let error):
+            return CommitResult(ok: false, oid: nil, error: String(describing: error))
         }
-        guard let data = json.data(using: .utf8),
-              let result = try? JSONDecoder().decode(CommitResult.self, from: data) else {
-            return CommitResult(ok: false, oid: nil, error: "Commit failed (decode error)")
-        }
-        return result
     }
 
     /// Discards changes for one REPO-RELATIVE `filePath` (checkout HEAD for
     /// tracked, delete for untracked/new). Returns `true` on success.
     /// Call off the main thread — libgit2/filesystem work blocks.
     static func discardPath(repoPath: String, filePath: String) -> Bool {
-        return impulse_git_discard_path(repoPath, filePath) == 0
+        return (try? GitClient.discardPath(repoPath: repoPath, filePath: filePath)) != nil
     }
 
     // MARK: - LSP

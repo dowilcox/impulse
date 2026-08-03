@@ -19,6 +19,28 @@ let package = Package(
             name: "CImpulseFFI",
             path: "CImpulseFFI"
         ),
+        // Vendored static libgit2 (built by scripts/build-libgit2.sh; local
+        // git operations only — no HTTPS/SSH, so no OpenSSL).
+        .systemLibrary(
+            name: "Clibgit2",
+            path: "Clibgit2"
+        ),
+        // Git layer ported from impulse-core/src/git.rs on top of libgit2.
+        .target(
+            name: "ImpulseGit",
+            dependencies: [
+                "Clibgit2",
+                "ImpulseKit",
+            ],
+            path: "Sources/ImpulseGit",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-L", ".libgit2/1.9.1/lib"]),
+            ]
+        ),
         // Pure logic ported from the Rust backend (impulse-core / impulse-editor).
         // Foundation-only: no AppKit, no FFI, so it stays headless-testable.
         .target(
@@ -41,6 +63,7 @@ let package = Package(
             dependencies: [
                 "CImpulseFFI",
                 "ImpulseKit",
+                "ImpulseGit",
             ],
             path: "Sources/ImpulseApp",
             resources: [
@@ -53,14 +76,30 @@ let package = Package(
                 // in existing AppKit delegate code (nonisolated deinit
                 // touching non-Sendable stored properties, etc.).
                 .swiftLanguageMode(.v5),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L", "../target/release"]),
                 .linkedLibrary("impulse_ffi"),
-                .linkedLibrary("resolv"),
+                // z + iconv are required by the vendored libgit2 (Clibgit2).
+                // resolv/Security were only needed by the old Rust git2 +
+                // vendored-OpenSSL stack and are gone with it.
                 .linkedLibrary("z"),
                 .linkedLibrary("iconv"),
-                .linkedFramework("Security"),
+            ]
+        ),
+        .testTarget(
+            name: "ImpulseGitTests",
+            dependencies: [
+                "ImpulseGit",
+            ],
+            path: "Tests/ImpulseGitTests",
+            resources: [
+                .copy("Fixtures"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
             ]
         ),
         .testTarget(

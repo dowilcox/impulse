@@ -151,6 +151,9 @@ echo "Building Impulse v${VERSION} for macOS..."
 # linked" linker warnings at link time.
 export MACOSX_DEPLOYMENT_TARGET=26.0
 
+echo "==> Building vendored libgit2 (cached)..."
+./scripts/build-libgit2.sh
+
 echo "==> Building impulse-ffi (Rust static library)..."
 cargo build --release -p impulse-ffi
 
