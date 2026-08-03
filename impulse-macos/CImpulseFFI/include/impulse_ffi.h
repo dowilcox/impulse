@@ -5,28 +5,8 @@
 #include <stdbool.h>
 #include <libproc.h>
 
-// Opaque handle for LSP registry
-typedef struct LspRegistryHandle LspRegistryHandle;
-
 // Memory management
 void impulse_free_string(char *s);
-
-
-// LSP management
-LspRegistryHandle *impulse_lsp_registry_new(const char *root_uri);
-int32_t impulse_lsp_ensure_servers(LspRegistryHandle *handle, const char *language_id, const char *file_uri);
-char *impulse_lsp_request(LspRegistryHandle *handle, const char *language_id, const char *file_uri, const char *method, const char *params_json);
-int32_t impulse_lsp_notify(LspRegistryHandle *handle, const char *language_id, const char *file_uri, const char *method, const char *params_json);
-int32_t impulse_lsp_did_change(LspRegistryHandle *handle, const char *language_id, const char *file_uri, int32_t version, const char *full_text, const char *changes_json);
-char *impulse_lsp_poll_event(LspRegistryHandle *handle);
-void impulse_lsp_shutdown_all(LspRegistryHandle *handle);
-void impulse_lsp_registry_free(LspRegistryHandle *handle);
-
-// Managed LSP installation
-char *impulse_lsp_check_status(void);
-char *impulse_lsp_install(void);
-bool impulse_npm_is_available(void);
-char *impulse_system_lsp_status(void);
 
 // Terminal backend API
 void *impulse_terminal_create(const char *config_json, unsigned short cols, unsigned short rows, unsigned short cell_width, unsigned short cell_height);

@@ -140,8 +140,8 @@ fi
 
 # ── Version detection ─────────────────────────────────────────────────
 
-# Read version from impulse-core/Cargo.toml (single source of truth).
-VERSION=$(grep -m1 '^version' impulse-core/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+# Read version from the top-level VERSION file (single source of truth).
+VERSION=$(cat VERSION)
 echo "Building Impulse v${VERSION} for macOS..."
 
 # ── Step 1: Build Rust FFI static library ─────────────────────────────

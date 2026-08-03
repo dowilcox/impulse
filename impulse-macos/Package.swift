@@ -58,12 +58,25 @@ let package = Package(
                 .swiftLanguageMode(.v5),
             ]
         ),
+        // LSP client ported from impulse-core/src/lsp.rs: server process
+        // management, JSON-RPC framing, registry, document cache.
+        .target(
+            name: "ImpulseLSP",
+            dependencies: [
+                "ImpulseKit",
+            ],
+            path: "Sources/ImpulseLSP",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
         .executableTarget(
             name: "ImpulseApp",
             dependencies: [
                 "CImpulseFFI",
                 "ImpulseKit",
                 "ImpulseGit",
+                "ImpulseLSP",
             ],
             path: "Sources/ImpulseApp",
             resources: [
@@ -86,6 +99,16 @@ let package = Package(
                 // vendored-OpenSSL stack and are gone with it.
                 .linkedLibrary("z"),
                 .linkedLibrary("iconv"),
+            ]
+        ),
+        .testTarget(
+            name: "ImpulseLSPTests",
+            dependencies: [
+                "ImpulseLSP",
+            ],
+            path: "Tests/ImpulseLSPTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
             ]
         ),
         .testTarget(

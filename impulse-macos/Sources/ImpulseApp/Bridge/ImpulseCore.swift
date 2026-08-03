@@ -2,6 +2,7 @@ import CImpulseFFI
 import Foundation
 import ImpulseGit
 import ImpulseKit
+import ImpulseLSP
 
 // MARK: - Error Type
 
@@ -26,9 +27,9 @@ struct ImpulseError: Error, CustomStringConvertible {
 /// pointer that must NOT be freed.
 final class ImpulseCore {
 
-    /// Opaque handle to the Rust LSP registry. `nil` until the first working
-    /// directory is established via `initializeLsp(rootUri:)`.
-    private var lspRegistry: OpaquePointer?
+    /// The Swift LSP registry. `nil` until the first working directory is
+    /// established via `initializeLsp(rootUri:)`.
+    private var lspRegistry: LSPRegistry?
 
     init() {}
 
@@ -479,80 +480,11 @@ final class ImpulseCore {
         return (try? GitClient.discardPath(repoPath: repoPath, filePath: filePath)) != nil
     }
 
-    // MARK: - LSP
+    // MARK: - LSP (ImpulseLSP-backed)
 
-    /// Creates a new LSP registry for the given workspace root URI.
-    ///
-    /// - Parameter rootUri: The workspace root as a `file://` URI.
-    /// - Returns: An opaque pointer to the registry handle, or `nil` on failure.
-    static func createLspRegistry(rootUri: String) -> OpaquePointer? {
-        return impulse_lsp_registry_new(rootUri)
-    }
-
-    /// Ensures LSP servers are running for the given language and file.
-    ///
-    /// - Parameters:
-    ///   - handle: The LSP registry handle.
-    ///   - languageId: The LSP language identifier (e.g. `"typescript"`).
-    ///   - fileUri: The file URI (e.g. `"file:///path/to/file.ts"`).
-    /// - Returns: The number of clients started/found, or `-1` on error.
-    static func lspEnsureServers(handle: OpaquePointer, languageId: String, fileUri: String) -> Int32 {
-        return impulse_lsp_ensure_servers(handle, languageId, fileUri)
-    }
-
-    /// Sends a synchronous LSP request and returns the JSON response.
-    ///
-    /// - Parameters:
-    ///   - handle: The LSP registry handle.
-    ///   - languageId: The LSP language identifier.
-    ///   - fileUri: The file URI.
-    ///   - method: The LSP method name (e.g. `"textDocument/completion"`).
-    ///   - params: JSON-encoded parameters, or `nil` for no params.
-    /// - Returns: A JSON string with the result.
-    static func lspRequest(handle: OpaquePointer, languageId: String, fileUri: String, method: String, params: String?) -> String {
-        let result = impulse_lsp_request(handle, languageId, fileUri, method, params)
-        return consumeCString(result) ?? "{\"error\":\"null response\"}"
-    }
-
-    /// Sends an LSP notification (no response expected).
-    ///
-    /// - Parameters:
-    ///   - handle: The LSP registry handle.
-    ///   - languageId: The LSP language identifier.
-    ///   - fileUri: The file URI.
-    ///   - method: The LSP method name (e.g. `"textDocument/didOpen"`).
-    ///   - params: JSON-encoded parameters, or `nil` for no params.
-    /// - Returns: `true` on success, `false` on error.
-    static func lspNotify(handle: OpaquePointer, languageId: String, fileUri: String, method: String, params: String?) -> Bool {
-        return impulse_lsp_notify(handle, languageId, fileUri, method, params) == 0
-    }
-
-    /// Polls for the next asynchronous LSP event (diagnostics, lifecycle).
-    ///
-    /// - Parameter handle: The LSP registry handle.
-    /// - Returns: A JSON string describing the event, or `nil` if no events
-    ///   are pending.
-    static func lspPollEvent(handle: OpaquePointer) -> String? {
-        return consumeCString(impulse_lsp_poll_event(handle))
-    }
-
-    /// Shuts down all LSP servers managed by the given registry.
-    static func lspShutdownAll(handle: OpaquePointer) {
-        impulse_lsp_shutdown_all(handle)
-    }
-
-    /// Frees an LSP registry handle. This also shuts down all servers.
-    static func lspRegistryFree(handle: OpaquePointer) {
-        impulse_lsp_registry_free(handle)
-    }
-
-    // MARK: - Instance LSP Management
-
-    /// Initializes the instance LSP registry for the given root URI.
-    /// Shuts down any previously active registry first.
     func initializeLsp(rootUri: String) {
         shutdownLsp()
-        lspRegistry = impulse_lsp_registry_new(rootUri)
+        lspRegistry = LSPRegistry(rootUri: rootUri)
     }
 
     /// Ensures LSP servers are running for the given language and file
@@ -560,52 +492,44 @@ final class ImpulseCore {
     @discardableResult
     func lspEnsureServers(languageId: String, fileUri: String) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
-        return impulse_lsp_ensure_servers(reg, languageId, fileUri)
+        return Int32(reg.ensureServers(languageId: languageId, fileUri: fileUri))
     }
 
     /// Sends a synchronous LSP request using the instance registry.
     func lspRequest(languageId: String, fileUri: String, method: String, paramsJson: String) -> String? {
         guard let reg = lspRegistry else { return nil }
-        let result = impulse_lsp_request(reg, languageId, fileUri, method, paramsJson)
-        return Self.consumeCString(result) ?? "{\"error\":\"null response\"}"
+        return reg.request(
+            languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJson)
     }
 
     /// Sends an LSP notification using the instance registry.
     @discardableResult
     func lspNotify(languageId: String, fileUri: String, method: String, paramsJson: String) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
-        return impulse_lsp_notify(reg, languageId, fileUri, method, paramsJson)
+        return reg.notify(
+            languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJson)
+            ? 0 : -1
     }
 
     /// Sends a capability-aware textDocument/didChange using the instance registry.
     @discardableResult
     func lspDidChange(languageId: String, fileUri: String, version: Int32, fullText: String?, changesJson: String) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
-        return languageId.withCString { languagePtr in
-            fileUri.withCString { uriPtr in
-                changesJson.withCString { changesPtr in
-                    if let fullText {
-                        return fullText.withCString { textPtr in
-                            impulse_lsp_did_change(reg, languagePtr, uriPtr, version, textPtr, changesPtr)
-                        }
-                    }
-                    return impulse_lsp_did_change(reg, languagePtr, uriPtr, version, nil, changesPtr)
-                }
-            }
-        }
+        return reg.didChange(
+            languageId: languageId, fileUri: fileUri, version: version,
+            fullText: fullText, changesJSON: changesJson)
+            ? 0 : -1
     }
 
     /// Polls for the next asynchronous LSP event using the instance registry.
     func lspPollEvent() -> String? {
         guard let reg = lspRegistry else { return nil }
-        return Self.consumeCString(impulse_lsp_poll_event(reg))
+        return reg.pollEvent()
     }
 
     /// Shuts down all running LSP servers and releases the instance registry.
     func shutdownLsp() {
-        guard let reg = lspRegistry else { return }
-        impulse_lsp_shutdown_all(reg)
-        impulse_lsp_registry_free(reg)
+        lspRegistry?.shutdownAll()
         lspRegistry = nil
     }
 
@@ -637,10 +561,10 @@ final class ImpulseCore {
     /// array of dictionaries with `command`, `installed`, and
     /// `resolvedPath` keys.
     static func lspCheckStatus() -> [[String: Any]] {
-        guard let raw = impulse_lsp_check_status() else { return [] }
-        let json = String(cString: raw)
-        impulse_free_string(raw)
+        decodeStatusJSON(ManagedServers.checkStatusJSON())
+    }
 
+    private static func decodeStatusJSON(_ json: String) -> [[String: Any]] {
         guard let data = json.data(using: .utf8),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return []
@@ -651,20 +575,15 @@ final class ImpulseCore {
     /// Installs managed web LSP servers. Returns the installation root path
     /// on success, or a descriptive error on failure.
     static func lspInstall() -> Result<String, ImpulseError> {
-        guard let raw = impulse_lsp_install() else {
-            return .failure(ImpulseError(message: "impulse_lsp_install returned null"))
+        switch ManagedServers.install() {
+        case .success(let path): return .success(path)
+        case .failure(let message): return .failure(ImpulseError(message: message))
         }
-        let str = String(cString: raw)
-        impulse_free_string(raw)
-        if str.hasPrefix("ERROR:") {
-            return .failure(ImpulseError(message: String(str.dropFirst(6))))
-        }
-        return .success(str)
     }
 
     /// Returns whether npm is available on the system PATH.
     static func npmIsAvailable() -> Bool {
-        impulse_npm_is_available()
+        ManagedServers.npmIsAvailable()
     }
 
     // MARK: - Terminal Backend
@@ -871,15 +790,7 @@ final class ImpulseCore {
     /// as an array of dictionaries with `command`, `installed`, and
     /// `resolvedPath` keys.
     static func systemLspStatus() -> [[String: Any]] {
-        guard let raw = impulse_system_lsp_status() else { return [] }
-        let json = String(cString: raw)
-        impulse_free_string(raw)
-
-        guard let data = json.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return []
-        }
-        return array
+        decodeStatusJSON(ManagedServers.systemStatusJSON())
     }
 
     /// Instance wrapper for `lspCheckStatus`.

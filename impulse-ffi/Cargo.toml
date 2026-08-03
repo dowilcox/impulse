@@ -9,11 +9,6 @@ license = "GPL-3.0-only"
 crate-type = ["staticlib"]
 
 [dependencies]
-impulse-core = { path = "../impulse-core" }
 impulse-terminal = { path = "../impulse-terminal" }
-crossbeam-channel = "0.5"
 serde_json = { workspace = true }
-tokio = { workspace = true }
 log = { workspace = true }
-lsp-types = { workspace = true }
-parking_lot = { workspace = true }
