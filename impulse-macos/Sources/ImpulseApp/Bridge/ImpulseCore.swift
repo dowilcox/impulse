@@ -96,10 +96,7 @@ final class ImpulseCore {
     /// - Returns: An array of `SearchResult` values decoded from the JSON
     ///   response, or an empty array on failure.
     static func searchFiles(root: String, query: String) -> [SearchResult] {
-        guard let json = consumeCString(impulse_search_files(root, query)) else {
-            return []
-        }
-        return decodeSearchResults(json)
+        return FileSearch.searchFilenames(root: root, query: query, limit: 200)
     }
 
     /// Searches file contents under `root` for `query`.
@@ -111,16 +108,8 @@ final class ImpulseCore {
     /// - Returns: An array of `SearchResult` values decoded from the JSON
     ///   response, or an empty array on failure.
     static func searchContent(root: String, query: String, caseSensitive: Bool) -> [SearchResult] {
-        guard let json = consumeCString(impulse_search_content(root, query, caseSensitive)) else {
-            return []
-        }
-        return decodeSearchResults(json)
-    }
-
-    /// Decodes a JSON array string into an array of `SearchResult`.
-    private static func decodeSearchResults(_ json: String) -> [SearchResult] {
-        guard let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([SearchResult].self, from: data)) ?? []
+        return FileSearch.searchContents(
+            root: root, query: query, limit: 500, caseSensitive: caseSensitive)
     }
 
     /// Runs filename and content searches concurrently under `root` and returns

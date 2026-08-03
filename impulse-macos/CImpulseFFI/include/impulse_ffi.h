@@ -14,10 +14,6 @@ void impulse_free_string(char *s);
 // Input completion
 void impulse_completion_warm_cache(void);
 
-// Search
-char *impulse_search_files(const char *root, const char *query);
-char *impulse_search_content(const char *root, const char *query, bool case_sensitive);
-
 // LSP management
 LspRegistryHandle *impulse_lsp_registry_new(const char *root_uri);
 int32_t impulse_lsp_ensure_servers(LspRegistryHandle *handle, const char *language_id, const char *file_uri);
