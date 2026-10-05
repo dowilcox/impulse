@@ -122,6 +122,9 @@ extension Notification.Name {
     /// Posted when the read-only terminal grid is clicked and keyboard focus
     /// should move to the input bar.
     static let terminalRequestInputFocus = Notification.Name("impulse.terminalRequestInputFocus")
+    /// A hint was picked in hints mode (object: TerminalTab; userInfo: kind,
+    /// text, action, and for paths path/line/column; cwd).
+    static let terminalHintChosen = Notification.Name("impulse.terminalHintChosen")
     /// Posted when the foreground program toggles password-style input on the
     /// PTY (termios ECHO off) and the input bar should mask what's typed
     /// (userInfo["active"]: Bool).

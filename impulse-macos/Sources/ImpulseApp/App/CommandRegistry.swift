@@ -121,6 +121,13 @@ enum CommandRegistry {
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },
       AppCommand(
+        id: "terminal_hints", title: "Show Terminal Hints", category: "Terminal",
+        keywords: ["link", "url", "path", "sha", "port", "open", "copy"], icon: .keyboard,
+        keybindingId: "terminal_hints"
+      ) { [weak controller] in
+        controller?.tabManager.selectedTerminal?.activeTerminal?.performBlockCommand("terminal_hints")
+      },
+      AppCommand(
         id: "select_blocks", title: "Select Command Blocks", category: "Terminal",
         keywords: ["block", "copy", "output"], icon: .squareTerminal, shortcut: "⌘↑"
       ) { [weak controller] in

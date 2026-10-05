@@ -755,6 +755,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
   }
 
+  /// Act on a hint picked in a terminal: open it (URL or port in the
+  /// browser, file in the editor, SHA in History), copy it, or insert it
+  /// at the prompt.
+  private func performHint(_ info: [AnyHashable: Any], terminal: TerminalTab) {
+    let text = info["text"] as? String ?? ""
+    let path = info["path"] as? String
+    switch info["action"] as? String {
+    case "copy":
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(path ?? text, forType: .string)
+      toasts.show(Toast(kind: .success, message: "Copied \(path.map { ($0 as NSString).lastPathComponent } ?? text)"))
+    case "insert":
+      if terminal.wantsGridFocus {
+        terminal.insertInput(text)
+        terminal.focus()
+      } else {
+        let draft = windowModel.inputDraft
+        windowModel.inputDraft = draft.isEmpty || draft.hasSuffix(" ") ? draft + text : draft + " " + text
+        windowModel.inputDraftRestoreToken += 1
+        windowModel.inputBarFocusToken += 1
+      }
+    default:
+      switch TerminalHintMatch.Kind(rawValue: info["kind"] as? String ?? "") {
+      case .url, .port:
+        let hint = TerminalHintMatch(
+          kind: info["kind"] as? String == "port" ? .port : .url, range: 0..<1, text: text)
+        if let url = hint.url { NSWorkspace.shared.open(url) }
+      case .path:
+        if let path {
+          paletteOpenFile(
+            path, line: (info["line"] as? Int).map(UInt32.init), column: (info["column"] as? Int).map(UInt32.init))
+        }
+      case .sha:
+        let cwd = info["cwd"] as? String ?? fileTreeRootPath
+        GitRepositoryStore.shared.resolve(directory: cwd.isEmpty ? fileTreeRootPath : cwd) { [weak self] state in
+          guard let self else { return }
+          guard let state else {
+            self.toasts.show(Toast(kind: .info, message: "\(text) isn't in a git repository here."))
+            return
+          }
+          self.tabManager.addHistoryTab(repository: state, host: self, reveal: text)
+        }
+      case nil:
+        break
+      }
+    }
+  }
+
   /// The agent's terminal, by terminal id.
   func agentTerminal(id: UUID) -> TerminalTab? {
     for case .terminal(let container) in tabManager.allSurfaces {
@@ -1766,6 +1814,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseOpenWorkspace, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.presentOpenWorkspacePanel()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalHintChosen, object: nil, queue: .main) { [weak self] notification in
+        guard let self, let terminal = notification.object as? TerminalTab,
+          self.tabManager.location(ofTerminal: terminal) != nil, let info = notification.userInfo
+        else { return }
+        self.performHint(info, terminal: terminal)
       }
     )
     notificationObservers.append(

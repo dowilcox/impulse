@@ -170,6 +170,14 @@ enum Keybindings {
             modifierFlags: [.command, .shift]
         ),
         BuiltinKeybinding(
+            id: "terminal_hints",
+            description: "Show Terminal Hints",
+            category: "Blocks",
+            defaultShortcut: "Cmd+Shift+Space",
+            keyEquivalent: " ",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "toggle_block_bookmark",
             description: "Bookmark Command Block",
             category: "Blocks",

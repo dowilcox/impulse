@@ -369,6 +369,7 @@ enum MenuBuilder {
         let blocksItem = NSMenuItem(title: "Command Blocks", action: nil, keyEquivalent: "")
         let blocksMenu = NSMenu(title: "Command Blocks")
         let blockCommands: [(String, String)?] = [
+            ("terminal_hints", "Show Hints"),
             ("select_blocks", "Select Blocks"),
             nil,
             ("previous_block", "Previous Block"),

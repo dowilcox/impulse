@@ -216,6 +216,21 @@ class TerminalTab: NSView {
     renderer.onToggleBookmark = { [weak self] id in
       self?.toggleBookmarks([id])
     }
+    renderer.onHintChosen = { [weak self] target, action in
+      guard let self else { return }
+      var info: [String: Any] = [
+        "kind": target.match.kind.rawValue, "text": target.match.text, "cwd": self.currentWorkingDirectory,
+        "action": action == .open ? "open" : action == .copy ? "copy" : "insert",
+      ]
+      if let path = target.resolvedPath { info["path"] = path }
+      if let line = target.match.path?.line { info["line"] = line }
+      if let column = target.match.path?.column { info["column"] = column }
+      NotificationCenter.default.post(name: .terminalHintChosen, object: self, userInfo: info)
+    }
+    renderer.onHintsEnded = { [weak self] in
+      guard let self, !self.wantsGridFocus else { return }
+      NotificationCenter.default.post(name: .terminalRequestInputFocus, object: self)
+    }
     renderer.onSendBlockToAgent = { [weak self] id in
       guard let self, let text = self.agentDescription(ofBlock: id) else { return }
       NotificationCenter.default.post(
@@ -1327,6 +1342,8 @@ class TerminalTab: NSView {
   func performBlockCommand(_ command: String) {
     switch command {
     case "select_blocks": beginBlockSelection()
+    case "terminal_hints":
+      if !renderer.beginHints() { NSSound.beep() }
     case "previous_block": jumpToPreviousCommandBlock()
     case "next_block": jumpToNextCommandBlock()
     case "last_failed_block": jumpToLastFailedCommandBlock()

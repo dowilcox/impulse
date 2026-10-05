@@ -117,6 +117,142 @@ class TerminalRenderer: NSView {
         }
     }
     var onToggleBookmark: ((UInt64) -> Void)?
+
+    // MARK: Hints Mode
+
+    enum HintAction { case open, copy, insert }
+    struct HintTarget {
+        let row: Int
+        let startCol: Int
+        /// Exclusive.
+        let endCol: Int
+        let label: String
+        let match: TerminalHintMatch
+        /// Absolute path, for file references.
+        let resolvedPath: String?
+    }
+    /// Labels shown over URLs, paths, SHAs and ports; typing one picks it.
+    private(set) var hintTargets: [HintTarget] = []
+    private var hintTyped = ""
+    var isShowingHints: Bool { !hintTargets.isEmpty }
+    var onHintChosen: ((HintTarget, HintAction) -> Void)?
+    var onHintsEnded: (() -> Void)?
+
+    /// Label everything actionable on screen. False when there's nothing.
+    func beginHints() -> Bool {
+        guard let grid = backend?.gridSnapshot() else { return false }
+        var found: [(row: Int, start: Int, end: Int, match: TerminalHintMatch, path: String?)] = []
+        for row in 0..<grid.lines {
+            if frameCollapsedRows.contains(row) { continue }
+            var units: [UInt16] = []
+            var colForUnit: [Int] = []
+            for c in 0..<grid.cols {
+                let cell = grid.cell(row: row, col: c)
+                if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+                let scalar = cell.character.value == 0 ? UnicodeScalar(0x20)! : cell.character
+                for unit in String(Character(scalar)).utf16 {
+                    units.append(unit)
+                    colForUnit.append(c)
+                }
+            }
+            let line = String(decoding: units, as: UTF16.self)
+            guard line.contains(where: { !$0.isWhitespace }) else { continue }
+            for match in TerminalHints.matches(in: line) where match.range.upperBound <= colForUnit.count {
+                var resolved: String?
+                if match.kind == .path {
+                    guard let reference = match.path, let absolute = resolvePath?(reference.path) else { continue }
+                    resolved = absolute
+                }
+                found.append(
+                    (row, colForUnit[match.range.lowerBound], colForUnit[match.range.upperBound - 1] + 1,
+                     match, resolved))
+            }
+        }
+        let labels = TerminalHints.labels(count: found.count)
+        hintTargets = zip(found, labels).map { item, label in
+            HintTarget(
+                row: item.row, startCol: item.start, endCol: item.end, label: label, match: item.match,
+                resolvedPath: item.path)
+        }
+        hintTyped = ""
+        needsDisplay = true
+        if !hintTargets.isEmpty { window?.makeFirstResponder(self) }
+        return !hintTargets.isEmpty
+    }
+
+    func endHints() {
+        guard !hintTargets.isEmpty else { return }
+        hintTargets = []
+        hintTyped = ""
+        needsDisplay = true
+        onHintsEnded?()
+    }
+
+    /// Letters pick a label (⇧ copies, ⌥ inserts into the input), ⌫ backs
+    /// up, Esc leaves.
+    private func handleHintKey(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53 {
+            endHints()
+            return true
+        }
+        if event.keyCode == 51 {
+            hintTyped = String(hintTyped.dropLast())
+            needsDisplay = true
+            return true
+        }
+        guard let letter = event.charactersIgnoringModifiers?.lowercased(), letter.count == 1,
+              letter.first?.isLetter == true
+        else { return true }
+        let typed = hintTyped + letter
+        let candidates = hintTargets.filter { $0.label.hasPrefix(typed) }
+        if candidates.isEmpty { return true }
+        if candidates.count == 1, candidates[0].label == typed {
+            let action: HintAction =
+                event.modifierFlags.contains(.shift) ? .copy
+                : event.modifierFlags.contains(.option) ? .insert : .open
+            let target = candidates[0]
+            endHints()
+            onHintChosen?(target, action)
+            return true
+        }
+        hintTyped = typed
+        needsDisplay = true
+        return true
+    }
+
+    /// Underline each target and put its label over its first cells.
+    private func drawHints(context: CGContext) {
+        let ch = fontMetrics.cellHeight
+        let cw = fontMetrics.cellWidth
+        let font = chipFont ?? fontMetrics.font
+        for target in hintTargets {
+            let matchesTyped = target.label.hasPrefix(hintTyped)
+            let top = rowTopY(target.row)
+            let x = padding + CGFloat(target.startCol) * cw
+            let width = CGFloat(target.endCol - target.startCol) * cw
+            context.setFillColor(blockAccentColor.copy(alpha: matchesTyped ? 0.9 : 0.25) ?? blockAccentColor)
+            context.fill(CGRect(x: x, y: top + ch - 1.5, width: width, height: 1.5))
+            guard matchesTyped else { continue }
+
+            let label = target.label.uppercased()
+            let attrs: [CFString: Any] = [
+                kCTFontAttributeName: font,
+                kCTForegroundColorAttributeName: defaultBackgroundColor,
+            ]
+            guard let attrStr = CFAttributedStringCreate(nil, label as CFString, attrs as CFDictionary) else {
+                continue
+            }
+            let line = CTLineCreateWithAttributedString(attrStr)
+            let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            let pill = CGRect(x: x - 1, y: top + 1, width: textWidth + 8, height: ch - 2)
+            context.setFillColor(blockAccentColor)
+            context.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil))
+            context.fillPath()
+            context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+            context.textPosition = CGPoint(x: pill.minX + 4, y: top + fontMetrics.ascent)
+            CTLineDraw(line, context)
+        }
+    }
     var onToggleBlockSelection: ((UInt64) -> Void)?
     private var contextBlockId: UInt64?
 
@@ -493,6 +629,7 @@ class TerminalRenderer: NSView {
     }
 
     override func resignFirstResponder() -> Bool {
+        endHints()
         backend?.setFocus(false)
         onFocusChanged?(false)
         DispatchQueue.main.async { [weak self] in self?.updateBlinkTimer() }
@@ -1251,6 +1388,10 @@ class TerminalRenderer: NSView {
                 context: context, overlay: blockOverlay, drawRows: drawRows, lines: lines,
                 grid: grid, cols: cols
             )
+        }
+
+        if !hintTargets.isEmpty {
+            drawHints(context: context)
         }
 
         // 7. Draw cursor (respects blink phase and shape override from
@@ -2469,6 +2610,7 @@ class TerminalRenderer: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if !hintTargets.isEmpty, handleHintKey(event) { return }
         if !selectedBlockIds.isEmpty, handleBlockSelectionKey(event) { return }
         if eventMatchesKeybinding(event, id: "paste") {
             paste(event)
@@ -2830,6 +2972,7 @@ class TerminalRenderer: NSView {
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
+        endHints()
         // Hover-toolbar buttons take priority over selection.
         let point = convert(event.locationInWindow, from: nil)
         if let target = hoverToolbarTargets.first(where: { $0.rect.contains(point) }) {
