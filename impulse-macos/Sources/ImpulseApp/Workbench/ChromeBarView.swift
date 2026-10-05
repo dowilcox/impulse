@@ -73,7 +73,8 @@ struct ChromeBarView: View {
 
 // MARK: - Breadcrumb
 
-/// `project › branch` for the active tab's repository/folder.
+/// `workspace › branch`: the project opens the workspace switcher, the
+/// branch the branch switcher.
 private struct WorkspaceBreadcrumb: View {
   @Environment(\.chrome) private var chrome
   var model: WindowModel
@@ -82,11 +83,18 @@ private struct WorkspaceBreadcrumb: View {
     let project = projectName
     HStack(spacing: 5) {
       if !project.isEmpty {
-        Text(project)
-          .font(ChromeFont.ui(12, weight: .semibold))
-          .foregroundStyle(chrome.text)
-          .lineLimit(1)
-          .truncationMode(.middle)
+        Button {
+          model.onShowWorkspaceSwitcher?()
+        } label: {
+          Text(project)
+            .font(ChromeFont.ui(12, weight: .semibold))
+            .foregroundStyle(chrome.text)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ChromePressStyle())
+        .help("Switch workspace (⌃⌘O)")
       }
       if let branch = model.gitBranch, !branch.isEmpty {
         Button {
@@ -121,6 +129,9 @@ private struct WorkspaceBreadcrumb: View {
   }
 
   private var projectName: String {
+    if let active = model.workspaces.first(where: \.isActive), !active.isScratch {
+      return active.name
+    }
     let root = model.fileTreeRootPath
     guard !root.isEmpty else { return "" }
     if root == NSHomeDirectory() { return "~" }

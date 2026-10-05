@@ -53,6 +53,29 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "switch_workspace", title: "Switch Workspace…", category: "Workspaces",
+        keywords: ["project", "folder", "recent"], icon: .folderGit2,
+        keybindingId: "switch_workspace"
+      ) { [weak controller] in controller?.showPalette(prefix: "w:") },
+      AppCommand(
+        id: "open_workspace", title: "Open Folder as Workspace…", category: "Workspaces",
+        keywords: ["project", "folder", "open"], icon: .folderOpen
+      ) { [weak controller] in controller?.presentOpenWorkspacePanel() },
+      AppCommand(
+        id: "rename_workspace", title: "Rename Workspace…", category: "Workspaces",
+        keywords: ["project", "name"], icon: .pencil
+      ) { [weak controller] in
+        guard let controller else { return }
+        controller.presentRenameWorkspace(controller.tabManager.activeWorkspaceID)
+      },
+      AppCommand(
+        id: "close_workspace", title: "Close Workspace", category: "Workspaces",
+        keywords: ["project", "folder"], icon: .x
+      ) { [weak controller] in
+        guard let controller else { return }
+        controller.requestCloseWorkspace(controller.tabManager.activeWorkspaceID)
+      },
+      AppCommand(
         id: "switch_tab", title: "Switch Tab…", category: "Tabs",
         keywords: ["go to tab"], icon: .layers
       ) { [weak controller] in controller?.showPalette(prefix: "t:") },

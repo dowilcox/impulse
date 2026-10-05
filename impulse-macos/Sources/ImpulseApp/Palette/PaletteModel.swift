@@ -15,6 +15,12 @@ protocol PaletteHost: AnyObject {
   func paletteSwitchBranch(_ branch: String)
   func paletteCreateBranch(_ name: String)
   func paletteSelectTab(_ index: Int)
+  /// The window's workspaces, and the global tab indexes the strip shows.
+  var paletteWorkspaces: [WorkspaceInfo] { get }
+  var paletteVisibleTabIndices: [Int] { get }
+  func paletteSelectWorkspace(_ id: UUID)
+  /// Open a folder as a workspace; nil asks for one.
+  func paletteOpenWorkspace(folder: String?)
 }
 
 /// One result row.
@@ -38,11 +44,11 @@ struct PaletteRow: Identifiable {
 ///
 /// The query's prefix picks the mode, so one field covers everything:
 ///   (none) files · `>` commands · `:` go to line · `%` text in files ·
-///   `b:` branches · `t:` tabs · `?` help.
+///   `b:` branches · `t:` tabs · `w:` workspaces · `?` help.
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, help
 
     var placeholder: String {
       switch self {
@@ -52,6 +58,7 @@ final class PaletteModel {
       case .text: return "Search text in project…"
       case .branches: return "Switch to branch…"
       case .tabs: return "Switch to tab…"
+      case .workspaces: return "Switch to workspace or open a folder…"
       case .help: return "Palette modes"
       }
     }
@@ -64,6 +71,7 @@ final class PaletteModel {
       case .text: return .search
       case .branches: return .gitBranch
       case .tabs: return .layers
+      case .workspaces: return .folderGit2
       case .help: return .info
       }
     }
@@ -141,6 +149,7 @@ final class PaletteModel {
     if query.hasPrefix("%") { return (.text, String(query.dropFirst())) }
     if query.hasPrefix("b:") { return (.branches, String(query.dropFirst(2))) }
     if query.hasPrefix("t:") { return (.tabs, String(query.dropFirst(2))) }
+    if query.hasPrefix("w:") { return (.workspaces, String(query.dropFirst(2))) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -159,6 +168,7 @@ final class PaletteModel {
     case .text: refreshText(trimmed)
     case .branches: refreshBranches(trimmed)
     case .tabs: refreshTabs(trimmed)
+    case .workspaces: refreshWorkspaces(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -440,19 +450,75 @@ final class PaletteModel {
 
   private func refreshTabs(_ term: String) {
     let tabs = host?.paletteTabs ?? []
+    let visible = host?.paletteVisibleTabIndices ?? []
+    let showWorkspace = (host?.paletteWorkspaces.count ?? 1) > 1
     let ranked = FuzzyMatcher.rank(tabs, query: term) { $0.title }
     rows = ranked.map { entry in
       let tab = entry.item
+      let position = visible.firstIndex(of: tab.index)
+      let subtitle = [showWorkspace ? tab.workspaceName : nil, tab.directory]
+        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
       return PaletteRow(
         id: "tab:\(tab.id)",
         glyph: tab.isTerminal ? .lucide(.terminal) : tab.icon.map { .image($0) },
         title: tab.title, highlights: entry.match.positions,
-        subtitle: tab.directory, trailing: tab.index < 9 ? "⌘\(tab.index + 1)" : nil
+        subtitle: subtitle.isEmpty ? nil : subtitle,
+        trailing: position.flatMap { $0 < 9 ? "⌘\($0 + 1)" : nil }
       ) { [weak self] in
         self?.host?.paletteSelectTab(tab.index)
       }
     }
     emptyMessage = "No matching tabs"
+  }
+
+  // MARK: Workspaces
+
+  private func refreshWorkspaces(_ term: String) {
+    let open = host?.paletteWorkspaces ?? []
+    let openRoots = Set(open.filter { !$0.isScratch }.map(\.root))
+    let recents = RecentWorkspaces.folders.filter {
+      !openRoots.contains($0) && FileManager.default.fileExists(atPath: $0)
+    }
+
+    var built: [PaletteRow] = []
+    for entry in FuzzyMatcher.rank(open, query: term, text: { $0.name }) {
+      let workspace = entry.item
+      let detail = [
+        workspace.isScratch ? "Follows the active tab" : TabManager.abbreviateHomePath(workspace.root),
+        "\(workspace.tabs.count) tab\(workspace.tabs.count == 1 ? "" : "s")",
+      ].joined(separator: " · ")
+      built.append(
+        PaletteRow(
+          id: "workspace:\(workspace.id)",
+          glyph: .lucide(workspace.isScratch ? .squareTerminal : .folderGit2),
+          title: workspace.name, highlights: entry.match.positions, subtitle: detail,
+          trailing: workspace.isActive ? "current" : nil
+        ) { [weak self] in
+          self?.host?.paletteSelectWorkspace(workspace.id)
+        })
+    }
+    let rankedRecents = FuzzyMatcher.rank(recents, query: term, isPath: true) { $0 }
+    for entry in rankedRecents {
+      let folder = entry.item
+      let name = (folder as NSString).lastPathComponent
+      built.append(
+        PaletteRow(
+          id: "recent:\(folder)", glyph: .lucide(.folder), title: name,
+          highlights: FuzzyMatcher.match(term, in: name)?.positions ?? [],
+          subtitle: TabManager.abbreviateHomePath(folder), trailing: "recent"
+        ) { [weak self] in
+          self?.host?.paletteOpenWorkspace(folder: folder)
+        })
+    }
+    built.append(
+      PaletteRow(
+        id: "workspace:open", glyph: .lucide(.folderOpen), title: "Open Folder as Workspace…",
+        trailing: "⌘O"
+      ) { [weak self] in
+        self?.host?.paletteOpenWorkspace(folder: nil)
+      })
+    rows = built
+    emptyMessage = "No matching workspaces"
   }
 
   // MARK: Help
@@ -465,6 +531,7 @@ final class PaletteModel {
       ("%", "Search text in the project", .search),
       ("b:", "Switch branch", .gitBranch),
       ("t:", "Switch tab", .layers),
+      ("w:", "Switch workspace", .folderGit2),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(

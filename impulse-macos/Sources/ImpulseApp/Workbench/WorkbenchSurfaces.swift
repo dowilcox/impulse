@@ -147,6 +147,7 @@ struct LeftDockView: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      WorkspacesSection(model: model)
       header
       switch model.sidebarPanel {
       case .search:

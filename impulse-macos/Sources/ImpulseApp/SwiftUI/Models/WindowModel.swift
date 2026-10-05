@@ -35,6 +35,25 @@ struct TabDisplayInfo: Identifiable {
   /// Panes in the tab (1 unless it's split), and whether one is zoomed.
   var paneCount: Int = 1
   var isZoomed: Bool = false
+  var workspaceID: UUID? = nil
+  var workspaceName: String = ""
+}
+
+// MARK: - Workspace Info
+
+/// Snapshot of a workspace for the sidebar and switcher.
+struct WorkspaceInfo: Identifiable {
+  let id: UUID
+  let name: String
+  let root: String
+  let isScratch: Bool
+  let isActive: Bool
+  let isExpanded: Bool
+  let tabs: [TabDisplayInfo]
+  let attentionCount: Int
+  let progress: TerminalProgress?
+  /// The folder's repository (folder workspaces in a git repo).
+  let repository: GitRepositoryState?
 }
 
 // MARK: - Window Model
@@ -47,8 +66,14 @@ final class WindowModel {
 
   // MARK: Tabs
 
+  /// The active workspace's tabs (what the strip shows). `index` values are
+  /// global tab indexes.
   var tabDisplayInfos: [TabDisplayInfo] = []
   var selectedTabIndex: Int = -1
+  /// Every tab in every workspace (tab switcher).
+  var allTabs: [TabDisplayInfo] = []
+  /// The window's workspaces in sidebar order.
+  var workspaces: [WorkspaceInfo] = []
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
   var tabBarPosition: String = "sidebar"
 
@@ -248,6 +273,13 @@ final class WindowModel {
   var onJoinTab: ((Int, Bool) -> Void)?
   /// Run a pane command by keybinding id ("split_right", "zoom_pane", …).
   var onPaneCommand: ((String) -> Void)?
+  var onSelectWorkspace: ((UUID) -> Void)?
+  var onCloseWorkspace: ((UUID) -> Void)?
+  var onRenameWorkspace: ((UUID) -> Void)?
+  var onSetWorkspaceExpanded: ((UUID, Bool) -> Void)?
+  /// Pick a folder to open as a workspace.
+  var onOpenWorkspace: (() -> Void)?
+  var onShowWorkspaceSwitcher: (() -> Void)?
 
   // MARK: Methods
 

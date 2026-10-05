@@ -138,6 +138,11 @@ extension Notification.Name {
     static let impulseToggleRightDock = Notification.Name("impulseToggleRightDock")
     /// A pane command (split, focus, zoom…); userInfo["command"] is its keybinding id.
     static let impulsePaneCommand = Notification.Name("impulsePaneCommand")
+    /// The window switched workspaces (object: the TabManager).
+    static let impulseActiveWorkspaceDidChange = Notification.Name("impulseActiveWorkspaceDidChange")
+    /// Ask the key window to pick a folder to open as a workspace.
+    static let impulseOpenWorkspace = Notification.Name("impulseOpenWorkspace")
+    static let impulseSwitchWorkspace = Notification.Name("impulseSwitchWorkspace")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.

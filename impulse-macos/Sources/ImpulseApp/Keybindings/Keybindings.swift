@@ -261,6 +261,14 @@ enum Keybindings {
             modifierFlags: [.command, .option]
         ),
         BuiltinKeybinding(
+            id: "switch_workspace",
+            description: "Switch Workspace",
+            category: "Navigation",
+            defaultShortcut: "Ctrl+Cmd+O",
+            keyEquivalent: "o",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
             id: "switch_branch",
             description: "Switch Branch",
             category: "Git",

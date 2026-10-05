@@ -228,19 +228,30 @@ enum ClosedTabInfo {
 /// segmented control used to switch between them. The segmented control is
 /// placed in the window's titlebar container.
 final class TabManager: NSObject {
-  /// The ordered list of open tabs.
-  private(set) var tabs: [TabEntry] = []
+  /// One open tab and its bookkeeping.
+  private struct TabRecord {
+    var entry: TabEntry
+    var pinned = false
+    /// Stable id (survives reorders); SwiftUI tracks tabs by it.
+    let uid: Int
+    /// The tab this one was opened from, selected again when it closes.
+    var closeReturnUID: Int?
+    var workspaceID: UUID
+  }
 
-  /// Per-tab pinned state, indexed in parallel with `tabs`.
-  private(set) var pinnedTabs: [Bool] = []
+  private var records: [TabRecord] = []
+  private var nextTabUID = 0
 
-  /// Stable unique IDs for each tab, indexed in parallel with `tabs`.
-  /// Used by SwiftUI to track tab identity across reorders.
-  private var tabUniqueIds: [Int] = []
-  private var nextTabUniqueId: Int = 0
+  /// Every open tab in strip order, across all workspaces. Indexes into this
+  /// array are the tab indexes used everywhere (selection, close, move).
+  var tabs: [TabEntry] { records.map(\.entry) }
+  var pinnedTabs: [Bool] { records.map(\.pinned) }
 
-  /// Stable tab id to return to when the corresponding tab closes.
-  private var tabCloseReturnIds: [Int?] = []
+  /// The window's workspaces, in sidebar order. Never empty.
+  private(set) var workspaces: [Workspace]
+  private(set) var activeWorkspaceID: UUID
+  /// Workspaces from most to least recently active.
+  private var workspaceHistory: [UUID] = []
 
   /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
   private var openFilePaths: Set<String> = []
@@ -287,13 +298,16 @@ final class TabManager: NSObject {
   /// Returns a `TabInfo` snapshot for the currently active tab, or `nil` if
   /// no tabs are open.
   var activeTabInfo: TabInfo? {
-    guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
-    return tabs[selectedIndex].info
+    guard records.indices.contains(selectedIndex) else { return nil }
+    return records[selectedIndex].entry.info
   }
 
   init(theme: Theme, core: ImpulseCore) {
     self.theme = theme
     self.core = core
+    let scratch = Workspace(kind: .scratch, root: NSHomeDirectory())
+    workspaces = [scratch]
+    activeWorkspaceID = scratch.id
 
     iconCache = IconCache(theme: theme)
 
@@ -306,8 +320,10 @@ final class TabManager: NSObject {
 
   // MARK: - Adding Tabs
 
-  /// Creates a new terminal tab and makes it active.
+  /// Creates a new terminal tab and makes it active. Without a directory it
+  /// starts in the active workspace's folder.
   func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
+    let directory = directory ?? activeWorkspace.defaultDirectory
     insertTab(.terminal(makeTerminalContainer(directory: directory, initialCommand: initialCommand)))
   }
 
@@ -553,31 +569,32 @@ final class TabManager: NSObject {
   }
 
   /// Inserts a new tab after the currently selected tab and selects it.
-  /// If no tab is selected, appends at the end.
+  /// With no selection in the workspace, it goes after the workspace's last
+  /// tab.
   private func insertTab(_ entry: TabEntry) {
-    var insertionIndex: Int
-    if selectedIndex >= 0 && selectedIndex < tabs.count {
-      if pinnedTabs[selectedIndex] {
-        // Selected tab is pinned — insert after the last pinned tab
-        // so new tabs never land between pinned and unpinned sections.
-        insertionIndex = pinnedTabs.lastIndex(of: true).map { $0 + 1 } ?? 0
+    let workspaceID = activeWorkspaceID
+    let insertionIndex: Int
+    if records.indices.contains(selectedIndex), records[selectedIndex].workspaceID == workspaceID {
+      if records[selectedIndex].pinned {
+        // Selected tab is pinned — insert after the workspace's last pinned
+        // tab so new tabs never land between pinned and unpinned sections.
+        let lastPinned = records.indices.last {
+          records[$0].pinned && records[$0].workspaceID == workspaceID
+        }
+        insertionIndex = (lastPinned ?? selectedIndex) + 1
       } else {
         insertionIndex = selectedIndex + 1
       }
     } else {
-      insertionIndex = tabs.count
+      let last = records.indices.last { records[$0].workspaceID == workspaceID }
+      insertionIndex = last.map { $0 + 1 } ?? records.count
     }
-    tabs.insert(entry, at: insertionIndex)
-    pinnedTabs.insert(false, at: insertionIndex)
-    tabUniqueIds.insert(nextTabUniqueId, at: insertionIndex)
-    let returnId: Int?
-    if selectedIndex >= 0 && selectedIndex < tabUniqueIds.count {
-      returnId = tabUniqueIds[selectedIndex]
-    } else {
-      returnId = nil
-    }
-    tabCloseReturnIds.insert(returnId, at: insertionIndex)
-    nextTabUniqueId += 1
+    let returnUID = records.indices.contains(selectedIndex) ? records[selectedIndex].uid : nil
+    records.insert(
+      TabRecord(entry: entry, uid: nextTabUID, closeReturnUID: returnUID, workspaceID: workspaceID),
+      at: insertionIndex)
+    nextTabUID += 1
+    if selectedIndex >= insertionIndex { selectedIndex += 1 }
 
     track(entry)
 
@@ -589,12 +606,10 @@ final class TabManager: NSObject {
   }
 
   private func updateCloseReturnTarget(forTabAt index: Int, sourceIndex: Int) {
-    guard index >= 0, index < tabCloseReturnIds.count,
-      sourceIndex >= 0, sourceIndex < tabUniqueIds.count,
+    guard records.indices.contains(index), records.indices.contains(sourceIndex),
       index != sourceIndex
     else { return }
-
-    tabCloseReturnIds[index] = tabUniqueIds[sourceIndex]
+    records[index].closeReturnUID = records[sourceIndex].uid
   }
 
   // MARK: - Removing Tabs
@@ -639,60 +654,52 @@ final class TabManager: NSObject {
   }
 
   /// Closes the tab at the given index. If it is the active tab, the tab that
-  /// opened it is selected when possible, otherwise the nearest neighbor is
-  /// selected. If it was the last tab, `selectedIndex` becomes -1.
+  /// opened it is selected when possible, otherwise the nearest neighbor in
+  /// its workspace. A workspace closes with its last tab while others remain;
+  /// the last workspace gets a fresh terminal instead.
   func closeTab(index: Int) {
-    guard index >= 0, index < tabs.count else { return }
+    guard records.indices.contains(index) else { return }
 
-    let entry = tabs[index]
+    let record = records[index]
     let closingSelectedTab = index == selectedIndex
-    let closeReturnId: Int?
-    if closingSelectedTab && index < tabCloseReturnIds.count {
-      closeReturnId = tabCloseReturnIds[index]
-    } else {
-      closeReturnId = nil
-    }
-    recordClosedTab(entry)
-    cleanupTab(entry)
-
-    untrack(entry)
+    recordClosedTab(record.entry)
+    cleanupTab(record.entry)
+    untrack(record.entry)
 
     // Remove the tab's view from the content area if it is currently displayed.
-    if index == selectedIndex {
-      entry.view.removeFromSuperview()
-    }
-
-    tabs.remove(at: index)
-    pinnedTabs.remove(at: index)
-    tabUniqueIds.remove(at: index)
-    tabCloseReturnIds.remove(at: index)
-
-    if tabs.isEmpty {
+    if closingSelectedTab {
+      record.entry.view.removeFromSuperview()
       selectedIndex = -1
-      // Auto-create a new terminal tab so the window is never empty,
-      // matching the Linux behavior.
-      addTerminalTab()
+    } else if index < selectedIndex {
+      selectedIndex -= 1
+    }
+    records.remove(at: index)
+
+    let siblings = records.indices.filter { records[$0].workspaceID == record.workspaceID }
+    if siblings.isEmpty {
+      if workspaces.count > 1 {
+        removeWorkspace(record.workspaceID)
+      } else {
+        // Keep the window from ever being empty.
+        addTerminalTab()
+      }
       return
     }
 
     guard closingSelectedTab else {
-      if index < selectedIndex {
-        selectedIndex -= 1
-      }
       rebuildSegments()
       return
     }
 
-    if let closeReturnId,
-      let returnIndex = tabUniqueIds.firstIndex(of: closeReturnId)
+    if let returnUID = record.closeReturnUID,
+      let returnIndex = siblings.first(where: { records[$0].uid == returnUID })
     {
       selectTab(index: returnIndex)
       return
     }
 
-    // Select the nearest valid tab.
-    let newIndex = min(index, tabs.count - 1)
-    selectTab(index: newIndex)
+    // Select the nearest tab in the same workspace.
+    selectTab(index: siblings.first { $0 >= index } ?? siblings[siblings.count - 1])
   }
 
   /// Clean up all tabs (kill processes, tear down WebViews). Called when the
@@ -705,22 +712,22 @@ final class TabManager: NSObject {
 
   /// Toggles the pinned state of the tab at the given index.
   func togglePin(index: Int) {
-    guard index >= 0, index < tabs.count else { return }
-    pinnedTabs[index].toggle()
+    guard records.indices.contains(index) else { return }
+    records[index].pinned.toggle()
     refreshSegmentLabels()
   }
 
   /// Sets the pinned state of the tab at the given index (session restore).
   func setPinned(_ pinned: Bool, index: Int) {
-    guard index >= 0, index < tabs.count, pinnedTabs[index] != pinned else { return }
-    pinnedTabs[index] = pinned
+    guard records.indices.contains(index), records[index].pinned != pinned else { return }
+    records[index].pinned = pinned
     refreshSegmentLabels()
   }
 
   /// Unpins the tab at the given index (used before closing a pinned tab).
   func unpin(index: Int) {
-    guard index >= 0, index < tabs.count else { return }
-    pinnedTabs[index] = false
+    guard records.indices.contains(index) else { return }
+    records[index].pinned = false
     refreshSegmentLabels()
   }
 
@@ -746,18 +753,11 @@ final class TabManager: NSObject {
   /// updating selection to follow the moved tab.
   func moveTab(from sourceIndex: Int, to destinationIndex: Int) {
     guard sourceIndex != destinationIndex,
-      sourceIndex >= 0, sourceIndex < tabs.count,
-      destinationIndex >= 0, destinationIndex < tabs.count
+      records.indices.contains(sourceIndex), records.indices.contains(destinationIndex)
     else { return }
 
-    let entry = tabs.remove(at: sourceIndex)
-    let pinned = pinnedTabs.remove(at: sourceIndex)
-    let uid = tabUniqueIds.remove(at: sourceIndex)
-    let closeReturnId = tabCloseReturnIds.remove(at: sourceIndex)
-    tabs.insert(entry, at: destinationIndex)
-    pinnedTabs.insert(pinned, at: destinationIndex)
-    tabUniqueIds.insert(uid, at: destinationIndex)
-    tabCloseReturnIds.insert(closeReturnId, at: destinationIndex)
+    let record = records.remove(at: sourceIndex)
+    records.insert(record, at: destinationIndex)
 
     // Track the moved tab's new position.
     if selectedIndex == sourceIndex {
@@ -775,24 +775,31 @@ final class TabManager: NSObject {
 
   /// Switches the visible tab to the one at `index`.
   func selectTab(index: Int) {
-    guard index >= 0, index < tabs.count else { return }
+    guard records.indices.contains(index) else { return }
 
     // Remove the previous tab's view.
-    if selectedIndex >= 0, selectedIndex < tabs.count {
-      tabs[selectedIndex].view.removeFromSuperview()
+    if records.indices.contains(selectedIndex) {
+      records[selectedIndex].entry.view.removeFromSuperview()
     }
 
+    // Selecting another workspace's tab switches to that workspace.
+    let workspaceChanged = records[index].workspaceID != activeWorkspaceID
+    if workspaceChanged { noteWorkspaceActivated(records[index].workspaceID) }
     selectedIndex = index
-    if case .terminal(let container) = tabs[index].focused {
+    activeWorkspace.lastSelectedUID = records[index].uid
+    if case .terminal(let container) = records[index].entry.focused {
       container.activeTerminal?.clearAttention()
     }
     syncToWindowModel()
 
     // Activate the new tab.
-    let entry = tabs[index]
+    let entry = records[index].entry
     install(entry.view)
     activateKeyboardFocus(entry.focused)
 
+    if workspaceChanged {
+      NotificationCenter.default.post(name: .impulseActiveWorkspaceDidChange, object: self)
+    }
     NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
   }
 
@@ -827,6 +834,158 @@ final class TabManager: NSObject {
       } else {
         DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
       }
+    }
+  }
+
+  // MARK: - Workspaces
+
+  var activeWorkspace: Workspace {
+    workspaces.first { $0.id == activeWorkspaceID } ?? workspaces[0]
+  }
+
+  func workspace(_ id: UUID) -> Workspace? {
+    workspaces.first { $0.id == id }
+  }
+
+  /// Indexes of a workspace's tabs, in strip order.
+  func tabIndices(inWorkspace id: UUID) -> [Int] {
+    records.indices.filter { records[$0].workspaceID == id }
+  }
+
+  /// Indexes of the tabs the strip shows (the active workspace's).
+  var visibleTabIndices: [Int] { tabIndices(inWorkspace: activeWorkspaceID) }
+
+  func workspaceID(ofTabAt index: Int) -> UUID? {
+    records.indices.contains(index) ? records[index].workspaceID : nil
+  }
+
+  /// Show a workspace: its last selected tab, or a new terminal in its
+  /// folder when it has none.
+  func activateWorkspace(_ id: UUID) {
+    guard id != activeWorkspaceID, let workspace = workspace(id) else { return }
+    let indices = tabIndices(inWorkspace: id)
+    let remembered = workspace.lastSelectedUID.flatMap { uid in
+      indices.first { records[$0].uid == uid }
+    }
+    if let index = remembered ?? indices.first {
+      selectTab(index: index)
+      return
+    }
+    if records.indices.contains(selectedIndex) {
+      records[selectedIndex].entry.view.removeFromSuperview()
+    }
+    selectedIndex = -1
+    noteWorkspaceActivated(id)
+    NotificationCenter.default.post(name: .impulseActiveWorkspaceDidChange, object: self)
+    addTerminalTab()
+  }
+
+  /// Open a folder as a workspace (or show it if it's already open).
+  @discardableResult
+  func openWorkspace(folder: String) -> Workspace {
+    let root = Workspace.normalize(folder)
+    if let existing = workspaces.first(where: { $0.kind == .folder && $0.root == root }) {
+      activateWorkspace(existing.id)
+      return existing
+    }
+    let workspace = Workspace(kind: .folder, root: root)
+    addWorkspace(workspace)
+    RecentWorkspaces.note(root)
+    activateWorkspace(workspace.id)
+    return workspace
+  }
+
+  /// Add a workspace without showing it (session restore).
+  func addWorkspace(_ workspace: Workspace) {
+    workspaces.append(workspace)
+    resolveRepository(for: workspace)
+    syncToWindowModel()
+  }
+
+  /// Close a workspace and every tab in it (callers confirm first). The
+  /// last workspace stays, with a fresh terminal.
+  func closeWorkspace(_ id: UUID) {
+    guard workspace(id) != nil else { return }
+    for index in tabIndices(inWorkspace: id).reversed() {
+      let record = records[index]
+      recordClosedTab(record.entry)
+      cleanupTab(record.entry)
+      untrack(record.entry)
+      if index == selectedIndex {
+        record.entry.view.removeFromSuperview()
+        selectedIndex = -1
+      } else if index < selectedIndex {
+        selectedIndex -= 1
+      }
+      records.remove(at: index)
+    }
+    if workspaces.count > 1 {
+      removeWorkspace(id)
+    } else {
+      addTerminalTab()
+    }
+  }
+
+  func renameWorkspace(_ id: UUID, to name: String?) {
+    guard let workspace = workspace(id) else { return }
+    let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+    workspace.customName = (trimmed?.isEmpty ?? true) ? nil : trimmed
+    syncToWindowModel()
+  }
+
+  func setWorkspaceExpanded(_ id: UUID, _ expanded: Bool) {
+    guard let workspace = workspace(id), workspace.isExpanded != expanded else { return }
+    workspace.isExpanded = expanded
+    syncToWindowModel()
+  }
+
+  /// Move workspace `id` before the one at `index` in sidebar order.
+  func moveWorkspace(_ id: UUID, to index: Int) {
+    guard let from = workspaces.firstIndex(where: { $0.id == id }) else { return }
+    let workspace = workspaces.remove(at: from)
+    workspaces.insert(workspace, at: max(0, min(index, workspaces.count)))
+    syncToWindowModel()
+  }
+
+  /// Drop a workspace whose tabs are gone, then show the most recently
+  /// used remaining one.
+  private func removeWorkspace(_ id: UUID) {
+    workspaces.removeAll { $0.id == id }
+    workspaceHistory.removeAll { $0 == id }
+    if workspaces.isEmpty {
+      workspaces = [Workspace(kind: .scratch, root: NSHomeDirectory())]
+    }
+    guard activeWorkspaceID == id else {
+      syncToWindowModel()
+      return
+    }
+    let nextID =
+      workspaceHistory.first { candidate in workspaces.contains { $0.id == candidate } }
+      ?? workspaces[0].id
+    guard let next = workspace(nextID) else { return }
+    let indices = tabIndices(inWorkspace: nextID)
+    let remembered = next.lastSelectedUID.flatMap { uid in indices.first { records[$0].uid == uid } }
+    if let index = remembered ?? indices.first {
+      selectTab(index: index)
+    } else {
+      noteWorkspaceActivated(nextID)
+      NotificationCenter.default.post(name: .impulseActiveWorkspaceDidChange, object: self)
+      addTerminalTab()
+    }
+  }
+
+  private func noteWorkspaceActivated(_ id: UUID) {
+    activeWorkspaceID = id
+    workspaceHistory.removeAll { $0 == id }
+    workspaceHistory.insert(id, at: 0)
+  }
+
+  private func resolveRepository(for workspace: Workspace) {
+    guard workspace.kind == .folder else { return }
+    GitRepositoryStore.shared.resolve(directory: workspace.root) { [weak self, weak workspace] state in
+      guard let workspace, let state else { return }
+      workspace.repository = state
+      self?.syncToWindowModel()
     }
   }
 
@@ -890,7 +1049,7 @@ final class TabManager: NSObject {
       current.view.removeFromSuperview()
       split = SplitTab(first: current, palette: ChromePalette(theme: theme))
       wire(split)
-      tabs[index] = .split(split)
+      records[index].entry = .split(split)
       install(split.view)
     }
     let id = split.insert(entry, beside: split.focusedPane, axis: axis, before: before)
@@ -942,12 +1101,9 @@ final class TabManager: NSObject {
   func joinTab(at sourceIndex: Int, axis: SplitAxis) {
     guard tabs.indices.contains(sourceIndex), selectedIndex >= 0, sourceIndex != selectedIndex
     else { return }
-    let source = tabs[sourceIndex]
+    let source = records[sourceIndex].entry
     source.view.removeFromSuperview()
-    tabs.remove(at: sourceIndex)
-    pinnedTabs.remove(at: sourceIndex)
-    tabUniqueIds.remove(at: sourceIndex)
-    tabCloseReturnIds.remove(at: sourceIndex)
+    records.remove(at: sourceIndex)
     if sourceIndex < selectedIndex { selectedIndex -= 1 }
     for surface in source.surfaces {
       splitSelectedTab(with: surface, axis: axis)
@@ -1005,7 +1161,7 @@ final class TabManager: NSObject {
     else { return }
     split.view.removeFromSuperview()
     last.view.removeFromSuperview()
-    tabs[index] = last
+    records[index].entry = last
     if index == selectedIndex { install(last.view) }
   }
 
@@ -1047,8 +1203,8 @@ final class TabManager: NSObject {
 
   /// The currently selected tab entry, or `nil` if no tabs are open.
   var selectedTab: TabEntry? {
-    guard selectedIndex >= 0, selectedIndex < tabs.count else { return nil }
-    return tabs[selectedIndex]
+    guard records.indices.contains(selectedIndex) else { return nil }
+    return records[selectedIndex].entry
   }
 
   /// The currently selected terminal container, or `nil` if the selection is
@@ -1186,13 +1342,13 @@ final class TabManager: NSObject {
     // or be -1 when there are no tabs. Catches races where two paths both
     // mutate `tabs` / `selectedIndex` without coordinating.
     assert(
-      tabs.isEmpty
-        ? selectedIndex == -1
-        : (selectedIndex >= 0 && selectedIndex < tabs.count),
-      "TabManager state inconsistent: selectedIndex=\(selectedIndex), tabs.count=\(tabs.count)"
+      selectedIndex == -1 || records.indices.contains(selectedIndex),
+      "TabManager state inconsistent: selectedIndex=\(selectedIndex), tabs.count=\(records.count)"
     )
 
-    let infos = tabs.enumerated().map { (i, tab) in
+    let names = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0.name) })
+    let infos = records.enumerated().map { (i, record) in
+      let tab = record.entry
       let surface = tab.focused
       let directory = tabDirectory(for: surface)
       var isDirectInteractionActive = false
@@ -1217,11 +1373,11 @@ final class TabManager: NSObject {
         isZoomed = split.isZoomed
       }
       return TabDisplayInfo(
-        id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
+        id: record.uid,
         index: i,
         title: tab.title,
         icon: tabIcon(for: surface),
-        isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
+        isPinned: record.pinned,
         isTerminal: { if case .terminal = surface { return true } else { return false } }(),
         needsAttention: tab.needsAttention,
         gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },
@@ -1230,10 +1386,29 @@ final class TabManager: NSObject {
         progress: progress,
         isDirty: isDirty,
         paneCount: paneCount,
-        isZoomed: isZoomed
+        isZoomed: isZoomed,
+        workspaceID: record.workspaceID,
+        workspaceName: names[record.workspaceID] ?? ""
       )
     }
-    ws.refreshTabs(infos, selectedIndex: selectedIndex)
+    ws.allTabs = infos
+    ws.refreshTabs(
+      infos.filter { $0.workspaceID == activeWorkspaceID }, selectedIndex: selectedIndex)
+    ws.workspaces = workspaces.map { workspace in
+      let tabs = infos.filter { $0.workspaceID == workspace.id }
+      return WorkspaceInfo(
+        id: workspace.id,
+        name: workspace.name,
+        root: workspace.root,
+        isScratch: workspace.kind == .scratch,
+        isActive: workspace.id == activeWorkspaceID,
+        isExpanded: workspace.isExpanded,
+        tabs: tabs,
+        attentionCount: tabs.filter(\.needsAttention).count,
+        progress: tabs.compactMap(\.progress).first,
+        repository: workspace.repository
+      )
+    }
 
     // Update the active file path for sidebar highlighting.
     if let editor = selectedEditor {

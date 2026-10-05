@@ -73,6 +73,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private var termSearchBarVisible = false
   /// The window's terminal input bar (see `attachInputBar`).
   private var inputBarHost: NSView?
+  /// The directory the window's repository was last resolved from.
+  private var repositoryAnchor = ""
   private weak var inputBarTerminal: TerminalTab?
   private var termSearchHeightConstraint: NSLayoutConstraint?
 
@@ -476,6 +478,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onPaneCommand = { [weak self] command in
       self?.performPaneCommand(command)
     }
+    windowModel.onSelectWorkspace = { [weak self] id in
+      self?.tabManager.activateWorkspace(id)
+    }
+    windowModel.onCloseWorkspace = { [weak self] id in
+      self?.requestCloseWorkspace(id)
+    }
+    windowModel.onRenameWorkspace = { [weak self] id in
+      self?.presentRenameWorkspace(id)
+    }
+    windowModel.onSetWorkspaceExpanded = { [weak self] id, expanded in
+      self?.tabManager.setWorkspaceExpanded(id, expanded)
+    }
+    windowModel.onOpenWorkspace = { [weak self] in
+      self?.presentOpenWorkspacePanel()
+    }
+    windowModel.onShowWorkspaceSwitcher = { [weak self] in
+      self?.showPalette(prefix: "w:")
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
@@ -625,6 +645,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabManager.addEditorTab(
           path: (base as NSString).appendingPathComponent(relative),
           projectDirectory: fileTreeRootPath, beside: true)
+      } else if action.hasPrefix("workspace=") {
+        let relative = String(action.dropFirst(10))
+        let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
+        tabManager.openWorkspace(
+          folder: relative.hasPrefix("/") ? relative : (base as NSString).appendingPathComponent(relative))
+      } else if action == "expand-workspaces" {
+        for workspace in tabManager.workspaces {
+          tabManager.setWorkspaceExpanded(workspace.id, true)
+        }
       } else if action.hasPrefix("pane=") {
         performPaneCommand(String(action.dropFirst(5)))
       } else {
@@ -639,9 +668,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// and CLI file arguments. Bypasses the notification path (which requires
   /// isKeyWindow) so it works during startup before the window is key.
   func openFile(path: String) {
-    // Switch the file tree to the file's parent directory.
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+      tabManager.openWorkspace(folder: path)
+      return
+    }
+    // Outside a folder workspace, the file tree follows the file.
     let dir = (path as NSString).deletingLastPathComponent
-    if !dir.isEmpty, dir != fileTreeRootPath {
+    if followsActiveDirectory, !dir.isEmpty, dir != fileTreeRootPath {
       switchFileTreeRoot(dir)
     }
     tabManager.addEditorTab(path: path, projectDirectory: fileTreeRootPath)
@@ -1409,7 +1443,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           case .diffReview(let repoRoot, _):
             dir = repoRoot
           }
-          if let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
+          if self.followsActiveDirectory, let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
             self.switchFileTreeRoot(dir, updateStatusBar: false)
           }
         }
@@ -1436,6 +1470,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         [weak self] notification in
         guard let self, self.window?.isKeyWindow == true else { return }
         if let path = notification.userInfo?["path"] as? String {
+          var isDirectory: ObjCBool = false
+          if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+          {
+            self.tabManager.openWorkspace(folder: path)
+            return
+          }
           let line = Self.lineNumber(from: notification.userInfo)
           self.tabManager.addEditorTab(
             path: path,
@@ -1502,6 +1543,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showPalette(prefix: "")
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseActiveWorkspaceDidChange, object: tabManager, queue: .main) {
+        [weak self] _ in
+        self?.activeWorkspaceDidChange()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseSwitchWorkspace, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.showPalette(prefix: "w:")
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseOpenWorkspace, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.presentOpenWorkspacePanel()
       }
     )
     notificationObservers.append(
@@ -1594,7 +1653,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         else { return }
         if let dir = notification.userInfo?["directory"] as? String {
           self.settings.lastDirectory = dir
-          if dir == self.fileTreeRootPath {
+          let isSelected = self.tabManager.selectedTerminal?.activeTerminal === terminal
+          if dir == self.fileTreeRootPath || !self.followsActiveDirectory || !isSelected {
             // Same directory — just refresh git status (a command
             // may have changed git state without changing CWD).
             self.fileTreeData.refreshGitStatus()
@@ -1927,19 +1987,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .impulseNextTab, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        let count = self.tabManager.tabs.count
-        guard count > 1 else { return }
-        let next = (self.tabManager.selectedIndex + 1) % count
-        self.tabManager.selectTab(index: next)
+        self.cycleTab(by: 1)
       }
     )
     notificationObservers.append(
       nc.addObserver(forName: .impulsePrevTab, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        let count = self.tabManager.tabs.count
-        guard count > 1 else { return }
-        let prev = (self.tabManager.selectedIndex - 1 + count) % count
-        self.tabManager.selectTab(index: prev)
+        self.cycleTab(by: -1)
       }
     )
     notificationObservers.append(
@@ -1947,8 +2001,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         [weak self] notification in
         guard let self, self.window?.isKeyWindow == true else { return }
         guard let index = notification.userInfo?["index"] as? Int else { return }
-        if index >= 0, index < self.tabManager.tabs.count {
-          self.tabManager.selectTab(index: index)
+        // ⌘1…⌘9 count tabs in the active workspace.
+        let visible = self.tabManager.visibleTabIndices
+        if visible.indices.contains(index) {
+          self.tabManager.selectTab(index: visible[index])
         }
       }
     )
@@ -2617,19 +2673,89 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Make the repository containing `dir` the window's active repository
   /// (titlebar breadcrumb, status bar, diff pill all follow it live).
+  /// In a folder workspace the repository is the folder's, whatever
+  /// directory the active tab is in.
   private func bindRepository(forDirectory dir: String) {
-    guard !dir.isEmpty else {
+    let workspace = tabManager.activeWorkspace
+    let anchor = workspace.kind == .folder ? workspace.root : dir
+    repositoryAnchor = anchor
+    guard !anchor.isEmpty else {
       setRepository(nil)
       return
     }
     if let current = windowModel.repository,
-      dir == current.root || dir.hasPrefix(current.root + "/")
+      anchor == current.root || anchor.hasPrefix(current.root + "/")
     {
       return
     }
-    GitRepositoryStore.shared.resolve(directory: dir) { [weak self] state in
-      guard let self, self.windowModel.currentCwd == dir else { return }
+    GitRepositoryStore.shared.resolve(directory: anchor) { [weak self] state in
+      guard let self, self.repositoryAnchor == anchor else { return }
       self.setRepository(state)
+    }
+  }
+
+  // MARK: - Workspaces
+
+  /// Outside folder workspaces the file tree and repository follow the
+  /// active tab's directory.
+  var followsActiveDirectory: Bool { tabManager.activeWorkspace.kind == .scratch }
+
+  /// ⌃Tab / ⌃⇧Tab: cycle through the active workspace's tabs.
+  private func cycleTab(by step: Int) {
+    let visible = tabManager.visibleTabIndices
+    guard visible.count > 1, let position = visible.firstIndex(of: tabManager.selectedIndex)
+    else { return }
+    tabManager.selectTab(index: visible[(position + step + visible.count) % visible.count])
+  }
+
+  private func activeWorkspaceDidChange() {
+    let workspace = tabManager.activeWorkspace
+    if workspace.kind == .folder, workspace.root != fileTreeRootPath {
+      switchFileTreeRoot(workspace.root, updateStatusBar: false)
+    }
+    updateStatusBar()
+  }
+
+  /// Choose a folder to open as a workspace.
+  func presentOpenWorkspacePanel() {
+    guard let window else { return }
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = "Open Workspace"
+    panel.message = "Choose a folder to work in. It gets its own tabs, file tree and git state."
+    panel.beginSheetModal(for: window) { [weak self] response in
+      guard response == .OK, let url = panel.url else { return }
+      self?.tabManager.openWorkspace(folder: url.path)
+    }
+  }
+
+  /// Close a workspace after confirming its unsaved files and running
+  /// processes.
+  func requestCloseWorkspace(_ id: UUID) {
+    let surfaces = tabManager.tabIndices(inWorkspace: id).flatMap { tabManager.tabs[$0].surfaces }
+    confirmClosing(surfaces) { [weak self] in
+      guard let self else { return }
+      for surface in surfaces { self.willCloseSurface(surface) }
+      self.tabManager.closeWorkspace(id)
+    }
+  }
+
+  func presentRenameWorkspace(_ id: UUID) {
+    guard let window, let workspace = tabManager.workspace(id) else { return }
+    let alert = NSAlert()
+    alert.messageText = "Rename Workspace"
+    alert.informativeText = "Leave empty to use the folder name."
+    alert.addButton(withTitle: "Rename")
+    alert.addButton(withTitle: "Cancel")
+    let field = NSTextField(string: workspace.customName ?? workspace.name)
+    field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+    alert.accessoryView = field
+    alert.window.initialFirstResponder = field
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn else { return }
+      self?.tabManager.renameWorkspace(id, to: field.stringValue)
     }
   }
 
@@ -3100,7 +3226,21 @@ extension MainWindowController: PaletteHost {
     }
   }
 
-  var paletteTabs: [TabDisplayInfo] { windowModel.tabDisplayInfos }
+  var paletteTabs: [TabDisplayInfo] { windowModel.allTabs }
+  var paletteWorkspaces: [WorkspaceInfo] { windowModel.workspaces }
+  var paletteVisibleTabIndices: [Int] { tabManager.visibleTabIndices }
+
+  func paletteSelectWorkspace(_ id: UUID) {
+    tabManager.activateWorkspace(id)
+  }
+
+  func paletteOpenWorkspace(folder: String?) {
+    if let folder {
+      tabManager.openWorkspace(folder: folder)
+    } else {
+      presentOpenWorkspacePanel()
+    }
+  }
   var paletteCurrentBranch: String? { windowModel.gitBranch }
   var paletteHasEditor: Bool { tabManager.selectedEditor != nil }
 

@@ -122,6 +122,19 @@ enum MenuBuilder {
         openItem.keyEquivalentModifierMask = [.command]
         menu.addItem(openItem)
 
+        let openWorkspaceItem = NSMenuItem(title: "Open Folder as Workspace…",
+                                           action: #selector(MenuActions.menuOpenWorkspace(_:)),
+                                           keyEquivalent: "")
+        openWorkspaceItem.target = MenuActions.shared
+        menu.addItem(openWorkspaceItem)
+
+        let switchWorkspaceItem = NSMenuItem(title: "Switch Workspace…",
+                                             action: #selector(MenuActions.menuSwitchWorkspace(_:)),
+                                             keyEquivalent: "o")
+        switchWorkspaceItem.target = MenuActions.shared
+        applyKeybinding("switch_workspace", overrides: overrides, to: switchWorkspaceItem)
+        menu.addItem(switchWorkspaceItem)
+
         menu.addItem(.separator())
 
         let closeTabItem = NSMenuItem(title: "Close Tab",
@@ -472,10 +485,19 @@ final class MenuActions: NSObject {
         NotificationCenter.default.post(name: .impulseReopenTab, object: nil)
     }
 
+    @objc func menuOpenWorkspace(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseOpenWorkspace, object: nil)
+    }
+
+    @objc func menuSwitchWorkspace(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseSwitchWorkspace, object: nil)
+    }
+
+    /// Opens a file in an editor tab, or a folder as a workspace.
     @objc func menuOpenFile(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.treatsFilePackagesAsDirectories = true
 

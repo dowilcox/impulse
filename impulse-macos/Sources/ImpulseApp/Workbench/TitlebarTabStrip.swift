@@ -238,7 +238,11 @@ struct TitlebarTabStrip: View {
         target = index
       }
     }
-    if target != source { model.onTabMoved?(source, target) }
+    if target != source {
+      // Infos carry global tab indexes (the strip shows one workspace).
+      model.onTabMoved?(
+        model.tabDisplayInfos[source].index, model.tabDisplayInfos[target].index)
+    }
   }
 }
 
