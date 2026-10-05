@@ -72,6 +72,11 @@ final class WindowModel {
   var selectedTabIndex: Int = -1
   /// Every tab in every workspace (tab switcher).
   var allTabs: [TabDisplayInfo] = []
+  /// The selected tab's info (`selectedTabIndex` is a global index, not a
+  /// position in `tabDisplayInfos`).
+  var selectedTabInfo: TabDisplayInfo? {
+    tabDisplayInfos.first { $0.index == selectedTabIndex }
+  }
   /// The window's workspaces in sidebar order.
   var workspaces: [WorkspaceInfo] = []
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).

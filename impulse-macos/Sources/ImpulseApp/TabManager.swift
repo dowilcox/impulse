@@ -448,6 +448,21 @@ final class TabManager: NSObject {
     beside: Bool = false
   ) {
     guard !openFilePaths.contains(path) else { return }
+    let editorTab = makeEditorTab(
+      path: path, content: fileContent, largeFile: largeFile, projectDirectory: projectDirectory,
+      goToLine: goToLine, goToColumn: goToColumn)
+    if beside {
+      splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
+    } else {
+      insertTab(.editor(editorTab))
+    }
+  }
+
+  /// A new editor surface for a file whose content was already read.
+  func makeEditorTab(
+    path: String, content fileContent: String, largeFile: Bool, projectDirectory: String?,
+    goToLine: UInt32? = nil, goToColumn: UInt32? = nil
+  ) -> EditorTab {
     let editorOptions = editorOptionsFromSettings()
     let themeDef = ThemeManager.monacoTheme(forName: theme.id)
     let language = languageIdForPath(path)
@@ -472,12 +487,7 @@ final class TabManager: NSObject {
     if let line = goToLine, let column = goToColumn {
       editorTab.goToPosition(line: line, column: column)
     }
-
-    if beside {
-      splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
-    } else {
-      insertTab(.editor(editorTab))
-    }
+    return editorTab
   }
 
   /// Creates a new untitled editor tab with no file on disk.
@@ -537,6 +547,16 @@ final class TabManager: NSObject {
 
   /// Creates an image preview tab that scales large images to fit.
   private func addImagePreviewTab(path: String, beside: Bool = false) {
+    let entry = makeImagePreview(path: path)
+    if beside {
+      splitSelectedTab(with: entry, axis: .horizontal)
+    } else {
+      insertTab(entry)
+    }
+  }
+
+  /// A new image preview surface.
+  func makeImagePreview(path: String) -> TabEntry {
     let container = NSView()
     container.wantsLayer = true
 
@@ -560,12 +580,8 @@ final class TabManager: NSObject {
       imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
     ])
 
-    let entry = TabEntry.imagePreview(path: path, view: container)
-    if beside {
-      splitSelectedTab(with: entry, axis: .horizontal)
-    } else {
-      insertTab(entry)
-    }
+    container.layer?.backgroundColor = theme.bgColor.cgColor
+    return TabEntry.imagePreview(path: path, view: container)
   }
 
   /// Inserts a new tab after the currently selected tab and selects it.
@@ -989,6 +1005,175 @@ final class TabManager: NSObject {
     }
   }
 
+  // MARK: - Session
+
+  /// The scratch workspace, if the window has one.
+  var scratchWorkspace: Workspace? { workspaces.first { $0.kind == .scratch } }
+
+  /// A surface restored from a session, or nil if it can't be (a missing
+  /// file, a file whose content wasn't preloaded).
+  func makeRestoredSurface(
+    _ surface: SessionSurface, contents: [String: (text: String, large: Bool)],
+    projectDirectory: String?
+  ) -> TabEntry? {
+    switch surface.kind {
+    case "terminal":
+      let cwd = surface.cwd.flatMap(nonEmpty) ?? activeWorkspace.defaultDirectory
+      let container = TerminalContainer(
+        frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+        settings: settings.terminalSettings(directory: cwd),
+        theme: terminalTheme,
+        sessionTab: .terminal(cwd: cwd, title: surface.title, shell: surface.shell, pinned: false)
+      )
+      container.applyTheme(theme: terminalTheme, dividerColor: theme.bgHighlightColor)
+      container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
+      return .terminal(container)
+    case "file":
+      guard let path = surface.path, !openFilePaths.contains(path),
+        FileManager.default.fileExists(atPath: path)
+      else { return nil }
+      if Self.isImageFile(path) { return makeImagePreview(path: path) }
+      guard let loaded = contents[path] else { return nil }
+      let editor = makeEditorTab(
+        path: path, content: loaded.text, largeFile: loaded.large,
+        projectDirectory: projectDirectory,
+        // Saved 1-based (as Monaco reports it); go-to positions are 0-based.
+        goToLine: surface.line.map { UInt32(max(1, $0) - 1) },
+        goToColumn: surface.column.map { UInt32(max(1, $0) - 1) })
+      openFilePaths.insert(path)
+      return .editor(editor)
+    default:
+      return nil
+    }
+  }
+
+  /// Append a restored tab to a workspace without selecting it. `panes` are
+  /// keyed by the saved layout's pane ids; missing panes drop out of the
+  /// layout. Returns the tab's index, or nil when nothing survived.
+  @discardableResult
+  func appendRestoredTab(
+    panes: [Int: TabEntry], layout: LayoutTree<Int>?, focusedPane: Int?, pinned: Bool,
+    workspaceID: UUID
+  ) -> Int? {
+    let entry: TabEntry
+    if let layout, panes.count > 1,
+      let split = SplitTab(
+        layout: layout, panes: panes, focusedPane: focusedPane ?? layout.leaves[0],
+        palette: ChromePalette(theme: theme))
+    {
+      wire(split)
+      entry = .split(split)
+    } else if let id = layout?.leaves.first(where: { panes[$0] != nil }) ?? panes.keys.min(),
+      let single = panes[id]
+    {
+      entry = single
+    } else {
+      return nil
+    }
+    track(entry)
+    let last = records.indices.last { records[$0].workspaceID == workspaceID }
+    let index = last.map { $0 + 1 } ?? records.count
+    records.insert(
+      TabRecord(entry: entry, pinned: pinned, uid: nextTabUID, workspaceID: workspaceID),
+      at: index)
+    nextTabUID += 1
+    if selectedIndex >= index { selectedIndex += 1 }
+    return index
+  }
+
+  /// After restoring: drop an empty scratch workspace (when others exist)
+  /// and show the saved workspace and tab.
+  func finishRestore(activeWorkspaceID targetID: UUID?, activeTabIndex: Int?) {
+    if let scratch = scratchWorkspace, workspaces.count > 1,
+      tabIndices(inWorkspace: scratch.id).isEmpty, scratch.id != targetID
+    {
+      workspaces.removeAll { $0.id == scratch.id }
+      workspaceHistory.removeAll { $0 == scratch.id }
+    }
+    let target = targetID.flatMap(workspace) ?? workspaces[0]
+    let indices = tabIndices(inWorkspace: target.id)
+    if let activeTabIndex, indices.indices.contains(activeTabIndex) {
+      target.lastSelectedUID = records[indices[activeTabIndex]].uid
+    }
+    if activeWorkspaceID != target.id || !records.indices.contains(selectedIndex) {
+      // Force a full activation even if it's already the active id.
+      if activeWorkspaceID == target.id { activeWorkspaceID = UUID() }
+      activateWorkspace(target.id)
+    }
+  }
+
+  /// The window's workspaces and tabs for the session file.
+  func sessionWorkspaces() -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
+    let shellName = LoginShell.defaultShellName()
+    func surfaceState(_ entry: TabEntry) -> SessionSurface? {
+      switch entry {
+      case .terminal(let container):
+        guard let terminal = container.activeTerminal else { return nil }
+        let cwd = terminal.currentWorkingDirectory
+        return .terminal(
+          cwd: cwd.isEmpty ? NSHomeDirectory() : cwd, title: nonEmpty(terminal.tabTitle),
+          shell: nonEmpty(shellName))
+      case .editor(let editor):
+        guard let path = editor.filePath, FileManager.default.fileExists(atPath: path) else {
+          return nil
+        }
+        return .file(
+          path: path, line: editor.cursorPosition.map { Int($0.line) },
+          column: editor.cursorPosition.map { Int($0.column) })
+      case .imagePreview(let path, _):
+        return FileManager.default.fileExists(atPath: path) ? .file(path: path) : nil
+      case .diffReview, .split:
+        return nil
+      }
+    }
+
+    var result: [SessionWorkspaceState] = []
+    for workspace in workspaces {
+      var tabs: [SessionTab] = []
+      var activeTab: Int?
+      for index in tabIndices(inWorkspace: workspace.id) {
+        let record = records[index]
+        var tab: SessionTab?
+        if case .split(let split) = record.entry {
+          // Pane ids become indexes into `panes`; unsaveable panes drop out.
+          var panes: [SessionSurface] = []
+          var idMap: [Int: Int] = [:]
+          for (id, entry) in split.orderedPanes {
+            if let state = surfaceState(entry) {
+              idMap[id] = panes.count
+              panes.append(state)
+            }
+          }
+          var layout: LayoutTree<Int>? = split.layout
+          for id in split.layout.leaves where idMap[id] == nil { layout = layout?.removing(id) }
+          if let layout, !panes.isEmpty {
+            let remapped = layout.mapPanes { idMap[$0] ?? $0 }
+            tab = SessionTab(
+              pinned: record.pinned, panes: panes, layout: panes.count > 1 ? remapped : nil,
+              focusedPane: idMap[split.focusedPane])
+          }
+        } else if let state = surfaceState(record.entry) {
+          tab = SessionTab(pinned: record.pinned, panes: [state])
+        }
+        guard let tab else { continue }
+        if index == selectedIndex || (activeTab == nil && record.uid == workspace.lastSelectedUID) {
+          activeTab = tabs.count
+        }
+        tabs.append(tab)
+      }
+      if workspace.kind == .scratch, tabs.isEmpty, workspaces.count > 1 { continue }
+      result.append(
+        SessionWorkspaceState(
+          kind: workspace.kind.rawValue, root: workspace.root, name: workspace.customName,
+          expanded: workspace.isExpanded ? true : nil, tabs: tabs, activeTabIndex: activeTab,
+          fileTreeRoot: nil))
+    }
+    let activeIndex = result.firstIndex { state in
+      state.kind == activeWorkspace.kind.rawValue && state.root == activeWorkspace.root
+    }
+    return (result, activeIndex)
+  }
+
   // MARK: - Panes
 
   /// Where a surface lives: its tab, and its pane when the tab is split.
@@ -1219,73 +1404,6 @@ final class TabManager: NSObject {
   var selectedEditor: EditorTab? {
     if case .editor(let et)? = selectedTab?.focused { return et }
     return nil
-  }
-
-  func sessionWindowState(projectRoot: String?) -> SessionWindowState {
-    var sessionTabs: [SessionTabState] = []
-    var activeSessionTabIndex: Int?
-
-    for (index, tab) in tabs.enumerated() {
-      let pinned = index < pinnedTabs.count ? pinnedTabs[index] : false
-      for surface in tab.surfaces {
-      let sessionTab: SessionTabState?
-
-      switch surface {
-      case .editor(let editor):
-        if let path = editor.filePath, FileManager.default.fileExists(atPath: path) {
-          sessionTab = .editor(path: path, pinned: pinned)
-        } else {
-          sessionTab = nil
-        }
-      case .imagePreview(let path, _):
-        if FileManager.default.fileExists(atPath: path) {
-          sessionTab = .editor(path: path, pinned: pinned)
-        } else {
-          sessionTab = nil
-        }
-      case .diffReview, .split:
-        // Review tabs are not persisted across sessions.
-        sessionTab = nil
-      case .terminal(let container):
-        let shellName = LoginShell.defaultShellName()
-        if let snapshot = container.sessionSnapshot(shellName: shellName) {
-          let activePane: SessionTerminalPaneState?
-          if let index = snapshot.activePaneIndex, snapshot.panes.indices.contains(index) {
-            activePane = snapshot.panes[index]
-          } else {
-            activePane = snapshot.panes.first
-          }
-          let hasSplitLayout = snapshot.panes.count > 1
-          sessionTab = .terminal(
-            cwd: activePane?.cwd ?? NSHomeDirectory(),
-            title: activePane?.title,
-            shell: activePane?.shell ?? nonEmpty(shellName),
-            pinned: pinned,
-            panes: hasSplitLayout ? snapshot.panes : nil,
-            activePaneIndex: hasSplitLayout ? snapshot.activePaneIndex : nil,
-            paneLayout: hasSplitLayout ? snapshot.paneLayout : nil
-          )
-        } else {
-          sessionTab = nil
-        }
-      }
-
-      if let sessionTab {
-        sessionTabs.append(sessionTab)
-        if index == selectedIndex, activeSessionTabIndex == nil {
-          activeSessionTabIndex = sessionTabs.count - 1
-        }
-      }
-      }
-    }
-
-    let indices = Array(sessionTabs.indices)
-    return SessionWindowState(
-      projectRoot: nonEmpty(projectRoot),
-      tabs: sessionTabs,
-      activeTabIndex: activeSessionTabIndex,
-      layout: .tabGroup(tabIndices: indices, activeTabIndex: activeSessionTabIndex)
-    )
   }
 
   // MARK: - Ownership Queries

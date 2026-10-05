@@ -329,8 +329,6 @@ struct TerminalInputHost: View {
 
   private var showsInput: Bool {
     guard model.contextBarEnabled, !model.terminalDirectInteraction else { return false }
-    let index = model.selectedTabIndex
-    guard index >= 0, index < model.tabDisplayInfos.count else { return false }
-    return model.tabDisplayInfos[index].isTerminal
+    return model.selectedTabInfo?.isTerminal ?? false
   }
 }

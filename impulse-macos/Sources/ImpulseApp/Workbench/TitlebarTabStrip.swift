@@ -46,10 +46,10 @@ struct TitlebarTabStrip: View {
           .onPreferenceChange(TabFramesKey.self) { frames = $0 }
           .padding(.vertical, 6)
         }
-        .onChange(of: model.selectedTabIndex) { _, index in
-          guard index >= 0, index < model.tabDisplayInfos.count else { return }
+        .onChange(of: model.selectedTabIndex) {
+          guard let selected = model.selectedTabInfo else { return }
           withAnimation(.easeOut(duration: 0.15)) {
-            proxy.scrollTo(model.tabDisplayInfos[index].id)
+            proxy.scrollTo(selected.id)
           }
         }
       }

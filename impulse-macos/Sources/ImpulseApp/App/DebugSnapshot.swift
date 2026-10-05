@@ -9,6 +9,7 @@ import WebKit
 ///     open -g -n "dist/Impulse Dev.app" --args --impulse-snapshot /tmp/shots \
 ///         [--impulse-snapshot-delay 4] [--impulse-snapshot-cwd ~/Code/impulse]
 ///         [--impulse-snapshot-actions sidebar,palette]
+///         [--impulse-snapshot-session saved-session.json]
 ///
 /// Windows are made fully transparent so nothing flashes on screen; AppKit
 /// still lays them out and draws them into the snapshot bitmap. WKWebView
@@ -21,6 +22,8 @@ enum DebugSnapshot {
   private(set) static var initialDirectory: String?
   /// Comma-separated named UI actions to run before capturing.
   private(set) static var actions: [String] = []
+  /// A session file to restore (read-only) instead of starting fresh.
+  private(set) static var sessionFile: URL?
 
   static var isActive: Bool { outputDirectory != nil }
 
@@ -38,6 +41,9 @@ enum DebugSnapshot {
     }
     if let cwd = value(after: "--impulse-snapshot-cwd") {
       initialDirectory = (cwd as NSString).expandingTildeInPath
+    }
+    if let path = value(after: "--impulse-snapshot-session") {
+      sessionFile = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
     }
     if let raw = value(after: "--impulse-snapshot-actions") {
       actions = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

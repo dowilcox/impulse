@@ -1,7 +1,10 @@
 import Foundation
+import ImpulseKit
 import os.log
 
-private let sessionStateVersion = 1
+/// 1: one window's flat tab list. 2: every window, each with workspaces whose
+/// tabs may be split into panes. Version 1 files are migrated on load.
+private let sessionStateVersion = 2
 
 struct SessionState: Codable {
   var version: Int = sessionStateVersion
@@ -28,8 +31,7 @@ struct SessionState: Codable {
       .appendingPathComponent("session-state.json")
   }
 
-  static func load() -> SessionState? {
-    let url = Self.filePath()
+  static func load(from url: URL = Self.filePath()) -> SessionState? {
     let data: Data
     do {
       data = try Data(contentsOf: url)
@@ -42,12 +44,18 @@ struct SessionState: Codable {
     }
 
     do {
-      let state = try JSONDecoder().decode(SessionState.self, from: data)
-      guard state.version == sessionStateVersion else {
+      var state = try JSONDecoder().decode(SessionState.self, from: data)
+      switch state.version {
+      case sessionStateVersion:
+        return state
+      case 1:
+        state.windows = state.windows.map { $0.migratedFromV1() }
+        state.version = sessionStateVersion
+        return state
+      default:
         os_log(.error, "Unsupported session state version %d", state.version)
         return nil
       }
-      return state
     } catch {
       os_log(.error, "Failed to decode session state from '%{public}@': %{public}@",
              url.path, error.localizedDescription)
@@ -89,16 +97,141 @@ struct SessionState: Codable {
 }
 
 struct SessionWindowState: Codable {
+  /// Version 1 only: the file tree root and the flat tab list.
   var projectRoot: String?
-  var tabs: [SessionTabState]
+  var tabs: [SessionTabState]?
   var activeTabIndex: Int?
-  var layout: SessionLayoutState
+  var layout: SessionLayoutState?
+
+  /// Version 2: the window's workspaces in sidebar order.
+  var workspaces: [SessionWorkspaceState]?
+  var activeWorkspaceIndex: Int?
+  /// `NSStringFromRect` of the window frame.
+  var frame: String?
+  var sidebarVisible: Bool?
+  var sidebarWidth: Double?
 
   enum CodingKeys: String, CodingKey {
     case projectRoot = "project_root"
     case tabs
     case activeTabIndex = "active_tab_index"
     case layout
+    case workspaces
+    case activeWorkspaceIndex = "active_workspace_index"
+    case frame
+    case sidebarVisible = "sidebar_visible"
+    case sidebarWidth = "sidebar_width"
+  }
+
+  init(
+    workspaces: [SessionWorkspaceState], activeWorkspaceIndex: Int?, frame: String?,
+    sidebarVisible: Bool?, sidebarWidth: Double?
+  ) {
+    self.workspaces = workspaces
+    self.activeWorkspaceIndex = activeWorkspaceIndex
+    self.frame = frame
+    self.sidebarVisible = sidebarVisible
+    self.sidebarWidth = sidebarWidth
+  }
+
+  /// A version 1 window becomes one scratch workspace (whose file tree
+  /// follows the active tab, as windows did then). Each old tab is a
+  /// single-pane tab; old terminal splits keep only their active pane.
+  func migratedFromV1() -> SessionWindowState {
+    let migratedTabs: [SessionTab] = (tabs ?? []).compactMap { tab in
+      switch tab.kind {
+      case "terminal":
+        var cwd = tab.cwd ?? ""
+        if let panes = tab.panes, !panes.isEmpty {
+          let index = tab.activePaneIndex ?? 0
+          let pane = panes.indices.contains(index) ? panes[index] : panes[0]
+          if !pane.cwd.isEmpty { cwd = pane.cwd }
+        }
+        return SessionTab(
+          pinned: tab.pinned,
+          panes: [.terminal(cwd: cwd, title: tab.title, shell: tab.shell)])
+      case "editor":
+        guard let path = tab.path else { return nil }
+        return SessionTab(pinned: tab.pinned, panes: [.file(path: path)])
+      default:
+        return nil
+      }
+    }
+    var active: Int?
+    if let index = activeTabIndex, let tabs, tabs.indices.contains(index) {
+      // Count only tabs that survived migration before the active one.
+      active = tabs[..<index].filter { $0.kind == "terminal" || $0.path != nil }.count
+    }
+    return SessionWindowState(
+      workspaces: [
+        SessionWorkspaceState(
+          kind: "scratch", root: NSHomeDirectory(), tabs: migratedTabs,
+          activeTabIndex: active, fileTreeRoot: projectRoot)
+      ],
+      activeWorkspaceIndex: 0, frame: nil, sidebarVisible: nil, sidebarWidth: nil)
+  }
+}
+
+/// A workspace and its tabs.
+struct SessionWorkspaceState: Codable {
+  /// "folder" or "scratch".
+  var kind: String
+  var root: String
+  var name: String?
+  var expanded: Bool?
+  var tabs: [SessionTab]
+  /// Index into `tabs`.
+  var activeTabIndex: Int?
+  /// Scratch only: where the file tree was.
+  var fileTreeRoot: String?
+
+  enum CodingKeys: String, CodingKey {
+    case kind, root, name, expanded, tabs
+    case activeTabIndex = "active_tab_index"
+    case fileTreeRoot = "file_tree_root"
+  }
+}
+
+/// A tab: one surface, or several arranged by `layout` (whose pane ids index
+/// into `panes`).
+struct SessionTab: Codable {
+  var pinned: Bool
+  var panes: [SessionSurface]
+  var layout: LayoutTree<Int>?
+  var focusedPane: Int?
+
+  enum CodingKeys: String, CodingKey {
+    case pinned, panes, layout
+    case focusedPane = "focused_pane"
+  }
+
+  init(pinned: Bool, panes: [SessionSurface], layout: LayoutTree<Int>? = nil, focusedPane: Int? = nil)
+  {
+    self.pinned = pinned
+    self.panes = panes
+    self.layout = layout
+    self.focusedPane = focusedPane
+  }
+}
+
+/// A restorable surface. Review tabs aren't saved.
+struct SessionSurface: Codable {
+  /// "terminal" or "file" (editor or image preview, by extension).
+  var kind: String
+  var path: String?
+  var cwd: String?
+  var title: String?
+  var shell: String?
+  /// Editor cursor, 1-based.
+  var line: Int?
+  var column: Int?
+
+  static func terminal(cwd: String, title: String?, shell: String?) -> SessionSurface {
+    SessionSurface(kind: "terminal", cwd: cwd, title: title, shell: shell)
+  }
+
+  static func file(path: String, line: Int? = nil, column: Int? = nil) -> SessionSurface {
+    SessionSurface(kind: "file", path: path, line: line, column: column)
   }
 }
 

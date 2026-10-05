@@ -96,6 +96,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Debounce work item for cursor move notifications.
     private var cursorDebounceWork: DispatchWorkItem?
+    /// The last reported cursor position (1-based), saved with the session.
+    private(set) var cursorPosition: (line: UInt32, column: UInt32)?
 
     /// Whether this editor is currently showing markdown preview instead of Monaco.
     private(set) var isPreviewing: Bool = false
@@ -263,6 +265,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             )
 
         case let .cursorMoved(line, column):
+            cursorPosition = (line, column)
             cursorDebounceWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }

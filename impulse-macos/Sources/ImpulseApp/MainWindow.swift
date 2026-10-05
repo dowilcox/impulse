@@ -2907,36 +2907,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   // MARK: - Window State
 
   func sessionWindowState() -> SessionWindowState {
-    tabManager.sessionWindowState(projectRoot: fileTreeRootPath)
+    var (workspaces, activeIndex) = tabManager.sessionWorkspaces()
+    // A scratch workspace remembers where its file tree was.
+    for index in workspaces.indices where workspaces[index].kind == "scratch" {
+      if tabManager.activeWorkspace.kind == .scratch { workspaces[index].fileTreeRoot = fileTreeRootPath }
+    }
+    return SessionWindowState(
+      workspaces: workspaces, activeWorkspaceIndex: activeIndex,
+      frame: window.map { NSStringFromRect($0.frame) },
+      sidebarVisible: windowModel.sidebarVisible,
+      sidebarWidth: Double(windowModel.sidebarWidth))
   }
 
+  /// Rebuild workspaces, tabs and split layouts from a saved window. File
+  /// contents are read off the main thread first, then everything is
+  /// inserted on main in saved order. Returns false when nothing in the
+  /// session can be restored.
   @discardableResult
   func restoreSessionWindow(_ state: SessionWindowState) -> Bool {
-    if let projectRoot = state.projectRoot,
-      FileManager.default.fileExists(atPath: projectRoot)
-    {
-      switchFileTreeRoot(projectRoot)
+    let savedWorkspaces = (state.workspaces ?? []).filter { workspace in
+      workspace.kind == "scratch" || FileManager.default.fileExists(atPath: workspace.root)
     }
+    guard !savedWorkspaces.isEmpty else { return false }
 
-    // Editor files are read off the main thread first; then every tab is
-    // inserted on main in saved order (inserting editors asynchronously as
-    // they finished loading used to reorder tabs and lose pinned state).
-    let restorable = state.tabs.filter { tab in
-      switch tab.kind {
-      case "terminal": return true
-      case "editor":
-        guard let path = tab.path else { return false }
-        return FileManager.default.fileExists(atPath: path)
-      default: return false
+    if let frame = state.frame, let window {
+      let rect = NSRectFromString(frame)
+      if rect.width > 200, rect.height > 200,
+        NSScreen.screens.contains(where: { $0.visibleFrame.intersects(rect) })
+      {
+        window.setFrame(rect, display: false)
       }
     }
-    guard !restorable.isEmpty else { return false }
+    if let visible = state.sidebarVisible { setSidebarVisible(visible) }
+    if let width = state.sidebarWidth, width > 120 { windowModel.sidebarWidth = CGFloat(width) }
 
-    let projectRoot = state.projectRoot
+    let paths = savedWorkspaces.flatMap { $0.tabs.flatMap { $0.panes.compactMap(\.path) } }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      var contents: [String: (String, Bool)] = [:]
-      for tab in restorable where tab.kind == "editor" {
-        guard let path = tab.path, !TabManager.isBinaryFile(path) else { continue }
+      var contents: [String: (text: String, large: Bool)] = [:]
+      for path in paths where !TabManager.isImageFile(path) {
+        guard FileManager.default.fileExists(atPath: path), !TabManager.isBinaryFile(path) else {
+          continue
+        }
         let size =
           (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap { $0 }
           ?? 0
@@ -2944,41 +2955,66 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         contents[path] = (text, size > 5 * 1024 * 1024)
       }
       DispatchQueue.main.async { [weak self] in
-        guard let self else { return }
-        var pinnedIndices: [Int] = []
-        for tab in restorable {
-          let countBefore = self.tabManager.tabs.count
-          switch tab.kind {
-          case "terminal":
-            self.tabManager.addRestoredTerminalTab(tab)
-          case "editor":
-            guard let path = tab.path else { continue }
-            if TabManager.isImageFile(path) {
-              self.tabManager.addEditorTab(path: path, projectDirectory: projectRoot)
-            } else if let (text, large) = contents[path] {
-              self.tabManager.insertLoadedEditorTab(
-                path: path, content: text, largeFile: large, projectDirectory: projectRoot)
-            }
-          default:
-            continue
-          }
-          if tab.pinned, self.tabManager.tabs.count > countBefore {
-            pinnedIndices.append(self.tabManager.tabs.count - 1)
-          }
-        }
-        for index in pinnedIndices {
-          self.tabManager.setPinned(true, index: index)
-        }
-        if self.tabManager.tabs.isEmpty {
-          self.tabManager.addTerminalTab()
-        } else if let activeTabIndex = state.activeTabIndex,
-          self.tabManager.tabs.indices.contains(activeTabIndex)
-        {
-          self.tabManager.selectTab(index: activeTabIndex)
-        }
+        self?.insertRestoredWorkspaces(
+          savedWorkspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
       }
     }
     return true
+  }
+
+  private func insertRestoredWorkspaces(
+    _ saved: [SessionWorkspaceState], activeIndex: Int?,
+    contents: [String: (text: String, large: Bool)]
+  ) {
+    var activeWorkspaceID: UUID?
+    var activeTabIndex: Int?
+    for (position, savedWorkspace) in saved.enumerated() {
+      let workspace: Workspace
+      if savedWorkspace.kind == "scratch", let scratch = tabManager.scratchWorkspace {
+        workspace = scratch
+        if let root = savedWorkspace.fileTreeRoot, FileManager.default.fileExists(atPath: root) {
+          switchFileTreeRoot(root)
+        }
+      } else {
+        workspace = Workspace(kind: .folder, root: savedWorkspace.root)
+        tabManager.addWorkspace(workspace)
+      }
+      workspace.customName = savedWorkspace.name
+      workspace.isExpanded = savedWorkspace.expanded ?? false
+      let projectDirectory = workspace.kind == .folder ? workspace.root : nil
+
+      var restoredIndexes: [Int?] = []
+      for tab in savedWorkspace.tabs {
+        var panes: [Int: TabEntry] = [:]
+        for (id, surface) in tab.panes.enumerated() {
+          if let entry = tabManager.makeRestoredSurface(
+            surface, contents: contents, projectDirectory: projectDirectory)
+          {
+            panes[id] = entry
+          }
+        }
+        let index = tabManager.appendRestoredTab(
+          panes: panes, layout: tab.layout, focusedPane: tab.focusedPane, pinned: tab.pinned,
+          workspaceID: workspace.id)
+        restoredIndexes.append(index)
+        for case .editor(let editor) in panes.values {
+          if let path = editor.filePath {
+            trackEditorTab(editor, forPath: path)
+            lspDidOpenIfNeeded(path: path)
+          }
+        }
+      }
+      if position == (activeIndex ?? 0) {
+        activeWorkspaceID = workspace.id
+        // Saved index → index among the tabs that actually came back.
+        if let saved = savedWorkspace.activeTabIndex, restoredIndexes.indices.contains(saved),
+          restoredIndexes[saved] != nil
+        {
+          activeTabIndex = restoredIndexes[..<saved].compactMap { $0 }.count
+        }
+      }
+    }
+    tabManager.finishRestore(activeWorkspaceID: activeWorkspaceID, activeTabIndex: activeTabIndex)
   }
 
   func restorableOpenFiles() -> [String] {

@@ -33,6 +33,7 @@ class TerminalContainer: NSView {
   private let placeholder = InputBarPlaceholder()
   private var reservedHeight: NSLayoutConstraint?
   private var interactionObserver: NSObjectProtocol?
+  private var heightObserver: NSObjectProtocol?
 
   // MARK: Initializer
 
@@ -207,12 +208,29 @@ class TerminalContainer: NSView {
     ) { [weak self] _ in
       self?.updatePlaceholder()
     }
+    heightObserver = NotificationCenter.default.addObserver(
+      forName: Self.inputBarHeightChanged, object: nil, queue: .main
+    ) { [weak self] _ in
+      self?.updatePlaceholder()
+    }
+    accessorySlot.onLayout = { [weak self] height in
+      guard let self, self.hasAccessory, height > 0, height != Self.lastInputBarHeight else {
+        return
+      }
+      Self.lastInputBarHeight = height
+      NotificationCenter.default.post(name: Self.inputBarHeightChanged, object: nil)
+    }
     updatePlaceholder()
   }
 
   deinit {
     if let interactionObserver { NotificationCenter.default.removeObserver(interactionObserver) }
+    if let heightObserver { NotificationCenter.default.removeObserver(heightObserver) }
   }
+
+  /// The live bar's height changed (first layout, font change): unfocused
+  /// terminals resize their stand-ins to match.
+  private static let inputBarHeightChanged = Notification.Name("impulse.inputBarHeightChanged")
 
   // MARK: Input bar
 
@@ -257,6 +275,12 @@ class TerminalContainer: NSView {
 /// to another pane.
 private final class AccessorySlot: NSView {
   var onWillRemove: ((NSView) -> Void)?
+  var onLayout: ((CGFloat) -> Void)?
+
+  override func layout() {
+    super.layout()
+    onLayout?(bounds.height)
+  }
 
   override func willRemoveSubview(_ subview: NSView) {
     super.willRemoveSubview(subview)

@@ -104,6 +104,14 @@
       #expect(approx(ratios(lopsided.equalized()), [1.0 / 3, 1.0 / 3, 1.0 / 3]))
     }
 
+    @Test func mappingPaneIDs() {
+      let renumbered = grid.mapPanes { $0 * 10 }
+      #expect(renumbered.leaves == [10, 30, 20, 40])
+      let named: LayoutTree<String> = grid.mapPanes { "p\($0)" }
+      #expect(named.leaves == ["p1", "p3", "p2", "p4"])
+      #expect(named.frames(in: LayoutRect(x: 0, y: 0, width: 100, height: 100))["p4"]?.x == 50)
+    }
+
     @Test func movingAPaneNextToAnother() {
       // Move 4 to the left of 1: the left column becomes H[4, 1] over 3.
       let moved = grid.moving(4, nextTo: 1, side: .left)

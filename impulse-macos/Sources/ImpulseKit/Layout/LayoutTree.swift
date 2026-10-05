@@ -166,6 +166,18 @@ public indirect enum LayoutTree<ID: Hashable & Codable & Sendable>: Equatable, S
     mapLeaves { $0 == id ? newID : $0 }
   }
 
+  /// The same arrangement with every pane id transformed (e.g. renumbered
+  /// for saving).
+  public func mapPanes<NewID: Hashable & Codable & Sendable>(_ transform: (ID) -> NewID)
+    -> LayoutTree<NewID>
+  {
+    switch self {
+    case .leaf(let id): return .leaf(transform(id))
+    case .split(let axis, let children, let ratios):
+      return .split(axis, children.map { $0.mapPanes(transform) }, ratios: ratios)
+    }
+  }
+
   /// Move a pane next to another one, on the given side of it.
   public func moving(_ id: ID, nextTo target: ID, side: PaneDirection) -> LayoutTree {
     guard id != target, contains(id), contains(target), let without = removing(id) else {

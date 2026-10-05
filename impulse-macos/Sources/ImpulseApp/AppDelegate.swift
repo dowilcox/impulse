@@ -78,9 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     core.initializeLsp(rootUri: rootUri)
     startLspPolling()
 
-    let sessionToRestore: SessionWindowState?
-    if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive {
-      sessionToRestore = SessionState.load()?.activeWindow
+    let sessionToRestore: SessionState?
+    if let file = DebugSnapshot.sessionFile {
+      sessionToRestore = SessionState.load(from: file)
+    } else if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive,
+      let saved = SessionState.load(), !saved.windows.isEmpty
+    {
+      sessionToRestore = saved
     } else {
       sessionToRestore = nil
     }
@@ -102,10 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     if let sessionToRestore {
       DispatchQueue.main.async { [weak self] in
-        guard let controller = self?.windowControllers.first else { return }
-        if !controller.restoreSessionWindow(sessionToRestore) {
-          controller.tabManager.addTerminalTab()
-        }
+        self?.restoreWindows(from: sessionToRestore)
       }
     }
 
@@ -355,8 +356,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   // MARK: Window Management
 
+  /// Reopen every saved window (the first reuses the launch window), then
+  /// bring the one that was active to the front.
+  private func restoreWindows(from session: SessionState) {
+    var controllers: [MainWindowController] = []
+    for (index, windowState) in session.windows.enumerated() {
+      let controller: MainWindowController
+      if index == 0, let first = windowControllers.first {
+        controller = first
+      } else {
+        controller = openNewWindow(skipInitialTerminal: true)
+      }
+      if !controller.restoreSessionWindow(windowState) {
+        controller.tabManager.addTerminalTab()
+      }
+      controllers.append(controller)
+    }
+    if let active = session.activeWindowIndex, controllers.indices.contains(active) {
+      controllers[active].window?.makeKeyAndOrderFront(nil)
+    }
+  }
+
   /// Creates and shows a new main window.
-  @objc func openNewWindow(skipInitialTerminal: Bool = false) {
+  @discardableResult
+  @objc func openNewWindow(skipInitialTerminal: Bool = false) -> MainWindowController {
     let controller = MainWindowController(
       settings: settings,
       theme: theme,
@@ -369,6 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Apply the initial theme.
     controller.handleThemeChange(theme)
+    return controller
   }
 
   /// Removes the window controller from our list when its window closes.
