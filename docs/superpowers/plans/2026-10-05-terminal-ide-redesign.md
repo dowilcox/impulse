@@ -62,41 +62,41 @@ foundations ├──────────── Track B: git ─────
 
 ### 0.1 Bug fixes (each is its own small commit)
 
-- [ ] **OSC 9;4 progress parsed as a notification.**
+- [x] **OSC 9;4 progress parsed as a notification.**
   - Problem: `impulse-terminal/src/osc_scanner.rs:186` treats any `9;` payload as a notification.
   - Fix: add `OscEvent::Progress { state, percent }` for `9;4;st;pct`, and keep `9;<text>` as a notification.
   - Tests: `9;4;1;50`, `9;4;0`, `9;4;3`, plain `9;hello`.
-- [ ] **Cursor style "bar" vs "beam".**
+- [x] **Cursor style "bar" vs "beam".**
   - Problem: the settings popup offers `bar` (`Settings/SettingsWindow.swift:458`), but the terminal expects `beam` (`Terminal/TerminalTab.swift:876-880`).
   - Fix: normalize on load and accept both.
-- [ ] **Classic mode can't type.**
+- [x] **Classic mode can't type.**
   - Problem: with `terminal_context_bar` off, the grid still refuses first responder at a prompt (`Terminal/TerminalRenderer.swift:209-213, 418, 2486-2493`).
   - Fix: make the grid accept focus whenever the input bar is disabled.
-- [ ] **Phantom ⌘R.**
+- [x] **Phantom ⌘R.**
   - Problem: the history button tooltip says "⌘R" (`SwiftUI/Views/TerminalContextBarView.swift:138`), but nothing binds it.
   - Fix: bind a `terminal.history` command to ⌃R in input focus and update the tooltip.
-- [ ] **Branch switch from an editor tab silently does nothing.**
+- [x] **Branch switch from an editor tab silently does nothing.**
   - Problem: `ContextChips.swift:78` → `MainWindow.swift:321` routes to `selectedTerminal`, which is nil on an editor tab.
   - Interim fix: run `git switch` via a background `Process` in the repo root and surface errors in a toast. M3 replaces this with `GitCLI`.
-- [ ] **Branch picker blocks the main thread.**
+- [x] **Branch picker blocks the main thread.**
   - Problem: `BranchPickerView.swift:75-76` loads branches synchronously.
   - Fix: load async with a spinner row.
-- [ ] **File-tree discard runs on the main thread.**
+- [x] **File-tree discard runs on the main thread.**
   - Problem: it runs after `runModal` (`FileTreeListView.swift:276-296`).
   - Fix: move it to a background queue.
 - [ ] **Review discard doesn't reload editors.**
   - Problem: discarding from the review leaves open editor tabs stale.
   - Fix: post `.impulseReloadEditorFile` like the file-tree path does (`DiffReviewTab.swift:416`).
-- [ ] **Review sticky header never sticks.**
+- [x] **Review sticky header never sticks.**
   - Problem: `web/review.html:98` sets `.review-section{overflow:hidden}`.
   - Fix: use `overflow: clip` on the body only, or move the header outside the clipped box.
-- [ ] **Index watcher breaks on worktrees and submodules.**
+- [x] **Index watcher breaks on worktrees and submodules.**
   - Problem: `Sidebar/FileTreeDataController.swift:410-423` hardcodes `<root>/.git/index`.
   - Fix: resolve the gitdir via `git rev-parse --git-dir`, or via libgit2 `git_repository_path`. This must be fixed before M6 worktree tasks.
-- [ ] **Background polls write the index.**
+- [x] **Background polls write the index.**
   - Problem: `ImpulseGit/Status.swift:74,151` passes `GIT_STATUS_OPT_UPDATE_INDEX` on background polls, which contends with agents' `index.lock`.
   - Fix: drop the flag for background refreshes and keep it only for explicit user refresh. Re-run the parity fixtures; status output must not change.
-- [ ] **Session restore drops pinned state.** Re-apply pinned state, and fix the editor/terminal insertion-order drift (`MainWindow.swift:2643-2681`).
+- [x] **Session restore drops pinned state.** Re-apply pinned state, and fix the editor/terminal insertion-order drift (`MainWindow.swift:2643-2681`).
 - [ ] **Remove dead code:**
   - toolbar items `newFile/newFolder/refresh/collapseAll/toggleHidden` and `sidebarOnlyItems` (`MainWindow.swift:483-674`);
   - `WindowModel.commandPaletteVisible`;
@@ -104,11 +104,11 @@ foundations ├──────────── Track B: git ─────
   - the `.impulseThemeDidChange` posts that have no observers;
   - empty `windowDidResize`;
   - stale doc comments mentioning NSSplitView or tab segments.
-- [ ] **Stale repo docs.** `AGENTS.md` and `PLAN.md` describe the Rust/GTK era. Rewrite `AGENTS.md` to match CLAUDE.md, and delete `PLAN.md` (Linux plan).
+- [x] **Stale repo docs.** `AGENTS.md` and `PLAN.md` describe the Rust/GTK era. Rewrite `AGENTS.md` to match CLAUDE.md, and delete `PLAN.md` (Linux plan).
 
 ### 0.2 Spikes (time-boxed, each ends in a short findings note under `docs/superpowers/specs/`)
 
-- [ ] **Spike A: titlebar chrome (§5.2).**
+- [x] **Spike A: titlebar chrome (§5.2).**
   - Build a throwaway window that tries option 1 (one full-width custom `NSToolbarItem` in an empty `.unifiedCompact` toolbar), then option 2 (content under a transparent titlebar with drag regions).
   - **Acceptance criteria:**
     - traffic lights stay vertically centered;
@@ -119,21 +119,21 @@ foundations ├──────────── Track B: git ─────
     - no Liquid Glass bezel on items;
     - VoiceOver reads the tab strip as tabs.
   - Pick one and record why.
-- [ ] **Spike B: workbench without NavigationSplitView.**
+- [x] **Spike B: workbench without NavigationSplitView.**
   - Build an AppKit `WorkbenchView` with left/right/bottom docks, hosting today's `SidebarView` and the content container.
   - Verify the terminal sizes correctly on first layout without the fake `didResizeNotification` (`ContentAreaRepresentable.swift:15-30`).
   - Verify that focus survives dock toggles.
 - [ ] **Spike C: OverlayHost.**
   - Generalize `CompletionPanel` / `NonKeyPanel` into a host for themed child panels positioned over WKWebView and the grid.
   - Prove three cases: a popover anchored to a SwiftUI chip; a toast stack; a key-taking palette panel that returns focus correctly.
-- [ ] **Spike D: TerminalSessionHub.**
+- [x] **Spike D: TerminalSessionHub.**
   - Pump `pollEvents()` for hidden terminals at 4 Hz, or on the PTY wakeup.
   - Measure CPU with 10 idle terminals.
   - Prove that a bell in a hidden tab reaches the sidebar dot in under 250 ms.
 
 ### 0.3 Foundations (refactors with no visible change)
 
-- [ ] **`SettingsStore`.**
+- [x] **`SettingsStore`.**
   - A single `@Observable` instance replaces the hand-synced copies in `AppDelegate.settings`, `MainWindowController.settings`, `TabManager.settings` and `SettingsWindowController.settings`.
   - Keep the on-disk format, the per-key fault tolerance and the "don't overwrite a broken file" behavior (`Settings.swift:327-392, 617-664`).
 - [ ] **`CommandRegistry` + `KeybindingResolver`.**
@@ -157,7 +157,7 @@ foundations ├──────────── Track B: git ─────
   - `TerminalTheme` construction (3×, `TabManager.swift:155-313`);
   - the drag-reorder plus context menu shared by `TabBarView` and `SidebarTabListView`.
 
-- [ ] **`GitCLI` runner (ImpulseGit).**
+- [x] **`GitCLI` runner (ImpulseGit).**
   - Resolves the git binary from login-shell `PATH`: extend `ImpulseKit/LoginShell.swift` to capture `PATH` once, asynchronously at launch.
   - Detects the missing-CLT shim.
   - Supports stdin, env, cwd, timeout, cancellation, streaming progress lines, and structured `GitCLIError`.
@@ -180,18 +180,18 @@ foundations ├──────────── Track B: git ─────
 
 ### 1.1 Design system
 
-- [ ] **Tokens in `ImpulseKit/Themes/UITokens.swift`:**
+- [x] **Tokens in `ImpulseKit/Themes/UITokens.swift`:**
   - spacing, radii, row heights per density, font roles;
   - `ThemeSchema` gains an optional `[ui]` table (§5.3) with derivation from the palette and semantic seeds;
   - `surface_style` is folded into it.
   - Tests: every built-in theme derives every UI token; the existing `ThemeParityTests` stay unchanged and green.
-- [ ] **Components in `Sources/ImpulseApp/DesignSystem/`:**
+- [x] **Components in `Sources/ImpulseApp/DesignSystem/`:**
   - `IconButton`, `Chip`, `SplitButton`, `SegmentedTabs`;
   - `ListRow` (hover actions plus a ⌘K row action menu), `SectionHeader`;
   - `Badge`, `StatusDot`, `ProgressRing`, `KeyHint`;
   - `ThemedTextField`, `ThemedTextEditor`;
   - `Toast` (with Undo), `ConfirmInline`, `EmptyState`, `PaneHeader`.
-- [ ] **Icons:**
+- [x] **Icons:**
   - Vendor a Lucide subset (ISC) as template PDFs or SVGs with a `scripts/vendor-icons.sh`.
   - Add `Icon` enum mapping.
   - Material file icons stay for the tree.
@@ -200,31 +200,31 @@ foundations ├──────────── Track B: git ─────
 
 ### 1.2 Window and layout
 
-- [ ] Implement the chosen titlebar approach from Spike A: `ChromeBarView` with traffic-light inset, dock toggles, breadcrumb placeholder, tab strip, ＋ menu, palette button, inbox bell placeholder, diff pill, right-dock toggle (§5.1).
-- [ ] **Tab strip:**
+- [x] Implement the chosen titlebar approach from Spike A: `ChromeBarView` with traffic-light inset, dock toggles, breadcrumb placeholder, tab strip, ＋ menu, palette button, inbox bell placeholder, diff pill, right-dock toggle (§5.1).
+- [x] **Tab strip:**
   - compact pills, attention dot, progress ring (from 0.1 OSC 9;4), pin section, close on hover;
   - double-click to rename, color from the ANSI palette;
   - drag to reorder;
   - AXTabGroup.
   - Replaces both `TabBarView` and `SidebarTabListView`. Vertical tabs return in M2 as a workspace-row expansion.
-- [ ] **`WorkbenchView` from Spike B:**
+- [x] **`WorkbenchView` from Spike B:**
   - left, right and bottom docks with persisted size and visibility;
   - `NavigationSplitView` removed from `MainContentView.swift`;
   - `currentSidebarWidth()` hack (`MainWindow.swift:2820-2843`) deleted.
-- [ ] **Left dock tool panel** with `SegmentedTabs`: Files (current tree), Search (current `SearchPanelView`), Changes (placeholder until M4).
-- [ ] **Status bar** (always visible, §5.1): branch, problems placeholder, agent summary placeholder, ports placeholder, LSP dot, editor info. The `TerminalContextBarView` / `StatusBarView` swap in `MainContentView.swift:58-67` goes away. The terminal input stays at the bottom of the terminal tab until M2 moves it into panes.
-- [ ] **`window.allowsAutomaticWindowTabbing = false`.** Delete the window background workaround "so the titlebar blends" (`MainWindow.swift:1070`), because the chrome is now drawn.
+- [x] **Left dock tool panel** with `SegmentedTabs`: Files (current tree), Search (current `SearchPanelView`), Changes (placeholder until M4).
+- [x] **Status bar** (always visible, §5.1): branch, problems placeholder, agent summary placeholder, ports placeholder, LSP dot, editor info. The `TerminalContextBarView` / `StatusBarView` swap in `MainContentView.swift:58-67` goes away. The terminal input stays at the bottom of the terminal tab until M2 moves it into panes.
+- [x] **`window.allowsAutomaticWindowTabbing = false`.** Delete the window background workaround "so the titlebar blends" (`MainWindow.swift:1070`), because the chrome is now drawn.
 - [ ] **Replace the `runModal` NSAlerts with themed `ConfirmInline` or sheets:** Go to Line, Rename, Discard, Trash, binary file, LSP install result.
 
 ### 1.3 Command palette v2
 
-- [ ] **`ImpulseKit/FuzzyScorer.swift`:** a subsequence scorer with boundary and camel bonuses, consecutive-match bonus and path-segment awareness. Tests include file-path ranking cases.
-- [ ] **Palette UI on `OverlayHost`:**
+- [x] **`ImpulseKit/FuzzyScorer.swift`:** a subsequence scorer with boundary and camel bonuses, consecutive-match bonus and path-segment awareness. Tests include file-path ranking cases.
+- [x] **Palette UI on `OverlayHost`:**
   - themed (fixes the dead `applyTheme`, `CommandPalette.swift:588`);
   - prefix modes `>`, `:`, `%`, `b:`, `w:`, `t:`, `h:`;
   - `@` and `#` arrive in M8;
   - recents persisted to Application Support.
-- [ ] **⌘P quick open** is a real fuzzy file finder over the workspace file index, gitignore-aware via existing `FileSearch`. Today it aliases project search (`MainWindow.swift:1610-1615`).
+- [x] **⌘P quick open** is a real fuzzy file finder over the workspace file index, gitignore-aware via existing `FileSearch`. Today it aliases project search (`MainWindow.swift:1610-1615`).
 - [ ] **Switch over** from `CommandPalette.filterItems`. Update or retire `Phase1ParityTests` palette fixtures in the same commit, with the reason: "palette moves to fuzzy scoring; old substring scorer retired".
 
 ### 1.4 Settings and keybindings surfaces
@@ -251,42 +251,42 @@ foundations ├──────────── Track B: git ─────
 
 ### 2.1 Models (pure parts in ImpulseKit)
 
-- [ ] **`ImpulseKit/Layout/LayoutTree.swift`:** split/leaf tree with ratios, plus split, close, move, swap, zoom, equalize and neighbor-in-direction. Codable. Tests cover every operation and serialization round-trips.
-- [ ] **`WorkspaceModel` (ImpulseApp):**
+- [x] **`ImpulseKit/Layout/LayoutTree.swift`:** split/leaf tree with ratios, plus split, close, move, swap, zoom, equalize and neighbor-in-direction. Codable. Tests cover every operation and serialization round-trips.
+- [x] **`WorkspaceModel` (ImpulseApp):**
   - id, root URL, repo ref, display name, tabs, active tab, dock state, env (port block later), agent sessions;
   - `AppModel` → `WindowModel` → `[WorkspaceModel]`;
   - rewrites `WindowModel.swift` (267 lines) around this hierarchy.
 - [ ] **`Surface` protocol** (§4), with `TerminalSurface`, `EditorSurface`, `ReviewSurface` (wraps today's `DiffReviewTab` until M4), `ImagePreviewSurface`, `SettingsSurface`.
-- [ ] **Retire the parallel arrays in `TabManager.swift`** (`tabs`, `pinnedTabs`, `tabUniqueIds`, `tabCloseReturnIds`, `openFilePaths` plus `editorTabsByPath`) in favor of a model-driven `TabModel` with one surface index.
+- [x] **Retire the parallel arrays in `TabManager.swift`** (`tabs`, `pinnedTabs`, `tabUniqueIds`, `tabCloseReturnIds`, `openFilePaths` plus `editorTabsByPath`) in favor of a model-driven `TabModel` with one surface index.
 
 ### 2.2 UI
 
-- [ ] **Workspaces section** at the top of the left dock:
+- [x] **Workspaces section** at the top of the left dock:
   - grouped by repo, resizable (reuse `VerticalResizeHandle`);
   - each row shows status dot, name, branch, ±count, attention badge;
   - expanding a row lists its tabs and panes (vertical-tabs mode);
   - hover card with full metadata.
   - Context menu: rename, color, reveal in Finder, open in new window, close workspace.
-- [ ] **Opening a folder** (⌘O, drag onto Dock icon, `application(openFiles:)`) creates or focuses its workspace. Linked worktrees of an open repo appear automatically under that repo; listing is via `git_worktree_list`, and creation comes in M6.
-- [ ] **Scratch workspace** for `~`.
-- [ ] **Breadcrumb in the titlebar:** repo › workspace and branch, opening the workspace/branch switcher. Branch actions are wired fully in M3/M4.
-- [ ] **Panes:**
+- [x] **Opening a folder** (⌘O, drag onto Dock icon, `application(openFiles:)`) creates or focuses its workspace. Linked worktrees of an open repo appear automatically under that repo; listing is via `git_worktree_list`, and creation comes in M6.
+- [x] **Scratch workspace** for `~`.
+- [x] **Breadcrumb in the titlebar:** repo › workspace and branch, opening the workspace/branch switcher. Branch actions are wired fully in M3/M4.
+- [x] **Panes:**
   - ⌘D / ⌘⇧D split; ⌥⌘arrows focus; ⌘[ ⌘] cycle; ⌘⇧↩ zoom; equalize;
   - drag the pane header to move it, or onto the tab strip to pop it out;
   - inactive-pane dimming setting;
   - accent focus marker.
-- [ ] **Move the terminal input into each terminal pane** (`TerminalPaneView` = grid + chips row + input). `TerminalContextBarView`'s chip logic moves to the pane, and `WindowModel`'s window-level input fields become per-pane state. Preserve `inputBarFocusToken`, `terminalDirectInteraction`, `passwordInputActive` and completion anchoring through `FocusCoordinator`.
+- [x] **Move the terminal input into each terminal pane** (`TerminalPaneView` = grid + chips row + input). `TerminalContextBarView`'s chip logic moves to the pane, and `WindowModel`'s window-level input fields become per-pane state. Preserve `inputBarFocusToken`, `terminalDirectInteraction`, `passwordInputActive` and completion anchoring through `FocusCoordinator`.
 - [ ] **Editor panes:**
   - stack multiple editor surfaces with a mini tab header (preview-mode italic tab for single-click opens, Nova/VS Code style);
   - opening a file targets the focused tab's editor pane, or creates one to the right (setting: right split / new tab).
 - [ ] **⌘Z restores** a closed pane or tab within 10 s (keep surface state alive; PTYs are not kept alive). After that, "Reopen closed tab" stays (existing `closedTabs` stack).
-- [ ] **`TerminalSessionHub`** from Spike D wired for all terminals. Hidden tabs keep delivering events (§6.1).
+- [x] **`TerminalSessionHub`** from Spike D wired for all terminals. Hidden tabs keep delivering events (§6.1).
 
 ### 2.3 Session restore v2
 
-- [ ] **`SessionState` version 2** stores workspaces, tabs, `LayoutTree`, surfaces, dock state, and editor cursor/scroll/folds. Migrate from v1, including the dormant `panes` / `paneLayout` fields.
-- [ ] **Restore all windows**, not only the `activeWindow` as today (`AppDelegate.swift:74`).
-- [ ] **Scrollback restore** for the last 2,000 rendered lines per terminal.
+- [x] **`SessionState` version 2** stores workspaces, tabs, `LayoutTree`, surfaces, dock state, and editor cursor/scroll/folds. Migrate from v1, including the dormant `panes` / `paneLayout` fields.
+- [x] **Restore all windows**, not only the `activeWindow` as today (`AppDelegate.swift:74`).
+- [x] **Scrollback restore** for the last 2,000 rendered lines per terminal.
   - New FFI `impulse_terminal_rendered_text(term, start_row, end_row, with_sgr)`.
   - Inject into the new terminal before the shell starts, under a dimmed "Restored" separator.
   - Setting, default on.
@@ -315,8 +315,8 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
   The existing scenario and fixtures stay untouched.
 
-- [ ] **`GitRepository`:** one per repo root, with a serial queue and a cached `git_repository*`. Add public invalidation of `RepoCache`. Handle `git_repository_commondir` for worktrees.
-- [ ] **`RepoSnapshot`:**
+- [x] **`GitRepository`:** one per repo root, with a serial queue and a cached `git_repository*`. Add public invalidation of `RepoCache`. Handle `git_repository_commondir` for worktrees.
+- [x] **`RepoSnapshot`:**
   - branch, HEAD oid, upstream, ahead/behind (`git_graph_ahead_behind`);
   - operation state and step, read from gitdir files: `MERGE_HEAD`, `rebase-merge/msgnum` + `end`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`;
   - `staged[]`, `unstaged[]`, `untracked[]` and `conflicted[]`, each with +/− counts, computed lazily per file;
@@ -325,22 +325,22 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
   No `UPDATE_INDEX`. Oracle: `git status --porcelain=v2 --branch -z` and `git rev-list --left-right --count`.
 
-- [ ] **`DiffScope`** (ImpulseKit) and `GitRepository.diff(scope:pathspec:options:)`:
+- [x] **`DiffScope`** (ImpulseKit) and `GitRepository.diff(scope:pathspec:options:)`:
   - covers unstaged, staged, uncommitted, branch(merge-base), commit, range, stash, and checkpoint (M6);
   - pathspec-limited;
   - options: context lines, ignore whitespace, ignore EOL;
   - stable hunk ids.
   - Keep the existing `changedFiles` / `fileHunks` / `diffMarkers` APIs and their fixtures. They become thin wrappers or stay as-is for parity until callers move.
   - Oracle: `git diff [--cached] --numstat -z` and `git diff -U<n>`.
-- [ ] **`RepoWatcher`:**
+- [x] **`RepoWatcher`:**
   - FSEvents stream on the worktree root plus the gitdir and commondir (HEAD, refs, index, packed-refs, operation files);
   - debounced; classifies changes as worktree vs index vs refs;
   - replaces the DispatchSource index watcher plus the 10 s poll in `FileTreeDataController.swift:399-487` and the per-expand whole-repo status (`WindowModel.swift:257`).
-- [ ] **`PatchBuilder`** (pure):
+- [x] **`PatchBuilder`** (pure):
   - inputs: hunks plus a line selection; output: a unified patch, forward or reverse;
   - handles no-newline-at-EOF, context recount, and partial selections inside mixed hunks.
   - Tests round-trip through `git apply --check --cached`.
-- [ ] **Mutations through `GitCLI`:**
+- [x] **Mutations through `GitCLI`:**
   - staging: stage/unstage path(s), stage/unstage patch (`git apply --cached [-R]`), revert patch in the workdir (`git apply -R`);
   - commit (`git commit -F -` with amend, sign-off, `--no-verify`, `--allow-empty` guard); uncommit (`reset --soft HEAD^`);
   - branches: create, switch, rename, delete, set upstream;
@@ -348,15 +348,15 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - remote: fetch, pull (ff-only or rebase), push / publish / force-with-lease;
   - worktree add/remove/prune;
   - merge / rebase / cherry-pick / revert / reset, plus continue/skip/abort.
-- [ ] **Retire libgit2 `commitAll` and `discardPath` / `discardFileChanges`.** Discard of a tracked file becomes `git restore`; untracked files go to the Trash via the app layer. Update `GitParityTests` for `commitAll` and discard in the same commit, explaining the CLI move (hooks, signing, LFS).
-- [ ] **Oplog snapshots** (`Snapshots.swift`):
+- [x] **Retire libgit2 `commitAll` and `discardPath` / `discardFileChanges`.** Discard of a tracked file becomes `git restore`; untracked files go to the Trash via the app layer. Update `GitParityTests` for `commitAll` and discard in the same commit, explaining the CLI move (hooks, signing, LFS).
+- [x] **Oplog snapshots** (`Snapshots.swift`):
   - `snapshot(reason:)` writes `refs/impulse/oplog/<ts>-<reason>` (index tree plus worktree-including-untracked tree, built in a temp `GIT_INDEX_FILE`);
   - `listSnapshots`, `restore(snapshot)`;
   - retention pruning.
   - Tests: restore after a discard reproduces the exact pre-discard workdir and index.
-- [ ] **Blame:** whole-file blame cached by blob id; `lineBlame` becomes a lookup. Keep its fixture.
+- [x] **Blame:** whole-file blame cached by blob id; `lineBlame` becomes a lookup. Keep its fixture.
 - [ ] **Log and graph data:** a revwalk with topo+time order, parents and ref decorations, paged. Oracle: `git log --format=%H%x00%P%x00%D --topo-order`.
-- [ ] **App-side `GitRepositoryState`** (`@Observable`, one per repo, shared across windows):
+- [x] **App-side `GitRepositoryState`** (`@Observable`, one per repo, shared across windows):
   - fed by snapshot plus watcher;
   - replaces the branch cache (`MainWindow.swift:2600`), the 15 s branch TTL (`TabManager.swift:978`), `refreshReviewSummary` (`MainWindow.swift:982`) and the file-tree git polling.
   - The file tree, chips, status bar and breadcrumb all read from it.
@@ -375,26 +375,26 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 4.1 Changes panel (§7.2)
 
-- [ ] SwiftUI panel in the left dock Changes tab, showing:
+- [x] SwiftUI panel in the left dock Changes tab, showing:
   - branch switcher button;
   - sync split button (state-morphing: Commit → Push → Publish → Create PR → PR #n; the PR states activate in M7);
   - operation banner;
   - sections Conflicts / Staged / Changes / Untracked / Stashes / Worktrees / Recent commits;
   - list or tree toggle; multi-select; hover actions.
 - [ ] **Panel-focus keys:** `space`, `⏎`, `⌫`, `⌘⌫`, `⌘↩`, `⌘⇧↩`, `⇧Esc`. All are registered as commands with a `gitPanelFocus` context.
-- [ ] **Commit composer:**
+- [x] **Commit composer:**
   - subject/body with 50/72 guides; `commit.template`;
   - message history (↑ in an empty field);
   - amend (prefills the previous message), sign-off, skip-hooks;
   - "Commit tracked changes?" confirmation when nothing is staged;
   - Uncommit after commit;
   - hook output shown on failure.
-- [ ] **Undo:** ⌘Z in git focus restores the latest oplog snapshot. Toasts with Undo after discard and revert.
-- [ ] **Diff pill** (titlebar) and the input chip show the live `±files +add −del` for the workspace.
+- [x] **Undo:** ⌘Z in git focus restores the latest oplog snapshot. Toasts with Undo after discard and revert.
+- [x] **Diff pill** (titlebar) and the input chip show the live `±files +add −del` for the workspace.
 
 ### 4.2 Review surface v2 (§7.3)
 
-- [ ] **Protocol v2** (`Editor/ReviewProtocol.swift` and `web/review.js`):
+- [x] **Protocol v2** (`Editor/ReviewProtocol.swift` and `web/review.js`):
   - `Render{generation, scope, files[{id, path, oldPath, status, added, removed, binary, contentHash, staged?}]}`;
   - `UpdateFile`, `RemoveFile`, `SetHunks{fileId, hunks[{id, …}], contentHash}`;
   - `SetViewed`, `SetComments`, `SetLayout{unified|split, whitespace, context}`.
@@ -405,8 +405,8 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
     - `ToggleViewed`, `AddComment` / `EditComment` / `DeleteComment`;
     - `OpenInEditor{path, line}`, `SendComments`, `Refresh` (today defined but never sent).
   - Drop the duplicate Codable structs and the JSON round-trip in `Bridge/ImpulseCore.swift:124, 345-430`; encode ImpulseGit types directly.
-- [ ] **Navigator pane:** file tree with status, +/−, Viewed checkbox (auto-reset on content-hash change, "changed since viewed" badge), comment count, filter (`T`), progress count.
-- [ ] **Body:**
+- [x] **Navigator pane:** file tree with status, +/−, Viewed checkbox (auto-reset on content-hash change, "changed since viewed" badge), comment count, filter (`T`), progress count.
+- [x] **Body:**
   - sticky headers;
   - row-level virtualization inside large files;
   - per-side tokenization using full old and new text (fixes state bleed, `review.js:477-513`);
@@ -415,10 +415,10 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - expandable context;
   - keep expansion and scroll across updates;
   - an "Updated — show" chip when the visible file changes.
-- [ ] **Actions:** hunk and line-selection stage/unstage/revert, file stage/unstage/discard, all/none; Undo toasts.
-- [ ] **Keys (review focus):** `j`/`k`, `n`/`p`, `N`, `⌘Y`, `⌘⇧Y`, `⌘⌥Z`, `v`, `c`, `o`, `s`, `⌘↩`.
-- [ ] **Scope selector:** Uncommitted / Unstaged / Staged / vs default branch (auto-detect `origin/HEAD` → main/master) / vs branch… / last commit / commit range / stash. "Last agent turn" and "Since my last review" arrive in M6.
-- [ ] **Comments:**
+- [x] **Actions:** hunk and line-selection stage/unstage/revert, file stage/unstage/discard, all/none; Undo toasts.
+- [x] **Keys (review focus):** `j`/`k`, `n`/`p`, `N`, `⌘Y`, `⌘⇧Y`, `⌘⌥Z`, `v`, `c`, `o`, `s`, `⌘↩`.
+- [x] **Scope selector:** Uncommitted / Unstaged / Staged / vs default branch (auto-detect `origin/HEAD` → main/master) / vs branch… / last commit / commit range / stash. "Last agent turn" and "Since my last review" arrive in M6.
+- [x] **Comments:**
   - anchored by (scope, path, side, range, snippet hash);
   - stored at `~/Library/Application Support/impulse/review/<repo-hash>/<branch>.json`;
   - an Outdated section;
@@ -429,10 +429,10 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 4.3 Editor git integration (§7.4)
 
-- [ ] **Gutter markers from the live buffer.** Send the base blob (index or HEAD per setting) once per file. Compute the line diff in JS on edit (debounced), or in Swift from buffer deltas. Today markers come from disk and go stale while typing.
-- [ ] **Clickable markers** open a peek diff view zone with Stage / Revert / Next / Prev.
-- [ ] **Inline current-line blame** (ghost text, setting) and a blame gutter toggle. Click goes to the commit (History, M7). Until then, show the commit summary in a hover card.
-- [ ] **Branch switcher popover** (⌃⌘B, breadcrumb, chip):
+- [x] **Gutter markers from the live buffer.** Send the base blob (index or HEAD per setting) once per file. Compute the line diff in JS on edit (debounced), or in Swift from buffer deltas. Today markers come from disk and go stale while typing.
+- [x] **Clickable markers** open a peek diff view zone with Stage / Revert / Next / Prev.
+- [x] **Inline current-line blame** (ghost text, setting) and a blame gutter toggle. Click goes to the commit (History, M7). Until then, show the commit summary in a hover card.
+- [x] **Branch switcher popover** (⌃⌘B, breadcrumb, chip):
   - fuzzy; recent first; local/remote grouped;
   - create branch;
   - dirty-tree choices (stash & switch / carry / new worktree / cancel).
@@ -466,13 +466,13 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - Keep `InputCompletionTests`; add spec tests.
   - Move `onInputSuggestion` off the main thread, where today it pulls 500 history entries per keystroke.
 - [ ] **Native shell completion bridge** (opt-in): fish `complete -C`, bash `compgen` (with bash-completion if present), zsh zpty capture (research). Results merge with spec results.
-- [ ] **Persistent history** (SQLite via the system `libsqlite3`):
+- [x] **Persistent history** (SQLite via the system `libsqlite3`):
   - shared across tabs;
   - metadata: cwd, exit, duration, branch (populate `git_branch`, always nil today at `backend.rs:568`), timestamp;
   - space-prefixed commands are skipped;
   - optional import of zsh/bash/fish history.
   - Rust `history.rs` stays the per-session ranking source, or moves to Swift. Decide in the task and record the decision.
-- [ ] **⌃R history panel:** fuzzy, with filters for cwd, repo, failed and today. Replaces `TerminalHistoryPicker`. Has an option to defer to the shell's own ⌃R binding (atuin/fzf).
+- [x] **⌃R history panel:** fuzzy, with filters for cwd, repo, failed and today. Replaces `TerminalHistoryPicker`. Has an option to defer to the shell's own ⌃R binding (atuin/fzf).
 - [ ] **Classic mode** (D6) as a first-class setting: "Input: Impulse editor | Shell prompt". Wire OSC 133;B so prompt and command are separable.
 
 ### 5.2 Blocks v2 (§6.3)
@@ -494,7 +494,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 5.3 Links, hints, protocols, notifications
 
-- [ ] **Path detection** (`file:line:col` and common stack-trace formats) on hover, opening in the Impulse editor. OSC 8 `file://` routes to the editor.
+- [x] **Path detection** (`file:line:col` and common stack-trace formats) on hover, opening in the Impulse editor. OSC 8 `file://` routes to the editor.
 - [ ] **Hints mode** (⌘⇧Space): labels for URLs, paths, SHAs and ports; open, copy or insert.
 - [ ] **Protocols:**
   - OSC 9;4 progress UI (tab ring, sidebar);
@@ -503,7 +503,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - Tests in `osc_scanner.rs`.
 - [ ] **Grapheme clusters** (zero-width and combining characters) and styled or colored underlines: snapshot format v2 with a side-table. Requires matching FFI and Swift `GridBufferReader` changes behind a version byte in the header.
 - [ ] **Kitty keyboard protocol** (progressive enhancement flags) in `KeyEncoder.swift`.
-- [ ] **`UNUserNotificationCenter`** (§6.6):
+- [x] **`UNUserNotificationCenter`** (§6.6):
   - request authorization on first need;
   - thread per workspace; click focuses the pane;
   - remove delivered notifications on focus;
@@ -523,47 +523,47 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ## M6: Agent workflows
 
-- [ ] **Foreground process FFI.** `impulse_terminal_foreground_pid` (via `tcgetpgrp` on the PTY master). Swift resolves the path and argv (`proc_pidpath`, `KERN_PROCARGS2`).
-- [ ] **`ImpulseKit/Agents/`:**
+- [x] **Foreground process FFI.** `impulse_terminal_foreground_pid` (via `tcgetpgrp` on the PTY master). Swift resolves the path and argv (`proc_pidpath`, `KERN_PROCARGS2`).
+- [x] **`ImpulseKit/Agents/`:**
   - `KnownAgents` table (user-extendable in settings);
   - `AgentStateMachine` (idle/working/needsInput/done/error) driven by typed events, with debouncing and timeouts.
   - Tests are event-sequence fixtures.
 - [ ] **Agent panes** (§8.3):
   - agent icon in the tab, sidebar row and pane header;
   - footer toolbelt (status, compose, diff, checkpoints) replacing the input editor while the TUI runs.
-- [ ] **`impulse` CLI and socket** (§8.6):
+- [x] **`impulse` CLI and socket** (§8.6):
   - new executable target `impulse-cli`, bundled at `Contents/MacOS/impulse` by `build.sh`;
   - `SocketServer` in the app; per-pane tokens; env injection in the shell integration scripts;
   - commands: `open`, `edit --wait`, `split`, `tab new`, `notify`, `status`, `checkpoint`, `review`, `task`, `send`;
   - "Install command line tool…" action, with consent.
   - Tests: protocol encode/decode (ImpulseKit), token checks.
-- [ ] **Hook installers** with a diff preview and explicit confirmation:
+- [x] **Hook installers** with a diff preview and explicit confirmation:
   - Claude Code (`UserPromptSubmit`, `Notification`, `Stop`, `SessionStart`), user-level or project-local;
   - Codex `notify`;
   - uninstall.
   - Record agent session ids for **Resume** on restore.
-- [ ] **Opt-in `$VISUAL` / `$EDITOR`** = `impulse edit --wait` inside Impulse terminals. The tab closes, then the CLI returns.
+- [x] **Opt-in `$VISUAL` / `$EDITOR`** = `impulse edit --wait` inside Impulse terminals. The tab closes, then the CLI returns.
 - [ ] **Composer overlay (⌘I):**
   - `CommandEditorView` above the TUI;
   - @file mentions from the workspace index; image paste; history;
   - send via bracketed paste (Enter optional);
   - auto-show on idle/needs-input (setting).
-- [ ] **Inbox (§8.7):** titlebar bell popover, ⌘⇧U next needs-input, ⌘⇧I open, status-bar summary, snooze, filters. Sidebar rows and tabs show status dots with AX labels.
-- [ ] **Checkpoints:**
+- [x] **Inbox (§8.7):** titlebar bell popover, ⌘⇧U next needs-input, ⌘⇧I open, status-bar summary, snooze, filters. Sidebar rows and tabs show status dots with AX labels.
+- [x] **Checkpoints:**
   - created on `UserPromptSubmit`/`Stop` hooks, `impulse checkpoint`, or manually;
   - stored in `refs/impulse/checkpoints/<workspace-id>/<n>` (reuses oplog snapshot code);
   - pane footer shows the count; timeline popover.
   - Review scopes: **Last agent turn** and **checkpoint n→m**.
   - Restore a checkpoint (oplog snapshot first).
-- [ ] **"Since my last review" scope.** Record the content hashes when the user sends comments or marks everything viewed.
-- [ ] **Review → agent delivery:**
+- [x] **"Since my last review" scope.** Record the content hashes when the user sends comments or marks everything viewed.
+- [x] **Review → agent delivery:**
   - target picker (agent panes in this workspace, last-used first);
   - queued delivery while the agent is "working";
   - send to composer instead (setting).
   - Same path for blocks, editor selections, diagnostics and files ("Send to agent").
 - [ ] **`.impulse/project.toml`** (ImpulseKit parser plus JSON Schema): worktree location and copy list, scripts, actions, layouts with params. Per-repo trust prompt before running any command from it. Palette `a:` mode and an actions menu.
-- [ ] **Worktree tasks:** New task (branch name generator, worktree add, copy list / `.worktreeinclude`, setup scripts, open the layout with the agent command); Archive (dirty/unpushed check, archive scripts, worktree remove, restorable list).
-- [ ] **Ports:** a process-tree walk per workspace (`proc_pidinfo` socket info) on a 2 s timer while visible. Chips in the status bar and workspace row. Optional `IMPULSE_PORT` block per workspace.
+- [x] **Worktree tasks:** New task (branch name generator, worktree add, copy list / `.worktreeinclude`, setup scripts, open the layout with the agent command); Archive (dirty/unpushed check, archive scripts, worktree remove, restorable list).
+- [x] **Ports:** a process-tree walk per workspace (`proc_pidinfo` socket info) on a 2 s timer while visible. Chips in the status bar and workspace row. Optional `IMPULSE_PORT` block per workspace.
 
 **M6 definition of done:** this end-to-end scenario works without leaving Impulse:
 
