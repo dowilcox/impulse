@@ -974,6 +974,12 @@ impl TerminalBackend {
                                             let _ =
                                                 event_tx.send(TerminalEvent::SessionStatus(fields));
                                         }
+                                        crate::osc_scanner::OscEvent::ShellNames(names) => {
+                                            let _ = event_tx.send(TerminalEvent::ShellNames(names));
+                                        }
+                                        crate::osc_scanner::OscEvent::ShellPath(path) => {
+                                            let _ = event_tx.send(TerminalEvent::ShellPath(path));
+                                        }
                                     }
 
                                     output_cursor = output_cursor.max(osc_event.end_offset.min(n));

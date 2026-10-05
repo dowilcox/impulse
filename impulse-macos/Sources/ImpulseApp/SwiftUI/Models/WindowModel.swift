@@ -333,6 +333,9 @@ final class WindowModel {
   var onSendSecureInput: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
+  /// Whether the focused terminal's shell can run a command word (nil: can't
+  /// tell).
+  @ObservationIgnored var onIsKnownCommand: ((String) -> Bool?)?
   /// Resolve path-completion candidates for the active token of the typed
   /// input (input-bar dropdown). Filesystem work — call off the main thread.
   var onCompletionCandidates: ((String) -> CompletionResult?)?

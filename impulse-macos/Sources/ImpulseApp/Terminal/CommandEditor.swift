@@ -32,6 +32,9 @@ struct CommandEditor: NSViewRepresentable {
   var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
   /// Color the text as a shell command (off for prose, e.g. agent prompts).
   var shellSyntax = true
+  /// Whether the shell can run a command word (nil: can't tell); unknown
+  /// commands get a dashed underline.
+  var isKnownCommand: ((String) -> Bool?)? = nil
   /// Return submits (commands). Off: Return adds a line and ⌘↩ submits
   /// (prompts).
   var returnSubmits = true
@@ -75,6 +78,7 @@ struct CommandEditor: NSViewRepresentable {
   }
 
   private func apply(to textView: CommandTextView) {
+    textView.isKnownCommand = shellSyntax ? isKnownCommand : nil
     let ghost = suggestion.flatMap { suggestion -> String? in
       guard suggestion.hasPrefix(text), suggestion.count > text.count else { return nil }
       return String(suggestion.dropFirst(text.count))
@@ -164,6 +168,7 @@ struct CommandEditorColors: Equatable {
   var string: NSColor
   var variable: NSColor
   var operatorColor: NSColor
+  var error: NSColor
 
   init(theme: Theme) {
     text = theme.fgColor
@@ -174,6 +179,7 @@ struct CommandEditorColors: Equatable {
     string = theme.greenColor
     variable = theme.magentaColor
     operatorColor = theme.cyanColor
+    error = theme.redColor
   }
 }
 
@@ -210,6 +216,7 @@ final class CommandTextView: NSTextView {
   var placeholder = ""
   var colors = CommandEditorColors(theme: ThemeManager.theme(forName: "nord"))
   var shellSyntax = true
+  var isKnownCommand: ((String) -> Bool?)?
   /// Lines shown before scrolling.
   static let maxVisibleLines: CGFloat = 8
 
@@ -359,8 +366,21 @@ final class CommandTextView: NSTextView {
         let start = offsets[span.start]
         return NSRange(location: start, length: offsets[span.end] - start)
       }
+      let cursor = selectedRange().location
       for token in parsed.tokens + parsed.assignments {
         guard let tokenRange = range(token.span) else { continue }
+        // A command the shell can't run, once you've moved past it.
+        if token.role == .command, !token.quoted,
+          cursor < tokenRange.location || cursor > NSMaxRange(tokenRange),
+          isKnownCommand?(token.text) == false
+        {
+          storage.addAttributes(
+            [
+              .underlineStyle: NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue,
+              .underlineColor: colors.error,
+              .toolTip: "\(token.text): command not found",
+            ], range: tokenRange)
+        }
         let color: NSColor?
         switch token.role {
         case .command: color = colors.command

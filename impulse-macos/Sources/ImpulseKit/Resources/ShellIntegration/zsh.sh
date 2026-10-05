@@ -1,5 +1,8 @@
 # Impulse shell integration for zsh
+zmodload zsh/parameter 2>/dev/null
 __impulse_command_started=""
+__impulse_names_sig=""
+__impulse_path_sent=""
 __impulse_urlencode() {
     local string="$1" i c
     local encoded=""
@@ -12,6 +15,22 @@ __impulse_urlencode() {
     done
     printf '%s' "$encoded"
 }
+# Commands that aren't files on PATH (aliases, functions, builtins, reserved
+# words) and PATH itself, for the input bar's unknown-command underline. Sent
+# again only when they change.
+__impulse_report_names() {
+    local sig="${#aliases}:${#functions}"
+    if [[ "$sig" != "$__impulse_names_sig" ]]; then
+        __impulse_names_sig="$sig"
+        local names="${(k)aliases} ${(k)functions} ${(k)builtins} ${(k)reswords}"
+        names="${names//[^[:graph:] ]/}"
+        printf '\e]6973;Names=%s\a' "${names[1,60000]}"
+    fi
+    if [[ "$PATH" != "$__impulse_path_sent" ]]; then
+        __impulse_path_sent="$PATH"
+        printf '\e]6973;Path=%s\a' "${PATH//[^[:graph:] ]/}"
+    fi
+}
 __impulse_precmd() {
     local exit_code=$?
     if [ -n "$__impulse_command_started" ]; then
@@ -19,6 +38,7 @@ __impulse_precmd() {
         __impulse_command_started=""
     fi
     printf '\e]7;file://%s%s\a' "$HOST" "$(__impulse_urlencode "$PWD")"
+    __impulse_report_names
     printf '\e]133;A\a'
 }
 __impulse_preexec() {

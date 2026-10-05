@@ -90,6 +90,10 @@ enum TerminalBackendEvent {
     case passwordInputChanged(Bool)
     /// iTerm2 OSC 21337 keys that were set (empty value = cleared).
     case sessionStatus([String: String])
+    /// The shell's aliases, functions, builtins and keywords.
+    case shellNames([String])
+    /// The shell's PATH.
+    case shellPath(String)
 }
 
 /// A program's own status line for its session (iTerm2 OSC 21337).
@@ -602,6 +606,10 @@ final class TerminalBackend {
                     events.append(.passwordInputChanged(active))
                 } else if let fields = dict["SessionStatus"] as? [String: String] {
                     events.append(.sessionStatus(fields))
+                } else if let names = dict["ShellNames"] as? [String] {
+                    events.append(.shellNames(names))
+                } else if let path = dict["ShellPath"] as? String {
+                    events.append(.shellPath(path))
                 }
             }
         }

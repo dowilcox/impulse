@@ -337,6 +337,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
     }
+    windowModel.onIsKnownCommand = { [weak self] word in
+      guard let terminal = self?.tabManager.selectedTerminal?.activeTerminal else { return nil }
+      return terminal.commandLookup.isKnown(word, cwd: terminal.currentWorkingDirectory)
+    }
     windowModel.onCompletionCandidates = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.completionCandidates(for: text)
     }

@@ -18,6 +18,8 @@ class TerminalTab: NSView {
 
   /// Current working directory reported by the shell via CWD polling.
   private(set) var currentWorkingDirectory: String
+  /// What the shell can run (from its integration), for the input bar.
+  let commandLookup = CommandLookup()
 
   /// Whether this terminal has produced output that needs user attention.
   private(set) var needsAttention: Bool = false
@@ -394,6 +396,10 @@ class TerminalTab: NSView {
       setPasswordInput(active)
     case .progress(let report):
       setProgress(report)
+    case .shellNames(let names):
+      commandLookup.setNames(names)
+    case .shellPath(let path):
+      commandLookup.setPath(path)
     case .sessionStatus(let fields):
       var status = sessionStatus
       status.apply(fields)

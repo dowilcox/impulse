@@ -45,6 +45,11 @@ pub enum OscEvent {
     /// iTerm2 OSC 21337 session status: the keys it set (`status`,
     /// `indicator`, `status-color`, `detail`); an empty value clears one.
     SessionStatus(std::collections::BTreeMap<String, String>),
+    /// OSC 6973;Names={space-separated}: the shell's aliases, functions,
+    /// builtins and keywords (commands that aren't files on PATH).
+    ShellNames(Vec<String>),
+    /// OSC 6973;Path={PATH}: the shell's search path.
+    ShellPath(String),
 }
 
 /// OSC event with byte offsets in the most recently scanned chunk.
@@ -66,6 +71,10 @@ enum State {
 
 /// Maximum OSC payload size before we reset (prevents unbounded growth).
 const MAX_OSC_LEN: usize = 4096;
+/// Impulse's own OSC 6973 payloads can be larger (the shell's command names).
+const MAX_IMPULSE_OSC_LEN: usize = 64 * 1024;
+/// At most this many names from one OSC 6973;Names.
+const MAX_SHELL_NAMES: usize = 20_000;
 
 /// Scans a byte stream for OSC sequences used by Impulse.
 pub struct OscScanner {
@@ -132,7 +141,9 @@ impl OscScanner {
                         self.state = State::Normal;
                     } else if b == 0x1B {
                         self.state = State::OscEscape;
-                    } else if self.buf.len() < MAX_OSC_LEN {
+                    } else if self.buf.len() < MAX_OSC_LEN
+                        || (self.buf.len() < MAX_IMPULSE_OSC_LEN && self.buf.starts_with(b"6973;"))
+                    {
                         self.buf.push(b);
                     } else {
                         // Overflow, reset.
@@ -217,6 +228,23 @@ impl OscScanner {
 
         if self.buf.starts_with(b"6973;Command=") {
             return Self::parse_impulse_command(&self.buf[13..]).map(OscEvent::CommandText);
+        }
+
+        if let Some(payload) = self.buf.strip_prefix(b"6973;Names=") {
+            let text = std::str::from_utf8(payload).ok()?;
+            let names = text
+                .split_whitespace()
+                .filter(|name| name.len() <= 256 && !name.chars().any(char::is_control))
+                .take(MAX_SHELL_NAMES)
+                .map(str::to_string)
+                .collect();
+            return Some(OscEvent::ShellNames(names));
+        }
+
+        if let Some(payload) = self.buf.strip_prefix(b"6973;Path=") {
+            let text = std::str::from_utf8(payload).ok()?;
+            let path: String = text.chars().filter(|c| !c.is_control()).collect();
+            return Some(OscEvent::ShellPath(path));
         }
 
         if self.buf.starts_with(b"21337;") {
@@ -554,6 +582,37 @@ mod tests {
                 "cargo test -p impulse-terminal".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn test_shell_names_and_path() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]6973;Names=ll gst  cd   my-func\x07\x1b]6973;Path=/usr/bin:/opt/homebrew/bin\x07");
+        let events = scanner.drain_events();
+        assert_eq!(
+            events,
+            vec![
+                OscEvent::ShellNames(vec![
+                    "ll".to_string(),
+                    "gst".to_string(),
+                    "cd".to_string(),
+                    "my-func".to_string()
+                ]),
+                OscEvent::ShellPath("/usr/bin:/opt/homebrew/bin".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_shell_names_may_exceed_the_usual_osc_limit() {
+        let mut scanner = OscScanner::new();
+        let names: Vec<String> = (0..2000).map(|i| format!("function_{i}")).collect();
+        let mut sequence = b"\x1b]6973;Names=".to_vec();
+        sequence.extend_from_slice(names.join(" ").as_bytes());
+        sequence.push(0x07);
+        assert!(sequence.len() > MAX_OSC_LEN);
+        scanner.scan(&sequence);
+        assert_eq!(scanner.drain_events(), vec![OscEvent::ShellNames(names)]);
     }
 
     #[test]

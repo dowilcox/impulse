@@ -276,6 +276,7 @@ struct TerminalContextBarView: View {
             suggestion: model.commandRunning ? nil : suggestion,
             colors: CommandEditorColors(theme: model.theme),
             font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            isKnownCommand: model.onIsKnownCommand,
             focusToken: focusRequest,
             onSubmit: handleSubmit,
             onKey: handleEditorKey,

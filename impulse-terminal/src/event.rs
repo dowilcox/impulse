@@ -50,6 +50,10 @@ pub enum TerminalEvent {
     },
     /// iTerm2 session status (OSC 21337): the keys set, empty values clear.
     SessionStatus(std::collections::BTreeMap<String, String>),
+    /// The shell's aliases, functions, builtins and keywords (OSC 6973;Names).
+    ShellNames(Vec<String>),
+    /// The shell's PATH (OSC 6973;Path).
+    ShellPath(String),
     /// The foreground program toggled password-style input on the PTY
     /// (termios ECHO off with ICANON on — sudo, ssh, `read -s`). Frontends
     /// should mask the input bar while true so the password isn't shown.
