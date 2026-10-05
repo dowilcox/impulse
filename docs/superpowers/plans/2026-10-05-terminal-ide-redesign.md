@@ -528,7 +528,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - `KnownAgents` table (user-extendable in settings);
   - `AgentStateMachine` (idle/working/needsInput/done/error) driven by typed events, with debouncing and timeouts.
   - Tests are event-sequence fixtures.
-- [ ] **Agent panes** (§8.3):
+- [x] **Agent panes** (§8.3):
   - agent icon in the tab, sidebar row and pane header;
   - footer toolbelt (status, compose, diff, checkpoints) replacing the input editor while the TUI runs.
 - [x] **`impulse` CLI and socket** (§8.6):
