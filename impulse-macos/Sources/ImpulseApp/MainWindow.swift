@@ -89,6 +89,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private var closingAfterDirtyReview = false
   /// The user confirmed closing over running processes (the sheet's answer).
   private var closeRiskConfirmed = false
+  /// The agent state last announced to VoiceOver, per terminal.
+  private var announcedAgentStates: [UUID: AgentState] = [:]
   private var reviewingDirtyWindowClose = false
 
   /// Local event monitor for custom keybinding interception.
@@ -851,6 +853,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
   }
 
+  /// Speak an agent needing input or finishing (VoiceOver), once per change.
+  private func announceAgentState(of terminal: TerminalTab) {
+    let state = terminal.agentState
+    defer { announcedAgentStates[terminal.id] = state }
+    guard NSWorkspace.shared.isVoiceOverEnabled, let state, state != announcedAgentStates[terminal.id],
+      let name = terminal.agent?.displayName
+    else { return }
+    let message: String
+    switch state {
+    case .needsInput: message = "\(name) needs your input in \(terminal.tabTitle)"
+    case .done: message = "\(name) finished in \(terminal.tabTitle)"
+    default: return
+    }
+    NSAccessibility.post(
+      element: window as Any, notification: .announcementRequested,
+      userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+  }
+
   /// Put the repository's files back to how they were when an agent turn
   /// started (snapshot first, so Undo brings the newer state back).
   func restoreAgentTurn(terminalID: UUID, index: Int) {
@@ -1417,7 +1437,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     termSearchBar.alphaValue = 0
     NSAnimationContext.runAnimationGroup(
       { context in
-        context.duration = 0.2
+        context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
         context.timingFunction = CAMediaTimingFunction(name: .easeOut)
         context.allowsImplicitAnimation = true
         termSearchHeightConstraint?.constant = 32
@@ -1448,7 +1468,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     NSAnimationContext.runAnimationGroup(
       { context in
-        context.duration = 0.16
+        context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
         context.timingFunction = CAMediaTimingFunction(name: .easeIn)
         context.allowsImplicitAnimation = true
         termSearchHeightConstraint?.constant = 0
@@ -2377,6 +2397,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           self.tabManager.ownsTerminal(terminal)
         else { return }
         self.tabManager.refreshSegmentLabels()
+        self.announceAgentState(of: terminal)
         // Opt-in: the focused agent asks for input → open the composer.
         if self.settings.agentComposerAutoShow, terminal.agentState == .needsInput,
           terminal === self.tabManager.selectedTerminal?.activeTerminal, terminal.isDirectInteraction,

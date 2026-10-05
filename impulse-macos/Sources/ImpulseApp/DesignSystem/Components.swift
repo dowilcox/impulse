@@ -202,6 +202,7 @@ struct ProgressRing: View {
   var lineWidth: CGFloat = 2
 
   @State private var spin = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     ZStack {
@@ -216,8 +217,10 @@ struct ProgressRing: View {
           .trim(from: 0, to: 0.28)
           .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
           .rotationEffect(.degrees(spin ? 360 : 0))
-          .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin)
-          .onAppear { spin = true }
+          .animation(
+            reduceMotion ? nil : .linear(duration: 0.9).repeatForever(autoreverses: false), value: spin
+          )
+          .onAppear { spin = !reduceMotion }
       }
     }
     .frame(width: size, height: size)

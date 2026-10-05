@@ -809,6 +809,7 @@ class TerminalRenderer: NSView {
                         rectForRow(row).insetBy(dx: 0, dy: -ch).intersection(bounds))
                 }
             }
+            accessibilityContentChanged()
         }
         return !events.isEmpty || wakeup
     }
@@ -3495,4 +3496,65 @@ extension TerminalRenderer: NSServicesMenuRequestor {
         pboard.clearContents()
         return pboard.setString(text, forType: .string)
     }
+}
+
+// MARK: - Accessibility
+
+/// VoiceOver sees the visible screen as a read-only text area: its text,
+/// lines, selection and cursor line, and hears that it changed.
+extension TerminalRenderer {
+    private static var lastAccessibilityPost: [ObjectIdentifier: Date] = [:]
+
+    /// The visible rows as text (wide-character spacers skipped).
+    func accessibleText() -> AccessibleText {
+        guard let grid = backend?.gridSnapshot() else { return AccessibleText(lines: []) }
+        var lines: [String] = []
+        lines.reserveCapacity(grid.lines)
+        for row in 0..<grid.lines {
+            var line = String.UnicodeScalarView()
+            for col in 0..<grid.cols {
+                let cell = grid.cell(row: row, col: col)
+                if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+                line.append(cell.character.value == 0 ? " " : cell.character)
+            }
+            lines.append(String(line))
+        }
+        return AccessibleText(lines: lines)
+    }
+
+    /// Tell VoiceOver the text changed, at most twice a second, and only
+    /// when it's listening.
+    fileprivate func accessibilityContentChanged() {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        let key = ObjectIdentifier(self)
+        let now = Date()
+        if let last = Self.lastAccessibilityPost[key], now.timeIntervalSince(last) < 0.5 { return }
+        Self.lastAccessibilityPost[key] = now
+        NSAccessibility.post(element: self, notification: .valueChanged)
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+    override func accessibilityRoleDescription() -> String? { "terminal" }
+    override func accessibilityLabel() -> String? { "Terminal" }
+    override func isAccessibilityEnabled() -> Bool { true }
+    override func accessibilityValue() -> Any? { accessibleText().string }
+    override func accessibilityNumberOfCharacters() -> Int { accessibleText().length }
+    override func accessibilitySelectedText() -> String? { backend?.selectedText() ?? "" }
+    override func accessibilitySelectedTextRange() -> NSRange { NSRange(location: 0, length: 0) }
+
+    override func accessibilityVisibleCharacterRange() -> NSRange {
+        NSRange(location: 0, length: accessibleText().length)
+    }
+
+    override func accessibilityInsertionPointLineNumber() -> Int {
+        guard let grid = backend?.gridSnapshot(), grid.cursorVisible else { return 0 }
+        return min(Int(grid.cursorRow), max(0, accessibleText().lines.count - 1))
+    }
+
+    override func accessibilityLine(for index: Int) -> Int { accessibleText().line(for: index) }
+
+    override func accessibilityRange(forLine line: Int) -> NSRange { accessibleText().range(forLine: line) }
+
+    override func accessibilityString(for range: NSRange) -> String? { accessibleText().substring(range) }
 }

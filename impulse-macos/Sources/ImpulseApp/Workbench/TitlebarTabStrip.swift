@@ -6,6 +6,7 @@ import SwiftUI
 /// the strip scrolls horizontally when they overflow.
 struct TitlebarTabStrip: View {
   @Environment(\.chrome) private var chrome
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var model: WindowModel
 
   @State private var hoveredId: Int? = nil
@@ -31,7 +32,7 @@ struct TitlebarTabStrip: View {
                 )
                 .offset(x: offset(for: tab))
                 .animation(
-                  draggedId == tab.id
+                  draggedId == tab.id || reduceMotion
                     ? nil : .interactiveSpring(response: 0.25, dampingFraction: 0.85),
                   value: offset(for: tab)
                 )
@@ -48,7 +49,7 @@ struct TitlebarTabStrip: View {
         }
         .onChange(of: model.selectedTabIndex) {
           guard let selected = model.selectedTabInfo else { return }
-          withAnimation(.easeOut(duration: 0.15)) {
+          withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
             proxy.scrollTo(selected.id)
           }
         }
