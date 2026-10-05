@@ -131,6 +131,8 @@ extension Notification.Name {
     static let impulseToggleSidebar = Notification.Name("impulseToggleSidebar")
     /// Requests showing the command palette.
     static let impulseShowCommandPalette = Notification.Name("impulseShowCommandPalette")
+    /// Toggles the right dock in the frontmost window.
+    static let impulseToggleRightDock = Notification.Name("impulseToggleRightDock")
     /// Requests project-wide find.
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
     /// Requests toggling markdown preview in the active editor tab.

@@ -125,3 +125,29 @@
     }
   }
 #endif
+
+#if canImport(Testing)
+  struct FileIndexTests {
+    @Test func listsTrackedAndUntrackedButNotIgnored() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit([".gitignore": "build/\n", "src/a.swift": "a\n"])
+      try repo.write("src/b.swift", "b\n")
+      try repo.write("build/out.o", "x\n")
+      let files = FileIndex.files(root: repo.root).sorted()
+      #expect(files == [".gitignore", "src/a.swift", "src/b.swift"])
+    }
+
+    @Test func walksNonRepositories() throws {
+      let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("impulse-index-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(
+        at: dir.appendingPathComponent("sub"), withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: dir) }
+      try "x".write(to: dir.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+      try "y".write(
+        to: dir.appendingPathComponent("sub/two.txt"), atomically: true, encoding: .utf8)
+      #expect(FileIndex.files(root: dir.path) == ["one.txt", "sub/two.txt"])
+    }
+  }
+#endif

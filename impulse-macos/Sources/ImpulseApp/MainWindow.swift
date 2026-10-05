@@ -73,16 +73,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private var termSearchHeightConstraint: NSLayoutConstraint?
 
   /// The command palette, lazily created on first use.
-  private var commandPaletteWindow: CommandPaletteWindow?
-  private var commandPalette: CommandPaletteWindow {
-    if let commandPaletteWindow {
-      return commandPaletteWindow
-    }
-    let palette = CommandPaletteWindow()
-    configureCommandPalette(palette, settings: settings)
-    commandPaletteWindow = palette
-    return palette
-  }
+  /// Command palette / quick open (see PaletteModel for its modes).
+  private let palette = PalettePanelController()
 
 
   /// Allows a deferred close after dirty editors have been reviewed without
@@ -517,8 +509,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   // MARK: - Workbench actions
 
   func showCommandPalette() {
+    showPalette(prefix: ">")
+  }
+
+  /// Open the palette with a mode prefix: "" files, ">" commands, ":" line,
+  /// "%" text, "b:" branches, "t:" tabs.
+  func showPalette(prefix: String) {
     guard let window else { return }
-    commandPalette.show(relativeTo: window)
+    let model = palette.model
+    model.host = self
+    model.iconCache = tabManager.iconCache
+    model.shortcutOverrides = settings.keybindingOverrides
+    model.commands = CommandRegistry.commands(
+      for: self, customKeybindings: settings.customKeybindings)
+    palette.show(in: window, prefix: prefix, palette: windowModel.palette)
   }
 
   /// Show or hide the right dock. Until a panel is installed there it has
@@ -533,7 +537,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   func performDebugAction(_ action: String) {
     switch action {
     case "sidebar": setSidebarVisible(true)
-    case "palette": NotificationCenter.default.post(name: .impulseShowCommandPalette, object: nil)
+    case "palette": showPalette(prefix: ">")
+    case "quickopen": showPalette(prefix: "")
+    case "quickopen-query": showPalette(prefix: "wbv")
+    case "branches": showPalette(prefix: "b:")
     case "review": openDiffReview()
     case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
     default: NSLog("DebugSnapshot: unknown action '\(action)'")
@@ -1210,29 +1217,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     return nil
   }
 
-  private func configureCommandPalette(_ palette: CommandPaletteWindow, settings: Settings) {
-    palette.registerBuiltinCommands(overrides: settings.keybindingOverrides)
-    palette.registerCustomCommands(settings.customKeybindings)
-    palette.configureDynamicSearch(
-      rootProvider: { [weak self] in self?.fileTreeRootPath },
-      openFile: { [weak self] path, line in
-        self?.openCommandPaletteSearchResult(path: path, line: line)
-      }
-    )
-  }
-
-  private func openCommandPaletteSearchResult(path: String, line: UInt32?) {
+  private func openCommandPaletteSearchResult(path: String, line: UInt32?, column: UInt32? = nil) {
+    let column = line == nil ? nil : (column ?? 1)
     tabManager.addEditorTab(
       path: path,
       projectDirectory: fileTreeRootPath,
       goToLine: line,
-      goToColumn: line == nil ? nil : 1
+      goToColumn: column
     )
     if let editor = findEditorTab(forPath: path) {
       trackEditorTab(editor, forPath: path)
       lspDidOpenIfNeeded(path: path)
-      if let line {
-        editor.goToPosition(line: line, column: 1)
+      if let line, let column {
+        editor.goToPosition(line: line, column: column)
       }
     }
   }
@@ -1405,7 +1402,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        self.showSearchSidebarAndFocus()
+        self.showPalette(prefix: "")
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseToggleRightDock, object: nil, queue: .main) {
+        [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.toggleRightDock()
       }
     )
     notificationObservers.append(
@@ -1494,8 +1498,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .impulseShowCommandPalette, object: nil, queue: .main) {
         [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true, let window = self.window else { return }
-        self.commandPalette.show(relativeTo: window)
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.showPalette(prefix: ">")
       }
     )
 
@@ -1827,13 +1831,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseSettingsDidChange, object: nil, queue: .main) {
         [weak self] notification in
         guard let self else { return }
-        let newSettings = self.settings
         self.applyAllSettings()
         // Rebuild custom keybinding monitor so new/changed bindings take effect.
         self.setupCustomKeybindingMonitor()
-        if let palette = self.commandPaletteWindow {
-          self.configureCommandPalette(palette, settings: newSettings)
-        }
       }
     )
 
@@ -2522,7 +2522,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Switch the active tab's repository to `branch` with `git switch`, off the
   /// main thread. On failure, explains why in a sheet (dirty tree, unknown
   /// branch, index.lock held by another process, ...).
-  private func switchBranch(to branch: String) {
+  func switchBranch(to branch: String) {
     let cwd = windowModel.currentCwd
     guard !cwd.isEmpty else { return }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -2888,5 +2888,41 @@ extension MainWindowController: NSSearchFieldDelegate {
     default:
       return false
     }
+  }
+}
+
+
+// MARK: - Palette host
+
+extension MainWindowController: PaletteHost {
+  var paletteRoot: String { fileTreeRootPath }
+
+  var paletteOpenFiles: [String] {
+    tabManager.tabs.compactMap { tab in
+      if case .editor(let editor) = tab { return editor.filePath }
+      return nil
+    }
+  }
+
+  var paletteTabs: [TabDisplayInfo] { windowModel.tabDisplayInfos }
+  var paletteCurrentBranch: String? { windowModel.gitBranch }
+  var paletteHasEditor: Bool { tabManager.selectedEditor != nil }
+
+  func paletteOpenFile(_ path: String, line: UInt32?, column: UInt32?) {
+    openCommandPaletteSearchResult(path: path, line: line, column: column)
+  }
+
+  func paletteGoToLine(_ line: UInt32, column: UInt32?) {
+    guard let editor = tabManager.selectedEditor else { return }
+    editor.goToPosition(line: line, column: column ?? 1)
+    editor.focus()
+  }
+
+  func paletteSwitchBranch(_ branch: String) {
+    switchBranch(to: branch)
+  }
+
+  func paletteSelectTab(_ index: Int) {
+    tabManager.selectTab(index: index)
   }
 }

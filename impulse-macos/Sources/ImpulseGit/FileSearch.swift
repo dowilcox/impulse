@@ -102,7 +102,7 @@ public enum FileSearch {
   /// Depth-first walk skipping hidden entries, `.git`, other filesystems,
   /// gitignored paths (when inside a repo), and anything deeper than
   /// `maxDepth`. The visitor returns false to stop the walk entirely.
-  private static func walk(
+  static func walk(
     root: String, visit: (_ path: String, _ name: String, _ isDirectory: Bool) -> Bool
   ) {
     let fm = FileManager.default

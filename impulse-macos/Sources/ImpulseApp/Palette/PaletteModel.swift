@@ -1,0 +1,451 @@
+import AppKit
+import ImpulseGit
+import ImpulseKit
+import Observation
+
+/// What the palette does with the user's choice. Implemented by the window.
+protocol PaletteHost: AnyObject {
+  var paletteRoot: String { get }
+  var paletteOpenFiles: [String] { get }
+  var paletteTabs: [TabDisplayInfo] { get }
+  var paletteCurrentBranch: String? { get }
+  var paletteHasEditor: Bool { get }
+  func paletteOpenFile(_ path: String, line: UInt32?, column: UInt32?)
+  func paletteGoToLine(_ line: UInt32, column: UInt32?)
+  func paletteSwitchBranch(_ branch: String)
+  func paletteSelectTab(_ index: Int)
+}
+
+/// One result row.
+struct PaletteRow: Identifiable {
+  enum Glyph {
+    case lucide(LucideIcon)
+    case image(NSImage)
+  }
+
+  let id: String
+  let glyph: Glyph?
+  let title: String
+  /// UTF-16 offsets in `title` to emphasize (fuzzy match positions).
+  var highlights: [Int] = []
+  var subtitle: String? = nil
+  var trailing: String? = nil
+  let run: () -> Void
+}
+
+/// State and providers for the command palette / quick open.
+///
+/// The query's prefix picks the mode, so one field covers everything:
+///   (none) files · `>` commands · `:` go to line · `%` text in files ·
+///   `b:` branches · `t:` tabs · `?` help.
+@Observable
+final class PaletteModel {
+  enum Mode: Equatable {
+    case files, commands, goToLine, text, branches, tabs, help
+
+    var placeholder: String {
+      switch self {
+      case .files: return "Go to file…  (type > for commands, ? for help)"
+      case .commands: return "Run a command…"
+      case .goToLine: return "Go to line, e.g. 42 or 42:7"
+      case .text: return "Search text in project…"
+      case .branches: return "Switch to branch…"
+      case .tabs: return "Switch to tab…"
+      case .help: return "Palette modes"
+      }
+    }
+
+    var icon: LucideIcon {
+      switch self {
+      case .files: return .file
+      case .commands: return .command
+      case .goToLine: return .cornerDownLeft
+      case .text: return .search
+      case .branches: return .gitBranch
+      case .tabs: return .layers
+      case .help: return .info
+      }
+    }
+  }
+
+  var query: String = "" {
+    didSet { refresh() }
+  }
+  private(set) var rows: [PaletteRow] = []
+  var selectedIndex: Int = 0
+  private(set) var isBusy = false
+  private(set) var mode: Mode = .files
+  /// Text shown when there are no rows.
+  private(set) var emptyMessage: String = ""
+
+  @ObservationIgnored weak var host: PaletteHost?
+  @ObservationIgnored var commands: [AppCommand] = []
+  @ObservationIgnored var shortcutOverrides: [String: String] = [:]
+  @ObservationIgnored var iconCache: IconCache?
+  @ObservationIgnored var onDismiss: (() -> Void)?
+
+  @ObservationIgnored private var fileIndex: [String] = []
+  @ObservationIgnored private var fileIndexRoot: String = ""
+  @ObservationIgnored private var fileIndexDate: Date = .distantPast
+  @ObservationIgnored private var branches: [String]?
+  @ObservationIgnored private var generation = 0
+  @ObservationIgnored private var textSearchWork: DispatchWorkItem?
+
+  private static let recentsKey = "paletteRecentCommands"
+  private static let worker = DispatchQueue(label: "impulse.palette", qos: .userInitiated)
+
+  /// Prepare for showing: reload the file index if the root changed or it's
+  /// stale, forget cached branches, and set the initial query.
+  func prepare(prefix: String) {
+    branches = nil
+    let root = host?.paletteRoot ?? ""
+    if root != fileIndexRoot || Date().timeIntervalSince(fileIndexDate) > 20 {
+      fileIndexRoot = root
+      fileIndex = []
+      loadFileIndex(root: root)
+    }
+    if query == prefix {
+      refresh()
+    } else {
+      query = prefix
+    }
+  }
+
+  // MARK: - Selection
+
+  func moveSelection(_ delta: Int) {
+    guard !rows.isEmpty else { return }
+    selectedIndex = (selectedIndex + delta + rows.count) % rows.count
+  }
+
+  func runSelected() {
+    guard rows.indices.contains(selectedIndex) else {
+      if mode == .goToLine { runGoToLine() }
+      return
+    }
+    run(rows[selectedIndex])
+  }
+
+  func run(_ row: PaletteRow) {
+    onDismiss?()
+    // Let the panel close and focus return to the window before acting.
+    DispatchQueue.main.async { row.run() }
+  }
+
+  // MARK: - Modes
+
+  private func parse() -> (Mode, String) {
+    if query.hasPrefix(">") { return (.commands, String(query.dropFirst())) }
+    if query.hasPrefix(":") { return (.goToLine, String(query.dropFirst())) }
+    if query.hasPrefix("%") { return (.text, String(query.dropFirst())) }
+    if query.hasPrefix("b:") { return (.branches, String(query.dropFirst(2))) }
+    if query.hasPrefix("t:") { return (.tabs, String(query.dropFirst(2))) }
+    if query.hasPrefix("?") { return (.help, "") }
+    return (.files, query)
+  }
+
+  private func refresh() {
+    generation += 1
+    textSearchWork?.cancel()
+    let (newMode, term) = parse()
+    mode = newMode
+    selectedIndex = 0
+    let trimmed = term.trimmingCharacters(in: .whitespaces)
+    switch newMode {
+    case .files: refreshFiles(trimmed)
+    case .commands: refreshCommands(trimmed)
+    case .goToLine: refreshGoToLine(trimmed)
+    case .text: refreshText(trimmed)
+    case .branches: refreshBranches(trimmed)
+    case .tabs: refreshTabs(trimmed)
+    case .help: refreshHelp()
+    }
+  }
+
+  // MARK: Files
+
+  private func loadFileIndex(root: String) {
+    guard !root.isEmpty else { return }
+    isBusy = true
+    Self.worker.async { [weak self] in
+      let files = FileIndex.files(root: root)
+      DispatchQueue.main.async {
+        guard let self, self.fileIndexRoot == root else { return }
+        self.fileIndex = files
+        self.fileIndexDate = Date()
+        self.isBusy = false
+        if self.mode == .files { self.refresh() }
+      }
+    }
+  }
+
+  private func refreshFiles(_ term: String) {
+    let root = fileIndexRoot
+    if term.isEmpty {
+      // Open files first, most useful when no query has been typed.
+      let open = host?.paletteOpenFiles ?? []
+      rows = open.prefix(12).map { path in fileRow(absolute: path, root: root, positions: []) }
+      emptyMessage = isBusy ? "Indexing files…" : "Type to search files in \(displayRoot(root))"
+      return
+    }
+    let index = fileIndex
+    let generation = self.generation
+    Self.worker.async { [weak self] in
+      let ranked = FuzzyMatcher.rank(index, query: term, limit: 60, isPath: true) { $0 }
+      DispatchQueue.main.async {
+        guard let self, self.generation == generation else { return }
+        self.rows = ranked.map { entry in
+          self.fileRow(
+            absolute: (root as NSString).appendingPathComponent(entry.item), root: root,
+            positions: entry.match.positions)
+        }
+        self.emptyMessage = self.isBusy ? "Indexing files…" : "No matching files"
+      }
+    }
+  }
+
+  private func fileRow(absolute path: String, root: String, positions: [Int]) -> PaletteRow {
+    let relative =
+      path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : path
+    let name = (relative as NSString).lastPathComponent
+    let dir = (relative as NSString).deletingLastPathComponent
+    // Map match positions in the relative path onto the file name.
+    let nameStart = relative.utf16.count - name.utf16.count
+    let highlights = positions.compactMap { $0 >= nameStart ? $0 - nameStart : nil }
+    let icon = iconCache?.icon(filename: name, isDirectory: false, expanded: false)
+    return PaletteRow(
+      id: "file:" + path, glyph: icon.map { .image($0) } ?? .lucide(.file), title: name,
+      highlights: highlights, subtitle: dir.isEmpty ? nil : dir
+    ) { [weak self] in
+      self?.host?.paletteOpenFile(path, line: nil, column: nil)
+    }
+  }
+
+  private func displayRoot(_ root: String) -> String {
+    root.isEmpty ? "the project" : TabManager.abbreviateHomePath(root)
+  }
+
+  // MARK: Commands
+
+  private func refreshCommands(_ term: String) {
+    let recents = Self.recents()
+    let ranked: [(item: AppCommand, match: FuzzyMatcher.Match)]
+    if term.isEmpty {
+      let byRecent = commands.sorted { a, b in
+        let ra = recents.firstIndex(of: a.id) ?? Int.max
+        let rb = recents.firstIndex(of: b.id) ?? Int.max
+        return ra != rb ? ra < rb : a.title < b.title
+      }
+      ranked = byRecent.map { ($0, FuzzyMatcher.Match(score: 0, positions: [])) }
+    } else {
+      // Match titles; fall back to "category title keywords" so e.g. "git"
+      // finds Review Changes. Recent commands get a small boost.
+      var scored: [(item: AppCommand, match: FuzzyMatcher.Match, score: Int)] = []
+      for command in commands {
+        let recentBoost = recents.firstIndex(of: command.id).map { max(0, 20 - $0 * 2) } ?? 0
+        if let m = FuzzyMatcher.match(term, in: command.title) {
+          scored.append((command, m, m.score + recentBoost + 10))
+        } else if let m = FuzzyMatcher.match(
+          term, in: ([command.category] + command.keywords).joined(separator: " "))
+        {
+          scored.append((command, FuzzyMatcher.Match(score: m.score, positions: []), m.score / 2))
+        }
+      }
+      scored.sort { $0.score > $1.score }
+      ranked = scored.map { ($0.item, $0.match) }
+    }
+    rows = ranked.map { entry in
+      let command = entry.item
+      let shortcut =
+        command.keybindingId.flatMap {
+          Keybindings.symbolDisplay(forId: $0, overrides: shortcutOverrides)
+        } ?? command.shortcut
+      return PaletteRow(
+        id: "cmd:" + command.id, glyph: command.icon.map { .lucide($0) }, title: command.title,
+        highlights: entry.match.positions, subtitle: command.category, trailing: shortcut
+      ) {
+        Self.recordRecent(command.id)
+        command.action()
+      }
+    }
+    emptyMessage = "No matching commands"
+  }
+
+  private static func recents() -> [String] {
+    UserDefaults.standard.stringArray(forKey: recentsKey) ?? []
+  }
+
+  private static func recordRecent(_ id: String) {
+    var list = recents().filter { $0 != id }
+    list.insert(id, at: 0)
+    UserDefaults.standard.set(Array(list.prefix(20)), forKey: recentsKey)
+  }
+
+  // MARK: Go to line
+
+  private func parseLine(_ term: String) -> (UInt32, UInt32?)? {
+    let parts = term.split(separator: ":", omittingEmptySubsequences: false)
+    guard let first = parts.first, let line = UInt32(first), line > 0 else { return nil }
+    let column = parts.count > 1 ? UInt32(parts[1]) : nil
+    return (line, column)
+  }
+
+  private func refreshGoToLine(_ term: String) {
+    guard host?.paletteHasEditor == true else {
+      rows = []
+      emptyMessage = "Open a file in the editor to go to a line"
+      return
+    }
+    if let (line, column) = parseLine(term) {
+      let label = column.map { "Go to line \(line), column \($0)" } ?? "Go to line \(line)"
+      rows = [
+        PaletteRow(id: "line", glyph: .lucide(.cornerDownLeft), title: label) { [weak self] in
+          self?.host?.paletteGoToLine(line, column: column)
+        }
+      ]
+    } else {
+      rows = []
+      emptyMessage = "Type a line number, optionally :column"
+    }
+  }
+
+  private func runGoToLine() {
+    let (_, term) = parse()
+    guard let (line, column) = parseLine(term) else { return }
+    onDismiss?()
+    DispatchQueue.main.async { [weak self] in self?.host?.paletteGoToLine(line, column: column) }
+  }
+
+  // MARK: Text search
+
+  private func refreshText(_ term: String) {
+    rows = []
+    guard term.count >= 2 else {
+      emptyMessage = "Type at least 2 characters"
+      isBusy = false
+      return
+    }
+    let root = fileIndexRoot
+    guard !root.isEmpty else {
+      emptyMessage = "No project folder"
+      return
+    }
+    isBusy = true
+    emptyMessage = "Searching…"
+    let generation = self.generation
+    let work = DispatchWorkItem { [weak self] in
+      let results = FileSearch.searchContents(
+        root: root, query: term, limit: 200, caseSensitive: term.contains { $0.isUppercase })
+      DispatchQueue.main.async {
+        guard let self, self.generation == generation else { return }
+        self.isBusy = false
+        self.rows = results.map { result in
+          let relative =
+            result.path.hasPrefix(root + "/")
+            ? String(result.path.dropFirst(root.count + 1)) : result.path
+          let line = result.lineNumber
+          let column = result.columnStart
+          let snippet = (result.lineContent ?? "").trimmingCharacters(in: .whitespaces)
+          return PaletteRow(
+            id: "text:\(result.path):\(line ?? 0):\(column ?? 0)", glyph: .lucide(.fileCode),
+            title: snippet.isEmpty ? (relative as NSString).lastPathComponent : snippet,
+            subtitle: "\(relative):\(line ?? 0)"
+          ) { [weak self] in
+            self?.host?.paletteOpenFile(
+              result.path, line: line, column: column.map { $0 + 1 })
+          }
+        }
+        self.emptyMessage = "No matches for “\(term)”"
+      }
+    }
+    textSearchWork = work
+    Self.worker.asyncAfter(deadline: .now() + 0.15, execute: work)
+  }
+
+  // MARK: Branches
+
+  private func refreshBranches(_ term: String) {
+    let current = host?.paletteCurrentBranch
+    func build(_ names: [String]) {
+      let ranked = FuzzyMatcher.rank(names, query: term) { $0 }
+      rows = ranked.map { entry in
+        let name = entry.item
+        return PaletteRow(
+          id: "branch:" + name, glyph: .lucide(.gitBranch), title: name,
+          highlights: entry.match.positions, trailing: name == current ? "current" : nil
+        ) { [weak self] in
+          guard name != current else { return }
+          self?.host?.paletteSwitchBranch(name)
+        }
+      }
+      emptyMessage = names.isEmpty ? "Not a git repository" : "No matching branches"
+    }
+    if let branches {
+      build(branches)
+      return
+    }
+    let root = fileIndexRoot
+    isBusy = true
+    Self.worker.async { [weak self] in
+      let names = GitClient.branches(forPath: root)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.isBusy = false
+        // Current branch first.
+        self.branches = names.filter { $0 == current } + names.filter { $0 != current }
+        if self.mode == .branches { self.refresh() }
+      }
+    }
+    rows = []
+    emptyMessage = "Loading branches…"
+  }
+
+  // MARK: Tabs
+
+  private func refreshTabs(_ term: String) {
+    let tabs = host?.paletteTabs ?? []
+    let ranked = FuzzyMatcher.rank(tabs, query: term) { $0.title }
+    rows = ranked.map { entry in
+      let tab = entry.item
+      return PaletteRow(
+        id: "tab:\(tab.id)",
+        glyph: tab.isTerminal ? .lucide(.terminal) : tab.icon.map { .image($0) },
+        title: tab.title, highlights: entry.match.positions,
+        subtitle: tab.directory, trailing: tab.index < 9 ? "⌘\(tab.index + 1)" : nil
+      ) { [weak self] in
+        self?.host?.paletteSelectTab(tab.index)
+      }
+    }
+    emptyMessage = "No matching tabs"
+  }
+
+  // MARK: Help
+
+  private func refreshHelp() {
+    let modes: [(String, String, LucideIcon)] = [
+      ("", "Go to file", .file),
+      (">", "Run a command", .command),
+      (":", "Go to line in the current file", .cornerDownLeft),
+      ("%", "Search text in the project", .search),
+      ("b:", "Switch branch", .gitBranch),
+      ("t:", "Switch tab", .layers),
+    ]
+    rows = modes.map { prefix, title, icon in
+      PaletteRow(
+        id: "help:" + prefix, glyph: .lucide(icon), title: title,
+        trailing: prefix.isEmpty ? "type a name" : prefix
+      ) { [weak self] in
+        DispatchQueue.main.async { self?.query = prefix }
+      }
+    }
+  }
+
+  /// Help rows change the query instead of dismissing.
+  func activate(_ row: PaletteRow) {
+    if row.id.hasPrefix("help:") {
+      query = String(row.id.dropFirst("help:".count))
+    } else {
+      run(row)
+    }
+  }
+}

@@ -234,6 +234,13 @@ enum MenuBuilder {
         applyKeybinding("toggle_sidebar", overrides: overrides, to: sidebarItem)
         menu.addItem(sidebarItem)
 
+        let rightDockItem = NSMenuItem(title: "Toggle Right Panel",
+                                       action: #selector(MenuActions.menuToggleRightDock(_:)),
+                                       keyEquivalent: "b")
+        rightDockItem.target = MenuActions.shared
+        applyKeybinding("toggle_right_dock", overrides: overrides, to: rightDockItem)
+        menu.addItem(rightDockItem)
+
         menu.addItem(.separator())
 
         let commandPaletteItem = NSMenuItem(title: "Command Palette",
@@ -242,6 +249,13 @@ enum MenuBuilder {
         commandPaletteItem.target = MenuActions.shared
         applyKeybinding("command_palette", overrides: overrides, to: commandPaletteItem)
         menu.addItem(commandPaletteItem)
+
+        let quickOpenItem = NSMenuItem(title: "Go to File…",
+                                       action: #selector(MenuActions.menuQuickOpen(_:)),
+                                       keyEquivalent: "p")
+        quickOpenItem.target = MenuActions.shared
+        applyKeybinding("quick_open", overrides: overrides, to: quickOpenItem)
+        menu.addItem(quickOpenItem)
 
         let findInProjectItem = NSMenuItem(title: "Find in Project",
                                            action: #selector(MenuActions.menuFindInProject(_:)),
@@ -434,6 +448,14 @@ final class MenuActions: NSObject {
 
     @objc func menuShowCommandPalette(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseShowCommandPalette, object: nil)
+    }
+
+    @objc func menuQuickOpen(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseQuickOpen, object: nil)
+    }
+
+    @objc func menuToggleRightDock(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseToggleRightDock, object: nil)
     }
 
     @objc func menuFindInProject(_ sender: Any?) {

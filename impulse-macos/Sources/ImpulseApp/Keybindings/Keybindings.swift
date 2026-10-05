@@ -127,9 +127,25 @@ enum Keybindings {
             id: "toggle_sidebar",
             description: "Toggle Sidebar",
             category: "Navigation",
-            defaultShortcut: "Cmd+Shift+B",
-            keyEquivalent: "B",
-            modifierFlags: [.command, .shift]
+            defaultShortcut: "Cmd+B",
+            keyEquivalent: "b",
+            modifierFlags: [.command]
+        ),
+        BuiltinKeybinding(
+            id: "toggle_right_dock",
+            description: "Toggle Right Panel",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Alt+B",
+            keyEquivalent: "b",
+            modifierFlags: [.command, .option]
+        ),
+        BuiltinKeybinding(
+            id: "quick_open",
+            description: "Go to File",
+            category: "Navigation",
+            defaultShortcut: "Cmd+P",
+            keyEquivalent: "p",
+            modifierFlags: [.command]
         ),
         BuiltinKeybinding(
             id: "project_search",
@@ -309,6 +325,19 @@ enum Keybindings {
         }
         guard let binding = builtins.first(where: { $0.id == id }) else { return nil }
         return binding.defaultShortcut
+    }
+
+    /// The shortcut for a binding id in macOS symbol notation ("⌘⇧P"), or nil.
+    static func symbolDisplay(forId id: String, overrides: [String: String] = [:]) -> String? {
+        guard let shortcut = shortcutDisplay(forId: id, overrides: overrides) else { return nil }
+        return symbolDisplay(shortcut: shortcut)
+    }
+
+    /// "Cmd+Shift+P" → "⌘⇧P".
+    static func symbolDisplay(shortcut: String) -> String? {
+        let parsed = parseShortcut(shortcut)
+        guard !parsed.keyEquivalent.isEmpty else { return nil }
+        return modifierSymbols(parsed.modifierFlags) + keyDisplay(parsed.keyEquivalent).uppercased()
     }
 
     /// Converts modifier flags to a display string using standard names.
