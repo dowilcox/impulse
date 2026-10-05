@@ -425,6 +425,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     }
     windowModel.onShowProblems = { [weak self] in self?.showProblems() }
+    windowModel.onRefreshOutline = { [weak self] in self?.refreshOutline(force: true) }
+    windowModel.onOutlineSelect = { [weak self] symbol in
+      self?.paletteGoToLine(UInt32(symbol.line), column: UInt32(symbol.column))
+    }
     windowModel.onReplaceAll = { [weak self] in self?.replaceAllInProject() }
     windowModel.onOpenSettingsFile = { [weak self] in
       self?.openSettingsFile()
@@ -554,7 +558,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       banner: WorkbenchHosting.make(WorkbenchBanner(model: windowModel), intrinsicHeight: true),
       statusBar: WorkbenchHosting.make(WorkbenchStatusBar(model: windowModel)),
       leftDockContent: WorkbenchHosting.make(LeftDockView(model: windowModel)),
-      rightDockContent: nil,
+      rightDockContent: WorkbenchHosting.make(OutlineView(model: windowModel)),
       bottomDockContent: nil
     )
     self.workbench = workbench
@@ -879,6 +883,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   func toggleRightDock() {
     windowModel.rightDockVisible.toggle()
+    if windowModel.rightDockVisible { refreshOutline(force: true) }
+  }
+
+  /// Fetch the focused editor's symbols for the outline (when it shows).
+  /// Skips the request when the file hasn't changed unless forced.
+  func refreshOutline(force: Bool = false) {
+    guard windowModel.rightDockVisible else { return }
+    guard let editor = tabManager.selectedEditor, let path = editor.filePath else {
+      windowModel.outlineFile = nil
+      windowModel.outlineSymbols = []
+      windowModel.outlineState = .noEditor
+      return
+    }
+    guard force || path != windowModel.outlineFile || windowModel.outlineState != .ready else { return }
+    if path != windowModel.outlineFile {
+      windowModel.outlineSymbols = []
+      windowModel.outlineState = .loading
+    }
+    windowModel.outlineFile = path
+    documentSymbols(for: editor) { [weak self] symbols in
+      guard let self, self.windowModel.outlineFile == path else { return }
+      self.windowModel.outlineSymbols = symbols ?? []
+      self.windowModel.outlineState = symbols == nil ? .noServer : .ready
+    }
   }
 
   // MARK: - Debug Snapshot Actions
@@ -927,6 +955,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         windowModel.searchReplacement = String(action[action.index(after: colon)...])
         windowModel.searchReplaceVisible = true
         windowModel.runSearchNow()
+      } else if action == "outline" {
+        toggleRightDock()
       } else if action == "problems" {
         windowModel.problemsByPath = [
           (fileTreeRootPath as NSString).appendingPathComponent("search.swift"): [
@@ -1384,6 +1414,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Updates the status bar with information from the currently active tab.
   func updateStatusBar() {
+    refreshOutline()
     guard let tabInfo = tabManager.activeTabInfo else { return }
 
     if let shellName = tabInfo.shellName {
@@ -2720,6 +2751,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private func postSaveActions(editor: EditorTab, path: String) {
     tabManager.refreshSegmentLabels()
     lspDidSave(editor: editor)
+    if editor === tabManager.selectedEditor { refreshOutline(force: true) }
     applyGitDiffDecorations(editor: editor)
     // Direct git status refresh (skip the debounce — saves are explicit
     // user actions that warrant immediate feedback).
