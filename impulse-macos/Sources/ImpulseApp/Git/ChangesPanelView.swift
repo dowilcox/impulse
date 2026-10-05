@@ -37,6 +37,7 @@ private struct ChangesPanelContent: View {
   @State private var stashesExpanded = false
   @State private var stashes: [GitOperations.StashEntry] = []
   @State private var selection: String? = nil
+  @FocusState private var listFocused: Bool
 
   var body: some View {
     let snapshot = repository.snapshot
@@ -50,13 +51,24 @@ private struct ChangesPanelContent: View {
         activityBar(activity)
       }
       Hairline()
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          if let snapshot {
-            sections(snapshot)
+      ScrollViewReader { proxy in
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 0) {
+            if let snapshot {
+              sections(snapshot)
+            }
           }
+          .padding(.bottom, 8)
         }
-        .padding(.bottom, 8)
+        .focusable()
+        .focused($listFocused)
+        .focusEffectDisabled()
+        .onKeyPress(phases: .down) { press in
+          guard let snapshot else { return .ignored }
+          return handleKey(press, snapshot: snapshot, proxy: proxy)
+        }
+        .onChange(of: model.changesFocusToken) { _, _ in focusList(snapshot) }
+        .onAppear { if model.changesFocusToken > 0 { focusList(snapshot) } }
       }
       .overlay {
         if let snapshot, !snapshot.hasChanges, snapshot.operation == nil {
@@ -247,12 +259,92 @@ private struct ChangesPanelContent: View {
 
   enum Section { case conflicted, staged, unstaged, untracked }
 
+  /// Keyboard focus to the list, with the first row selected if none is.
+  private func focusList(_ snapshot: RepoSnapshot?) {
+    DispatchQueue.main.async {
+      listFocused = true
+      let rows = (snapshot ?? repository.snapshot).map(visibleRows) ?? []
+      if selection == nil || !rows.contains(where: { $0.id == selection }), let first = rows.first {
+        selection = first.id
+      }
+    }
+  }
+
+  /// Rows in the order shown (collapsed sections left out).
+  private func visibleRows(_ snapshot: RepoSnapshot) -> [(id: String, change: FileChange, section: Section)] {
+    var rows: [(id: String, change: FileChange, section: Section)] = []
+    func add(_ changes: [FileChange], _ section: Section, _ expanded: Bool) {
+      guard expanded else { return }
+      rows += changes.map { ("\(section)-\($0.path)", $0, section) }
+    }
+    add(snapshot.conflicted, .conflicted, conflictsExpanded)
+    add(snapshot.staged, .staged, stagedExpanded)
+    add(snapshot.unstaged, .unstaged, changesExpanded)
+    add(snapshot.untracked, .untracked, untrackedExpanded)
+    return rows
+  }
+
+  /// ↑/↓ move, space stages or unstages (marks a conflict resolved), ⏎ opens
+  /// the diff, ⌘⏎ the file, ⌫ discards, Esc goes back to the work.
+  private func handleKey(_ press: KeyPress, snapshot: RepoSnapshot, proxy: ScrollViewProxy) -> KeyPress.Result {
+    let rows = visibleRows(snapshot)
+    guard !rows.isEmpty else { return .ignored }
+    let index = rows.firstIndex { $0.id == selection }
+    func select(_ i: Int) {
+      let row = rows[max(0, min(rows.count - 1, i))]
+      selection = row.id
+      proxy.scrollTo(row.id)
+    }
+    switch press.key {
+    case .upArrow:
+      select((index ?? rows.count) - 1)
+    case .downArrow:
+      select((index ?? -1) + 1)
+    case .space:
+      guard let index else { return .ignored }
+      let row = rows[index]
+      switch row.section {
+      case .staged:
+        actions.unstage([row.change])
+        selection = "\(Section.unstaged)-\(row.change.path)"
+      case .unstaged, .untracked:
+        actions.stage([row.change])
+        selection = "\(Section.staged)-\(row.change.path)"
+      case .conflicted:
+        actions.markResolved([row.change])
+      }
+    case .return:
+      guard let index else { return .ignored }
+      let row = rows[index]
+      if press.modifiers.contains(.command) {
+        model.gitHost?.gitOpenFile((repository.root as NSString).appendingPathComponent(row.change.path))
+      } else {
+        let scope: DiffScope =
+          row.section == .staged ? .staged : row.section == .conflicted ? .uncommitted : .unstaged
+        model.gitHost?.gitOpenReview(scope: scope, focusPath: row.change.path)
+      }
+    case .delete, .deleteForward:
+      guard let index, rows[index].section != .conflicted else { return .ignored }
+      let row = rows[index]
+      actions.discard([row.change], includeStaged: row.section == .staged)
+    case .escape:
+      listFocused = false
+      model.onFocusTerminal?()
+    default:
+      return .ignored
+    }
+    return .handled
+  }
+
   private func row(_ change: FileChange, section: Section) -> some View {
     let id = "\(section)-\(change.path)"
     return ChangeRow(
       change: change, section: section, isSelected: selection == id,
       root: repository.root, iconCache: model.iconCache, actions: actions,
-      select: { selection = id },
+      select: {
+        selection = id
+        listFocused = true
+      },
       openDiff: {
         let scope: DiffScope =
           section == .staged ? .staged : section == .conflicted ? .uncommitted : .unstaged
@@ -260,7 +352,9 @@ private struct ChangesPanelContent: View {
       },
       openFile: {
         model.gitHost?.gitOpenFile((repository.root as NSString).appendingPathComponent(change.path))
-      })
+      }
+    )
+    .id(id)
   }
 }
 

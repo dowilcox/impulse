@@ -4130,5 +4130,6 @@ extension MainWindowController: GitPanelHost {
     windowModel.resetSearch()
     windowModel.sidebarPanel = .changes
     windowModel.sidebarVisible = true
+    windowModel.changesFocusToken += 1
   }
 }

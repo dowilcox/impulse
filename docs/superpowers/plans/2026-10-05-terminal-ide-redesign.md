@@ -381,7 +381,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - operation banner;
   - sections Conflicts / Staged / Changes / Untracked / Stashes / Worktrees / Recent commits;
   - list or tree toggle; multi-select; hover actions.
-- [ ] **Panel-focus keys:** `space`, `⏎`, `⌫`, `⌘⌫`, `⌘↩`, `⌘⇧↩`, `⇧Esc`. All are registered as commands with a `gitPanelFocus` context.
+- [x] **Panel-focus keys:** `space`, `⏎`, `⌫`, `⌘⌫`, `⌘↩`, `⌘⇧↩`, `⇧Esc`. All are registered as commands with a `gitPanelFocus` context. *(Done in the panel itself: ↑/↓ move, space stages/unstages (or marks a conflict resolved), ⏎ opens the diff, ⌘⏎ opens the file, ⌫ discards, Esc returns to the terminal; Show Changes focuses the list. ⌘↩/⌘⇧↩ stay with the commit composer.)*
 - [x] **Commit composer:**
   - subject/body with 50/72 guides; `commit.template`;
   - message history (↑ in an empty field);

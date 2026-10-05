@@ -344,6 +344,8 @@ final class WindowModel {
   }
   private(set) var problemCounts = ProblemCounts()
   var onShowProblems: (() -> Void)?
+  /// Bumped to put keyboard focus in the Changes panel's list.
+  var changesFocusToken = 0
   /// Bumped to open the input's completion menu (as Tab does).
   var completionRequestToken = 0
   /// ⌘↑ in the input: select the latest command block (false: none).
