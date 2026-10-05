@@ -73,7 +73,13 @@ public final class LSPRegistry {
   public func request(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> String {
     let params = paramsJSON.flatMap { JSONUtil.parse($0) }
     let clients = getClients(languageId: languageId, fileUri: fileUri)
-    guard let client = clients.first else {
+    // The first server that can answer: several can serve one language
+    // (typescript + eslint + tailwind), and only some support each request.
+    guard
+      let client = clients.first(where: {
+        ServerProcess.supports(method: method, capabilities: $0.serverCapabilities)
+      }) ?? clients.first
+    else {
       return "{\"error\":\"no LSP client available\"}"
     }
     switch client.request(method: method, params: params) {

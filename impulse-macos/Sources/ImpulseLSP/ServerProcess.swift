@@ -691,6 +691,35 @@ final class ServerProcess {
   }
 
   /// Port of `text_document_sync_kind`.
+  /// Whether `capabilities` advertise support for request `method`. Unknown
+  /// methods count as supported (the server gets to answer).
+  static func supports(method: String, capabilities: [String: Any]?) -> Bool {
+    let keys: [String: String] = [
+      "textDocument/completion": "completionProvider",
+      "textDocument/hover": "hoverProvider",
+      "textDocument/definition": "definitionProvider",
+      "textDocument/typeDefinition": "typeDefinitionProvider",
+      "textDocument/implementation": "implementationProvider",
+      "textDocument/references": "referencesProvider",
+      "textDocument/documentSymbol": "documentSymbolProvider",
+      "textDocument/formatting": "documentFormattingProvider",
+      "textDocument/rangeFormatting": "documentRangeFormattingProvider",
+      "textDocument/signatureHelp": "signatureHelpProvider",
+      "textDocument/codeAction": "codeActionProvider",
+      "textDocument/rename": "renameProvider",
+      "textDocument/prepareRename": "renameProvider",
+      "workspace/symbol": "workspaceSymbolProvider",
+    ]
+    guard let key = keys[method] else { return true }
+    guard let value = capabilities?[key] else { return false }
+    // prepareRename needs RenameOptions with prepareProvider, not just `true`.
+    if method == "textDocument/prepareRename" {
+      return (value as? [String: Any])?["prepareProvider"] as? Bool ?? false
+    }
+    if let flag = value as? Bool { return flag }
+    return !(value is NSNull)
+  }
+
   static func textDocumentSyncKind(_ capabilities: [String: Any]) -> Int? {
     guard let sync = capabilities["textDocumentSync"] else { return nil }
     if let kind = JSONUtil.asInt64(sync) {

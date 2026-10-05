@@ -536,11 +536,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Returns the LSP language ID for a file path, which may differ from the Monaco language.
     /// For example, `.tsx` files use "typescript" in Monaco but "typescriptreact" for LSP.
     private static func lspLanguageForPath(_ path: String, monacoLanguage: String) -> String {
+        // LSP language ids where they differ from Monaco's.
         let ext = (path as NSString).pathExtension.lowercased()
         switch ext {
         case "tsx": return "typescriptreact"
         case "jsx": return "javascriptreact"
-        default: return monacoLanguage
+        case "vue": return "vue"
+        case "svelte": return "svelte"
+        case "jsonc": return "jsonc"
+        default: return monacoLanguage == "shell" ? "shellscript" : monacoLanguage
         }
     }
 
