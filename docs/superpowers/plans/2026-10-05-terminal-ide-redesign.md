@@ -543,7 +543,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - uninstall.
   - Record agent session ids for **Resume** on restore.
 - [x] **Opt-in `$VISUAL` / `$EDITOR`** = `impulse edit --wait` inside Impulse terminals. The tab closes, then the CLI returns.
-- [ ] **Composer overlay (⌘I):** (done: editor above the TUI, @file mentions, bracketed-paste send; left: image paste, history, auto-show)
+- [x] **Composer overlay (⌘I):** (image paste saves a PNG and inserts its path)
   - `CommandEditorView` above the TUI;
   - @file mentions from the workspace index; image paste; history;
   - send via bracketed paste (Enter optional);
