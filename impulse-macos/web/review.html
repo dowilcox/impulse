@@ -95,7 +95,7 @@
         margin: 0 10px 8px;
         border: 1px solid var(--review-border);
         border-radius: 8px;
-        overflow: hidden;
+        overflow: clip; /* not hidden: hidden makes a scroll container, which breaks the sticky header */
         background: var(--review-bg);
       }
       .review-section-header {
