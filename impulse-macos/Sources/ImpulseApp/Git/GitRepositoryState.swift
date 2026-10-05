@@ -18,6 +18,9 @@ final class GitRepositoryState {
   private(set) var activityDetail: String?
   /// Incremented on every snapshot change (cheap change token for observers).
   private(set) var revision = 0
+  /// The current branch's pull request, when the GitHub CLI knows one (see
+  /// PullRequestMonitor).
+  var pullRequest: PullRequestInfo?
 
   @ObservationIgnored private var watcher: RepoWatcher?
   @ObservationIgnored private var refreshQueued = false

@@ -61,6 +61,10 @@ enum CommandRegistry {
         keywords: ["git commit", "visual", "editor", "wait"], icon: .pencil
       ) { [weak controller] in controller?.toggleEditorIntegration() },
       AppCommand(
+        id: "pull_request", title: "Open or Create Pull Request", category: "Git",
+        keywords: ["github", "gh", "pr", "review"], icon: .gitPullRequest
+      ) { [weak controller] in controller?.openOrCreatePullRequest() },
+      AppCommand(
         id: "git_history", title: "Show Git History", category: "Git",
         keywords: ["log", "commits", "graph", "blame"], icon: .history
       ) { [weak controller] in controller?.showHistory() },

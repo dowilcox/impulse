@@ -3101,6 +3101,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.reviewChangedFileCount = snapshot?.changedFileCount ?? 0
     windowModel.reviewAddedLines = snapshot?.totalAdded ?? 0
     windowModel.reviewRemovedLines = snapshot?.totalRemoved ?? 0
+    if let repository = windowModel.repository {
+      PullRequestMonitor.shared.refresh(repository)
+    }
+  }
+
+  /// Open the branch's pull request, or start one in the browser.
+  func openOrCreatePullRequest() {
+    guard let repository = windowModel.repository else {
+      toasts.show(Toast(kind: .info, message: "Not in a git repository."))
+      return
+    }
+    if let pr = repository.pullRequest, let url = URL(string: pr.url) {
+      NSWorkspace.shared.open(url)
+      return
+    }
+    guard PullRequestMonitor.shared.isAvailable else {
+      toasts.show(Toast(kind: .info, message: "Install the GitHub CLI (gh) to work with pull requests."))
+      return
+    }
+    PullRequestMonitor.shared.createInBrowser(root: repository.root) { [weak self] ok in
+      if !ok {
+        self?.toasts.show(
+          Toast(kind: .warning, message: "gh couldn't start a pull request (is the branch pushed and gh signed in?)."))
+      }
+    }
   }
 
   /// Switch the active tab's repository to `branch` with `git switch`, off the
