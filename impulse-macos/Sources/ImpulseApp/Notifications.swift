@@ -148,6 +148,11 @@ extension Notification.Name {
     /// A terminal wants a desktop notification (object: the TerminalTab;
     /// userInfo "title", "body").
     static let terminalWantsNotification = Notification.Name("impulse.terminalWantsNotification")
+    /// A terminal's coding agent appeared, changed state or left (object:
+    /// the TerminalTab).
+    static let terminalAgentChanged = Notification.Name("impulse.terminalAgentChanged")
+    /// Go to the next agent waiting for the user.
+    static let impulseNextAgent = Notification.Name("impulseNextAgent")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.

@@ -1529,6 +1529,15 @@ final class TabManager: NSObject {
       default:
         break
       }
+      // The tab's most pressing agent.
+      let agentTerminal = tab.surfaces.compactMap { surface -> TerminalTab? in
+        if case .terminal(let container) = surface, let terminal = container.activeTerminal,
+          terminal.agent != nil
+        {
+          return terminal
+        }
+        return nil
+      }.max { ($0.agentState?.urgency ?? 0) < ($1.agentState?.urgency ?? 0) }
       var paneCount = 1
       var isZoomed = false
       if case .split(let split) = tab {
@@ -1551,8 +1560,23 @@ final class TabManager: NSObject {
         paneCount: paneCount,
         isZoomed: isZoomed,
         workspaceID: record.workspaceID,
-        workspaceName: names[record.workspaceID] ?? ""
+        workspaceName: names[record.workspaceID] ?? "",
+        agentName: agentTerminal?.agent?.displayName,
+        agentState: agentTerminal?.agentState
       )
+    }
+    ws.agents = records.flatMap { record -> [AgentSummary] in
+      record.entry.surfaces.compactMap { surface in
+        guard case .terminal(let container) = surface, let terminal = container.activeTerminal,
+          let agent = terminal.agent, let state = terminal.agentState
+        else { return nil }
+        return AgentSummary(
+          id: terminal.id, agentName: agent.displayName, tabTitle: terminal.tabTitle,
+          workspaceName: names[record.workspaceID] ?? "", state: state,
+          since: terminal.agentStateSince)
+      }
+    }.sorted {
+      $0.state.urgency != $1.state.urgency ? $0.state.urgency > $1.state.urgency : $0.since > $1.since
     }
     ws.allTabs = infos
     ws.refreshTabs(
@@ -1569,7 +1593,9 @@ final class TabManager: NSObject {
         tabs: tabs,
         attentionCount: tabs.filter(\.needsAttention).count,
         progress: tabs.compactMap(\.progress).first,
-        repository: workspace.repository
+        repository: workspace.repository,
+        agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
+        agentsWorking: tabs.filter { $0.agentState == .working }.count
       )
     }
 

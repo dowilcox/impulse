@@ -261,6 +261,14 @@ enum Keybindings {
             modifierFlags: [.command, .option]
         ),
         BuiltinKeybinding(
+            id: "next_agent",
+            description: "Next Agent Needing You",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Shift+U",
+            keyEquivalent: "U",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "switch_workspace",
             description: "Switch Workspace",
             category: "Navigation",

@@ -399,6 +399,10 @@ class TerminalRenderer: NSView {
     var resolvePath: ((String) -> String?)?
     /// Open a file in the editor at an optional 1-based line and column.
     var onOpenPath: ((String, Int?, Int?) -> Void)?
+    /// The program wrote to the terminal (once per poll with output).
+    var onOutput: (() -> Void)?
+    /// The user typed into the grid; true for Return.
+    var onUserKey: ((Bool) -> Void)?
     private var trackingArea: NSTrackingArea?
 
     /// Regex for auto-detecting plain URLs in terminal output.
@@ -598,6 +602,7 @@ class TerminalRenderer: NSView {
                 onEvent?(event)
             }
         }
+        if wakeup { onOutput?() }
         if wakeup && !isScrolledBack {
             // Auto-scroll to bottom on output when enabled and the user
             // hasn't manually scrolled back.
@@ -2305,6 +2310,8 @@ class TerminalRenderer: NSView {
             super.keyDown(with: event)
             return
         }
+
+        onUserKey?(event.keyCode == 36 || event.keyCode == 76)
 
         // Route through the input manager so dead keys and IME composition
         // work. interpretKeyEvents will call:

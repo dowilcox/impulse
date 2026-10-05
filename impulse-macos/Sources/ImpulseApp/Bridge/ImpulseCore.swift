@@ -547,6 +547,10 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    static func terminalForegroundPid(handle: OpaquePointer) -> Int32 {
+        impulse_terminal_foreground_pid(UnsafeMutableRawPointer(handle))
+    }
+
     static func terminalTranscript(handle: OpaquePointer, maxRows: Int) -> String? {
         guard
             let ptr = impulse_terminal_transcript(

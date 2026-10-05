@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import Observation
 
 // MARK: - Sidebar Mode
@@ -37,6 +38,35 @@ struct TabDisplayInfo: Identifiable {
   var isZoomed: Bool = false
   var workspaceID: UUID? = nil
   var workspaceName: String = ""
+  /// The most pressing coding agent among the tab's terminals.
+  var agentName: String? = nil
+  var agentState: AgentState? = nil
+}
+
+// MARK: - Agents
+
+/// A coding agent running in one of the window's terminals (inbox rows).
+struct AgentSummary: Identifiable {
+  /// The terminal's id.
+  let id: UUID
+  let agentName: String
+  let tabTitle: String
+  let workspaceName: String
+  let state: AgentState
+  let since: Date
+}
+
+extension AgentState {
+  /// Sort key: what needs the user most comes first.
+  var urgency: Int {
+    switch self {
+    case .needsInput: return 4
+    case .done: return 3
+    case .working: return 2
+    case .idle: return 1
+    case .exited: return 0
+    }
+  }
 }
 
 // MARK: - Workspace Info
@@ -54,6 +84,9 @@ struct WorkspaceInfo: Identifiable {
   let progress: TerminalProgress?
   /// The folder's repository (folder workspaces in a git repo).
   let repository: GitRepositoryState?
+  /// Agents waiting on the user, and agents working.
+  var agentsWaiting: Int = 0
+  var agentsWorking: Int = 0
 }
 
 // MARK: - Window Model
@@ -79,6 +112,8 @@ final class WindowModel {
   }
   /// The window's workspaces in sidebar order.
   var workspaces: [WorkspaceInfo] = []
+  /// Coding agents in this window, most urgent first.
+  var agents: [AgentSummary] = []
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
   var tabBarPosition: String = "sidebar"
 
@@ -285,6 +320,8 @@ final class WindowModel {
   /// Pick a folder to open as a workspace.
   var onOpenWorkspace: (() -> Void)?
   var onShowWorkspaceSwitcher: (() -> Void)?
+  /// Show a terminal by id (selects its workspace, tab and pane).
+  var onRevealTerminal: ((UUID) -> Void)?
 
   // MARK: Methods
 

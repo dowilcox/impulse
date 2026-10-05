@@ -113,7 +113,10 @@ struct TitlebarTabStrip: View {
 
   @ViewBuilder
   private func tabIcon(_ tab: TabDisplayInfo, selected: Bool) -> some View {
-    if let progress = tab.progress {
+    if let state = tab.agentState {
+      AgentStatusGlyph(state: state, size: 13)
+        .help(tab.agentName.map { "\($0) — \(state.label)" } ?? state.label)
+    } else if let progress = tab.progress {
       ProgressRing(
         progress: progress.fraction, color: progressColor(progress), size: 12, lineWidth: 1.6)
     } else if tab.isTerminal {

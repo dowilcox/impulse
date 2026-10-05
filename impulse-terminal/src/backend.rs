@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -569,6 +569,8 @@ pub struct TerminalBackend {
     force_full_damage: AtomicBool,
     /// Wakes the frontend when events arrive (see `set_wakeup_callback`).
     notifier: Arc<WakeNotifier>,
+    /// The PTY master, or -1 after the reader thread has closed it.
+    master_fd: Arc<AtomicI32>,
 }
 
 impl TerminalBackend {
@@ -619,9 +621,14 @@ impl TerminalBackend {
             cell_width,
             cell_height,
         };
-        let pty = spawn_pty(&pty_options, window_size)
+        let mut pty = spawn_pty(&pty_options, window_size)
             .map_err(|e| format!("Failed to create PTY: {e}"))?;
         let child_pid = pty.child().id();
+        let master_fd = {
+            use std::os::unix::io::AsRawFd;
+            Arc::new(AtomicI32::new(pty.reader().as_raw_fd()))
+        };
+        let master_fd_clone = Arc::clone(&master_fd);
         let history_context = CommandHistoryContext {
             session_id: Some(format!("terminal:{child_pid}")),
             shell: shell_name_from_path(&config.shell_path),
@@ -644,6 +651,7 @@ impl TerminalBackend {
             .name("impulse-pty-reader".into())
             .spawn(move || {
                 Self::read_loop(
+                    master_fd_clone,
                     pty,
                     term_clone,
                     event_tx,
@@ -679,6 +687,7 @@ impl TerminalBackend {
             password_input,
             force_full_damage: AtomicBool::new(true),
             notifier,
+            master_fd,
         })
     }
 
@@ -689,6 +698,7 @@ impl TerminalBackend {
     /// main thread (input, resize, shutdown).
     #[allow(clippy::too_many_arguments)]
     fn read_loop(
+        master_fd: Arc<AtomicI32>,
         mut pty: tty::Pty,
         term: Arc<FairMutex<Term<EventProxy>>>,
         event_tx: EventSink,
@@ -701,6 +711,16 @@ impl TerminalBackend {
         password_input: Arc<AtomicBool>,
         max_scrollback: usize,
     ) {
+        // Invalidate the shared master fd before `pty` (a parameter, dropped
+        // after every local) closes it, so it's never queried once reused.
+        struct ForgetFd(Arc<AtomicI32>);
+        impl Drop for ForgetFd {
+            fn drop(&mut self) {
+                self.0.store(-1, Ordering::Release);
+            }
+        }
+        let _forget_fd = ForgetFd(master_fd);
+
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
         let mut scanner = crate::osc_scanner::OscScanner::new();
@@ -1654,6 +1674,17 @@ impl TerminalBackend {
     /// Get the PID of the child shell process.
     pub fn child_pid(&self) -> u32 {
         self.child_pid
+    }
+
+    /// The process group in the foreground of the PTY (the shell itself, or
+    /// the program it's running), or None once the terminal has closed.
+    pub fn foreground_pid(&self) -> Option<i32> {
+        let fd = self.master_fd.load(Ordering::Acquire);
+        if fd < 0 {
+            return None;
+        }
+        let pgid = unsafe { libc::tcgetpgrp(fd) };
+        (pgid > 0).then_some(pgid)
     }
 
     /// Whether the foreground program is currently reading password-style

@@ -628,6 +628,22 @@ pub extern "C" fn impulse_terminal_child_pid(handle: *mut TerminalHandle) -> u32
     )
 }
 
+/// The foreground process group of the terminal's PTY (the shell, or the
+/// program it runs), or -1 when unknown or closed.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_foreground_pid(handle: *mut TerminalHandle) -> i32 {
+    ffi_catch(
+        -1,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return -1;
+            }
+            let h = unsafe { &*handle };
+            h.backend.foreground_pid().unwrap_or(-1)
+        }),
+    )
+}
+
 /// Return the OSC 8 hyperlink URI at the given grid cell, or NULL if none.
 /// Caller must free the returned string with `impulse_free_string`.
 #[no_mangle]

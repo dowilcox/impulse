@@ -22,6 +22,17 @@ class TerminalTab: NSView {
 
   /// Stable identity (desktop notifications point back at it).
   let id = UUID()
+
+  /// The coding agent running in this terminal, if any, and what it's doing
+  /// (maintained by TerminalTab+Agent).
+  var agent: AgentKind?
+  var agentMachine = AgentStateMachine()
+  var agentTickTimer: Timer?
+  var agentTickDeadline: Date?
+  var agentProbeTimer: Timer?
+  var agentState: AgentState? { agent == nil ? nil : agentMachine.state }
+  /// When the agent entered its current state.
+  var agentStateSince: Date { agentMachine.since }
   /// The command running now, or that ran last (from shell integration).
   private(set) var currentCommand: String?
 
@@ -49,7 +60,7 @@ class TerminalTab: NSView {
 
   // MARK: Private Properties
 
-  private var backend: TerminalBackend?
+  private(set) var backend: TerminalBackend?
 
   /// Whether copy-on-select is currently active.
   private var copyOnSelectEnabled: Bool = false
@@ -101,6 +112,8 @@ class TerminalTab: NSView {
   }
 
   deinit {
+    agentTickTimer?.invalidate()
+    agentProbeTimer?.invalidate()
     cancelAttentionRequest()
     cwdPollTimer?.invalidate()
     for path in shellIntegrationTempPaths {
@@ -149,6 +162,12 @@ class TerminalTab: NSView {
     renderer.onEvent = { [weak self] event in
       guard let self else { return }
       self.handleBackendEvent(event)
+    }
+    renderer.onOutput = { [weak self] in
+      self?.agentEvent(.output)
+    }
+    renderer.onUserKey = { [weak self] isReturn in
+      self?.agentEvent(isReturn ? .submit : .keystroke)
     }
     renderer.onPaste = { [weak self] in
       self?.pasteFromClipboard()
@@ -206,6 +225,7 @@ class TerminalTab: NSView {
       break  // Handled by renderer refresh loop.
     case .titleChanged(let title):
       tabTitle = title
+      agentEvent(.title(title))
       NotificationCenter.default.post(
         name: .terminalTitleChanged,
         object: self,
@@ -219,6 +239,7 @@ class TerminalTab: NSView {
         userInfo: ["title": tabTitle]
       )
     case .bell:
+      agentEvent(.bell)
       if currentSettings?.terminalBell ?? true {
         NSSound.beep()
       }
@@ -279,6 +300,7 @@ class TerminalTab: NSView {
     case .commandBlockStarted(let block):
       isCommandRunning = true
       currentCommand = block.command
+      startAgentProbe()
       // Lets the renderer combine "command running" with the raw terminal modes
       // to decide direct interaction (e.g. Claude Code, which runs inline).
       renderer.commandRunning = true
@@ -292,6 +314,8 @@ class TerminalTab: NSView {
       )
     case .commandBlockEnded(let block):
       isCommandRunning = false
+      stopAgentProbe()
+      endAgent()
       setProgress(.hidden)
       renderer.commandRunning = false
       setPasswordInput(false)
@@ -324,6 +348,7 @@ class TerminalTab: NSView {
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
+      agentEvent(.notification([title, body].filter { !$0.isEmpty }.joined(separator: " ")))
       if currentSettings?.terminalAllowNotifications ?? true {
         requestAttention(.informationalRequest)
         if !title.isEmpty || !body.isEmpty {
@@ -334,6 +359,9 @@ class TerminalTab: NSView {
   }
 
   private func setProgress(_ report: TerminalProgress) {
+    if agent != nil, (progress.state == .hidden) != (report.state == .hidden) {
+      agentEvent(.progress(active: report.state != .hidden))
+    }
     guard progress != report else { return }
     progress = report
     NotificationCenter.default.post(name: .terminalProgressChanged, object: self)
@@ -415,6 +443,14 @@ class TerminalTab: NSView {
     }
   }
 
+  /// The user is looking at this terminal (key window, focused grid).
+  var isWatched: Bool { !shouldSurfaceAttention }
+
+  /// Flag the tab and bounce the Dock like any attention request.
+  func setAttentionFromAgent() {
+    requestAttention(.informationalRequest)
+  }
+
   private var shouldSurfaceAttention: Bool {
     guard let window = renderer.window else { return true }
     return !NSApp.isActive || !window.isKeyWindow || window.firstResponder !== renderer
@@ -436,6 +472,7 @@ class TerminalTab: NSView {
   func clearAttention() {
     cancelAttentionRequest()
     setNeedsAttention(false)
+    agentEvent(.acknowledged)
   }
 
   // MARK: Cleanup
@@ -691,6 +728,7 @@ class TerminalTab: NSView {
   /// Run a command typed in the input bar: write it to the PTY with a
   /// newline so the shell echoes it into the current block.
   func runCommand(_ command: String) {
+    agentEvent(.submit)
     let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     // The view may be tucked up (prompt hidden below the fold) or scrolled into

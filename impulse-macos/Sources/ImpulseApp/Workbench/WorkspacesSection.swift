@@ -190,6 +190,18 @@ private struct WorkspaceRow: View {
   @ViewBuilder
   private func trailing(snapshot: RepoSnapshot?) -> some View {
     HStack(spacing: 6) {
+      if workspace.agentsWorking > 0 {
+        ProgressRing(progress: nil, color: chrome.working, size: 10, lineWidth: 1.4)
+          .help("\(workspace.agentsWorking) agent(s) working")
+      }
+      if workspace.agentsWaiting > 0 {
+        HStack(spacing: 2) {
+          Icon(.bot, size: 10)
+          Text("\(workspace.agentsWaiting)").font(ChromeFont.mono(10))
+        }
+        .foregroundStyle(chrome.attention)
+        .help("\(workspace.agentsWaiting) agent(s) waiting for you")
+      }
       if let snapshot, snapshot.changedFileCount > 0 {
         DiffStat(added: snapshot.totalAdded, removed: snapshot.totalRemoved)
       }

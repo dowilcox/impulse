@@ -53,6 +53,9 @@ struct ChromeBarView: View {
 
   private var trailingSection: some View {
     HStack(spacing: 4) {
+      if !model.agents.isEmpty {
+        AgentInboxButton(model: model)
+      }
       PaletteButton { model.onShowCommandPalette?() }
       if model.reviewChangedFileCount > 0 {
         DiffPill(

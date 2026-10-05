@@ -53,6 +53,10 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "next_agent", title: "Go to Next Agent Needing You", category: "Agents",
+        keywords: ["claude", "codex", "inbox", "waiting"], icon: .bot, keybindingId: "next_agent"
+      ) { [weak controller] in controller?.revealNextWaitingAgent() },
+      AppCommand(
         id: "command_history", title: "Search Command History…", category: "Terminal",
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },

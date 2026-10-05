@@ -128,6 +128,13 @@ enum MenuBuilder {
         openWorkspaceItem.target = MenuActions.shared
         menu.addItem(openWorkspaceItem)
 
+        let nextAgentItem = NSMenuItem(title: "Next Agent Needing You",
+                                       action: #selector(MenuActions.menuNextAgent(_:)),
+                                       keyEquivalent: "U")
+        nextAgentItem.target = MenuActions.shared
+        applyKeybinding("next_agent", overrides: overrides, to: nextAgentItem)
+        menu.addItem(nextAgentItem)
+
         let switchWorkspaceItem = NSMenuItem(title: "Switch Workspace…",
                                              action: #selector(MenuActions.menuSwitchWorkspace(_:)),
                                              keyEquivalent: "o")
@@ -483,6 +490,10 @@ final class MenuActions: NSObject {
 
     @objc func menuReopenTab(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseReopenTab, object: nil)
+    }
+
+    @objc func menuNextAgent(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseNextAgent, object: nil)
     }
 
     @objc func menuOpenWorkspace(_ sender: Any?) {

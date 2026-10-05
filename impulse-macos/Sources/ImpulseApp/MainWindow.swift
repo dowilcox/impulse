@@ -496,6 +496,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onShowWorkspaceSwitcher = { [weak self] in
       self?.showPalette(prefix: "w:")
     }
+    windowModel.onRevealTerminal = { [weak self] id in
+      self?.revealTerminal(id: id)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
@@ -590,6 +593,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     } else {
       host.removeFromSuperview()
     }
+  }
+
+  /// Bring a terminal forward: its window, workspace, tab and pane.
+  @discardableResult
+  func revealTerminal(id: UUID) -> Bool {
+    guard
+      let location = tabManager.locate(where: {
+        if case .terminal(let container) = $0 { return container.activeTerminal?.id == id }
+        return false
+      })
+    else { return false }
+    window?.makeKeyAndOrderFront(nil)
+    tabManager.reveal(location)
+    return true
+  }
+
+  /// ⌘⇧U: the next agent waiting on the user (needs input first), cycling
+  /// past the one already in front.
+  func revealNextWaitingAgent() {
+    let waiting = windowModel.agents.filter { $0.state.wantsUser }
+    guard !waiting.isEmpty else {
+      toasts.show(Toast(kind: .info, message: "No agents are waiting for you."))
+      return
+    }
+    let current = tabManager.selectedTerminal?.activeTerminal?.id
+    let start = waiting.firstIndex { $0.id == current }.map { $0 + 1 } ?? 0
+    revealTerminal(id: waiting[start % waiting.count].id)
   }
 
   /// Split, focus, resize and zoom panes of the selected tab. `command` is
@@ -1872,14 +1902,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: DesktopNotifier.revealTerminal, object: nil, queue: .main) {
         [weak self] notification in
-        guard let self, let id = notification.userInfo?["terminal"] as? String,
-          let location = self.tabManager.locate(where: {
-            if case .terminal(let container) = $0 { return container.activeTerminal?.id.uuidString == id }
-            return false
-          })
+        guard let self, let id = (notification.userInfo?["terminal"] as? String).flatMap(UUID.init)
         else { return }
-        self.window?.makeKeyAndOrderFront(nil)
-        self.tabManager.reveal(location)
+        self.revealTerminal(id: id)
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalAgentChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let terminal = notification.object as? TerminalTab,
+          self.tabManager.ownsTerminal(terminal)
+        else { return }
+        self.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseNextAgent, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.revealNextWaitingAgent()
       }
     )
     notificationObservers.append(

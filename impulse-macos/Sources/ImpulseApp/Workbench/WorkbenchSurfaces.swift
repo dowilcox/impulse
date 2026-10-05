@@ -62,7 +62,7 @@ struct WorkbenchStatusBar: View {
       StatusItem(help: "Go to Line (⌘G)") {
         NotificationCenter.default.post(name: .impulseGoToLine, object: nil)
       } label: {
-        Text("Ln \(line + 1), Col \(col + 1)")
+        Text("Ln \(line), Col \(col)")
       }
       if let indent = model.currentIndent {
         StatusItem(help: "Indentation", label: { Text(indent) })

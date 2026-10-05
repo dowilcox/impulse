@@ -682,6 +682,13 @@ final class TerminalBackend {
         return ImpulseCore.terminalSelectedText(handle: handle)
     }
 
+    /// The PTY's foreground process group (the shell, or what it runs).
+    func foregroundPid() -> pid_t? {
+        guard let handle, !isShutdown else { return nil }
+        let pid = ImpulseCore.terminalForegroundPid(handle: handle)
+        return pid > 0 ? pid : nil
+    }
+
     /// About the last `maxRows` rows of output, with SGR colors, for
     /// restoring scrollback later.
     func transcript(maxRows: Int) -> String? {
