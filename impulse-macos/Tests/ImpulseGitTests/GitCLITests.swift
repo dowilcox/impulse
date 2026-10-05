@@ -105,3 +105,23 @@
     }
   }
 #endif
+
+#if canImport(Testing)
+  struct GitDirectoryTests {
+    @Test func resolvesGitDirForCheckoutAndLinkedWorktree() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      #expect(GitClient.gitDirectory(forPath: repo.root) == repo.root + "/.git")
+      #expect(GitClient.commonGitDirectory(forPath: repo.root) == repo.root + "/.git")
+
+      let worktree = repo.root + "-wt"
+      defer { try? FileManager.default.removeItem(atPath: worktree) }
+      try repo.git("worktree", "add", "-q", "-b", "topic", worktree)
+      let gitDir = GitClient.gitDirectory(forPath: worktree)
+      #expect(gitDir == repo.root + "/.git/worktrees/" + (worktree as NSString).lastPathComponent)
+      #expect(GitClient.commonGitDirectory(forPath: worktree) == repo.root + "/.git")
+      #expect(FileManager.default.fileExists(atPath: gitDir! + "/index"))
+    }
+  }
+#endif

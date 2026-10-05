@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseGit
 
 /// Headless owner of the sidebar file tree data.
 ///
@@ -402,25 +403,13 @@ final class FileTreeDataController {
 
         let currentRootPath = rootPath
 
-        // Run git rev-parse on a background thread to avoid blocking the main
-        // thread (waitUntilExit on the main thread pumps the run loop).
+        // Resolve the git directory on a background thread (opening the repo
+        // touches the filesystem). Use libgit2's per-worktree gitdir rather
+        // than `<root>/.git/index`: in a linked worktree `.git` is a file and
+        // the index lives under the main repo's `.git/worktrees/<name>/`.
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let pipe = Pipe()
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            proc.arguments = ["rev-parse", "--show-toplevel"]
-            proc.currentDirectoryURL = URL(fileURLWithPath: currentRootPath)
-            proc.standardOutput = pipe
-            proc.standardError = FileHandle.nullDevice
-            do { try proc.run() } catch { return }
-            proc.waitUntilExit()
-            guard proc.terminationStatus == 0 else { return }
-            let gitRoot = String(
-                data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !gitRoot.isEmpty else { return }
-
-            let indexPath = (gitRoot as NSString).appendingPathComponent(".git/index")
+            guard let gitDir = GitClient.gitDirectory(forPath: currentRootPath) else { return }
+            let indexPath = (gitDir as NSString).appendingPathComponent("index")
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

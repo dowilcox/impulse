@@ -53,6 +53,29 @@ extension GitClient {
     return names.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
   }
 
+  /// The repository's git directory for the given path (no trailing slash):
+  /// `<root>/.git` for a normal checkout, or `<common>/.git/worktrees/<name>`
+  /// for a linked worktree — where that worktree's `index` and `HEAD` live.
+  /// Nil when the path is not inside a git repository.
+  public static func gitDirectory(forPath path: String) -> String? {
+    guard let repo = try? openRepo(at: path), let raw = git_repository_path(repo.raw) else {
+      return nil
+    }
+    let dir = String(cString: raw)
+    return dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+  }
+
+  /// The shared git directory for the given path (no trailing slash). Equal to
+  /// `gitDirectory` except in linked worktrees, where it is the main
+  /// repository's `.git` (refs, objects, config).
+  public static func commonGitDirectory(forPath path: String) -> String? {
+    guard let repo = try? openRepo(at: path), let raw = git_repository_commondir(repo.raw) else {
+      return nil
+    }
+    let dir = String(cString: raw)
+    return dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+  }
+
   /// Git working directory root (no trailing slash) for the given path, or nil
   /// when the path is not inside a git repository.
   public static func repoRoot(forPath path: String) -> String? {

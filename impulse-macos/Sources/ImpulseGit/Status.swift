@@ -60,7 +60,14 @@ extension GitClient {
   /// Git status for files directly in a directory: {filename: statusCode}.
   /// Subdirectories are marked with the highest-priority status among their
   /// descendants. Empty map when the path is not in a git repository.
-  public static func statusForDirectory(_ path: String) -> [String: String]? {
+  ///
+  /// `refreshIndex` lets libgit2 write refreshed stat data back to the index
+  /// (`GIT_STATUS_OPT_UPDATE_INDEX`). Leave it off for background refreshes:
+  /// writing takes `index.lock`, which then collides with git commands the
+  /// user or an agent runs in a terminal at the same moment.
+  public static func statusForDirectory(
+    _ path: String, refreshIndex: Bool = false
+  ) -> [String: String]? {
     // Canonicalize to resolve symlinks (e.g. /var -> /private/var on macOS)
     // so paths match the repo root reported by libgit2.
     let dirPath = canonicalPath(path) ?? lexicallyNormalized(path)
@@ -70,8 +77,8 @@ extension GitClient {
     var options = git_status_options()
     git_status_options_init(&options, UInt32(GIT_STATUS_OPTIONS_VERSION))
     options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
-    options.flags =
-      GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue | GIT_STATUS_OPT_UPDATE_INDEX.rawValue
+    options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue
+    if refreshIndex { options.flags |= GIT_STATUS_OPT_UPDATE_INDEX.rawValue }
 
     // Restrict to the requested directory relative to the repo root. At the
     // repo root, skip the pathspec entirely to list all statuses.
@@ -138,7 +145,10 @@ extension GitClient {
   /// Batch-fetch git status for the entire repository: outer key = directory
   /// absolute path, inner key = filename, value = status code. Parent
   /// directories receive the highest-priority status among their descendants.
-  public static func allStatuses(root path: String) -> [String: [String: String]]? {
+  /// See `statusForDirectory` for `refreshIndex`.
+  public static func allStatuses(
+    root path: String, refreshIndex: Bool = false
+  ) -> [String: [String: String]]? {
     let dirPath = canonicalPath(path) ?? lexicallyNormalized(path)
     guard let repo = try? openRepo(at: dirPath) else { return [:] }
     guard let repoRoot = try? repo.workdir() else { return nil }
@@ -148,7 +158,7 @@ extension GitClient {
     options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
     options.flags =
       GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue | GIT_STATUS_OPT_INCLUDE_IGNORED.rawValue
-      | GIT_STATUS_OPT_UPDATE_INDEX.rawValue
+    if refreshIndex { options.flags |= GIT_STATUS_OPT_UPDATE_INDEX.rawValue }
 
     var listPointer: OpaquePointer?
     guard git_status_list_new(&listPointer, repo.raw, &options) == 0, let list = listPointer
