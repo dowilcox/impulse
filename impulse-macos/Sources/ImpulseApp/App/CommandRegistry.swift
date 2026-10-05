@@ -121,6 +121,10 @@ enum CommandRegistry {
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },
       AppCommand(
+        id: "show_problems", title: "Show Problems", category: "Editor",
+        keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert
+      ) { [weak controller] in controller?.showProblems() },
+      AppCommand(
         id: "open_keybindings", title: "Keyboard Shortcuts", category: "Impulse",
         keywords: ["keybindings", "shortcuts", "keys", "hotkeys"], icon: .keyboard
       ) { [weak controller] in controller?.openKeybindings() },

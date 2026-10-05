@@ -306,6 +306,12 @@ final class WindowModel {
   var onSendInterrupt: (() -> Void)?
   /// Move keyboard focus into the terminal grid (Esc from the input bar).
   var onFocusTerminal: (() -> Void)?
+  /// Language-server diagnostics by file (Problems panel, status bar).
+  var problemsByPath: [String: [Problem]] = [:] {
+    didSet { problemCounts = Problems.counts(problemsByPath.values.flatMap { $0 }) }
+  }
+  private(set) var problemCounts = ProblemCounts()
+  var onShowProblems: (() -> Void)?
   /// ⌘↑ in the input: select the latest command block (false: none).
   var onSelectBlocks: (() -> Bool)?
   var onSidebarVisibilityChanged: ((Bool) -> Void)?

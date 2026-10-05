@@ -41,6 +41,25 @@ struct WorkbenchStatusBar: View {
         }
       }
     }
+    if model.problemCounts.total > 0 {
+      StatusItem(
+        icon: model.problemCounts.errors > 0 ? .circleX : .triangleAlert,
+        help: "Problems: \(model.problemCounts.errors) errors, \(model.problemCounts.warnings) warnings",
+        tint: model.problemCounts.errors > 0 ? model.palette.danger : nil
+      ) {
+        model.onShowProblems?()
+      } label: {
+        HStack(spacing: 6) {
+          Text(verbatim: "\(model.problemCounts.errors)")
+          HStack(spacing: 3) {
+            Icon(.triangleAlert, size: 10)
+            Text(verbatim: "\(model.problemCounts.warnings)")
+          }
+          .foregroundStyle(model.problemCounts.warnings > 0 ? model.palette.warning : model.palette.textTertiary)
+        }
+        .monospacedDigit()
+      }
+    }
     ForEach(model.ports.prefix(3), id: \.port) { port in
       StatusItem(icon: .globe, help: "\(port.process) is listening on \(port.port) — open in browser") {
         if let url = URL(string: "http://localhost:\(port.port)") { NSWorkspace.shared.open(url) }

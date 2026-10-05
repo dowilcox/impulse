@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImpulseKit
 import os.log
 
 /// Serializes a JSON-compatible value (dictionaries/arrays of `String`, numbers,
@@ -23,6 +24,7 @@ private func encodeLspJSON(_ value: Any) -> String {
 extension MainWindowController {
 
   func applyLspDiagnostics(uri: String, diagnosticsArray: [[String: Any]]) {
+    recordProblems(path: uriToFilePath(uri), diagnosticsArray)
     // A server's trailing `diagnostics: []` can arrive after lspDidClose;
     // applying it to a freshly-reopened or still-closing tab clobbers valid
     // state.
@@ -49,6 +51,28 @@ extension MainWindowController {
       )
     }
     editorTab.applyDiagnostics(uri: uri, markers: markers)
+  }
+
+  /// Keep every file's diagnostics for the Problems panel, open or not
+  /// (servers like rust-analyzer report the whole workspace).
+  private func recordProblems(path: String, _ diagnosticsArray: [[String: Any]]) {
+    let problems: [Problem] = diagnosticsArray.compactMap { d in
+      guard let severity = (d["severity"] as? NSNumber)?.intValue,
+        let line = (d["startLine"] as? NSNumber)?.intValue,
+        let column = (d["startColumn"] as? NSNumber)?.intValue,
+        let message = d["message"] as? String
+      else { return nil }
+      let code = (d["code"] as? String) ?? (d["code"] as? NSNumber)?.stringValue
+      return Problem(
+        path: path, line: line + 1, column: column + 1,
+        severity: Problem.Severity(rawValue: severity) ?? .info, message: message,
+        source: d["source"] as? String, code: code)
+    }
+    if problems.isEmpty {
+      if windowModel.problemsByPath[path] != nil { windowModel.problemsByPath[path] = nil }
+    } else if windowModel.problemsByPath[path] != problems {
+      windowModel.problemsByPath[path] = problems
+    }
   }
 
   /// Sends LSP didOpen for a file if not already tracked.

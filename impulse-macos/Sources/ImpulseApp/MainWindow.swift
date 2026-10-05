@@ -424,6 +424,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       }
     }
+    windowModel.onShowProblems = { [weak self] in self?.showProblems() }
     windowModel.onOpenSettingsFile = { [weak self] in
       self?.openSettingsFile()
     }
@@ -919,6 +920,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action == "problems" {
+        windowModel.problemsByPath = [
+          (fileTreeRootPath as NSString).appendingPathComponent("search.swift"): [
+            Problem(
+              path: (fileTreeRootPath as NSString).appendingPathComponent("search.swift"), line: 3, column: 10,
+              severity: .error, message: "Value of optional type '[String]?' must be unwrapped", source: "sourcekit"),
+            Problem(
+              path: (fileTreeRootPath as NSString).appendingPathComponent("search.swift"), line: 2, column: 7,
+              severity: .warning, message: "Initialization of immutable value 'words' was never used",
+              source: "sourcekit"),
+          ],
+          (fileTreeRootPath as NSString).appendingPathComponent("main.swift"): [
+            Problem(
+              path: (fileTreeRootPath as NSString).appendingPathComponent("main.swift"), line: 1, column: 1,
+              severity: .info, message: "Consider using 'let'", source: "swiftlint", code: "prefer_let"),
+          ],
+        ]
+        showProblems()
       } else if action == "keybindings" {
         openKeybindings()
       } else if action == "settings" {
@@ -988,6 +1007,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     surface.model.onOpenSettingsFile = { [weak self] in self?.openSettingsFile() }
     surface.model.onOpenKeybindings = { [weak self] in self?.openKeybindings() }
     if let query { surface.reveal(query: query) } else { surface.focusTool() }
+  }
+
+  /// The window's language-server diagnostics as a tab.
+  func showProblems() {
+    let palette = windowModel.palette
+    let tool = tabManager.openTool(kind: "problems") { ProblemsSurface(palette: palette) }
+    guard let surface = tool as? ProblemsSurface else { return }
+    surface.model.window = windowModel
+    surface.model.root = { [weak self] in
+      self?.windowModel.repository?.root ?? self?.fileTreeRootPath
+    }
+    surface.model.onOpen = { [weak self] problem in
+      self?.paletteOpenFile(problem.path, line: UInt32(problem.line), column: UInt32(problem.column))
+    }
+    surface.model.agents = { [weak self] in self?.agentTargets ?? [] }
+    surface.model.onSendToAgent = { [weak self] text, id in self?.sendToAgent(text, terminalID: id) }
   }
 
   /// Keyboard shortcuts as a tab.
