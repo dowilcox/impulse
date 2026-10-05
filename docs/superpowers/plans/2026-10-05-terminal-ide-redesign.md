@@ -496,7 +496,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 - [x] **Path detection** (`file:line:col` and common stack-trace formats) on hover, opening in the Impulse editor. OSC 8 `file://` routes to the editor.
 - [x] **Hints mode** (⌘⇧Space): labels for URLs, paths, SHAs and ports; open, copy or insert.
-- [ ] **Protocols:**
+- [x] **Protocols:**
   - OSC 9;4 progress UI (tab ring, sidebar);
   - OSC 21337 status;
   - OSC 99 notifications.
