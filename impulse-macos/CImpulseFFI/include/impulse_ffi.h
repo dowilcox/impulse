@@ -18,6 +18,7 @@ unsigned long impulse_terminal_grid_snapshot_size(void *handle);
 int64_t impulse_terminal_take_damage(void *handle, unsigned short *out_rows, unsigned long cap);
 char *impulse_terminal_poll_events(void *handle);
 char *impulse_terminal_command_blocks(void *handle);
+char *impulse_terminal_command_block(void *handle, uint64_t id);
 char *impulse_terminal_block_overlay(void *handle);
 uint64_t impulse_terminal_block_overlay_key(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);

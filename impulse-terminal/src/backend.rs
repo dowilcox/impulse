@@ -24,7 +24,9 @@ use alacritty_terminal::vte::ansi::{
 use crossbeam_channel::{Receiver, Sender};
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
 
-use crate::blocks::{CommandBlockTracker, TerminalBlockId, TerminalCommandBlock};
+use crate::blocks::{
+    CommandBlockTracker, TerminalBlockId, TerminalCommandBlock, TerminalCommandBlockSummary,
+};
 use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
@@ -1120,6 +1122,22 @@ impl TerminalBackend {
             .lock()
             .map(|blocks| blocks.blocks())
             .unwrap_or_default()
+    }
+
+    /// Every command block without its output (cheap to list).
+    pub fn command_block_summaries(&self) -> Vec<TerminalCommandBlockSummary> {
+        self.blocks
+            .lock()
+            .map(|blocks| blocks.summaries())
+            .unwrap_or_default()
+    }
+
+    /// One command block with its captured output.
+    pub fn command_block(&self, id: u64) -> Option<TerminalCommandBlock> {
+        self.blocks
+            .lock()
+            .ok()
+            .and_then(|blocks| blocks.block(TerminalBlockId(id)))
     }
 
     /// Map command blocks into viewport rows for block-decoration rendering.

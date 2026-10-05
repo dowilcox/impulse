@@ -282,9 +282,35 @@ pub extern "C" fn impulse_terminal_command_blocks(handle: *mut TerminalHandle) -
                 return to_c_string("[]");
             }
             let h = unsafe { &*handle };
-            match serde_json::to_string(&h.backend.command_blocks()) {
+            match serde_json::to_string(&h.backend.command_block_summaries()) {
                 Ok(json) => to_c_string(&json),
                 Err(_) => to_c_string("[]"),
+            }
+        }),
+    )
+}
+
+/// One command block, with its captured output, as JSON; null when there's
+/// no such block. Caller frees with `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_command_block(
+    handle: *mut TerminalHandle,
+    id: u64,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
+            }
+            let h = unsafe { &*handle };
+            match h
+                .backend
+                .command_block(id)
+                .map(|block| serde_json::to_string(&block))
+            {
+                Some(Ok(json)) => to_c_string(&json),
+                _ => std::ptr::null_mut(),
             }
         }),
     )

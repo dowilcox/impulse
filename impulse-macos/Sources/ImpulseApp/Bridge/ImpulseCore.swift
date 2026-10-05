@@ -488,6 +488,12 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    /// One command block with its output (JSON), or nil.
+    static func terminalCommandBlock(handle: OpaquePointer, id: UInt64) -> String? {
+        guard let ptr = impulse_terminal_command_block(UnsafeMutableRawPointer(handle), id) else { return nil }
+        return consumeCString(ptr)
+    }
+
     /// Returns command-block availability flags: bit 0 command, bit 1 output, bit 2 failed.
     static func terminalCommandBlockFlags(handle: OpaquePointer) -> UInt32 {
         return impulse_terminal_command_block_flags(UnsafeMutableRawPointer(handle))

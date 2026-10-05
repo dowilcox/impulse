@@ -117,7 +117,9 @@ struct TerminalCommandBlock: Codable, Equatable {
     let exitCode: Int32?
     let outputStartLine: UInt64
     let outputEndLine: UInt64?
+    /// Captured output; empty in listings (fetch the block by id for it).
     let output: String
+    let hasOutput: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -129,6 +131,21 @@ struct TerminalCommandBlock: Codable, Equatable {
         case outputStartLine = "output_start_line"
         case outputEndLine = "output_end_line"
         case output
+        case hasOutput = "has_output"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UInt64.self, forKey: .id)
+        command = try c.decodeIfPresent(String.self, forKey: .command)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        startedAtMs = try c.decode(UInt64.self, forKey: .startedAtMs)
+        endedAtMs = try c.decodeIfPresent(UInt64.self, forKey: .endedAtMs)
+        exitCode = try c.decodeIfPresent(Int32.self, forKey: .exitCode)
+        outputStartLine = try c.decode(UInt64.self, forKey: .outputStartLine)
+        outputEndLine = try c.decodeIfPresent(UInt64.self, forKey: .outputEndLine)
+        output = try c.decodeIfPresent(String.self, forKey: .output) ?? ""
+        hasOutput = try c.decodeIfPresent(Bool.self, forKey: .hasOutput) ?? !output.isEmpty
     }
 }
 
@@ -556,6 +573,7 @@ final class TerminalBackend {
         return events
     }
 
+    /// Every block, oldest first, without output (see `commandBlock(id:)`).
     func commandBlocks() -> [TerminalCommandBlock] {
         guard let handle, !isShutdown,
               let json = ImpulseCore.terminalCommandBlocks(handle: handle),
@@ -564,6 +582,17 @@ final class TerminalBackend {
             return []
         }
         return (try? decoder.decode([TerminalCommandBlock].self, from: data)) ?? []
+    }
+
+    /// One block with its captured output.
+    func commandBlock(id: UInt64) -> TerminalCommandBlock? {
+        guard let handle, !isShutdown,
+              let json = ImpulseCore.terminalCommandBlock(handle: handle, id: id),
+              let data = json.data(using: .utf8)
+        else {
+            return nil
+        }
+        return try? decoder.decode(TerminalCommandBlock.self, from: data)
     }
 
     /// Viewport-mapped block regions for Warp-style block decorations.

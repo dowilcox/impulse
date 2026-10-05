@@ -30,6 +30,36 @@ pub struct TerminalCommandBlock {
     pub end_row: Option<i64>,
 }
 
+/// A block without its captured output (cheap to list and serialize).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TerminalCommandBlockSummary {
+    pub id: TerminalBlockId,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub started_at_ms: u64,
+    pub ended_at_ms: Option<u64>,
+    pub exit_code: Option<i32>,
+    pub output_start_line: u64,
+    pub output_end_line: Option<u64>,
+    pub has_output: bool,
+}
+
+impl From<&TerminalCommandBlock> for TerminalCommandBlockSummary {
+    fn from(block: &TerminalCommandBlock) -> Self {
+        Self {
+            id: block.id,
+            command: block.command.clone(),
+            cwd: block.cwd.clone(),
+            started_at_ms: block.started_at_ms,
+            ended_at_ms: block.ended_at_ms,
+            exit_code: block.exit_code,
+            output_start_line: block.output_start_line,
+            output_end_line: block.output_end_line,
+            has_output: !block.output.is_empty(),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct CommandBlockTracker {
     next_id: u64,
@@ -186,6 +216,18 @@ impl CommandBlockTracker {
             blocks.push(current.clone());
         }
         blocks
+    }
+
+    /// Every block, oldest first, without output.
+    pub(crate) fn summaries(&self) -> Vec<TerminalCommandBlockSummary> {
+        self.iter_blocks()
+            .map(TerminalCommandBlockSummary::from)
+            .collect()
+    }
+
+    /// One block with its output.
+    pub(crate) fn block(&self, id: TerminalBlockId) -> Option<TerminalCommandBlock> {
+        self.iter_blocks().find(|block| block.id == id).cloned()
     }
 
     /// Iterate blocks oldest-first without cloning their captured output.
@@ -351,6 +393,22 @@ fn plain_text_from_terminal_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summaries_leave_output_out() {
+        let mut tracker = CommandBlockTracker::new();
+        tracker.set_pending_command("ls".into());
+        let block = tracker.command_started_at(10, Some(1));
+        tracker.observe_output(b"a.txt\n");
+        tracker.command_ended_at(0, 20, Some(3));
+        let summaries = tracker.summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].command.as_deref(), Some("ls"));
+        assert!(summaries[0].has_output);
+        let full = tracker.block(block.id).expect("block");
+        assert_eq!(full.output, "a.txt\n");
+        assert!(tracker.block(TerminalBlockId(99)).is_none());
+    }
 
     #[test]
     fn version_tracks_boundary_changes_but_not_output() {

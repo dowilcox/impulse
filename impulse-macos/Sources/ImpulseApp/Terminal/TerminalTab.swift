@@ -710,7 +710,7 @@ class TerminalTab: NSView {
   // MARK: Per-Block Actions (right-click menu + hover toolbar)
 
   private func block(withId id: UInt64) -> TerminalCommandBlock? {
-    backend?.commandBlocks().first { $0.id == id }
+    backend?.commandBlock(id: id)
   }
 
   /// Copy a specific block's command and/or output to the clipboard.
@@ -943,8 +943,8 @@ class TerminalTab: NSView {
   }
 
   private func latestOutputBlock() -> TerminalCommandBlock? {
-    guard let blocks = backend?.commandBlocks() else { return nil }
-    return blocks.last { !$0.output.isEmpty }
+    guard let last = backend?.commandBlocks().last(where: \.hasOutput) else { return nil }
+    return backend?.commandBlock(id: last.id)
   }
 
   private func navigableCommandBlocks() -> [TerminalCommandBlock] {
@@ -955,7 +955,7 @@ class TerminalTab: NSView {
       {
         return true
       }
-      return !block.output.isEmpty
+      return block.hasOutput
     }
   }
 
