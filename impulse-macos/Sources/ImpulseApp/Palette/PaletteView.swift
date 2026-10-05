@@ -195,16 +195,25 @@ struct PaletteView: View {
   private var footer: some View {
     HStack(spacing: 14) {
       hint("↑↓", "navigate")
-      hint("⏎", "open")
+      hint("⏎", enterLabel)
       hint("esc", "close")
       Spacer(minLength: 8)
-      Text("> commands   : line   % text   b: branches   t: tabs")
+      Text("> commands   : line   % text   b: branches   w: workspaces   h: history   ? more")
         .font(ChromeFont.ui(10.5))
         .foregroundStyle(palette.textTertiary)
         .lineLimit(1)
     }
     .padding(.horizontal, 14)
     .frame(height: 28)
+  }
+
+  private var enterLabel: String {
+    switch model.mode {
+    case .commands: return "run"
+    case .history: return "insert"
+    case .branches: return "switch"
+    default: return "open"
+    }
   }
 
   private func hint(_ key: String, _ label: String) -> some View {

@@ -53,6 +53,14 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "command_history", title: "Search Command History…", category: "Terminal",
+        keywords: ["history", "recent", "ctrl-r"], icon: .history
+      ) { [weak controller] in controller?.showPalette(prefix: "h:") },
+      AppCommand(
+        id: "import_shell_history", title: "Import Shell History", category: "Terminal",
+        keywords: ["zsh", "bash", "fish", "history"], icon: .history
+      ) { [weak controller] in controller?.importShellHistory() },
+      AppCommand(
         id: "switch_workspace", title: "Switch Workspace…", category: "Workspaces",
         keywords: ["project", "folder", "recent"], icon: .folderGit2,
         keybindingId: "switch_workspace"

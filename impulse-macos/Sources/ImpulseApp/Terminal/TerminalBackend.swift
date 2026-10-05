@@ -601,9 +601,15 @@ final class TerminalBackend {
 
     /// Best inline completion for the input bar (history continuation, then
     /// PATH executables / subcommands / flags / filesystem paths), or nil.
-    func completeInput(_ input: String, cwd: String?) -> String? {
+    /// `globalHistory` (newest first) extends this session's history.
+    func completeInput(_ input: String, cwd: String?, globalHistory: [String] = []) -> String? {
         guard handle != nil, !isShutdown, !input.isEmpty else { return nil }
-        return InputCompletion.complete(input: input, cwd: cwd, history: recentCommandHistory())
+        var history = recentCommandHistory()
+        if !globalHistory.isEmpty {
+            let session = Set(history)
+            history += globalHistory.filter { !session.contains($0) }
+        }
+        return InputCompletion.complete(input: input, cwd: cwd, history: history)
     }
 
     /// Path-completion candidates for the active argument token of `input`,

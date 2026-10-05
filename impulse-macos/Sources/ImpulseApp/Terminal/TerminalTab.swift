@@ -71,7 +71,6 @@ class TerminalTab: NSView {
   private var selectedCommandBlockId: UInt64?
 
   /// Lazily-created command history picker for this terminal session.
-  private var historyPicker: TerminalHistoryPicker?
 
   /// Outstanding continuous macOS attention request, if any.
   private var attentionRequestId: Int?
@@ -103,7 +102,6 @@ class TerminalTab: NSView {
 
   deinit {
     cancelAttentionRequest()
-    historyPicker?.close()
     cwdPollTimer?.invalidate()
     for path in shellIntegrationTempPaths {
       try? FileManager.default.removeItem(at: path)
@@ -300,6 +298,13 @@ class TerminalTab: NSView {
       lastCommandExitCode = block.exitCode
       lastCommandDurationMs = block.endedAtMs.map { ended in
         ended >= block.startedAtMs ? ended - block.startedAtMs : 0
+      }
+      if let command = block.command ?? currentCommand {
+        CommandHistory.shared.record(
+          command: command,
+          cwd: block.cwd ?? (currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory),
+          exitCode: block.exitCode.map(Int.init), durationMs: lastCommandDurationMs.map(Int.init),
+          session: id.uuidString)
       }
       selectedCommandBlockId = nil
       renderer.highlightedBlockId = nil
@@ -708,7 +713,8 @@ class TerminalTab: NSView {
   func historySuggestion(for text: String) -> String? {
     guard !text.isEmpty, let backend else { return nil }
     let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
-    return backend.completeInput(text, cwd: cwd)
+    return backend.completeInput(
+      text, cwd: cwd, globalHistory: CommandHistory.shared.recentCommands)
   }
 
   /// Path-completion candidates for the active argument token of `text`
@@ -721,12 +727,20 @@ class TerminalTab: NSView {
   }
 
   /// Most recent commands, newest first (input-bar ↑/↓ cycling).
+  /// This session's commands first, then everything else Impulse has seen.
   func recentCommands(limit: Int) -> [String] {
-    guard let backend else { return [] }
     var seen = Set<String>()
-    return backend.commandHistorySearch(text: "", cwd: nil, limit: limit)
-      .map { $0.record.command }
-      .filter { seen.insert($0).inserted }
+    let session = backend?.commandHistorySearch(text: "", cwd: nil, limit: limit)
+      .map { $0.record.command } ?? []
+    return Array(
+      (session + CommandHistory.shared.recentCommands)
+        .filter { seen.insert($0).inserted }
+        .prefix(limit))
+  }
+
+  /// Type text at the shell prompt (classic mode, where the grid owns input).
+  func insertInput(_ text: String) {
+    backend?.write(text)
   }
 
   /// Unsent input-bar text, kept while the bar is in another terminal.
@@ -761,31 +775,9 @@ class TerminalTab: NSView {
     backend?.write(bytes: [0x0C])
   }
 
+  /// Open the history panel (the window's palette in history mode).
   private func showCommandHistory() {
-    guard backend != nil else { return }
-    if historyPicker == nil {
-      historyPicker = TerminalHistoryPicker(
-        search: { [weak self] query in
-          guard let self, let backend = self.backend else { return [] }
-          return backend.commandHistorySearch(
-            text: query,
-            cwd: self.currentWorkingDirectory,
-            limit: 30
-          )
-        },
-        insertCommand: { [weak self] command in
-          self?.backend?.write(command)
-          self?.renderer.window?.makeFirstResponder(self?.renderer)
-        },
-        runCommand: { [weak self] command in
-          guard let self, let backend = self.backend else { return false }
-          let didRun = backend.rerunCommand(command)
-          self.renderer.window?.makeFirstResponder(self.renderer)
-          return didRun
-        }
-      )
-    }
-    historyPicker?.show(attachedTo: renderer)
+    NotificationCenter.default.post(name: .impulseShowCommandHistory, object: self)
   }
 
   private func jumpToPreviousCommandBlock() {

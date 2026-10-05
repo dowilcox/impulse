@@ -312,7 +312,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       self?.tabManager.addTerminalTab()
     }
     windowModel.onShowCommandHistory = { [weak self] in
-      self?.tabManager.selectedTerminal?.activeTerminal?.presentCommandHistory()
+      self?.showPalette(prefix: "h:")
     }
     windowModel.onClearTerminal = { [weak self] in
       self?.tabManager.selectedTerminal?.activeTerminal?.clearScreen()
@@ -562,6 +562,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Show or hide the right dock. Until a panel is installed there it has
   /// nothing to show, so this is a no-op beyond flipping the flag.
+  /// Add the shells' own history files to Impulse's history.
+  func importShellHistory() {
+    CommandHistory.shared.importShellHistory { [weak self] count in
+      self?.toasts.show(
+        Toast(
+          kind: .success,
+          message: count == 0
+            ? "No zsh, bash or fish history found." : "Imported \(count) commands from shell history."))
+    }
+  }
+
   /// Move the input bar into the focused terminal, carrying each terminal's
   /// unsent draft with it. Outside a terminal the bar leaves the hierarchy.
   func attachInputBar() {
@@ -654,6 +665,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("palette=") {
+        showPalette(prefix: String(action.dropFirst(8)))
       } else if action.hasPrefix("run=") {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
       } else if action == "close-pane" {
@@ -1558,6 +1571,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseActiveWorkspaceDidChange, object: tabManager, queue: .main) {
         [weak self] _ in
         self?.activeWorkspaceDidChange()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseShowCommandHistory, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let terminal = notification.object as? TerminalTab,
+          self.tabManager.ownsTerminal(terminal)
+        else { return }
+        self.showPalette(prefix: "h:")
       }
     )
     notificationObservers.append(
@@ -3295,6 +3317,30 @@ extension MainWindowController: PaletteHost {
   }
 
   var paletteTabs: [TabDisplayInfo] { windowModel.allTabs }
+
+  var paletteHistoryContext: (cwd: String?, repo: String?) {
+    let cwd = tabManager.selectedTerminal?.activeTerminal?.currentWorkingDirectory
+    return (cwd?.isEmpty == false ? cwd : nil, windowModel.repository?.root)
+  }
+
+  /// Into the input bar, or typed at the shell prompt when the grid owns
+  /// input (classic mode, a TUI).
+  func paletteInsertCommand(_ command: String) {
+    guard let terminal = tabManager.selectedTerminal?.activeTerminal else {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(command, forType: .string)
+      toasts.show(Toast(kind: .info, message: "Copied the command (no terminal is focused)."))
+      return
+    }
+    if terminal.wantsGridFocus {
+      terminal.insertInput(command)
+      terminal.focus()
+    } else {
+      windowModel.inputDraft = command
+      windowModel.inputDraftRestoreToken += 1
+      windowModel.inputBarFocusToken += 1
+    }
+  }
   var paletteWorkspaces: [WorkspaceInfo] { windowModel.workspaces }
   var paletteVisibleTabIndices: [Int] { tabManager.visibleTabIndices }
 

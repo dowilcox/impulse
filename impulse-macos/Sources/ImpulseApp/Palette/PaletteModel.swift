@@ -21,6 +21,10 @@ protocol PaletteHost: AnyObject {
   func paletteSelectWorkspace(_ id: UUID)
   /// Open a folder as a workspace; nil asks for one.
   func paletteOpenWorkspace(folder: String?)
+  /// The focused terminal's folder and repository, for history filters.
+  var paletteHistoryContext: (cwd: String?, repo: String?) { get }
+  /// Put a command from history at the prompt (not run).
+  func paletteInsertCommand(_ command: String)
 }
 
 /// One result row.
@@ -44,11 +48,11 @@ struct PaletteRow: Identifiable {
 ///
 /// The query's prefix picks the mode, so one field covers everything:
 ///   (none) files · `>` commands · `:` go to line · `%` text in files ·
-///   `b:` branches · `t:` tabs · `w:` workspaces · `?` help.
+///   `b:` branches · `t:` tabs · `w:` workspaces · `h:` history · `?` help.
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, help
 
     var placeholder: String {
       switch self {
@@ -59,6 +63,7 @@ final class PaletteModel {
       case .branches: return "Switch to branch…"
       case .tabs: return "Switch to tab…"
       case .workspaces: return "Switch to workspace or open a folder…"
+      case .history: return "Search history…  @here @repo @failed @today"
       case .help: return "Palette modes"
       }
     }
@@ -72,6 +77,7 @@ final class PaletteModel {
       case .branches: return .gitBranch
       case .tabs: return .layers
       case .workspaces: return .folderGit2
+      case .history: return .history
       case .help: return .info
       }
     }
@@ -150,6 +156,7 @@ final class PaletteModel {
     if query.hasPrefix("b:") { return (.branches, String(query.dropFirst(2))) }
     if query.hasPrefix("t:") { return (.tabs, String(query.dropFirst(2))) }
     if query.hasPrefix("w:") { return (.workspaces, String(query.dropFirst(2))) }
+    if query.hasPrefix("h:") { return (.history, String(query.dropFirst(2))) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -169,6 +176,7 @@ final class PaletteModel {
     case .branches: refreshBranches(trimmed)
     case .tabs: refreshTabs(trimmed)
     case .workspaces: refreshWorkspaces(trimmed)
+    case .history: refreshHistory(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -471,6 +479,60 @@ final class PaletteModel {
     emptyMessage = "No matching tabs"
   }
 
+  // MARK: History
+
+  private static let relativeTime: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+  }()
+
+  /// `@here`, `@repo`, `@failed` and `@today` narrow the search; the rest
+  /// of the query is matched fuzzily.
+  private func refreshHistory(_ term: String) {
+    var filter = HistoryFilter()
+    var words: [String] = []
+    let context = host?.paletteHistoryContext
+    for word in term.split(separator: " ") {
+      switch word.lowercased() {
+      case "@here": filter.cwd = context?.cwd
+      case "@repo": filter.repo = context?.repo
+      case "@failed": filter.failedOnly = true
+      case "@today": filter.since = Calendar.current.startOfDay(for: Date())
+      default: words.append(String(word))
+      }
+    }
+    let text = words.joined(separator: " ")
+    let generation = self.generation
+    isBusy = true
+    CommandHistory.shared.search(text, filter: filter) { [weak self] results in
+      guard let self, self.generation == generation else { return }
+      self.isBusy = false
+      self.rows = results.map { result in
+        let entry = result.hit.entry
+        let title = entry.command.replacingOccurrences(of: "\n", with: " ⏎ ")
+        var details: [String] = []
+        if let cwd = entry.cwd { details.append(TabManager.abbreviateHomePath(cwd)) }
+        if entry.startedAt > Date(timeIntervalSince1970: 0) {
+          details.append(Self.relativeTime.localizedString(for: entry.startedAt, relativeTo: Date()))
+        }
+        if let code = entry.exitCode, code != 0 { details.append("exit \(code)") }
+        let failed = (entry.exitCode ?? 0) != 0
+        return PaletteRow(
+          id: "history:\(entry.command)",
+          glyph: .lucide(failed ? .circleX : .history),
+          title: title, highlights: result.positions,
+          subtitle: details.isEmpty ? nil : details.joined(separator: " · "),
+          trailing: result.hit.uses > 1 ? "×\(result.hit.uses)" : nil
+        ) { [weak self] in
+          self?.host?.paletteInsertCommand(entry.command)
+        }
+      }
+      self.selectedIndex = 0
+    }
+    emptyMessage = text.isEmpty && filter == HistoryFilter() ? "No history yet" : "No matching commands"
+  }
+
   // MARK: Workspaces
 
   private func refreshWorkspaces(_ term: String) {
@@ -532,6 +594,7 @@ final class PaletteModel {
       ("b:", "Switch branch", .gitBranch),
       ("t:", "Switch tab", .layers),
       ("w:", "Switch workspace", .folderGit2),
+      ("h:", "Search command history", .history),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(
