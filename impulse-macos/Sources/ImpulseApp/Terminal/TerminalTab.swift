@@ -754,7 +754,13 @@ class TerminalTab: NSView {
     // The view may be tucked up (prompt hidden below the fold) or scrolled into
     // history; snap to the bottom so the command's output is visible.
     backend?.scrollToBottom()
-    backend?.write(trimmed + "\n")
+    if trimmed.contains("\n"), backend?.mode()?.bracketedPaste == true {
+      // A multi-line command reaches the shell's line editor as one paste,
+      // then runs as a whole (instead of line by line).
+      backend?.write("\u{1b}[200~" + trimmed + "\u{1b}[201~\r")
+    } else {
+      backend?.write(trimmed + "\n")
+    }
   }
 
   /// Send a line to the running program verbatim (password prompts): no

@@ -16,7 +16,21 @@ struct TerminalContextBarView: View {
   /// Index into the recent-history list while cycling with ↑/↓; nil = live draft.
   @State private var historyIndex: Int? = nil
   @State private var savedDraft: String = ""
-  @FocusState private var inputFocused: Bool
+  /// The password field's focus (the command editor reports its own).
+  @FocusState private var secureFocused: Bool
+  @State private var editorFocused = false
+  /// Bumped to put keyboard focus in the input (editor or password field).
+  @State private var focusRequest = 0
+  private var inputFocused: Bool { editorFocused || secureFocused }
+
+  /// Move keyboard focus into whichever field is showing.
+  private func focusInput() {
+    if model.passwordInputActive {
+      secureFocused = true
+    } else {
+      focusRequest += 1
+    }
+  }
 
   // MARK: Completion dropdown state
   /// Candidates for the active argument token. Non-empty == dropdown open.
@@ -60,11 +74,11 @@ struct TerminalContextBarView: View {
         closeDropdown()
       } else {
         // Shell returned to the prompt — reclaim focus for the next command.
-        inputFocused = true
+        focusInput()
       }
     }
     .onChange(of: model.inputBarFocusToken) {
-      inputFocused = true
+      focusInput()
     }
     .onAppear {
       if !model.passwordInputActive { text = model.inputDraft }
@@ -91,7 +105,7 @@ struct TerminalContextBarView: View {
       // this update, so a same-transaction focus write loses the race.
       // Re-grab focus once the responder churn has settled.
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-        inputFocused = true
+        focusInput()
       }
     }
     .onChange(of: inputFocused) { _, focused in
@@ -118,7 +132,7 @@ struct TerminalContextBarView: View {
     ) { note in
       if isDropdownOpen, (note.object as? NSWindow) === anchorWindow { closeDropdown() }
     }
-    .onAppear { inputFocused = true }
+    .onAppear { focusInput() }
     .onDisappear { completionPanel.hide() }
   }
 
@@ -232,17 +246,6 @@ struct TerminalContextBarView: View {
       }
 
       ZStack(alignment: .leading) {
-        // Ghost suggestion: typed prefix invisible, completion dimmed.
-        if !model.commandRunning, let suggestion, suggestion.hasPrefix(text),
-          suggestion != text, !text.isEmpty {
-          (Text(text).foregroundColor(.clear)
-            + Text(suggestion.dropFirst(text.count))
-            .foregroundColor(model.theme.colorFgComment))
-            .font(monoFont)
-            .lineLimit(1)
-            .allowsHitTesting(false)
-        }
-
         if model.passwordInputActive {
           // The running program disabled terminal echo (sudo, ssh, `read -s`):
           // mask keystrokes so the password is never rendered. No suggestions,
@@ -252,7 +255,7 @@ struct TerminalContextBarView: View {
             .font(monoFont)
             .foregroundStyle(model.theme.colorFg)
             .tint(model.theme.colorAccent)
-            .focused($inputFocused)
+            .focused($secureFocused)
             .onSubmit(handleSubmit)
             .onKeyPress(.escape) {
               model.onFocusTerminal?()
@@ -267,86 +270,31 @@ struct TerminalContextBarView: View {
             }
             .accessibilityLabel("Password input")
         } else {
-          TextField(inputPlaceholder, text: $text)
-            .textFieldStyle(.plain)
-            .font(monoFont)
-            .foregroundStyle(model.theme.colorFg)
-            .tint(model.theme.colorAccent)
-            .focused($inputFocused)
-            .onSubmit(handleSubmit)
-            .onChange(of: text) { _, newValue in
-              model.inputDraft = newValue
-              if historyIndex == nil || newValue != currentHistoryEntry() {
-                historyIndex = nil
-              }
-              suggestion =
-                (newValue.isEmpty || model.commandRunning)
-                ? nil : model.onInputSuggestion?(newValue)
-              // Tab-only dropdown: typing never opens it. While it's already
-              // open, re-fetch so the list narrows/widens to the new prefix.
-              if isDropdownOpen {
-                scheduleCompletions(for: newValue)
-              }
+          CommandEditor(
+            text: $text,
+            placeholder: inputPlaceholder,
+            suggestion: model.commandRunning ? nil : suggestion,
+            colors: CommandEditorColors(theme: model.theme),
+            font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            focusToken: focusRequest,
+            onSubmit: handleSubmit,
+            onKey: handleEditorKey,
+            onFocusChange: { editorFocused = $0 }
+          )
+          .onChange(of: text) { _, newValue in
+            model.inputDraft = newValue
+            if historyIndex == nil || newValue != currentHistoryEntry() {
+              historyIndex = nil
             }
-            .onKeyPress(.upArrow) {
-              // When the dropdown is open, ↑ moves the highlight (wrap); else it
-              // cycles command history.
-              if isDropdownOpen {
-                moveSelection(by: -1)
-                return .handled
-              }
-              return cycleHistory(direction: 1)
+            suggestion =
+              (newValue.isEmpty || model.commandRunning)
+              ? nil : model.onInputSuggestion?(newValue)
+            // Tab-only dropdown: typing never opens it. While it's already
+            // open, re-fetch so the list narrows/widens to the new prefix.
+            if isDropdownOpen {
+              scheduleCompletions(for: newValue)
             }
-            .onKeyPress(.downArrow) {
-              if isDropdownOpen {
-                moveSelection(by: 1)
-                return .handled
-              }
-              return cycleHistory(direction: -1)
-            }
-            .onKeyPress(.tab) {
-              // Tab is the dropdown trigger. When it's already open, Tab accepts
-              // the highlighted candidate. When closed, try to open it: fetch
-              // candidates and, with two or more, show the panel (row 0 selected).
-              // With zero/one candidate, fall back to accepting the inline ghost
-              // suggestion. Always swallow Tab so it never triggers focus
-              // traversal.
-              if isDropdownOpen {
-                acceptCompletion()
-                return .handled
-              }
-              if openCompletionsFromTab() {
-                return .handled
-              }
-              _ = acceptSuggestion()
-              return .handled
-            }
-            .onKeyPress(.rightArrow) { acceptSuggestionWord() }
-            .onKeyPress(.escape) {
-              // First Esc closes the dropdown; a second Esc (dropdown already
-              // closed) moves focus into the terminal grid.
-              if isDropdownOpen {
-                closeDropdown()
-                return .handled
-              }
-              model.onFocusTerminal?()
-              return .handled
-            }
-            .onKeyPress(phases: .down) { press in
-              guard press.modifiers.contains(.control) else { return .ignored }
-              switch press.key {
-              case KeyEquivalent("c"):
-                model.onSendInterrupt?()
-                return .handled
-              case KeyEquivalent("r"):
-                // Reverse history search, like the shell's own Ctrl-R.
-                model.onShowCommandHistory?()
-                return .handled
-              default:
-                return .ignored
-              }
-            }
-            .accessibilityLabel("Command input")
+          }
         }
       }
       // Tracks the input field's screen rect so the floating completion panel
@@ -599,6 +547,53 @@ struct TerminalContextBarView: View {
       suggestion = nil
       historyIndex = nil
       closeDropdown()
+    }
+  }
+
+  /// Keys the command editor offers before handling them itself.
+  private func handleEditorKey(_ key: CommandEditorKey) -> Bool {
+    switch key {
+    case .up:
+      // When the dropdown is open, ↑ moves the highlight (wrap); else it
+      // cycles command history.
+      if isDropdownOpen {
+        moveSelection(by: -1)
+        return true
+      }
+      return cycleHistory(direction: 1) == .handled
+    case .down:
+      if isDropdownOpen {
+        moveSelection(by: 1)
+        return true
+      }
+      return cycleHistory(direction: -1) == .handled
+    case .tab:
+      // Tab is the dropdown trigger. When it's already open, Tab accepts the
+      // highlighted candidate. When closed, try to open it (two or more
+      // candidates); otherwise accept the inline ghost suggestion.
+      if isDropdownOpen {
+        acceptCompletion()
+      } else if !openCompletionsFromTab() {
+        _ = acceptSuggestion()
+      }
+      return true
+    case .right:
+      return acceptSuggestionWord() == .handled
+    case .escape:
+      // First Esc closes the dropdown; a second moves focus into the grid.
+      if isDropdownOpen {
+        closeDropdown()
+      } else {
+        model.onFocusTerminal?()
+      }
+      return true
+    case .controlC:
+      model.onSendInterrupt?()
+      return true
+    case .controlR:
+      // Reverse history search, like the shell's own Ctrl-R.
+      model.onShowCommandHistory?()
+      return true
     }
   }
 

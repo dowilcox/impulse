@@ -752,6 +752,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("draft=") {
+        windowModel.inputDraft = String(action.dropFirst(6)).replacingOccurrences(of: "\\n", with: "\n")
+        windowModel.inputDraftRestoreToken += 1
       } else if action.hasPrefix("palette=") {
         showPalette(prefix: String(action.dropFirst(8)))
       } else if action.hasPrefix("run=") {
