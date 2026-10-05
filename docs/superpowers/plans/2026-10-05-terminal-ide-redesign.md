@@ -612,7 +612,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 - [ ] **Multi-model editor panes:** one WKWebView per pane, with view-state save/restore. `EditorWebViewPool` pre-warms per pane. Measure against §11.
 - [x] **Problems panel** (bottom dock): keep diagnostics for all URIs; filters; status-bar counts; send to agent. (a tool tab rather than a bottom dock)
-- [ ] **Outline** (right dock) and breadcrumbs from `documentSymbol`. Palette `@` symbols and `#` workspace symbols.
+- [x] **Outline** (right dock) and breadcrumbs from `documentSymbol`. Palette `@` symbols and `#` workspace symbols. (no breadcrumbs yet)
 - [ ] **LSP coverage:**
   - `workspace/applyEdit` and multi-file `WorkspaceEdit` applied in Swift with one undo group;
   - command-only code actions via `executeCommand`;
