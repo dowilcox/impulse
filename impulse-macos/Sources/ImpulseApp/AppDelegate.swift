@@ -47,6 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
+    EditorTab.jsonSchemaProvider = { path in
+      guard path == Settings.filePath.path,
+        let data = try? JSONSerialization.data(
+          withJSONObject: SettingsCatalog.jsonSchema(), options: [.sortedKeys])
+      else { return nil }
+      return String(decoding: data, as: UTF8.self)
+    }
     DesktopNotifier.shared.activate()
     // Before any terminal starts, so they get IMPULSE_SOCKET.
     ControlServer.shared.handler = { [weak self] request, reply in
@@ -476,7 +483,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   // MARK: Menu Actions
 
+  /// ⌘, opens Settings as a tab in the front window.
   @objc func showPreferences(_ sender: Any?) {
+    let controller =
+      windowControllers.first { $0.window?.isKeyWindow == true } ?? windowControllers.first
+      ?? openNewWindow()
+    controller.openSettings()
+  }
+
+  /// The classic settings window, for the panes not yet in the Settings tab.
+  func showClassicSettings(pane: String) {
+    UserDefaults.standard.set(pane, forKey: "settingsSelectedPane")
     SettingsWindowController.show(settings: settings)
   }
 

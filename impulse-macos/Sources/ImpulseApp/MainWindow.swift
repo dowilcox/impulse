@@ -424,8 +424,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       }
     }
-    windowModel.onOpenSettingsFile = {
-      NSWorkspace.shared.open(Settings.filePath)
+    windowModel.onOpenSettingsFile = { [weak self] in
+      self?.openSettingsFile()
     }
     windowModel.onDismissSettingsWarning = { [weak self] in
       self?.windowModel.settingsLoadWarning = nil
@@ -919,6 +919,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action == "settings" {
+        openSettings()
+      } else if action.hasPrefix("settings=") {
+        openSettings(query: String(action.dropFirst(9)))
       } else if action.hasPrefix("find=") {
         if !termSearchBarVisible { toggleTerminalSearch() }
         termFind.query.text = String(action.dropFirst(5))
@@ -966,6 +970,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   // MARK: - Public API
+
+  /// Settings as a tab (one per window), optionally searching for `query`.
+  func openSettings(query: String? = nil) {
+    let palette = windowModel.palette
+    let tool = tabManager.openTool(kind: "settings") { SettingsSurface(palette: palette) }
+    guard let surface = tool as? SettingsSurface else { return }
+    surface.model.onOpenSettingsFile = { [weak self] in self?.openSettingsFile() }
+    surface.model.onOpenKeybindings = {
+      (NSApp.delegate as? AppDelegate)?.showClassicSettings(pane: "keybindings")
+    }
+    surface.model.onOpenClassicPane = { pane in
+      (NSApp.delegate as? AppDelegate)?.showClassicSettings(pane: pane)
+    }
+    if let query { surface.reveal(query: query) } else { surface.focusTool() }
+  }
+
+  /// settings.json in an editor tab, validated against the settings schema.
+  func openSettingsFile() {
+    let path = Settings.filePath.path
+    if !FileManager.default.fileExists(atPath: path) {
+      SettingsStore.shared.saveNow()
+    }
+    openFile(path: path)
+  }
 
   /// Opens a file in an editor tab. Called by AppDelegate for Finder "Open With"
   /// and CLI file arguments. Bypasses the notification path (which requires
@@ -1681,7 +1709,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             dir = container.activeTerminal?.currentWorkingDirectory
           case .editor(let editor):
             dir = editor.projectDirectory
-          case .imagePreview, .split:
+          case .imagePreview, .split, .tool:
             dir = nil
           case .diffReview(let repoRoot, _), .history(let repoRoot, _):
             dir = repoRoot
@@ -2060,7 +2088,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           )
         case .terminal:
           self.toggleTerminalSearch()
-        case .imagePreview, .diffReview, .history, .split:
+        case .imagePreview, .diffReview, .history, .tool, .split:
           break
         }
       }
@@ -2778,7 +2806,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       return (path as NSString).deletingLastPathComponent
     case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return repoRoot.isEmpty ? nil : repoRoot
-    case .split:
+    case .split, .tool:
       break
     }
     return nil
@@ -2904,7 +2932,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview, .history, .split:
+      case .imagePreview, .diffReview, .history, .tool, .split:
         break
       }
     }
@@ -2924,7 +2952,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview, .history, .split:
+      case .imagePreview, .diffReview, .history, .tool, .split:
         break
       }
     }
@@ -3460,7 +3488,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return editor.filePath
       case .imagePreview(let path, _):
         return path
-      case .terminal, .diffReview, .history, .split:
+      case .terminal, .diffReview, .history, .tool, .split:
         return nil
       }
     }
@@ -3677,6 +3705,10 @@ extension MainWindowController: PaletteHost {
       PullRequestMonitor.shared.isAvailable
     else { return completion(nil) }
     PullRequestMonitor.shared.list(root: repository.root, completion: completion)
+  }
+
+  func paletteOpenSetting(_ key: String) {
+    openSettings(query: key)
   }
 
   func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary) {

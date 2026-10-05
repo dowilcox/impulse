@@ -26,6 +26,8 @@ enum EditorCommand: Encodable {
     /// The file's git base (index version) to diff the live buffer against,
     /// plus blame for the saved file. A nil base turns git gutter marks off.
     case setGitBase(base: String?, blame: [EditorBlameLine])
+    /// Validate (and complete) a JSON file against `schema` (JSON text).
+    case setJsonSchema(fileMatch: String, schema: String)
 
     // MARK: Tagged Enum Encoding
 
@@ -47,6 +49,7 @@ enum EditorCommand: Encodable {
         case resolveRename = "ResolveRename"
         case resolvePrepareRename = "ResolvePrepareRename"
         case setGitBase = "SetGitBase"
+        case setJsonSchema = "SetJsonSchema"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -73,6 +76,8 @@ enum EditorCommand: Encodable {
         case placeholder
         case base
         case blame
+        case fileMatch = "file_match"
+        case schema
     }
 
     func encode(to encoder: Encoder) throws {
@@ -163,6 +168,10 @@ enum EditorCommand: Encodable {
             try container.encode(TypeTag.setGitBase, forKey: .type)
             try container.encode(base, forKey: .base)
             try container.encode(blame, forKey: .blame)
+        case let .setJsonSchema(fileMatch, schema):
+            try container.encode(TypeTag.setJsonSchema, forKey: .type)
+            try container.encode(fileMatch, forKey: .fileMatch)
+            try container.encode(schema, forKey: .schema)
         }
     }
 }

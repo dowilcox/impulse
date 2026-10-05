@@ -468,10 +468,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     ///
     /// If the editor is not yet ready, the command is queued and will be sent
     /// once the `Ready` event is received.
+    /// JSON Schema text for files the app knows the shape of (settings.json).
+    static var jsonSchemaProvider: ((String) -> String?)?
+
     func sendCommand(_ command: EditorCommand) {
         guard isEditorReady else {
             pendingCommands.append(command)
             return
+        }
+        // Register the schema first so the file validates as it opens.
+        if case .openFile(let path, _, _) = command, !path.isEmpty,
+           let schema = Self.jsonSchemaProvider?(path) {
+            sendCommand(.setJsonSchema(fileMatch: path, schema: schema))
         }
 
         let jsonData: Data

@@ -29,6 +29,8 @@ protocol PaletteHost: AnyObject {
   func palettePullRequests(_ completion: @escaping ([PullRequestSummary]?) -> Void)
   /// Check a pull request out into a new task worktree.
   func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary)
+  /// Open the Settings tab at one setting.
+  func paletteOpenSetting(_ key: String)
 }
 
 /// One result row.
@@ -56,7 +58,7 @@ struct PaletteRow: Identifiable {
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, help
 
     var placeholder: String {
       switch self {
@@ -69,6 +71,7 @@ final class PaletteModel {
       case .workspaces: return "Switch to workspace or open a folder…"
       case .history: return "Search history…  @here @repo @failed @today"
       case .pullRequests: return "Check out a pull request into a new task…"
+      case .settings: return "Find a setting…"
       case .help: return "Palette modes"
       }
     }
@@ -84,6 +87,7 @@ final class PaletteModel {
       case .workspaces: return .folderGit2
       case .history: return .history
       case .pullRequests: return .gitPullRequest
+      case .settings: return .settings
       case .help: return .info
       }
     }
@@ -166,6 +170,7 @@ final class PaletteModel {
     if query.hasPrefix("w:") { return (.workspaces, String(query.dropFirst(2))) }
     if query.hasPrefix("h:") { return (.history, String(query.dropFirst(2))) }
     if query.hasPrefix("pr:") { return (.pullRequests, String(query.dropFirst(3))) }
+    if query.hasPrefix("set:") { return (.settings, String(query.dropFirst(4))) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -187,6 +192,7 @@ final class PaletteModel {
     case .workspaces: refreshWorkspaces(trimmed)
     case .history: refreshHistory(trimmed)
     case .pullRequests: refreshPullRequests(trimmed)
+    case .settings: refreshSettings(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -543,6 +549,24 @@ final class PaletteModel {
     emptyMessage = text.isEmpty && filter == HistoryFilter() ? "No history yet" : "No matching commands"
   }
 
+  // MARK: Settings
+
+  private func refreshSettings(_ term: String) {
+    let ranked = FuzzyMatcher.rank(SettingsCatalog.items, query: term) { "\($0.title) \($0.key)" }
+    let current = SettingsStore.shared.settings
+    rows = ranked.map { entry in
+      let item = entry.item
+      return PaletteRow(
+        id: "setting:" + item.key, glyph: .lucide(item.category.icon), title: item.title,
+        subtitle: "\(item.category.rawValue) › \(item.section)",
+        trailing: item.isModified(current) ? "changed" : nil
+      ) { [weak self] in
+        self?.host?.paletteOpenSetting(item.key)
+      }
+    }
+    emptyMessage = "No matching settings"
+  }
+
   // MARK: Pull requests
 
   private func refreshPullRequests(_ term: String) {
@@ -645,6 +669,7 @@ final class PaletteModel {
       ("w:", "Switch workspace", .folderGit2),
       ("h:", "Search command history", .history),
       ("pr:", "Check out a pull request", .gitPullRequest),
+      ("set:", "Find a setting", .settings),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(

@@ -48,6 +48,8 @@ enum TabEntry {
   case imagePreview(path: String, view: NSView)
   case diffReview(repoRoot: String, view: ReviewSurface)
   case history(repoRoot: String, view: HistorySurface)
+  /// An app tool (Settings, Keybindings).
+  case tool(any ToolSurface)
   /// Several of the above side by side (never nested).
   case split(SplitTab)
 
@@ -59,6 +61,7 @@ enum TabEntry {
     case .imagePreview(_, let view): return view
     case .diffReview(_, let view): return view
     case .history(_, let view): return view
+    case .tool(let view): return view
     case .split(let split): return split.view
     }
   }
@@ -104,6 +107,8 @@ enum TabEntry {
       return name.isEmpty ? "Review" : "Review · \(name)"
     case .history(_, let view):
       return view.title
+    case .tool(let view):
+      return view.toolTitle
     }
   }
 
@@ -114,7 +119,7 @@ enum TabEntry {
       return container.needsAttention
     case .split(let split):
       return split.panes.values.contains { $0.needsAttention }
-    case .editor, .imagePreview, .diffReview, .history:
+    case .editor, .imagePreview, .diffReview, .history, .tool:
       return false
     }
   }
@@ -153,6 +158,10 @@ enum TabEntry {
         encoding: nil,
         indentInfo: nil
       )
+    case .tool:
+      return TabInfo(
+        cwd: nil, gitBranch: nil, shellName: nil, cursorLine: nil, cursorCol: nil, language: nil,
+        encoding: nil, indentInfo: nil)
     case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return TabInfo(
         cwd: repoRoot,
@@ -181,6 +190,8 @@ enum TabEntry {
       view.focus()
     case .history(_, let view):
       view.focus()
+    case .tool(let view):
+      view.focusTool()
     }
   }
 
@@ -212,6 +223,8 @@ enum TabEntry {
       view.applyTheme(theme)
     case .history(_, let view):
       view.applyTheme(theme)
+    case .tool(let view):
+      view.applyToolTheme(theme)
     }
   }
 }
@@ -567,6 +580,21 @@ final class TabManager: NSObject {
     insertTab(.history(repoRoot: repository.root, view: view))
   }
 
+  /// Bring the window's `kind` tool forward, or make one with `make`.
+  @discardableResult
+  func openTool(kind: String, make: () -> any ToolSurface) -> any ToolSurface {
+    if let location = locate(where: {
+      if case .tool(let view) = $0 { return view.toolKind == kind }
+      return false
+    }) {
+      reveal(location)
+      if case .tool(let view) = tabs[location.tabIndex].focused { return view }
+    }
+    let view = make()
+    insertTab(.tool(view))
+    return view
+  }
+
   /// Detect the Monaco language ID for a file path.
   func detectLanguage(forPath path: String) -> String {
     languageIdForPath(path)
@@ -677,6 +705,8 @@ final class TabManager: NSObject {
       view.cleanup()
     case .history(_, let view):
       view.cleanup()
+    case .tool(let view):
+      view.cleanupTool()
     }
   }
 
@@ -1247,7 +1277,7 @@ final class TabManager: NSObject {
           column: editor.cursorPosition.map { Int($0.column) })
       case .imagePreview(let path, _):
         return FileManager.default.fileExists(atPath: path) ? .file(path: path) : nil
-      case .diffReview, .history, .split:
+      case .diffReview, .history, .tool, .split:
         return nil
       }
     }
@@ -1724,6 +1754,8 @@ final class TabManager: NSObject {
       return (path as NSString).deletingLastPathComponent
     case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return repoRoot
+    case .tool:
+      return nil
     case .split(let split):
       return tabDirectory(for: split.focused)
     }
@@ -1789,6 +1821,8 @@ final class TabManager: NSObject {
         systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Review Changes")
     case .history:
       return NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
+    case .tool(let view):
+      return NSImage(systemSymbolName: view.toolSymbol, accessibilityDescription: view.toolTitle)
     case .split(let split):
       return tabIcon(for: split.focused)
     }

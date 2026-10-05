@@ -580,6 +580,9 @@ function handleCommand(cmd) {
       case "SetGitBase":
         handleSetGitBase(cmd);
         break;
+      case "SetJsonSchema":
+        handleSetJsonSchema(cmd);
+        break;
       case "ResolveFormatting":
         handleResolveFormatting(cmd);
         break;
@@ -632,6 +635,27 @@ window.impulseReceiveCommand = function (jsonString) {
 // ---------------------------------------------------------------------------
 // Command implementations
 // ---------------------------------------------------------------------------
+
+/** Validate and complete a JSON file (settings.json) against a schema. */
+function handleSetJsonSchema(cmd) {
+  try {
+    const json = monaco.languages.json;
+    if (!json || !json.jsonDefaults) return;
+    json.jsonDefaults.setDiagnosticsOptions({
+      validate: true,
+      allowComments: false,
+      schemas: [
+        {
+          uri: "impulse://schemas/" + encodeURIComponent(cmd.file_match),
+          fileMatch: [monaco.Uri.file(cmd.file_match).toString()],
+          schema: JSON.parse(cmd.schema),
+        },
+      ],
+    });
+  } catch (e) {
+    console.warn("SetJsonSchema failed", e);
+  }
+}
 
 function handleOpenFile(cmd) {
   currentFilePath = cmd.file_path || "";
