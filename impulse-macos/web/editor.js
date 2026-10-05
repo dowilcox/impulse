@@ -223,6 +223,7 @@ require(["vs/editor/editor.main"], function () {
   // --- Content change listener ---
   editor.onDidChangeModelContent(function (e) {
     contentVersion++;
+    scheduleGitDiff(250);
     sendToHost({
       type: "ContentChanged",
       changes: e.changes.map(function (change) {
@@ -245,6 +246,7 @@ require(["vs/editor/editor.main"], function () {
   // --- Cursor change listener (debounced) ---
   var cursorDebounceTimer = null;
   editor.onDidChangeCursorPosition(function (e) {
+    scheduleBlame(e.position.lineNumber);
     clearTimeout(cursorDebounceTimer);
     cursorDebounceTimer = setTimeout(function () {
       sendToHost({
@@ -254,6 +256,8 @@ require(["vs/editor/editor.main"], function () {
       });
     }, 50);
   });
+
+  installGitPeekHandler();
 
   // --- Focus listeners ---
   editor.onDidFocusEditorText(function () {
@@ -555,6 +559,9 @@ function handleCommand(cmd) {
       case "ApplyDiffDecorations":
         handleApplyDiffDecorations(cmd);
         break;
+      case "SetGitBase":
+        handleSetGitBase(cmd);
+        break;
       case "ResolveFormatting":
         handleResolveFormatting(cmd);
         break;
@@ -614,6 +621,7 @@ function handleOpenFile(cmd) {
 
   // Clear diff decorations from previous file
   currentDiffDecorations = editor.deltaDecorations(currentDiffDecorations, []);
+  resetGitState();
 
   // Dispose old model if it exists
   if (currentModel) {
@@ -1023,6 +1031,17 @@ function updateDiffGutterColors(colors) {
   var safeModified = isValidCssColor(modifiedColor) ? modifiedColor : "#e0af68";
   var safeDeleted = isValidCssColor(deletedColor) ? deletedColor : "#f7768e";
 
+  var root = document.documentElement.style;
+  root.setProperty("--git-added", safeAdded);
+  root.setProperty("--git-modified", safeModified);
+  root.setProperty("--git-removed", safeDeleted);
+  if (isValidCssColor(colors["editorLineNumber.foreground"]))
+    root.setProperty("--git-blame", colors["editorLineNumber.foreground"]);
+  if (isValidCssColor(colors["editorWidget.background"]))
+    root.setProperty("--git-peek-bg", colors["editorWidget.background"]);
+  if (isValidCssColor(colors["editor.foreground"]))
+    root.setProperty("--git-peek-fg", colors["editor.foreground"]);
+
   var styleId = "impulse-diff-gutter-style";
   var existing = document.getElementById(styleId);
   if (existing) existing.remove();
@@ -1040,4 +1059,404 @@ function updateDiffGutterColors(colors) {
     safeDeleted +
     "; }";
   document.head.appendChild(style);
+}
+
+
+// ===========================================================================
+// Git: change marks against the index version, peek, and inline blame
+//
+// The host sends the file's base (its index version) with SetGitBase after
+// opening/saving and when the index changes. Marks are computed here from the
+// live buffer, so they follow typing. Clicking a mark opens a peek with the
+// original lines and Revert / Stage / Review actions.
+// ===========================================================================
+let gitBaseLines = null; // null: not in a repository (no marks)
+let gitHunks = [];
+let gitDecorations = [];
+let gitDiffTimer = null;
+let gitBlame = new Map();
+let gitBlameVersion = -1;
+let blameDecorations = [];
+let blameTimer = null;
+let gitPeek = null; // { zoneId, hunk }
+
+function resetGitState() {
+  gitBaseLines = null;
+  gitHunks = [];
+  gitBlame = new Map();
+  if (editor) {
+    gitDecorations = editor.deltaDecorations(gitDecorations, []);
+    blameDecorations = editor.deltaDecorations(blameDecorations, []);
+  }
+  closeGitPeek();
+}
+
+function handleSetGitBase(cmd) {
+  gitBaseLines = typeof cmd.base === "string" ? splitGitLines(cmd.base) : null;
+  gitBlame = new Map();
+  (cmd.blame || []).forEach(function (b) {
+    gitBlame.set(b.line, b);
+  });
+  gitBlameVersion = contentVersion;
+  // The old marks (from the previous base) are now meaningless.
+  currentDiffDecorations = editor.deltaDecorations(currentDiffDecorations, []);
+  scheduleGitDiff(0);
+}
+
+function splitGitLines(text) {
+  if (text === "") return [];
+  var lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function scheduleGitDiff(delay) {
+  clearTimeout(gitDiffTimer);
+  gitDiffTimer = setTimeout(updateGitDiff, delay);
+}
+
+function updateGitDiff() {
+  if (!editor || !currentModel) return;
+  if (gitBaseLines == null) {
+    gitHunks = [];
+    gitDecorations = editor.deltaDecorations(gitDecorations, []);
+    return;
+  }
+  var current = currentModel.getLinesContent().slice();
+  if (current.length && current[current.length - 1] === "") current.pop();
+  gitHunks = diffLineHunks(gitBaseLines, current);
+  var lineCount = currentModel.getLineCount();
+  var decorations = [];
+  gitHunks.forEach(function (h) {
+    var kind = h.newCount === 0 ? "deleted" : h.oldLines.length === 0 ? "added" : "modified";
+    var className = "diff-gutter-" + kind;
+    var color = kind === "added" ? "--git-added" : kind === "modified" ? "--git-modified" : "--git-removed";
+    var ruler = getComputedStyle(document.documentElement).getPropertyValue(color).trim() || "#888";
+    if (kind === "deleted") {
+      var line = Math.min(Math.max(h.newStart - 1, 1), lineCount);
+      decorations.push({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          linesDecorationsClassName: "diff-gutter-deleted",
+          overviewRuler: { color: ruler, position: monaco.editor.OverviewRulerLane.Left },
+        },
+      });
+    } else {
+      decorations.push({
+        range: new monaco.Range(h.newStart, 1, h.newStart + h.newCount - 1, 1),
+        options: {
+          isWholeLine: true,
+          linesDecorationsClassName: className,
+          overviewRuler: { color: ruler, position: monaco.editor.OverviewRulerLane.Left },
+        },
+      });
+    }
+  });
+  gitDecorations = editor.deltaDecorations(gitDecorations, decorations);
+  if (gitPeek) {
+    // Keep the peek on its hunk if it still exists; otherwise close it.
+    var same = gitHunks.find(function (h) {
+      return h.newStart === gitPeek.hunk.newStart;
+    });
+    if (same) renderGitPeek(same);
+    else closeGitPeek();
+  }
+}
+
+// Line diff: trim the common prefix/suffix, then Myers on the middle.
+function diffLineHunks(a, b) {
+  var start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  var endA = a.length;
+  var endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  var midA = a.slice(start, endA);
+  var midB = b.slice(start, endB);
+  if (midA.length === 0 && midB.length === 0) return [];
+  var ops = myersOps(midA, midB);
+  if (!ops) {
+    // Too different to diff cheaply: one hunk covering the middle.
+    return [{ oldStart: start + 1, oldLines: midA, newStart: start + 1, newCount: midB.length }];
+  }
+  var hunks = [];
+  var current = null;
+  var ai = 0;
+  var bi = 0;
+  ops.forEach(function (op) {
+    if (op === "=") {
+      if (current) {
+        hunks.push(current);
+        current = null;
+      }
+      ai++;
+      bi++;
+      return;
+    }
+    if (!current) current = { oldStart: start + ai + 1, oldLines: [], newStart: start + bi + 1, newCount: 0 };
+    if (op === "-") {
+      current.oldLines.push(midA[ai]);
+      ai++;
+    } else {
+      current.newCount++;
+      bi++;
+    }
+  });
+  if (current) hunks.push(current);
+  return hunks;
+}
+
+// Myers O(ND) edit script as a list of "=", "-", "+"; null if D is huge.
+// Each step's trace keeps only the diagonals it can reach (k in [-d, d]),
+// so memory is O(D^2) rather than O(D * (N + M)).
+function myersOps(a, b) {
+  var n = a.length;
+  var m = b.length;
+  var max = n + m;
+  var limit = Math.min(max, 1500);
+  var offset = max + 1;
+  var v = new Int32Array(2 * max + 3);
+  var trace = [];
+  for (var d = 0; d <= limit; d++) {
+    // Snapshot diagonals -d-1 .. d+1 before this step mutates them.
+    trace.push(v.slice(offset - d - 1, offset + d + 2));
+    for (var k = -d; k <= d; k += 2) {
+      var x;
+      if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
+        x = v[offset + k + 1];
+      } else {
+        x = v[offset + k - 1] + 1;
+      }
+      var y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[offset + k] = x;
+      if (x >= n && y >= m) {
+        return backtrack(trace, n, m, d);
+      }
+    }
+  }
+  return null;
+}
+
+function backtrack(trace, n, m, dFinal) {
+  var x = n;
+  var y = m;
+  var ops = [];
+  for (var d = dFinal; d > 0; d--) {
+    var band = trace[d];
+    var at = function (k) {
+      return band[k + d + 1];
+    };
+    var k = x - y;
+    var prevK = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1;
+    var prevX = at(prevK);
+    var prevY = prevX - prevK;
+    while (x > prevX && y > prevY) {
+      ops.push("=");
+      x--;
+      y--;
+    }
+    if (x === prevX) {
+      ops.push("+");
+      y--;
+    } else {
+      ops.push("-");
+      x--;
+    }
+  }
+  while (x > 0 && y > 0) {
+    ops.push("=");
+    x--;
+    y--;
+  }
+  return ops.reverse();
+}
+
+// --- Peek -------------------------------------------------------------------
+
+function gitHunkAtLine(line) {
+  return gitHunks.find(function (h) {
+    if (h.newCount === 0) return line === Math.max(h.newStart - 1, 1);
+    return line >= h.newStart && line < h.newStart + h.newCount;
+  });
+}
+
+function installGitPeekHandler() {
+  if (!editor || editor.__gitPeekInstalled) return;
+  editor.__gitPeekInstalled = true;
+  editor.onMouseDown(function (e) {
+    if (!e.target || e.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) return;
+    var line = e.target.position && e.target.position.lineNumber;
+    var hunk = line && gitHunkAtLine(line);
+    if (!hunk) return;
+    if (gitPeek && gitPeek.hunk.newStart === hunk.newStart) closeGitPeek();
+    else renderGitPeek(hunk);
+  });
+}
+
+function renderGitPeek(hunk) {
+  closeGitPeek();
+  var node = document.createElement("div");
+  node.className = "git-peek";
+  var bar = document.createElement("div");
+  bar.className = "git-peek-bar";
+  var title = document.createElement("span");
+  title.className = "git-peek-title";
+  var removed = hunk.oldLines.length;
+  title.textContent =
+    hunk.newCount === 0
+      ? removed + " line" + (removed === 1 ? "" : "s") + " removed"
+      : removed === 0
+        ? hunk.newCount + " line" + (hunk.newCount === 1 ? "" : "s") + " added"
+        : "Changed " + hunk.newCount + " line" + (hunk.newCount === 1 ? "" : "s") + " (was " + removed + ")";
+  bar.appendChild(title);
+  bar.appendChild(peekButton("Revert", "Restore the original lines in the editor", function () {
+    revertGitHunk(hunk);
+  }));
+  bar.appendChild(peekButton("Stage", "Stage this change (saves first)", function () {
+    sendToHost({ type: "GitAction", action: "stage", line: anchorLine(hunk) });
+  }));
+  bar.appendChild(peekButton("Review", "Open in the review", function () {
+    sendToHost({ type: "GitAction", action: "review", line: anchorLine(hunk) });
+  }));
+  bar.appendChild(peekButton("✕", "Close", closeGitPeek));
+  node.appendChild(bar);
+  if (hunk.oldLines.length) {
+    var pre = document.createElement("pre");
+    pre.className = "git-peek-old";
+    pre.textContent = hunk.oldLines.join("\n");
+    node.appendChild(pre);
+  }
+  var lineHeight = editor.getOption(monaco.editor.EditorOption.lineHeight);
+  var heightInLines = 1.6 + Math.min(hunk.oldLines.length, 12);
+  var afterLine = hunk.newCount === 0 ? Math.max(hunk.newStart - 1, 0) : hunk.newStart + hunk.newCount - 1;
+  var zoneId = null;
+  editor.changeViewZones(function (accessor) {
+    zoneId = accessor.addZone({
+      afterLineNumber: afterLine,
+      heightInPx: Math.round(heightInLines * lineHeight) + 8,
+      domNode: node,
+      suppressMouseDown: true,
+    });
+  });
+  gitPeek = { zoneId: zoneId, hunk: hunk };
+}
+
+function anchorLine(hunk) {
+  return hunk.newCount === 0 ? Math.max(hunk.newStart - 1, 1) : hunk.newStart;
+}
+
+function peekButton(label, title, onClick) {
+  var b = document.createElement("button");
+  b.className = "git-peek-button";
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener("mousedown", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+function closeGitPeek() {
+  if (!gitPeek || !editor) {
+    gitPeek = null;
+    return;
+  }
+  var id = gitPeek.zoneId;
+  editor.changeViewZones(function (accessor) {
+    accessor.removeZone(id);
+  });
+  gitPeek = null;
+}
+
+function revertGitHunk(hunk) {
+  var model = currentModel;
+  if (!model) return;
+  var lineCount = model.getLineCount();
+  var range;
+  var text;
+  if (hunk.newCount === 0) {
+    // Re-insert removed lines before newStart.
+    var at = Math.min(hunk.newStart, lineCount + 1);
+    if (at > lineCount) {
+      var lastCol = model.getLineMaxColumn(lineCount);
+      range = new monaco.Range(lineCount, lastCol, lineCount, lastCol);
+      text = "\n" + hunk.oldLines.join("\n");
+    } else {
+      range = new monaco.Range(at, 1, at, 1);
+      text = hunk.oldLines.join("\n") + "\n";
+    }
+  } else if (hunk.oldLines.length === 0) {
+    // Remove added lines (including their line breaks).
+    var first = hunk.newStart;
+    var last = hunk.newStart + hunk.newCount - 1;
+    if (last < lineCount) {
+      range = new monaco.Range(first, 1, last + 1, 1);
+    } else if (first > 1) {
+      range = new monaco.Range(first - 1, model.getLineMaxColumn(first - 1), last, model.getLineMaxColumn(last));
+    } else {
+      range = new monaco.Range(first, 1, last, model.getLineMaxColumn(last));
+    }
+    text = "";
+  } else {
+    var end = hunk.newStart + hunk.newCount - 1;
+    range = new monaco.Range(hunk.newStart, 1, end, model.getLineMaxColumn(end));
+    text = hunk.oldLines.join("\n");
+  }
+  editor.pushUndoStop();
+  editor.executeEdits("git-revert", [{ range: range, text: text, forceMoveMarkers: true }]);
+  editor.pushUndoStop();
+  closeGitPeek();
+}
+
+// --- Inline blame -------------------------------------------------------------
+
+function scheduleBlame(line) {
+  clearTimeout(blameTimer);
+  if (blameDecorations.length) blameDecorations = editor.deltaDecorations(blameDecorations, []);
+  blameTimer = setTimeout(function () {
+    showBlame(line);
+  }, 450);
+}
+
+function showBlame(line) {
+  if (!editor || !currentModel || gitBlame.size === 0) return;
+  // Blame describes the saved file; skip once the buffer has diverged, and
+  // on lines with uncommitted edits.
+  if (contentVersion !== gitBlameVersion) return;
+  if (gitHunkAtLine(line)) return;
+  var info = gitBlame.get(line);
+  if (!info || /^0+$/.test(info.sha)) return;
+  var text = "    " + info.author + ", " + relativeTime(info.time) + " · " + info.summary;
+  var col = currentModel.getLineMaxColumn(line);
+  blameDecorations = editor.deltaDecorations(blameDecorations, [
+    {
+      range: new monaco.Range(line, col, line, col),
+      options: { after: { content: text, inlineClassName: "git-blame-ghost" } },
+    },
+  ]);
+}
+
+function relativeTime(seconds) {
+  var delta = Date.now() / 1000 - seconds;
+  var units = [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["week", 604800],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+  for (var i = 0; i < units.length; i++) {
+    var n = Math.floor(delta / units[i][1]);
+    if (n >= 1) return n + " " + units[i][0] + (n === 1 ? "" : "s") + " ago";
+  }
+  return "just now";
 }

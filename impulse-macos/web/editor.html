@@ -76,6 +76,66 @@
       .monaco-scrollable-element > .scrollbar {
         transition: opacity 0.3s ease;
       }
+      :root {
+        --git-added: #9ece6a;
+        --git-modified: #e0af68;
+        --git-removed: #f7768e;
+        --git-blame: rgba(128, 128, 128, 0.7);
+        --git-peek-bg: #1f2335;
+        --git-peek-fg: #c0caf5;
+      }
+      .monaco-editor .margin-view-overlays .diff-gutter-added,
+      .monaco-editor .margin-view-overlays .diff-gutter-modified,
+      .monaco-editor .margin-view-overlays .diff-gutter-deleted {
+        cursor: pointer;
+      }
+      .git-blame-ghost {
+        color: var(--git-blame) !important;
+        font-style: italic;
+        opacity: 0.75;
+      }
+      .git-peek {
+        margin: 4px 0;
+        border-top: 1px solid var(--git-modified);
+        border-bottom: 1px solid var(--git-modified);
+        background: var(--git-peek-bg);
+        color: var(--git-peek-fg);
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 12px;
+        overflow: hidden;
+      }
+      .git-peek-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+      }
+      .git-peek-title {
+        flex: 1;
+        opacity: 0.8;
+      }
+      .git-peek-button {
+        background: transparent;
+        color: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.35);
+        border-radius: 5px;
+        padding: 1px 8px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .git-peek-button:hover {
+        background: rgba(128, 128, 128, 0.18);
+      }
+      .git-peek-old {
+        margin: 0;
+        padding: 2px 10px 6px 14px;
+        max-height: 220px;
+        overflow: auto;
+        font-family: "JetBrains Mono", Menlo, monospace;
+        font-size: 12px;
+        background: color-mix(in srgb, var(--git-removed) 12%, transparent);
+        white-space: pre;
+      }
       /* Default diff gutter colors (overridden by theme) */
       .diff-gutter-added {
         background: #9ece6a;

@@ -275,6 +275,11 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             cursorDebounceWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
 
+        case let .gitAction(action, line):
+            NotificationCenter.default.post(
+                name: .editorGitAction, object: self,
+                userInfo: ["action": action, "line": Int(line)])
+
         case .saveRequested:
             // Route through the main save pipeline so format-on-save, LSP
             // notifications, and other post-save actions run correctly.
@@ -623,6 +628,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// Apply git diff decorations in the gutter.
     func applyDiffDecorations(_ decorations: [DiffDecoration]) {
         sendCommand(.applyDiffDecorations(decorations: decorations))
+    }
+
+    /// Give Monaco the file's git base (index version) and blame so it can
+    /// mark changes against the live buffer.
+    func setGitBase(_ base: String?, blame: [EditorBlameLine]) {
+        sendCommand(.setGitBase(base: base, blame: blame))
     }
 
     /// Apply LSP diagnostics (errors, warnings) as markers.

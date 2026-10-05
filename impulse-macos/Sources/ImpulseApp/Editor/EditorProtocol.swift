@@ -23,6 +23,9 @@ enum EditorCommand: Encodable {
     case resolveCodeActions(requestId: UInt64, actions: [MonacoCodeAction])
     case resolveRename(requestId: UInt64, edits: [MonacoWorkspaceTextEdit])
     case resolvePrepareRename(requestId: UInt64, range: MonacoRange?, placeholder: String?)
+    /// The file's git base (index version) to diff the live buffer against,
+    /// plus blame for the saved file. A nil base turns git gutter marks off.
+    case setGitBase(base: String?, blame: [EditorBlameLine])
 
     // MARK: Tagged Enum Encoding
 
@@ -43,6 +46,7 @@ enum EditorCommand: Encodable {
         case resolveCodeActions = "ResolveCodeActions"
         case resolveRename = "ResolveRename"
         case resolvePrepareRename = "ResolvePrepareRename"
+        case setGitBase = "SetGitBase"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -67,6 +71,8 @@ enum EditorCommand: Encodable {
         case actions
         case range
         case placeholder
+        case base
+        case blame
     }
 
     func encode(to encoder: Encoder) throws {
@@ -152,6 +158,11 @@ enum EditorCommand: Encodable {
             try container.encode(requestId, forKey: .requestId)
             try container.encodeIfPresent(range, forKey: .range)
             try container.encodeIfPresent(placeholder, forKey: .placeholder)
+
+        case let .setGitBase(base, blame):
+            try container.encode(TypeTag.setGitBase, forKey: .type)
+            try container.encode(base, forKey: .base)
+            try container.encode(blame, forKey: .blame)
         }
     }
 }
@@ -179,6 +190,8 @@ enum EditorEvent: Decodable {
     case codeActionRequested(requestId: UInt64, startLine: UInt32, startColumn: UInt32, endLine: UInt32, endColumn: UInt32, diagnostics: [MonacoDiagnostic])
     case renameRequested(requestId: UInt64, line: UInt32, character: UInt32, newName: String)
     case prepareRenameRequested(requestId: UInt64, line: UInt32, character: UInt32)
+    /// From the git peek widget: "stage" or "review" at a 1-based line.
+    case gitAction(action: String, line: UInt32)
 
     private enum TypeTag: String, Decodable {
         case ready = "Ready"
@@ -197,6 +210,7 @@ enum EditorEvent: Decodable {
         case codeActionRequested = "CodeActionRequested"
         case renameRequested = "RenameRequested"
         case prepareRenameRequested = "PrepareRenameRequested"
+        case gitAction = "GitAction"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -218,6 +232,7 @@ enum EditorEvent: Decodable {
         case endColumn = "end_column"
         case diagnostics
         case newName = "new_name"
+        case action
     }
 
     init(from decoder: Decoder) throws {
@@ -312,6 +327,11 @@ enum EditorEvent: Decodable {
             let line = try container.decode(UInt32.self, forKey: .line)
             let character = try container.decode(UInt32.self, forKey: .character)
             self = .prepareRenameRequested(requestId: requestId, line: line, character: character)
+
+        case .gitAction:
+            let action = try container.decode(String.self, forKey: .action)
+            let line = try container.decode(UInt32.self, forKey: .line)
+            self = .gitAction(action: action, line: line)
         }
     }
 }
@@ -474,6 +494,16 @@ struct MonacoContentChange: Codable {
 struct MonacoTextEdit: Codable {
     var range: MonacoRange
     var text: String
+}
+
+/// Blame for one line of the saved file (for inline current-line blame).
+struct EditorBlameLine: Codable {
+    var line: Int
+    var author: String
+    /// Seconds since 1970.
+    var time: Double
+    var summary: String
+    var sha: String
 }
 
 struct DiffDecoration: Codable {

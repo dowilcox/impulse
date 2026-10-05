@@ -546,7 +546,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     case "changes": showChangesPanel()
     case "review-split":
       for case .diffReview(_, let review) in tabManager.tabs { review.setLayout("split") }
-    default: NSLog("DebugSnapshot: unknown action '\(action)'")
+    default:
+      if action.hasPrefix("open=") {
+        let relative = String(action.dropFirst(5))
+        let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
+        openFile(path: (base as NSString).appendingPathComponent(relative))
+      } else {
+        NSLog("DebugSnapshot: unknown action '\(action)'")
+      }
     }
   }
 
@@ -1626,6 +1633,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .editorGitAction, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let editor = self.ownedEditor(from: notification),
+          let action = notification.userInfo?["action"] as? String,
+          let line = notification.userInfo?["line"] as? Int
+        else { return }
+        self.handleEditorGitAction(editor: editor, action: action, line: line)
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .editorDirtyStateChanged, object: nil, queue: .main) {
         [weak self] notification in
         guard let self, let editor = notification.object as? EditorTab,
@@ -2499,8 +2516,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.repository = state
     if let state {
       // Working-tree and index changes recolor the file tree's git badges.
-      let token = state.addChangeListener { [weak self] _ in
-        self?.fileTreeData.refreshGitStatus()
+      let token = state.addChangeListener { [weak self] change in
+        guard let self else { return }
+        self.fileTreeData.refreshGitStatus()
+        // Staging/committing/switching changes the editor's diff base.
+        if !change.isDisjoint(with: [.index, .refs]), let editor = self.tabManager.selectedEditor {
+          self.applyGitDiffDecorations(editor: editor)
+        }
       }
       repositoryListener = (state, token)
     }
@@ -2563,12 +2585,75 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Applies git diff gutter decorations to an editor tab by querying
   /// the FFI bridge for diff markers.
+  /// Send the editor its file's git base (index version) and blame; Monaco
+  /// computes change marks against the live buffer from it.
   private func applyGitDiffDecorations(editor: EditorTab) {
     guard let path = editor.filePath else { return }
     DispatchQueue.global(qos: .utility).async {
-      let markers = ImpulseCore.gitDiffMarkers(filePath: path)
+      let base = GitClient.baseContent(forFile: path)
+      var blame: [EditorBlameLine] = []
+      if base != nil, let root = GitClient.repoRoot(forPath: path) {
+        let relative = path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : path
+        blame = GitOperations.blame(path: relative, root: root).map { line, info in
+          EditorBlameLine(
+            line: line, author: info.author, time: info.authorTime.timeIntervalSince1970,
+            summary: info.summary, sha: info.sha)
+        }
+      }
       DispatchQueue.main.async {
-        editor.applyDiffDecorations(markers)
+        editor.setGitBase(base, blame: blame)
+      }
+    }
+  }
+
+  /// Stage the hunk at `line` (from the editor's git peek) or open it in the
+  /// review.
+  private func handleEditorGitAction(editor: EditorTab, action: String, line: Int) {
+    guard let path = editor.filePath, let repository = windowModel.repository,
+      path.hasPrefix(repository.root + "/")
+    else { return }
+    let relative = String(path.dropFirst(repository.root.count + 1))
+    if action == "review" {
+      gitOpenReview(scope: .unstaged, focusPath: relative)
+      return
+    }
+    guard !editor.isModified else {
+      toasts.show(
+        Toast(
+          kind: .info, message: "Save the file to stage this change.", actionTitle: "Save",
+          action: { [weak self] in
+            self?.tabManager.selectTab(index: self?.tabManager.tabs.firstIndex {
+              if case .editor(let e) = $0 { return e === editor } else { return false }
+            } ?? -1)
+            NotificationCenter.default.post(name: .impulseSaveFile, object: nil)
+          }))
+      return
+    }
+    let root = repository.root
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let diff = try? GitClient.fileDiff(repoPath: root, path: relative, scope: .unstaged)
+      DispatchQueue.main.async {
+        guard let self, let diff else { return }
+        guard
+          let index = diff.hunks.firstIndex(where: { hunk in
+            let start = Int(hunk.newStart)
+            let count = hunk.lines.filter { $0.kind != .removed }.count
+            return line >= start - 1 && line <= start + max(count, 1)
+          })
+        else {
+          self.toasts.show(Toast(kind: .warning, message: "That change isn't in the unstaged diff."))
+          return
+        }
+        let change = FileChange(path: relative, status: diff.status)
+        GitActions(repository: repository, host: self).apply(
+          .stage, selection: .wholeHunks([index]), change: change,
+          expectedHunkIds: [index: diff.hunkIds[index]], options: DiffOptions()
+        ) { [weak self] success in
+          if success {
+            self?.toasts.show(Toast(kind: .success, message: "Staged the change"))
+            self?.applyGitDiffDecorations(editor: editor)
+          }
+        }
       }
     }
   }

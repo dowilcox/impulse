@@ -420,3 +420,40 @@
     }
   }
 #endif
+
+#if canImport(Testing)
+  @Suite(.serialized)
+  struct BlameAndBaseTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func blameAttributesLinesAndMarksUncommitted() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\ntwo\n"], message: "first lines")
+      try repo.write("a.txt", "one\ntwo\nthree\n")
+      let blame = GitOperations.blame(path: "a.txt", root: repo.root)
+      #expect(blame.count == 3)
+      #expect(blame[1]?.summary == "first lines")
+      #expect(blame[1]?.author == "Impulse Test")
+      #expect(blame[2]?.isUncommitted == false)
+      #expect(blame[3]?.isUncommitted == true)
+    }
+
+    @Test func baseContentIsTheIndexVersion() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit([".gitignore": "*.log\n", "a.txt": "committed\n"])
+      try repo.write("a.txt", "staged\n")
+      try repo.git("add", "a.txt")
+      try repo.write("a.txt", "working\n")
+      try repo.write("new.txt", "fresh\n")
+      try repo.write("debug.log", "ignored\n")
+      #expect(GitClient.baseContent(forFile: repo.root + "/a.txt") == "staged\n")
+      #expect(GitClient.baseContent(forFile: repo.root + "/new.txt") == "")
+      #expect(GitClient.baseContent(forFile: repo.root + "/debug.log") == nil)
+      #expect(GitClient.baseContent(forFile: "/tmp/not-in-a-repo-\(UUID().uuidString).txt") == nil)
+    }
+  }
+#endif
