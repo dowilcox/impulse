@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     startLspPolling()
 
     let sessionToRestore: SessionWindowState?
-    if pendingFiles.isEmpty && settings.restoreSession {
+    if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive {
       sessionToRestore = SessionState.load()?.activeWindow
     } else {
       sessionToRestore = nil
@@ -88,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let filesToOpen: [String]
     if sessionToRestore != nil {
       filesToOpen = []
-    } else if pendingFiles.isEmpty && settings.restoreSession {
+    } else if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive {
       filesToOpen = settings.openFiles.filter {
         FileManager.default.fileExists(atPath: $0)
       }
@@ -123,10 +123,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
-    NSApp.activate(ignoringOtherApps: true)
+    if DebugSnapshot.isActive {
+      NSApp.setActivationPolicy(.accessory)
+      DebugSnapshot.run { [weak self] action in
+        self?.windowControllers.first?.performDebugAction(action)
+      }
+    } else {
+      NSApp.activate(ignoringOtherApps: true)
+    }
 
     // Check for updates in background if enabled.
-    if settings.checkForUpdates {
+    if settings.checkForUpdates && !DebugSnapshot.isActive {
       DispatchQueue.global(qos: .utility).async {
         guard let update = UpdateChecker.checkForUpdate(currentVersion: AppVersion.current)
         else { return }
@@ -143,6 +150,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func application(_ sender: NSApplication, openFiles filenames: [String]) {
+    // AppKit hands non-flag command-line arguments to openFiles; in snapshot
+    // mode those are the snapshot options' values, not documents.
+    guard !DebugSnapshot.isActive else {
+      sender.reply(toOpenOrPrint: .success)
+      return
+    }
     if let controller = windowControllers.first {
       for path in filenames {
         controller.openFile(path: path)
@@ -372,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// their tabs. If every window has already closed, keep the most recent
   /// snapshot written by the closing window.
   func persistSessionStateFromOpenWindows() {
-    guard !windowControllers.isEmpty else { return }
+    guard AppState.persistenceEnabled, !windowControllers.isEmpty else { return }
     var seen = Set<String>()
     settings.openFiles = windowControllers.flatMap { $0.restorableOpenFiles() }.filter { path in
       guard !seen.contains(path) else { return false }

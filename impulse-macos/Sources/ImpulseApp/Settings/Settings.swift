@@ -491,24 +491,10 @@ extension Settings {
     private static var fileSnapshot: SettingsFileSnapshot?
     static private(set) var loadWarning: SettingsLoadWarning?
 
-    /// Returns the path to `~/Library/Application Support/impulse/settings.json`.
+    /// Returns the path to `settings.json` in the app's data directory
+    /// (`~/Library/Application Support/impulse`, or `impulse-dev` for dev builds).
     static func settingsPath() -> URL {
-        guard let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first else {
-            // Fallback to ~/Library/Application Support if the system API
-            // returns an empty array (should never happen on macOS).
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            return home.appendingPathComponent("Library/Application Support/impulse/settings.json")
-        }
-        let dir = appSupport.appendingPathComponent("impulse", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Set restrictive permissions on settings directory
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: dir.path
-        )
-        return dir.appendingPathComponent("settings.json")
+        AppPaths.dataDirectory.appendingPathComponent("settings.json")
     }
 
     /// Convenience alias used by existing code.

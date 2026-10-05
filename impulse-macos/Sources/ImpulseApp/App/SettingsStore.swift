@@ -49,11 +49,13 @@ final class SettingsStore {
   func saveNow() {
     saveWorkItem?.cancel()
     saveWorkItem = nil
+    guard AppState.persistenceEnabled else { return }
     settings.save()
   }
 
   /// Coalesce rapid changes (stepper clicks, typing) into one write.
   private func scheduleSave() {
+    guard AppState.persistenceEnabled else { return }
     saveWorkItem?.cancel()
     let work = DispatchWorkItem { [weak self] in
       self?.saveWorkItem = nil

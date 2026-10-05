@@ -282,7 +282,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // Open a default terminal tab (skipped when launching with file arguments).
     if !skipInitialTerminal {
-      tabManager.addTerminalTab()
+      tabManager.addTerminalTab(directory: DebugSnapshot.initialDirectory)
     }
 
   }
@@ -635,6 +635,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
           toolbar.removeItem(at: i)
         }
       }
+    }
+  }
+
+  // MARK: - Debug Snapshot Actions
+
+  /// Named UI actions for `--impulse-snapshot-actions` (headless visual checks).
+  func performDebugAction(_ action: String) {
+    switch action {
+    case "sidebar": setSidebarVisible(true)
+    case "palette": NotificationCenter.default.post(name: .impulseShowCommandPalette, object: nil)
+    case "review": openDiffReview()
+    case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
+    default: NSLog("DebugSnapshot: unknown action '\(action)'")
     }
   }
 

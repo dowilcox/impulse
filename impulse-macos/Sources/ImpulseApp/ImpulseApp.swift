@@ -16,7 +16,13 @@ struct ImpulseApp {
         let args = CommandLine.arguments
 
         // Detect --dev mode before anything else.
-        AppState.isDev = args.contains("--dev")
+        AppState.isDev =
+            args.contains("--dev")
+            || (Bundle.main.bundleIdentifier?.hasSuffix(".Devel") ?? false)
+        DebugSnapshot.configure(arguments: args)
+        if DebugSnapshot.isActive {
+            AppState.persistenceEnabled = false
+        }
 
         // Handle CLI-only LSP management flags before launching the GUI.
         if args.contains("--install-lsp-servers") {
@@ -52,7 +58,7 @@ struct ImpulseApp {
         }
 
         // Collect non-flag arguments as file paths to open.
-        let filePaths = args.dropFirst().filter { !$0.hasPrefix("-") }
+        let filePaths = DebugSnapshot.isActive ? [] : args.dropFirst().filter { !$0.hasPrefix("-") }
 
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
