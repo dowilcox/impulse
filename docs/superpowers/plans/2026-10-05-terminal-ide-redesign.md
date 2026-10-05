@@ -458,7 +458,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - Replaces the SwiftUI `TextField` in `TerminalContextBarView.swift:249-321`.
   - Keeps password `SecureField` behavior via ECHO detection.
 - [ ] **Highlighting** from `ShellParser` tokens. Unknown-command dashed underline, resolved against a `PATH` / alias / function cache captured from the shell through an OSC 6973 extension emitted at prompt time, size-capped.
-- [ ] **Completion engine:**
+- [x] **Completion engine:** (specs are hand-written in `CompletionSpecs.swift` for the common tools rather than vendored from withfig; generators for git refs, paths, package.json scripts, Make/just targets, ssh hosts; the menu stays prefix-matched)
   - `scripts/vendor-completion-specs.sh` exports a curated JSON subset of withfig/autocomplete (MIT) into `ImpulseKit/Resources/CompletionSpecs/`.
   - A spec interpreter for subcommands, options and args.
   - Native generators: git refs, files, package.json scripts, Makefile and justfile targets, ssh hosts.
