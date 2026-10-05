@@ -19,6 +19,11 @@ class TerminalTab: NSView {
   /// Whether this terminal has produced output that needs user attention.
   private(set) var needsAttention: Bool = false
 
+  /// Stable identity (desktop notifications point back at it).
+  let id = UUID()
+  /// The command running now, or that ran last (from shell integration).
+  private(set) var currentCommand: String?
+
   /// Latest OSC 9;4 progress report from the foreground program. Reset to
   /// hidden when the command ends so a crashed program can't leave it stuck.
   private(set) var progress: TerminalProgress = .hidden
@@ -204,6 +209,7 @@ class TerminalTab: NSView {
       }
       if currentSettings?.terminalAttentionOnBell ?? true {
         requestAttention(.informationalRequest)
+        postDesktopNotification(title: tabTitle, body: "Bell")
       }
     case .childExited(let code):
       NotificationCenter.default.post(
@@ -257,6 +263,7 @@ class TerminalTab: NSView {
       handleCommandEnd(exitCode: code)
     case .commandBlockStarted(let block):
       isCommandRunning = true
+      currentCommand = block.command
       // Lets the renderer combine "command running" with the raw terminal modes
       // to decide direct interaction (e.g. Claude Code, which runs inline).
       renderer.commandRunning = true
@@ -298,7 +305,7 @@ class TerminalTab: NSView {
       if currentSettings?.terminalAllowNotifications ?? true {
         requestAttention(.informationalRequest)
         if !title.isEmpty || !body.isEmpty {
-          os_log(.info, "Terminal notification: %{public}@ %{public}@", title, body)
+          postDesktopNotification(title: title.isEmpty ? tabTitle : title, body: body)
         }
       }
     }
@@ -331,9 +338,27 @@ class TerminalTab: NSView {
     }
 
     requestAttention(.informationalRequest)
-    if exitCode != 0 {
-      os_log(.info, "Long terminal command exited with status %{public}d", exitCode)
-    }
+    let elapsed = Self.durationText(Date().timeIntervalSince(started))
+    let command = currentCommand.map { $0.count > 80 ? String($0.prefix(79)) + "…" : $0 }
+    postDesktopNotification(
+      title: exitCode == 0 ? "Command finished" : "Command failed (exit \(exitCode))",
+      body: [command, elapsed].compactMap { $0 }.joined(separator: " · "))
+  }
+
+  /// Ask the window to show a desktop notification for this terminal (it
+  /// does when Impulse is in the background).
+  private func postDesktopNotification(title: String, body: String) {
+    NotificationCenter.default.post(
+      name: .terminalWantsNotification, object: self,
+      userInfo: ["title": title, "body": body])
+  }
+
+  /// "8s", "2m 05s", "1h 02m".
+  static func durationText(_ seconds: TimeInterval) -> String {
+    let total = Int(seconds.rounded())
+    if total < 60 { return "\(total)s" }
+    if total < 3600 { return String(format: "%dm %02ds", total / 60, total % 60) }
+    return String(format: "%dh %02dm", total / 3600, (total % 3600) / 60)
   }
 
   private func handleAttentionRequest(_ value: String) {

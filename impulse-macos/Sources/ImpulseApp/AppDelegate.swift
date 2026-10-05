@@ -45,6 +45,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
+    DesktopNotifier.shared.activate()
+    // The Dock badge counts terminals (in any window) that need attention.
+    NotificationCenter.default.addObserver(
+      forName: .terminalAttentionChanged, object: nil, queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      let count = self.windowControllers.reduce(0) { total, controller in
+        total
+          + controller.tabManager.allSurfaces.filter {
+            if case .terminal(let container) = $0 { return container.needsAttention }
+            return false
+          }.count
+      }
+      DesktopNotifier.shared.setBadge(count: count)
+    }
     theme = ThemeManager.theme(forName: settings.colorScheme)
     rebuildMainMenu()
     observeSettingsChanges()
@@ -344,6 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    // Pick up git changes made while Impulse was in the background.
+    GitRepositoryStore.shared.refreshAll()
     startLspPolling()
     // Drain anything that queued while inactive (e.g. diagnostics from a
     // build that touched watched files).

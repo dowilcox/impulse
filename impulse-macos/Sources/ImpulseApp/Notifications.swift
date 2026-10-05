@@ -143,6 +143,9 @@ extension Notification.Name {
     /// Ask the key window to pick a folder to open as a workspace.
     static let impulseOpenWorkspace = Notification.Name("impulseOpenWorkspace")
     static let impulseSwitchWorkspace = Notification.Name("impulseSwitchWorkspace")
+    /// A terminal wants a desktop notification (object: the TerminalTab;
+    /// userInfo "title", "body").
+    static let terminalWantsNotification = Notification.Name("impulse.terminalWantsNotification")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.

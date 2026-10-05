@@ -1826,7 +1826,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let terminal = notification.object as? TerminalTab,
           self.tabManager.ownsTerminal(terminal)
         else { return }
+        if !terminal.needsAttention { DesktopNotifier.shared.clear(terminalID: terminal.id) }
         self.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalWantsNotification, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, !NSApp.isActive,
+          let terminal = notification.object as? TerminalTab,
+          let location = self.tabManager.location(ofTerminal: terminal),
+          let workspaceID = self.tabManager.workspaceID(ofTabAt: location.tabIndex)
+        else { return }
+        let workspace = self.tabManager.workspace(workspaceID)
+        DesktopNotifier.shared.post(
+          title: notification.userInfo?["title"] as? String ?? terminal.tabTitle,
+          subtitle: [workspace?.name, terminal.tabTitle].compactMap { $0 }.joined(separator: " · "),
+          body: notification.userInfo?["body"] as? String ?? "",
+          terminalID: terminal.id, thread: workspaceID.uuidString)
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: DesktopNotifier.revealTerminal, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let id = notification.userInfo?["terminal"] as? String,
+          let location = self.tabManager.locate(where: {
+            if case .terminal(let container) = $0 { return container.activeTerminal?.id.uuidString == id }
+            return false
+          })
+        else { return }
+        self.window?.makeKeyAndOrderFront(nil)
+        self.tabManager.reveal(location)
       }
     )
     notificationObservers.append(

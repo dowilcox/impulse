@@ -72,6 +72,15 @@ pub struct OscScanner {
     event_spans: Vec<OscEventSpan>,
     escape_start_offset: Option<usize>,
     osc_start_offset: Option<usize>,
+    /// OSC 99 notifications still being assembled, by id.
+    kitty_pending: Vec<(String, KittyNotification)>,
+}
+
+/// A kitty (OSC 99) notification arriving in chunks.
+#[derive(Default)]
+struct KittyNotification {
+    title: String,
+    body: String,
 }
 
 impl OscScanner {
@@ -83,6 +92,7 @@ impl OscScanner {
             event_spans: Vec::new(),
             escape_start_offset: None,
             osc_start_offset: None,
+            kitty_pending: Vec::new(),
         }
     }
 
@@ -152,7 +162,13 @@ impl OscScanner {
     }
 
     fn dispatch_osc(&mut self, end_offset: usize) {
-        if let Some(event) = self.parse_osc() {
+        let event = if self.buf.starts_with(b"99;") {
+            let payload = self.buf[3..].to_vec();
+            self.parse_kitty_notification(&payload)
+        } else {
+            self.parse_osc()
+        };
+        if let Some(event) = event {
             self.events.push(event.clone());
             self.event_spans.push(OscEventSpan {
                 event,
@@ -258,6 +274,75 @@ impl OscScanner {
             _ => percent,
         };
         Some(OscEvent::Progress { state, percent })
+    }
+
+    /// Parse a kitty desktop notification after "99;": `metadata;payload`,
+    /// where metadata is `key=value` pairs joined by ':' — `i` (id), `d`
+    /// (0 while more chunks follow), `p` (`title` or `body`). Chunks with the
+    /// same id accumulate until `d` isn't 0. Base64 (`e=1`) and other payload
+    /// kinds are ignored.
+    fn parse_kitty_notification(&mut self, payload: &[u8]) -> Option<OscEvent> {
+        let s = std::str::from_utf8(payload).ok()?;
+        let (metadata, text) = s.split_once(';')?;
+        let mut id = String::new();
+        let mut done = true;
+        let mut kind = "title";
+        for pair in metadata.split(':').filter(|p| !p.is_empty()) {
+            let (key, value) = pair.split_once('=')?;
+            match key {
+                "i" => id = value.to_string(),
+                "d" => done = value != "0",
+                "p" => {
+                    kind = if value == "body" {
+                        "body"
+                    } else if value == "title" {
+                        "title"
+                    } else {
+                        return None;
+                    }
+                }
+                "e" if value == "1" => return None,
+                _ => {}
+            }
+        }
+        let index = match self
+            .kitty_pending
+            .iter()
+            .position(|(pending, _)| *pending == id)
+        {
+            Some(index) => index,
+            None => {
+                // Bound memory if a program never finishes its chunks.
+                if self.kitty_pending.len() >= 8 {
+                    self.kitty_pending.remove(0);
+                }
+                self.kitty_pending
+                    .push((id.clone(), KittyNotification::default()));
+                self.kitty_pending.len() - 1
+            }
+        };
+        let text = Self::sanitize_text(text);
+        let entry = &mut self.kitty_pending[index].1;
+        if kind == "body" {
+            entry.body.push_str(&text);
+        } else {
+            entry.title.push_str(&text);
+        }
+        if !done {
+            return None;
+        }
+        let (_, finished) = self.kitty_pending.remove(index);
+        if finished.title.is_empty() && finished.body.is_empty() {
+            return None;
+        }
+        Some(OscEvent::Notification {
+            title: if finished.title.is_empty() {
+                "Terminal".to_string()
+            } else {
+                finished.title
+            },
+            body: finished.body,
+        })
     }
 
     /// Parse rxvt/WezTerm notification payload after "777;".
@@ -600,6 +685,45 @@ mod tests {
                 body: "40 tests passed".to_string()
             }]
         );
+    }
+
+    #[test]
+    fn test_osc99_simple_notification_is_a_title() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]99;;Hello world\x1b\\");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::Notification {
+                title: "Hello world".to_string(),
+                body: String::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_osc99_chunks_assemble_by_id() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]99;i=1:d=0;Build\x1b\\");
+        scanner.scan(b"\x1b]99;i=2:d=0;Other\x07");
+        assert!(scanner.drain_events().is_empty());
+        scanner.scan(b"\x1b]99;i=1:d=0:p=body;All tests\x1b\\");
+        scanner.scan(b"\x1b]99;i=1:p=body; passed\x1b\\");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::Notification {
+                title: "Build".to_string(),
+                body: "All tests passed".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_osc99_ignores_base64_and_unknown_payloads() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]99;e=1;SGVsbG8=\x07");
+        scanner.scan(b"\x1b]99;p=icon;x\x07");
+        scanner.scan(b"\x1b]99;garbage\x07");
+        assert!(scanner.drain_events().is_empty());
     }
 
     #[test]

@@ -1243,6 +1243,13 @@ final class TabManager: NSObject {
     }
   }
 
+  func location(ofTerminal terminal: TerminalTab) -> SurfaceLocation? {
+    locate {
+      if case .terminal(let container) = $0 { return container.terminals.contains { $0 === terminal } }
+      return false
+    }
+  }
+
   /// Select the tab holding a surface and focus its pane.
   func reveal(_ location: SurfaceLocation) {
     if location.tabIndex != selectedIndex { selectTab(index: location.tabIndex) }
