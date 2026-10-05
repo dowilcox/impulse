@@ -611,7 +611,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 ## M8: Editor depth, accessibility, performance, docs
 
 - [ ] **Multi-model editor panes:** one WKWebView per pane, with view-state save/restore. `EditorWebViewPool` pre-warms per pane. Measure against §11.
-- [ ] **Problems panel** (bottom dock): keep diagnostics for all URIs; filters; status-bar counts; send to agent.
+- [x] **Problems panel** (bottom dock): keep diagnostics for all URIs; filters; status-bar counts; send to agent. (a tool tab rather than a bottom dock)
 - [ ] **Outline** (right dock) and breadcrumbs from `documentSymbol`. Palette `@` symbols and `#` workspace symbols.
 - [ ] **LSP coverage:**
   - `workspace/applyEdit` and multi-file `WorkspaceEdit` applied in Swift with one undo group;
@@ -619,7 +619,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - document highlight, inlay hints, type definition/implementation.
   - `showMessage` and `$/progress` go to toasts and the status bar.
   - Move LSP off the single global serial `lspQueue` (`AppDelegate.swift:24`) to per-server queues.
-- [ ] **Project-wide find & replace** with preview.
+- [x] **Project-wide find & replace** with preview.
 - [ ] **Optional vim mode** (monaco-vim, vendored).
 - [ ] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
 - [ ] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace.
