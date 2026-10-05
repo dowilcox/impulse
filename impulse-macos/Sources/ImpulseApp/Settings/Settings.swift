@@ -526,6 +526,13 @@ extension Settings {
         sidebarWidth = max(100, min(1000, sidebarWidth))
         rightMarginPosition = max(1, min(500, rightMarginPosition))
         editorLineHeight = max(0, min(100, editorLineHeight))
+        // The settings UI once offered "bar" while the terminal only knows
+        // "beam", which silently fell back to a block cursor.
+        switch terminalCursorShape.lowercased() {
+        case "bar", "beam", "ibeam": terminalCursorShape = "beam"
+        case "underline": terminalCursorShape = "underline"
+        default: terminalCursorShape = "block"
+        }
         if tabBarPosition != "top" && tabBarPosition != "sidebar" {
             tabBarPosition = "sidebar"
         }

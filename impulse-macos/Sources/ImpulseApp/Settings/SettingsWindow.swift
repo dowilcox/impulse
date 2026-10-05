@@ -455,7 +455,7 @@ final class SettingsWindowController: NSWindowController {
 
     let cursorPopup = NSPopUpButton(
       title: "", target: self, action: #selector(termCursorShapeChanged(_:)))
-    cursorPopup.addItems(withTitles: ["block", "underline", "bar"])
+    cursorPopup.addItems(withTitles: ["block", "underline", "beam"])
     cursorPopup.selectItem(withTitle: settings.terminalCursorShape)
 
     let cursorBlinkCheck = NSButton(
