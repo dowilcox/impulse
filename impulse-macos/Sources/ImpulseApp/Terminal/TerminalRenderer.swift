@@ -100,7 +100,18 @@ class TerminalRenderer: NSView {
 
     private enum BlockToolbarButton: Equatable {
         case copyOutput
+        case rerun
+        case sendToAgent
         case menu
+
+        var help: String {
+            switch self {
+            case .copyOutput: return "Copy output"
+            case .rerun: return "Run again"
+            case .sendToAgent: return "Send to agent"
+            case .menu: return "More"
+            }
+        }
     }
     private struct BlockToolbarTarget {
         let rect: CGRect  // in view coordinates (includes the bottom-anchor offset)
@@ -111,7 +122,11 @@ class TerminalRenderer: NSView {
     private var hoverToolbarTargets: [BlockToolbarTarget] = []
     /// The toolbar button currently under the pointer (for hover highlight).
     private var hoveredToolbarButton: BlockToolbarButton? = nil {
-        didSet { if hoveredToolbarButton != oldValue { needsDisplay = true } }
+        didSet {
+            guard hoveredToolbarButton != oldValue else { return }
+            needsDisplay = true
+            toolTip = hoveredToolbarButton?.help
+        }
     }
     var onShowCommandHistory: (() -> Void)?
     var onJumpToPreviousCommandBlock: (() -> Void)?
@@ -1208,7 +1223,8 @@ class TerminalRenderer: NSView {
         // 6b. Block separators, stripes, and status chips above the text.
         if let blockOverlay {
             drawBlockDecorations(
-                context: context, overlay: blockOverlay, drawRows: drawRows, lines: lines
+                context: context, overlay: blockOverlay, drawRows: drawRows, lines: lines,
+                grid: grid, cols: cols
             )
         }
 
@@ -1494,10 +1510,21 @@ class TerminalRenderer: NSView {
     /// Hairline separators between blocks, left-edge status stripes
     /// (Warp's "flag pole"), and right-aligned exit/duration chips.
     private func drawBlockDecorations(
-        context: CGContext, overlay: TerminalBlockOverlay, drawRows: Range<Int>, lines: Int
+        context: CGContext, overlay: TerminalBlockOverlay, drawRows: Range<Int>, lines: Int,
+        grid: GridBufferReader, cols: Int
     ) {
         let ch = fontMetrics.cellHeight
         let fullWidth = bounds.width
+
+        // Exit status and duration at the right of each finished block's
+        // first row, where the shell left that space blank.
+        for block in overlay.blocks where block.id != hoveredBlockId {
+            let row = Int(block.startRow)
+            guard row >= 0, row < lines, drawRows.contains(row), !frameCollapsedRows.contains(row),
+                let text = Self.blockChipText(exitCode: block.exitCode, durationMs: block.durationMs)
+            else { continue }
+            drawBlockChip(context: context, text: text, failed: block.failed, row: row, grid: grid, cols: cols)
+        }
 
         for block in overlay.blocks {
             // The blank prompt padding is collapsed away, so the block's real
@@ -1564,8 +1591,34 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Floating action toolbar at a hovered block's top-right: a quick
-    /// copy-output button and a "⋯" options menu (Warp-style).
+    /// Right-aligned status text on `row`, unless glyphs (a right prompt,
+    /// long output) are already there.
+    private func drawBlockChip(
+        context: CGContext, text: String, failed: Bool, row: Int, grid: GridBufferReader, cols: Int
+    ) {
+        let color = failed ? blockFailedColor : (blockMutedTextColor.copy(alpha: 0.75) ?? blockMutedTextColor)
+        let attrs: [CFString: Any] = [
+            kCTFontAttributeName: chipFont ?? fontMetrics.font,
+            kCTForegroundColorAttributeName: color,
+        ]
+        guard let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) else { return }
+        let line = CTLineCreateWithAttributedString(attrStr)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let cw = fontMetrics.cellWidth
+        let span = Int((width / cw).rounded(.up)) + 2
+        guard span < cols / 2 else { return }
+        for col in (cols - span)..<cols {
+            let value = grid.cell(row: row, col: col).character.value
+            if value != 0 && value != 32 { return }
+        }
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(
+            x: bounds.width - padding - width, y: rowTopY(row) + fontMetrics.ascent)
+        CTLineDraw(line, context)
+    }
+
+    /// Floating action toolbar at a hovered block's top-right: copy output,
+    /// run again, send to agent and a "⋯" options menu (Warp-style).
     private func drawBlockToolbar(
         context: CGContext, block: TerminalBlockOverlayRegion, lines: Int
     ) {
@@ -1576,7 +1629,10 @@ class TerminalRenderer: NSView {
 
         let buttonW: CGFloat = 26
         let inset: CGFloat = 4
-        let buttons: [BlockToolbarButton] = [.copyOutput, .menu]
+        var buttons: [BlockToolbarButton] = [.copyOutput]
+        if !(block.command?.isEmpty ?? true), !block.isRunning { buttons.append(.rerun) }
+        if onSendBlockToAgent != nil { buttons.append(.sendToAgent) }
+        buttons.append(.menu)
         let toolbarH = ch
         let toolbarW = inset * 2 + buttonW * CGFloat(buttons.count)
         let x = bounds.width - padding - toolbarW
@@ -1620,6 +1676,10 @@ class TerminalRenderer: NSView {
             switch button {
             case .copyOutput:
                 drawCopyGlyph(context: context, in: iconBox, color: iconColor)
+            case .rerun:
+                drawRerunGlyph(context: context, in: iconBox, color: iconColor)
+            case .sendToAgent:
+                drawSendGlyph(context: context, in: iconBox, color: iconColor)
             case .menu:
                 drawKebabGlyph(context: context, in: iconBox, color: iconColor)
             }
@@ -1650,6 +1710,43 @@ class TerminalRenderer: NSView {
         context.fillPath()
         context.setStrokeColor(color)
         context.addPath(frontPath)
+        context.strokePath()
+    }
+
+    /// An open circle with an arrowhead — "run again".
+    private func drawRerunGlyph(context: CGContext, in box: CGRect, color: CGColor) {
+        let center = CGPoint(x: box.midX, y: box.midY)
+        let radius = min(box.width, box.height) * 0.42
+        context.setStrokeColor(color)
+        context.setLineWidth(1.3)
+        context.setLineCap(.round)
+        // Flipped view: angles run clockwise. Leave a gap at the top right.
+        context.addArc(center: center, radius: radius, startAngle: -.pi / 3, endAngle: 1.5 * .pi, clockwise: false)
+        context.strokePath()
+        let tip = CGPoint(x: center.x + radius * cos(-.pi / 3), y: center.y + radius * sin(-.pi / 3))
+        context.setFillColor(color)
+        context.move(to: CGPoint(x: tip.x + 2.6, y: tip.y - 1.2))
+        context.addLine(to: CGPoint(x: tip.x - 1.6, y: tip.y - 2.6))
+        context.addLine(to: CGPoint(x: tip.x + 0.4, y: tip.y + 2.4))
+        context.closePath()
+        context.fillPath()
+    }
+
+    /// A paper plane — "send to agent".
+    private func drawSendGlyph(context: CGContext, in box: CGRect, color: CGColor) {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: box.minX + 0.5, y: box.minY + box.height * 0.42))
+        path.addLine(to: CGPoint(x: box.maxX - 0.5, y: box.minY + 0.5))
+        path.addLine(to: CGPoint(x: box.minX + box.width * 0.62, y: box.maxY - 0.5))
+        path.addLine(to: CGPoint(x: box.minX + box.width * 0.45, y: box.minY + box.height * 0.55))
+        path.closeSubpath()
+        context.setStrokeColor(color)
+        context.setLineWidth(1.2)
+        context.setLineJoin(.round)
+        context.addPath(path)
+        context.strokePath()
+        context.move(to: CGPoint(x: box.minX + box.width * 0.45, y: box.minY + box.height * 0.55))
+        context.addLine(to: CGPoint(x: box.maxX - 0.5, y: box.minY + 0.5))
         context.strokePath()
     }
 
@@ -2641,6 +2738,10 @@ class TerminalRenderer: NSView {
             switch target.button {
             case .copyOutput:
                 onCopyBlockOutput?(target.blockId)
+            case .rerun:
+                onRerunBlock?(target.blockId)
+            case .sendToAgent:
+                onSendBlockToAgent?(target.blockId)
             case .menu:
                 highlightedBlockId = target.blockId
                 let menu = buildBlockActionMenu(blockId: target.blockId)
