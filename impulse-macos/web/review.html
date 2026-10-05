@@ -35,26 +35,38 @@
         font-style: italic;
         font-display: swap;
       }
-      @font-face {
-        font-family: "JetBrains Mono";
-        src: url("./fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf")
-          format("truetype");
-        font-weight: 700;
-        font-style: italic;
-        font-display: swap;
-      }
+
+      /* Colors come from the host (SetTheme → chrome); these are fallbacks. */
       :root {
-        /* Overridden by SetTheme; defaults mirror editor.html fallbacks. */
-        --review-bg: #1a1b26;
-        --review-fg: #c0caf5;
-        --review-header-bg: #1f2335;
-        --review-header-hover-bg: #292e42;
-        --review-border: #292e42;
-        --review-muted: #565f89;
-        --review-added: #9ece6a;
-        --review-modified: #e0af68;
-        --review-deleted: #f7768e;
-        --review-renamed: #7aa2f7;
+        --bg: #1a1b26;
+        --panel: #16171f;
+        --chrome: #14151d;
+        --raised: #24283b;
+        --hairline: #2b2f44;
+        --hairline-strong: #363b55;
+        --hover: rgba(192, 202, 245, 0.07);
+        --text: #c0caf5;
+        --text2: #a9b1d6;
+        --text3: #565f89;
+        --accent: #7aa2f7;
+        --accent-soft: rgba(122, 162, 247, 0.16);
+        --on-accent: #15161e;
+        --added: #9ece6a;
+        --removed: #f7768e;
+        --modified: #e0af68;
+        --renamed: #7dcfff;
+        --conflict: #ff9e64;
+        --added-bg: rgba(158, 206, 106, 0.1);
+        --removed-bg: rgba(247, 118, 142, 0.11);
+        --added-word: rgba(158, 206, 106, 0.28);
+        --removed-word: rgba(247, 118, 142, 0.3);
+        --selection: rgba(122, 162, 247, 0.22);
+        --warning: #e0af68;
+        --danger: #f7768e;
+        --nav-width: 260px;
+        --code-font: "JetBrains Mono", ui-monospace, Menlo, monospace;
+        --ui-font: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        --row-h: 19px;
       }
       * {
         margin: 0;
@@ -65,262 +77,528 @@
       body {
         width: 100%;
         height: 100%;
-        background: var(--review-bg);
-        color: var(--review-fg);
-        font-family:
-          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        font-size: 13px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--ui-font);
+        font-size: 12px;
+        overflow: hidden;
+        cursor: default;
+        -webkit-user-select: none;
+        user-select: none;
       }
-      /* The OUTER page scrolls; diff rows lay out as natural-height DOM. */
-      body {
-        overflow-y: auto;
-        overflow-x: hidden;
+      button {
+        font: inherit;
+        color: inherit;
+        background: none;
+        border: 0;
+        cursor: default;
       }
-      #review-root {
+      #app {
+        display: grid;
+        grid-template-columns: var(--nav-width) 1fr;
+        height: 100%;
+      }
+
+      /* ---------------- Navigator ---------------- */
+      #nav {
+        background: var(--panel);
+        border-right: 1px solid var(--hairline);
         display: flex;
         flex-direction: column;
-        width: 100%;
-        min-height: 100%;
-        padding: 6px 0 24px;
+        min-width: 0;
       }
-      .review-empty {
+      #nav-filter {
+        margin: 8px;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 5px;
+        border: 1px solid var(--hairline-strong);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+        outline: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      #nav-filter:focus {
+        border-color: var(--accent);
+      }
+      #nav-progress {
+        height: 3px;
+        margin: 0 10px 6px;
+        border-radius: 2px;
+        background: var(--hairline);
+        overflow: hidden;
+      }
+      #nav-progress > i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--added);
+        transition: width 0.2s ease;
+      }
+      #nav-list {
+        flex: 1;
+        overflow-y: auto;
+        padding-bottom: 12px;
+      }
+      .nav-dir {
+        padding: 6px 12px 2px;
+        font-size: 10.5px;
+        color: var(--text3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        direction: rtl;
+        text-align: left;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 24px;
+        margin: 0 6px;
+        padding: 0 6px 0 8px;
+        border-radius: 5px;
+        white-space: nowrap;
+      }
+      .nav-item:hover {
+        background: var(--hover);
+      }
+      .nav-item.current {
+        background: var(--accent-soft);
+      }
+      .nav-item .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .nav-item.viewed .name {
+        color: var(--text3);
+      }
+      .nav-item .changed {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--warning);
+        flex: none;
+      }
+      .nav-item .comments {
+        font-size: 10px;
+        color: var(--accent);
+      }
+      .stat {
+        font-family: var(--code-font);
+        font-size: 10.5px;
+        flex: none;
+      }
+      .stat .a {
+        color: var(--added);
+      }
+      .stat .r {
+        color: var(--removed);
+        margin-left: 4px;
+      }
+      .status {
+        font-family: var(--code-font);
+        font-size: 10.5px;
+        font-weight: 700;
+        width: 12px;
+        text-align: center;
+        flex: none;
+      }
+      .status-A,
+      .status-U {
+        color: var(--added);
+      }
+      .status-M,
+      .status-T {
+        color: var(--modified);
+      }
+      .status-D {
+        color: var(--removed);
+      }
+      .status-R {
+        color: var(--renamed);
+      }
+      .status-C {
+        color: var(--conflict);
+      }
+      .check {
+        width: 13px;
+        height: 13px;
+        border-radius: 3px;
+        border: 1px solid var(--text3);
+        flex: none;
+        display: inline-grid;
+        place-items: center;
+      }
+      .check.on {
+        background: var(--added);
+        border-color: var(--added);
+      }
+      .check.on::after {
+        content: "";
+        width: 6px;
+        height: 3px;
+        border-left: 1.6px solid var(--on-accent);
+        border-bottom: 1.6px solid var(--on-accent);
+        transform: rotate(-45deg) translate(0.5px, -1px);
+      }
+
+      /* ---------------- Main ---------------- */
+      #main {
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-width: 0;
+        position: relative;
+        scroll-padding-top: 40px;
+      }
+      #files {
+        padding: 10px 12px 60vh;
+      }
+      .empty {
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100%;
-        min-height: 200px;
-        color: var(--review-muted);
+        min-height: 60vh;
+        color: var(--text3);
+        font-size: 13px;
       }
-      .review-section {
-        margin: 0 10px 8px;
-        border: 1px solid var(--review-border);
+      .card {
+        margin-bottom: 10px;
+        border: 1px solid var(--hairline);
         border-radius: 8px;
-        overflow: clip; /* not hidden: hidden makes a scroll container, which breaks the sticky header */
-        background: var(--review-bg);
+        overflow: clip;
+        background: var(--bg);
       }
-      .review-section-header {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 12px;
-        cursor: pointer;
-        background: var(--review-header-bg);
-        user-select: none;
+      .card.focused-file {
+        border-color: var(--hairline-strong);
+      }
+      .card-header {
         position: sticky;
         top: 0;
-        z-index: 2;
-        transition: background 0.1s ease;
-      }
-      .review-section:not(.collapsed) .review-section-header {
-        border-bottom: 1px solid var(--review-border);
-      }
-      .review-section-header:hover {
-        background: var(--review-header-hover-bg);
-      }
-      .review-chevron {
-        width: 12px;
-        height: 12px;
-        flex: 0 0 auto;
+        z-index: 3;
         display: flex;
         align-items: center;
-        justify-content: center;
-        transition: transform 0.12s ease;
-        color: var(--review-muted);
+        gap: 8px;
+        height: 32px;
+        padding: 0 8px 0 10px;
+        background: var(--panel);
+        white-space: nowrap;
       }
-      .review-section.collapsed .review-chevron {
+      .card:not(.collapsed) .card-header {
+        border-bottom: 1px solid var(--hairline);
+      }
+      .chev {
+        width: 14px;
+        height: 14px;
+        flex: none;
+        color: var(--text3);
+        transition: transform 0.12s ease;
+      }
+      .card.collapsed .chev {
         transform: rotate(-90deg);
       }
-      .review-status-glyph {
-        flex: 0 0 auto;
-        width: 16px;
-        text-align: center;
-        font-family: "JetBrains Mono", monospace;
-        font-weight: 700;
+      .card-header .path {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
         font-size: 12px;
       }
-      .review-status-A {
-        color: var(--review-added);
+      .card-header .path .dir {
+        color: var(--text3);
       }
-      .review-status-M {
-        color: var(--review-modified);
+      .card-header .path .old {
+        color: var(--text3);
+        text-decoration: line-through;
+        margin-right: 4px;
       }
-      .review-status-D {
-        color: var(--review-deleted);
-      }
-      .review-status-R {
-        color: var(--review-renamed);
-      }
-      .review-status-Q {
-        color: var(--review-added);
-      }
-      .review-path {
-        flex: 1 1 auto;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 12.5px;
-        letter-spacing: 0.1px;
-      }
-      .review-old-path {
-        color: var(--review-muted);
-      }
-      .review-badge {
-        flex: 0 0 auto;
+      .viewed-toggle {
         display: inline-flex;
-        align-items: baseline;
-        gap: 8px;
-        font-family: "JetBrains Mono", monospace;
+        align-items: center;
+        gap: 5px;
+        color: var(--text2);
         font-size: 11px;
-        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      .viewed-toggle:hover {
+        background: var(--hover);
+      }
+      .changed-badge {
+        font-size: 10px;
+        color: var(--warning);
+      }
+      .act {
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 5px;
+        font-size: 11px;
+        color: var(--text2);
+        border: 1px solid transparent;
         white-space: nowrap;
       }
-      .review-badge .added {
-        color: var(--review-added);
+      .act:hover {
+        background: var(--hover);
+        color: var(--text);
       }
-      .review-badge .removed {
-        color: var(--review-deleted);
+      .act.primary {
+        border-color: var(--hairline-strong);
+        color: var(--text);
       }
-      .review-discard {
-        flex: 0 0 auto;
-        background: transparent;
-        border: 1px solid var(--review-border);
-        color: var(--review-muted);
-        border-radius: 6px;
-        padding: 3px 10px;
-        font-size: 11px;
-        font-weight: 500;
-        cursor: pointer;
-        transition:
-          color 0.1s ease,
-          border-color 0.1s ease,
-          background 0.1s ease;
+      .act.danger:hover {
+        color: var(--danger);
       }
-      .review-discard:hover {
-        color: var(--review-deleted);
-        border-color: var(--review-deleted);
-        background: color-mix(in srgb, var(--review-deleted) 12%, transparent);
+      .act[disabled] {
+        opacity: 0.4;
+        pointer-events: none;
       }
-      .review-discard:active {
-        transform: translateY(0.5px);
+      .card.busy .card-body {
+        opacity: 0.55;
+        pointer-events: none;
       }
-      .review-section-body {
-        width: 100%;
-      }
-      .review-section.collapsed .review-section-body {
-        display: none;
-      }
-      .review-diff-container {
-        width: 100%;
-        background: var(--review-bg);
-      }
-      .review-spacer {
-        width: 100%;
-      }
-      .review-placeholder {
-        padding: 16px 14px;
-        color: var(--review-muted);
+      .placeholder {
+        padding: 14px 16px;
+        color: var(--text3);
         font-style: italic;
       }
-      .review-loading {
-        padding: 12px 14px;
-        color: var(--review-muted);
-      }
-
-      /* =====================================================================
-         Unified-diff rows.
-
-         Each row is a flex line: old line-number gutter, new line-number
-         gutter, a +/- marker, then the syntax-colored content. Rows tint by
-         kind (added/removed); the exact characters that changed get a stronger
-         word-level emphasis from the per-line spans.
-         ===================================================================== */
-      .review-hunk-header {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 11.5px;
-        color: var(--review-muted);
-        background: var(--review-header-bg);
-        padding: 3px 12px;
-        white-space: pre;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        border-top: 1px solid var(--review-border);
-      }
-      .review-diff-container > .review-hunk-header:first-child {
-        border-top: none;
-      }
-      .review-row {
-        display: flex;
-        align-items: flex-start;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 12.5px;
-        line-height: 1.5;
-      }
-      .review-gutter {
-        flex: 0 0 auto;
-        width: 46px;
-        padding: 0 8px;
-        text-align: right;
-        color: var(--review-muted);
-        background: var(--review-header-bg);
-        user-select: none;
-        -webkit-user-select: none;
-      }
-      .review-line-marker {
-        flex: 0 0 auto;
-        width: 16px;
-        text-align: center;
-        color: var(--review-muted);
-        user-select: none;
-        -webkit-user-select: none;
-      }
-      .review-line-content {
-        flex: 1 1 auto;
-        min-width: 0;
-        padding: 0 8px 0 6px;
-        white-space: pre;
-        tab-size: 4;
-        -moz-tab-size: 4;
-      }
-      .review-row-added {
-        background: color-mix(in srgb, var(--review-added) 12%, transparent);
-      }
-      .review-row-added .review-line-marker {
-        color: var(--review-added);
-      }
-      .review-row-removed {
-        background: color-mix(in srgb, var(--review-deleted) 12%, transparent);
-      }
-      .review-row-removed .review-line-marker {
-        color: var(--review-deleted);
-      }
-      .review-word {
-        border-radius: 2px;
-      }
-      .review-row-added .review-word {
-        background: color-mix(in srgb, var(--review-added) 32%, transparent);
-      }
-      .review-row-removed .review-word {
-        background: color-mix(in srgb, var(--review-deleted) 32%, transparent);
-      }
-      .review-truncated {
-        color: var(--review-modified);
+      .placeholder.error {
+        color: var(--danger);
         font-style: normal;
       }
 
-      /* Native-style overlay scrollbars: rounded, auto-fade (mirrors editor.html) */
-      .monaco-scrollable-element > .scrollbar > .slider {
-        border-radius: 5px;
-        transition: opacity 0.2s ease;
+      /* Hunks */
+      .hunk {
+        border-top: 1px solid var(--hairline);
       }
-      .monaco-scrollable-element > .scrollbar {
-        transition: opacity 0.3s ease;
+      .hunk:first-child {
+        border-top: 0;
+      }
+      .hunk.focused {
+        box-shadow: inset 2px 0 0 var(--accent);
+      }
+      .hunk-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px 0 10px;
+        background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+        color: var(--text3);
+        font-family: var(--code-font);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .hunk-header .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .hunk-actions {
+        display: flex;
+        gap: 2px;
+        font-family: var(--ui-font);
+      }
+
+      /* Rows */
+      .rows {
+        font-family: var(--code-font);
+        font-size: 12px;
+        line-height: var(--row-h);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 46px 46px 18px 1fr;
+        min-height: var(--row-h);
+      }
+      .split .row {
+        grid-template-columns: 46px 18px 1fr 46px 18px 1fr;
+      }
+      .gutter {
+        text-align: right;
+        padding-right: 8px;
+        color: var(--text3);
+        font-size: 11px;
+        position: relative;
+      }
+      .gutter.selectable:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .marker {
+        text-align: center;
+        color: var(--text3);
+      }
+      .code {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding-right: 12px;
+        tab-size: 4;
+        -webkit-user-select: text;
+        user-select: text;
+        cursor: text;
+      }
+      .row.added,
+      .cell.added {
+        background: var(--added-bg);
+      }
+      .row.removed,
+      .cell.removed {
+        background: var(--removed-bg);
+      }
+      .row.added .marker,
+      .cell.added.marker {
+        color: var(--added);
+      }
+      .row.removed .marker,
+      .cell.removed.marker {
+        color: var(--removed);
+      }
+      .row.selected,
+      .cell.selected {
+        box-shadow: inset 3px 0 0 var(--accent);
+        background-image: linear-gradient(var(--selection), var(--selection));
+      }
+      .cell.blank {
+        background: repeating-linear-gradient(
+          135deg,
+          transparent 0 4px,
+          var(--hover) 4px 5px
+        );
+      }
+      .word {
+        border-radius: 2px;
+      }
+      .added .word {
+        background: var(--added-word);
+      }
+      .removed .word {
+        background: var(--removed-word);
+      }
+      .add-comment {
+        position: absolute;
+        left: 2px;
+        top: 1px;
+        width: 15px;
+        height: 15px;
+        border-radius: 4px;
+        background: var(--accent);
+        color: var(--on-accent);
+        font-family: var(--ui-font);
+        font-size: 12px;
+        line-height: 15px;
+        text-align: center;
+        display: none;
+      }
+      .row:hover .add-comment {
+        display: block;
+      }
+
+      /* Comments */
+      .comment,
+      .composer {
+        margin: 4px 12px 8px 100px;
+        border: 1px solid var(--hairline-strong);
+        border-left: 3px solid var(--accent);
+        border-radius: 6px;
+        background: var(--panel);
+        padding: 8px 10px;
+        font-family: var(--ui-font);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .split .comment,
+      .split .composer {
+        margin-left: 64px;
+      }
+      .comment.outdated {
+        border-left-color: var(--text3);
+        opacity: 0.8;
+      }
+      .comment .meta {
+        display: flex;
+        gap: 8px;
+        color: var(--text3);
+        font-size: 11px;
+        margin-bottom: 3px;
+      }
+      .comment .meta .spacer {
+        flex: 1;
+      }
+      .comment .body {
+        white-space: pre-wrap;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .composer textarea {
+        width: 100%;
+        min-height: 54px;
+        resize: vertical;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .composer .buttons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .composer .hint {
+        flex: 1;
+        color: var(--text3);
+        font-size: 11px;
+        align-self: center;
+      }
+      .outdated-box {
+        margin: 8px 12px;
+      }
+      .outdated-box > .title {
+        color: var(--text3);
+        font-size: 11px;
+        margin: 4px 0;
+      }
+      .outdated-box .comment {
+        margin-left: 0;
+      }
+
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--hairline-strong);
+        border-radius: 5px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
       }
     </style>
   </head>
   <body>
-    <div id="review-root">
-      <div class="review-empty">Loading changes…</div>
+    <div id="app">
+      <aside id="nav" aria-label="Changed files">
+        <input
+          id="nav-filter"
+          placeholder="Filter files (T)"
+          spellcheck="false"
+        />
+        <div id="nav-progress"><i></i></div>
+        <div id="nav-list"></div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div id="files"><div class="empty">Loading changes…</div></div>
+      </main>
     </div>
 
     <script src="vs/loader.js"></script>

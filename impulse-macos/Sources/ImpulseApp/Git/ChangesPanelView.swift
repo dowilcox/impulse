@@ -105,28 +105,26 @@ private struct ChangesPanelContent: View {
       if let snapshot {
         syncIndicator(snapshot)
       }
-      Menu {
-        Button("Fetch") { actions.fetch() }
-        Button("Pull") { actions.pull() }
-        Button("Pull (Rebase)") { actions.pull(rebase: true) }
-        Button("Push") { actions.push() }
-        Divider()
-        Button("Stage All Changes") { actions.stageAll() }
-        Button("Unstage All Changes") { actions.unstageAll() }
-        Divider()
-        Button("Stash All Changes") { actions.stashAll() }
-        Divider()
-        Button("Review Uncommitted Changes") {
-          model.gitHost?.gitOpenReview(scope: .uncommitted, focusPath: nil)
-        }
-        Button("Refresh") { repository.refresh() }
+      ChromeMenuButton(help: "More git actions") {
+        [
+          ChromeMenuItem("Fetch") { actions.fetch() },
+          ChromeMenuItem("Pull") { actions.pull() },
+          ChromeMenuItem("Pull (Rebase)") { actions.pull(rebase: true) },
+          ChromeMenuItem("Push") { actions.push() },
+          .separator,
+          ChromeMenuItem("Stage All Changes") { actions.stageAll() },
+          ChromeMenuItem("Unstage All Changes") { actions.unstageAll() },
+          .separator,
+          ChromeMenuItem("Stash All Changes") { actions.stashAll() },
+          .separator,
+          ChromeMenuItem("Review Uncommitted Changes") {
+            model.gitHost?.gitOpenReview(scope: .uncommitted, focusPath: nil)
+          },
+          ChromeMenuItem("Refresh") { repository.refresh() },
+        ]
       } label: {
         Icon(.ellipsis, size: 14).foregroundStyle(chrome.textSecondary)
       }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("More git actions")
     }
     .padding(.horizontal, 8)
     .frame(height: 34)

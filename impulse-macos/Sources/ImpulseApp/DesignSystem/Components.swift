@@ -325,3 +325,106 @@ struct Hairline: View {
       .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
   }
 }
+
+// MARK: - Popup menu button
+
+/// One entry in a `ChromeMenuButton` menu.
+struct ChromeMenuItem {
+  var title: String
+  var isEnabled = true
+  var isSeparator = false
+  var action: () -> Void = {}
+
+  static let separator = ChromeMenuItem(title: "", isSeparator: true)
+
+  init(_ title: String, isEnabled: Bool = true, action: @escaping () -> Void) {
+    self.title = title
+    self.isEnabled = isEnabled
+    self.action = action
+  }
+
+  private init(title: String, isSeparator: Bool) {
+    self.title = title
+    self.isSeparator = isSeparator
+  }
+}
+
+/// A chrome button (any label) that pops up a native menu below itself.
+/// Used instead of SwiftUI `Menu`, whose borderless style rescales icon
+/// labels and can't be styled to match the chrome.
+struct ChromeMenuButton<Label: View>: View {
+  let help: String
+  let items: () -> [ChromeMenuItem]
+  @ViewBuilder let label: () -> Label
+
+  @State private var hovering = false
+  @Environment(\.chrome) private var chrome
+
+  var body: some View {
+    label()
+      .padding(.horizontal, 4)
+      .frame(minWidth: 22, minHeight: 22)
+      .background(
+        RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
+          .fill(hovering ? chrome.hover : .clear)
+      )
+      .contentShape(Rectangle())
+      .overlay(MenuAnchor(items: items))
+      .onHover { hovering = $0 }
+      .help(help)
+      .accessibilityLabel(help)
+      .accessibilityAddTraits(.isButton)
+  }
+}
+
+/// Transparent AppKit view that shows the menu on mouse down, anchored to
+/// its own bottom-left corner.
+private struct MenuAnchor: NSViewRepresentable {
+  let items: () -> [ChromeMenuItem]
+
+  func makeNSView(context: Context) -> AnchorView {
+    let view = AnchorView()
+    view.items = items
+    return view
+  }
+
+  func updateNSView(_ nsView: AnchorView, context: Context) {
+    nsView.items = items
+  }
+
+  final class AnchorView: NSView {
+    var items: (() -> [ChromeMenuItem])?
+
+    override func mouseDown(with event: NSEvent) {
+      guard let items else { return }
+      let menu = NSMenu()
+      menu.autoenablesItems = false
+      for item in items() {
+        if item.isSeparator {
+          menu.addItem(.separator())
+          continue
+        }
+        let menuItem = ClosureMenuItem(title: item.title, action: item.action)
+        menuItem.isEnabled = item.isEnabled
+        menu.addItem(menuItem)
+      }
+      menu.popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.height + 4 : -4), in: self)
+    }
+  }
+}
+
+/// NSMenuItem that runs a closure.
+final class ClosureMenuItem: NSMenuItem {
+  private let handler: () -> Void
+
+  init(title: String, action: @escaping () -> Void) {
+    handler = action
+    super.init(title: title, action: #selector(run), keyEquivalent: "")
+    target = self
+  }
+
+  @available(*, unavailable)
+  required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  @objc private func run() { handler() }
+}

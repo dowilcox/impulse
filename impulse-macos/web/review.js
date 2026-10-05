@@ -1,37 +1,31 @@
 "use strict";
 
 // ===========================================================================
-// Review Changes — stacked unified-diff renderer + host bridge.
+// Review — multi-file change review renderer (protocol v2).
 //
-// Host -> JS:  window.__applyReviewCommand(cmd)  (object or JSON string)
-//              dispatches on cmd.type ("Render" / "SetHunks" / "SetTheme").
-// JS -> Host:  ReviewEvents posted to messageHandlers.impulseReview
-//              (e.g. { "type": "Ready" }, { "type": "RequestDiff", "path": ... }).
+// Host -> JS: window.__applyReviewCommand(cmd) with cmd.type in
+//   Configure, SetFiles, SetFileDiff, DiffError, SetViewed, Focus, SetTheme,
+//   SetBusy.
+// JS -> Host: messageHandlers.impulseReview events
+//   Ready, RequestDiff, HunkAction, FileAction, ToggleViewed, OpenFile,
+//   AddComment, EditComment, DeleteComment, CopyPath.
 //
-// The host computes unified-diff hunks in Rust (only changed regions + a few
-// context lines, never whole files) and sends them via SetHunks. We render them
-// as plain DOM rows — old/new line-number gutters, a +/- marker, and the line
-// content syntax-colored via monaco.editor.colorizeModelLine plus word-level
-// emphasis from the per-line spans. No client-side diffing, no Monaco editor
-// instances. We still virtualize: only sections near the viewport build their
-// rows; off-screen ones collapse to a spacer of last-known height so scroll
-// position stays stable.
+// The DOM persists across updates: SetFiles reconciles cards by path, and a
+// SetFileDiff whose content hash and comments are unchanged doesn't re-render,
+// so expansion, scroll position and line selections survive refreshes. Only
+// cards near the viewport keep their rows (IntersectionObserver), so very
+// large reviews stay cheap.
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
-// Host communication (mirrors editor.js's sendToHost, different handler name)
-// ---------------------------------------------------------------------------
-function sendToHost(msgObj) {
-  const json = JSON.stringify(msgObj);
+function post(msg) {
+  const json = JSON.stringify(msg);
   if (
     window.webkit &&
     window.webkit.messageHandlers &&
     window.webkit.messageHandlers.impulseReview
   ) {
-    // macOS WKWebView
     window.webkit.messageHandlers.impulseReview.postMessage(json);
   } else {
-    // Fallback (e.g. future Linux frontend intercepting console messages)
     console.log("IMPULSE_REVIEW_EVENT:" + json);
   }
 }
@@ -39,658 +33,1466 @@ function sendToHost(msgObj) {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let monacoReady = false;
-let pendingCommands = [];
-let currentThemeColors = null;
+const state = {
+  ready: false,
+  pending: [],
+  caps: { stage: false, unstage: false, revert: false },
+  options: { layout: "unified", ignoreWhitespace: false, contextLines: 3 },
+  scopeTitle: "",
+  generation: 0,
+  order: [], // paths in display order
+  emptyMessage: "No changes.",
+  filter: "",
+  focus: null, // { path, hunk } keyboard focus
+  currentPath: null, // file at the top of the viewport (navigator highlight)
+};
 
-// Virtualization margin: build/keep a section's rows when it is within this
-// many pixels of the viewport; collapse to a spacer once it scrolls away.
-const VIRTUALIZE_ROOT_MARGIN = "600px 0px";
+// path -> record
+//  { item, card, header, body, nav, expanded, near, diff, renderedKey,
+//    requestedGen, loadedGen, busy, selection: { hunk, lines:Set, anchor } }
+const files = new Map();
+let observer = null;
 
-// path -> section record
-//   { path, status, oldPath, added, removed, isBinary, expanded,
-//     diffRequested, isBinaryDiff, isTooLarge,
-//     hunksData,        // cached FileHunks payload from SetHunks
-//     rendered,         // whether rows are currently mounted in the DOM
-//     near, lastHeight,
-//     el, bodyEl, diffContainerEl }
-const sections = new Map();
-
-// Shared IntersectionObserver: tracks which sections are near the viewport so
-// we can build/collapse their rows. Created lazily once Monaco is up.
-let viewportObserver = null;
+const $ = (sel) => document.querySelector(sel);
+const mainEl = () => $("#main");
+const filesEl = () => $("#files");
 
 // ---------------------------------------------------------------------------
-// Monaco loader wiring (IDENTICAL to editor.js so file:// paths resolve)
+// Monaco (only used to colorize code; no editors)
 // ---------------------------------------------------------------------------
-require.config({
-  paths: { vs: "./vs" },
-});
-
+require.config({ paths: { vs: "./vs" } });
 window.MonacoEnvironment = {
-  getWorker: function (moduleId, label) {
-    var baseUri = document.baseURI.substring(
+  getWorker: function () {
+    const base = document.baseURI.substring(
       0,
       document.baseURI.lastIndexOf("/") + 1,
     );
-    var workerUrl = baseUri + "vs/base/worker/workerMain.js";
-    var blob = new Blob(
+    const blob = new Blob(
       [
         "self.MonacoEnvironment={baseUrl:" +
-          JSON.stringify(baseUri) +
+          JSON.stringify(base) +
           "};importScripts(" +
-          JSON.stringify(workerUrl) +
+          JSON.stringify(base + "vs/base/worker/workerMain.js") +
           ");",
       ],
       { type: "application/javascript" },
     );
-    var blobUrl = URL.createObjectURL(blob);
-    var worker = new Worker(blobUrl);
-    URL.revokeObjectURL(blobUrl);
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url);
+    URL.revokeObjectURL(url);
     return worker;
   },
 };
 
 require(["vs/editor/editor.main"], function () {
-  // Disable Monaco's built-in TS/JS diagnostics (Impulse owns its LSP, and the
-  // review view is read-only anyway).
   try {
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: true,
       noSyntaxValidation: true,
-      noSuggestionDiagnostics: true,
     });
     monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: true,
       noSyntaxValidation: true,
-      noSuggestionDiagnostics: true,
     });
   } catch (e) {
-    /* older bundles may lack the TS defaults */
+    /* ignore */
   }
-
-  monacoReady = true;
-  createViewportObserver();
-
-  // Flush any commands that arrived before Monaco finished loading.
-  var queued = pendingCommands;
-  pendingCommands = [];
-  queued.forEach(handleCommand);
-
-  sendToHost({ type: "Ready" });
+  state.ready = true;
+  observer = new IntersectionObserver(onIntersect, {
+    root: mainEl(),
+    rootMargin: "800px 0px",
+    threshold: 0,
+  });
+  const queued = state.pending;
+  state.pending = [];
+  queued.forEach(dispatch);
+  post({ type: "Ready" });
 });
 
-// ---------------------------------------------------------------------------
-// Host -> JS bridge
-// ---------------------------------------------------------------------------
 window.__applyReviewCommand = function (cmd) {
   if (typeof cmd === "string") {
     try {
       cmd = JSON.parse(cmd);
     } catch (e) {
-      console.error("Failed to parse review command:", e);
       return;
     }
   }
-  if (!cmd || typeof cmd !== "object") return;
-
-  if (!monacoReady) {
-    pendingCommands.push(cmd);
+  if (!cmd) return;
+  if (!state.ready) {
+    state.pending.push(cmd);
     return;
   }
-  handleCommand(cmd);
+  dispatch(cmd);
 };
 
-function handleCommand(cmd) {
+function dispatch(cmd) {
   try {
     switch (cmd.type) {
-      case "Render":
-        handleRender(cmd);
+      case "Configure":
+        onConfigure(cmd);
         break;
-      case "SetHunks":
-        handleSetHunks(cmd);
+      case "SetFiles":
+        onSetFiles(cmd);
+        break;
+      case "SetFileDiff":
+        onSetFileDiff(cmd.diff);
+        break;
+      case "DiffError":
+        onDiffError(cmd.path, cmd.message);
+        break;
+      case "SetViewed":
+        setViewed(cmd.path, cmd.viewed, false);
+        break;
+      case "Focus":
+        focusFile(cmd.path, true);
         break;
       case "SetTheme":
-        handleSetTheme(cmd);
+        onSetTheme(cmd);
         break;
-      default:
-        console.warn("Unknown review command:", cmd.type);
+      case "SetBusy":
+        onSetBusy(cmd.path, cmd.busy);
+        break;
     }
   } catch (e) {
-    console.error("Review command handler error for", cmd.type, ":", e);
+    console.error("review command failed", cmd.type, e);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Viewport virtualization
-//
-// The observer watches each section element. When a section is near the
-// viewport it becomes "near" and (if expanded + hunks available) builds its
-// rows; when it leaves the margin the rows are cleared and the container is
-// replaced by a spacer of its last-known height so scroll position is stable.
+// Configure / theme
 // ---------------------------------------------------------------------------
-function createViewportObserver() {
-  if (viewportObserver || typeof IntersectionObserver === "undefined") return;
-  viewportObserver = new IntersectionObserver(
-    function (entries) {
-      entries.forEach(function (entry) {
-        const path = entry.target.getAttribute("data-review-path");
-        if (!path) return;
-        const rec = sections.get(path);
-        if (!rec) return;
-        const near = entry.isIntersecting;
-        if (near === rec.near) return;
-        rec.near = near;
-        reconcileSection(rec);
-      });
-    },
-    { root: null, rootMargin: VIRTUALIZE_ROOT_MARGIN, threshold: 0 },
-  );
-}
-
-function observeSection(rec) {
-  if (viewportObserver && rec.el) viewportObserver.observe(rec.el);
-}
-
-// Bring a section's DOM in line with its (expanded, near, hunks) state. This is
-// the single funnel for build/clear decisions so expand/collapse, viewport
-// changes, and hunk arrival all converge here.
-function reconcileSection(rec) {
-  if (!rec.expanded) {
-    // Collapsed sections never hold rows.
-    if (rec.rendered) clearSection(rec);
+function onConfigure(cmd) {
+  const layoutChanged =
+    cmd.options && cmd.options.layout !== state.options.layout;
+  const whitespaceChanged =
+    cmd.options &&
+    cmd.options.ignoreWhitespace !== state.options.ignoreWhitespace;
+  state.caps = cmd.capabilities || state.caps;
+  state.options = cmd.options || state.options;
+  const scopeChanged = cmd.scopeTitle !== state.scopeTitle;
+  state.scopeTitle = cmd.scopeTitle || "";
+  if (scopeChanged || whitespaceChanged) {
+    // A different comparison: start over.
+    files.forEach(
+      (rec) => observer && rec.card && observer.unobserve(rec.card),
+    );
+    files.clear();
+    state.order = [];
+    state.focus = null;
+    filesEl().textContent = "";
+    $("#nav-list").textContent = "";
     return;
   }
-
-  // Binaries and too-large files render placeholders without a host round-trip.
-  if (rec.isBinaryDiff || rec.isTooLarge) {
-    renderPlaceholder(rec);
-    return;
-  }
-
-  // Expanded but no hunks yet: request them (once) when near.
-  if (!rec.hunksData) {
-    if (rec.near && !rec.diffRequested) {
-      rec.diffRequested = true;
-      sendToHost({ type: "RequestDiff", path: rec.path });
+  // Same scope: refresh header actions and re-render rows in the new layout.
+  files.forEach((rec) => {
+    renderHeader(rec);
+    if (layoutChanged) {
+      rec.renderedKey = null;
+      reconcile(rec);
+    } else if (rec.diff) {
+      // Hunk header buttons depend on capabilities.
+      rec.renderedKey = null;
+      reconcile(rec);
     }
-    return;
-  }
-
-  // We have cached hunks.
-  if (rec.near) {
-    if (!rec.rendered) renderHunks(rec);
-  } else if (rec.rendered) {
-    // Far from viewport: clear the rows, keep a spacer of last height.
-    clearSection(rec, /* keepSpacer */ true);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Render: rebuild #review-root with one collapsible section per file.
-// ---------------------------------------------------------------------------
-function handleRender(cmd) {
-  const files = cmd.files || [];
-  const root = document.getElementById("review-root");
-  if (!root) return;
-
-  // Clear all existing rows + stop observing before tearing down.
-  sections.forEach(function (rec) {
-    if (viewportObserver && rec.el) {
-      try {
-        viewportObserver.unobserve(rec.el);
-      } catch (e) {
-        /* ignore */
-      }
-    }
-    clearSection(rec);
-  });
-  sections.clear();
-  root.textContent = "";
-
-  if (files.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "review-empty";
-    empty.textContent = "No changes to review.";
-    root.appendChild(empty);
-    return;
-  }
-
-  files.forEach(function (f) {
-    // All sections start collapsed; the diff is requested and the Monaco editor
-    // mounted lazily the first time the user expands a section (and it is near
-    // the viewport — see reconcileSection / the IntersectionObserver).
-    const rec = buildSection(f, false);
-    sections.set(f.path, rec);
-    root.appendChild(rec.el);
-    observeSection(rec);
   });
 }
 
-function statusGlyphClass(status) {
-  switch (status) {
-    case "A":
-      return "review-status-A";
-    case "M":
-      return "review-status-M";
-    case "D":
-      return "review-status-D";
-    case "R":
-      return "review-status-R";
-    case "?":
-      return "review-status-Q";
-    default:
-      return "review-status-M";
+function onSetTheme(cmd) {
+  const theme = cmd.theme;
+  if (theme) {
+    monaco.editor.defineTheme("impulse-review", {
+      base: theme.base || "vs-dark",
+      inherit: theme.inherit !== false,
+      rules: (theme.rules || []).map(function (r) {
+        const rule = { token: r.token };
+        if (r.foreground) rule.foreground = r.foreground;
+        if (r.font_style || r.fontStyle)
+          rule.fontStyle = r.font_style || r.fontStyle;
+        return rule;
+      }),
+      colors: theme.colors || {},
+    });
+    monaco.editor.setTheme("impulse-review");
   }
+  const root = document.documentElement.style;
+  Object.entries(cmd.chrome || {}).forEach(([k, v]) => {
+    if (
+      typeof v === "string" &&
+      /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,\s]+\))$/.test(v)
+    ) {
+      root.setProperty(k, v);
+    }
+  });
+  // Re-colorize visible rows with the new token colors.
+  files.forEach((rec) => {
+    rec.renderedKey = null;
+    reconcile(rec);
+  });
 }
 
-function statusGlyphText(status) {
-  return status === "?" ? "?" : status || "M";
+// ---------------------------------------------------------------------------
+// File list
+// ---------------------------------------------------------------------------
+function onSetFiles(cmd) {
+  state.generation = cmd.generation;
+  state.emptyMessage = cmd.emptyMessage || "No changes.";
+  const incoming = cmd.files || [];
+  const seen = new Set();
+  const container = filesEl();
+
+  // Remove the loading/empty placeholder.
+  const empty = container.querySelector(".empty");
+  if (empty) empty.remove();
+
+  incoming.forEach((item) => {
+    seen.add(item.path);
+    let rec = files.get(item.path);
+    if (!rec) {
+      rec = createRecord(item);
+      files.set(item.path, rec);
+      observer.observe(rec.card);
+    } else {
+      const statsChanged =
+        rec.item.added !== item.added ||
+        rec.item.removed !== item.removed ||
+        rec.item.status !== item.status;
+      rec.item = item;
+      renderHeader(rec);
+      if (statsChanged) rec.renderedKey = null;
+    }
+    // Every new generation re-requests diffs lazily (only what's visible).
+    rec.stale = true;
+  });
+
+  // Remove files that are gone.
+  files.forEach((rec, path) => {
+    if (!seen.has(path)) {
+      observer.unobserve(rec.card);
+      rec.card.remove();
+      files.delete(path);
+      if (state.focus && state.focus.path === path) state.focus = null;
+    }
+  });
+
+  // Order cards like the incoming list.
+  state.order = incoming.map((f) => f.path);
+  state.order.forEach((path) => container.appendChild(files.get(path).card));
+
+  if (state.order.length === 0) {
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.textContent = state.emptyMessage;
+    container.appendChild(div);
+  }
+
+  renderNav();
+  files.forEach(reconcile);
 }
 
-function buildSection(f, expanded) {
-  const rec = {
-    path: f.path,
-    status: f.status,
-    oldPath: f.old_path || null,
-    added: f.added || 0,
-    removed: f.removed || 0,
-    isBinary: !!f.is_binary,
-    expanded: !!expanded,
-    diffRequested: false,
-    // Cached FileHunks payload from SetHunks so a re-build needs no round-trip.
-    hunksData: null,
-    rendered: false,
-    isBinaryDiff: !!f.is_binary,
-    isTooLarge: false,
-    near: false,
-    lastHeight: 0,
-    el: null,
-    bodyEl: null,
-    diffContainerEl: null,
-  };
+function createRecord(item) {
+  const card = document.createElement("section");
+  card.className = "card";
+  card.dataset.path = item.path;
 
-  const section = document.createElement("div");
-  section.className = "review-section" + (expanded ? "" : " collapsed");
-  section.setAttribute("data-review-path", f.path);
-
-  // --- Header row ---
   const header = document.createElement("div");
-  header.className = "review-section-header";
+  header.className = "card-header";
+  card.appendChild(header);
 
-  const chevron = document.createElement("span");
-  chevron.className = "review-chevron";
-  chevron.innerHTML =
-    '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5L6 7.5L9 4.5"/></svg>';
-  header.appendChild(chevron);
-
-  const glyph = document.createElement("span");
-  glyph.className = "review-status-glyph " + statusGlyphClass(f.status);
-  glyph.textContent = statusGlyphText(f.status);
-  header.appendChild(glyph);
-
-  const pathEl = document.createElement("span");
-  pathEl.className = "review-path";
-  if (rec.oldPath && rec.oldPath !== rec.path) {
-    const oldEl = document.createElement("span");
-    oldEl.className = "review-old-path";
-    oldEl.textContent = rec.oldPath + " → ";
-    pathEl.appendChild(oldEl);
-    pathEl.appendChild(document.createTextNode(rec.path));
-  } else {
-    pathEl.textContent = rec.path;
-  }
-  pathEl.title = rec.path;
-  header.appendChild(pathEl);
-
-  const badge = document.createElement("span");
-  badge.className = "review-badge";
-  const addedEl = document.createElement("span");
-  addedEl.className = "added";
-  addedEl.textContent = "+" + rec.added;
-  const removedEl = document.createElement("span");
-  removedEl.className = "removed";
-  removedEl.textContent = "-" + rec.removed;
-  badge.appendChild(addedEl);
-  badge.appendChild(removedEl);
-  header.appendChild(badge);
-
-  const discard = document.createElement("button");
-  discard.className = "review-discard";
-  discard.title = "Discard changes to this file";
-  discard.textContent = "Discard";
-  discard.addEventListener("click", function (ev) {
-    ev.stopPropagation();
-    sendToHost({ type: "Discard", path: rec.path });
-  });
-  header.appendChild(discard);
-
-  header.addEventListener("click", function () {
-    toggleSection(rec);
-  });
-
-  section.appendChild(header);
-
-  // --- Body (diff container) ---
   const body = document.createElement("div");
-  body.className = "review-section-body";
-  const diffContainer = document.createElement("div");
-  diffContainer.className = "review-diff-container";
-  body.appendChild(diffContainer);
-  section.appendChild(body);
+  body.className = "card-body";
+  card.appendChild(body);
 
-  rec.el = section;
-  rec.bodyEl = body;
-  rec.diffContainerEl = diffContainer;
-
+  const rec = {
+    item,
+    card,
+    header,
+    body,
+    nav: null,
+    // Viewed files start collapsed; everything else starts expanded.
+    expanded: !item.viewed,
+    near: false,
+    diff: null,
+    renderedKey: null,
+    stale: true,
+    requestedGen: -1,
+    busy: false,
+    selection: null,
+    composer: null, // { hunk, side, line, endLine, el }
+  };
+  renderHeader(rec);
   return rec;
 }
 
-// ---------------------------------------------------------------------------
-// Expand / collapse
-// ---------------------------------------------------------------------------
-function toggleSection(rec) {
-  const next = !rec.expanded;
-  rec.expanded = next;
-  rec.el.classList.toggle("collapsed", !next);
-  sendToHost({ type: "ToggleFile", path: rec.path, expanded: next });
+function renderHeader(rec) {
+  const item = rec.item;
+  const h = rec.header;
+  h.textContent = "";
+  rec.card.classList.toggle("collapsed", !rec.expanded);
 
-  if (!next) {
-    // Collapsed: clear the rows immediately (no spacer needed — body hidden).
-    clearSection(rec);
-    return;
+  const chev = svg('<path d="M4 6l4 4 4-4"/>', "chev");
+  h.appendChild(chev);
+
+  const status = el("span", "status status-" + item.status, item.status);
+  h.appendChild(status);
+
+  const path = el("span", "path");
+  if (item.oldPath) path.appendChild(el("span", "old", item.oldPath));
+  const slash = item.path.lastIndexOf("/");
+  if (slash >= 0)
+    path.appendChild(el("span", "dir", item.path.slice(0, slash + 1)));
+  path.appendChild(document.createTextNode(item.path.slice(slash + 1)));
+  path.title = item.path;
+  h.appendChild(path);
+
+  if (item.changedSinceViewed)
+    h.appendChild(el("span", "changed-badge", "changed since viewed"));
+  if (item.binary) h.appendChild(el("span", "stat", "binary"));
+  else h.appendChild(statEl(item.added, item.removed));
+
+  const viewed = el("button", "viewed-toggle");
+  viewed.appendChild(el("span", "check" + (item.viewed ? " on" : "")));
+  viewed.appendChild(document.createTextNode("Viewed"));
+  viewed.title = "Mark as viewed (v)";
+  viewed.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setViewed(item.path, !rec.item.viewed, true);
+  });
+  h.appendChild(viewed);
+
+  if (state.caps.stage) {
+    h.appendChild(
+      actionButton(
+        "Stage",
+        "Stage file",
+        () => fileAction(rec, "stage"),
+        "primary",
+      ),
+    );
   }
+  if (state.caps.unstage) {
+    h.appendChild(
+      actionButton(
+        "Unstage",
+        "Unstage file",
+        () => fileAction(rec, "unstage"),
+        "primary",
+      ),
+    );
+  }
+  if (state.caps.revert) {
+    h.appendChild(
+      actionButton(
+        "Revert",
+        "Discard changes to this file",
+        () => fileAction(rec, "revert"),
+        "danger",
+      ),
+    );
+  }
+  h.appendChild(
+    actionButton("Open", "Open file (o)", () =>
+      post({ type: "OpenFile", path: item.path, line: firstChangedLine(rec) }),
+    ),
+  );
 
-  // Expanded: let the reconciler decide whether to request/build based on
-  // whether this section is currently near the viewport. Re-expanding a section
-  // that is on-screen will build synchronously here; off-screen ones wait for
-  // the IntersectionObserver to flag them near.
-  reconcileSection(rec);
+  h.onclick = (e) => {
+    if (e.target.closest("button")) return;
+    toggleExpanded(rec);
+  };
+  h.oncontextmenu = (e) => {
+    e.preventDefault();
+    post({ type: "CopyPath", path: item.path });
+  };
 }
 
-// ---------------------------------------------------------------------------
-// SetHunks: cache the unified-diff hunks for one section, then reconcile.
-// ---------------------------------------------------------------------------
-function handleSetHunks(cmd) {
-  const rec = sections.get(cmd.path);
+function statEl(added, removed) {
+  const s = el("span", "stat");
+  if (added != null) s.appendChild(el("span", "a", "+" + added));
+  if (removed != null && removed > 0)
+    s.appendChild(el("span", "r", "−" + removed));
+  return s;
+}
+
+function actionButton(label, title, onClick, kind) {
+  const b = el("button", "act" + (kind ? " " + kind : ""), label);
+  b.title = title;
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+function fileAction(rec, action) {
+  post({ type: "FileAction", action, path: rec.item.path });
+}
+
+function toggleExpanded(rec, value) {
+  rec.expanded = value === undefined ? !rec.expanded : value;
+  rec.card.classList.toggle("collapsed", !rec.expanded);
+  reconcile(rec);
+}
+
+function setViewed(path, viewed, fromUser) {
+  const rec = files.get(path);
   if (!rec) return;
-  const data = cmd.hunks || null;
-  rec.diffRequested = false;
-
-  if (data && (data.is_binary || data.too_large)) {
-    // Placeholder content — no rows, no round-trip needed again.
-    rec.isBinaryDiff = !!data.is_binary;
-    rec.isTooLarge = !!data.too_large;
-    rec.hunksData = null;
-    reconcileSection(rec);
-    return;
-  }
-
-  // Cache the hunks so we can rebuild on re-approach without asking again.
-  rec.isBinaryDiff = false;
-  rec.isTooLarge = false;
-  rec.hunksData = data;
-  rec.rendered = false;
-  reconcileSection(rec);
-}
-
-// Render the binary / too-large placeholder directly into the container.
-function renderPlaceholder(rec) {
-  const container = rec.diffContainerEl;
-  if (!container) return;
-  container.textContent = "";
-  const ph = document.createElement("div");
-  ph.className = "review-placeholder";
-  ph.textContent = rec.isBinaryDiff
-    ? "Binary file not shown"
-    : "File too large or complex to display";
-  container.appendChild(ph);
-  container.style.height = "auto";
-  rec.rendered = false;
+  rec.item = Object.assign({}, rec.item, {
+    viewed,
+    changedSinceViewed: fromUser
+      ? false
+      : rec.item.changedSinceViewed && !viewed,
+  });
+  if (fromUser) post({ type: "ToggleViewed", path, viewed });
+  // Viewing collapses; un-viewing (e.g. it changed) expands.
+  toggleExpanded(rec, !viewed);
+  renderHeader(rec);
+  renderNav();
 }
 
 // ---------------------------------------------------------------------------
-// Build the unified-diff rows for a section from its cached hunks.
-//
-// Syntax coloring: we drop all the hunks' content lines into one throwaway
-// Monaco model and colorize each line synchronously via colorizeModelLine
-// (tokenize-only — no diff algorithm, no editor instance), then dispose the
-// model. Word-level emphasis is overlaid from each line's `spans`.
+// Navigator
 // ---------------------------------------------------------------------------
-function renderHunks(rec) {
-  const container = rec.diffContainerEl;
-  if (!container) return;
-  container.textContent = "";
-  container.style.height = "auto";
+function renderNav() {
+  const list = $("#nav-list");
+  list.textContent = "";
+  const filter = state.filter.toLowerCase();
+  let lastDir = null;
+  let viewedCount = 0;
+  state.order.forEach((path) => {
+    const rec = files.get(path);
+    if (rec.item.viewed) viewedCount++;
+    if (filter && !path.toLowerCase().includes(filter)) {
+      rec.nav = null;
+      return;
+    }
+    const slash = path.lastIndexOf("/");
+    const dir = slash >= 0 ? path.slice(0, slash) : "";
+    if (dir !== lastDir) {
+      if (dir) {
+        const d = el("div", "nav-dir", dir);
+        d.title = dir;
+        list.appendChild(d);
+      }
+      lastDir = dir;
+    }
+    const row = el(
+      "div",
+      "nav-item" +
+        (rec.item.viewed ? " viewed" : "") +
+        (path === state.currentPath ? " current" : ""),
+    );
+    const check = el("span", "check" + (rec.item.viewed ? " on" : ""));
+    check.title = "Viewed";
+    check.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setViewed(path, !rec.item.viewed, true);
+    });
+    row.appendChild(check);
+    row.appendChild(
+      el("span", "status status-" + rec.item.status, rec.item.status),
+    );
+    row.appendChild(el("span", "name", path.slice(slash + 1)));
+    if (rec.item.changedSinceViewed) row.appendChild(el("span", "changed"));
+    if (rec.item.commentCount > 0)
+      row.appendChild(el("span", "comments", "💬" + rec.item.commentCount));
+    if (!rec.item.binary)
+      row.appendChild(statEl(rec.item.added, rec.item.removed));
+    row.title = path;
+    row.addEventListener("click", () => focusFile(path, true));
+    rec.nav = row;
+    list.appendChild(row);
+  });
+  const total = state.order.length;
+  $("#nav-progress > i").style.width = total
+    ? (100 * viewedCount) / total + "%"
+    : "0";
+}
 
-  const data = rec.hunksData;
-  if (!data || !data.hunks || data.hunks.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "review-placeholder";
-    empty.textContent = "No textual changes.";
-    container.appendChild(empty);
-    rec.rendered = true;
-    rec.lastHeight = container.offsetHeight;
+$("#nav-filter").addEventListener("input", (e) => {
+  state.filter = e.target.value || "";
+  renderNav();
+});
+
+function focusFile(path, scroll) {
+  const rec = files.get(path);
+  if (!rec) return;
+  if (!rec.expanded) toggleExpanded(rec, true);
+  state.focus = { path, hunk: 0 };
+  markFocus();
+  if (scroll) rec.card.scrollIntoView({ block: "start" });
+  setCurrent(path);
+}
+
+function setCurrent(path) {
+  if (state.currentPath === path) return;
+  const prev = state.currentPath && files.get(state.currentPath);
+  if (prev && prev.nav) prev.nav.classList.remove("current");
+  state.currentPath = path;
+  const rec = files.get(path);
+  if (rec && rec.nav) {
+    rec.nav.classList.add("current");
+    rec.nav.scrollIntoView({ block: "nearest" });
+  }
+}
+
+mainEl().addEventListener(
+  "scroll",
+  () => {
+    // The first card whose bottom is below the top edge is "current".
+    const top = mainEl().getBoundingClientRect().top + 4;
+    for (const path of state.order) {
+      const rect = files.get(path).card.getBoundingClientRect();
+      if (rect.bottom > top) {
+        setCurrent(path);
+        break;
+      }
+    }
+  },
+  { passive: true },
+);
+
+// ---------------------------------------------------------------------------
+// Diff loading + virtualization
+// ---------------------------------------------------------------------------
+function onIntersect(entries) {
+  entries.forEach((entry) => {
+    const rec = files.get(entry.target.dataset.path);
+    if (!rec) return;
+    rec.near = entry.isIntersecting;
+    reconcile(rec);
+  });
+}
+
+// Single funnel: bring a card's DOM in line with (expanded, near, diff).
+function reconcile(rec) {
+  if (!rec.expanded) {
+    clearBody(rec, false);
+    return;
+  }
+  if (!rec.near) {
+    if (rec.renderedKey) clearBody(rec, true);
+    return;
+  }
+  if (rec.stale && rec.requestedGen !== state.generation) {
+    rec.requestedGen = state.generation;
+    post({ type: "RequestDiff", path: rec.item.path });
+    if (!rec.diff) {
+      rec.body.textContent = "";
+      rec.body.appendChild(el("div", "placeholder", "Loading…"));
+      rec.body.style.height = "";
+      return;
+    }
+  }
+  if (rec.diff) renderBody(rec);
+}
+
+function onSetFileDiff(diff) {
+  const rec = files.get(diff.path);
+  if (!rec) return;
+  rec.stale = false;
+  const prevHash = rec.diff && rec.diff.diffHash;
+  rec.diff = diff;
+  if (prevHash !== diff.diffHash && rec.selection) rec.selection = null;
+  if (rec.expanded && rec.near) renderBody(rec);
+}
+
+function onDiffError(path, message) {
+  const rec = files.get(path);
+  if (!rec) return;
+  rec.stale = false;
+  rec.body.textContent = "";
+  rec.body.appendChild(el("div", "placeholder error", message));
+}
+
+function onSetBusy(path, busy) {
+  const rec = files.get(path);
+  if (!rec) return;
+  rec.busy = busy;
+  rec.card.classList.toggle("busy", busy);
+}
+
+function clearBody(rec, keepHeight) {
+  const height = rec.body.offsetHeight;
+  rec.body.textContent = "";
+  rec.renderedKey = null;
+  rec.body.style.height = keepHeight && height > 0 ? height + "px" : "";
+}
+
+// ---------------------------------------------------------------------------
+// Rendering a file's hunks
+// ---------------------------------------------------------------------------
+function renderKey(rec) {
+  const d = rec.diff;
+  return [
+    d.diffHash,
+    state.options.layout,
+    JSON.stringify(d.comments || []),
+    rec.selection
+      ? rec.selection.hunk + ":" + Array.from(rec.selection.lines).join(",")
+      : "",
+    state.caps.stage,
+    state.caps.unstage,
+    state.caps.revert,
+    rec.composer ? rec.composer.hunk + ":" + rec.composer.line : "",
+  ].join("|");
+}
+
+function renderBody(rec) {
+  const key = renderKey(rec);
+  if (key === rec.renderedKey) return;
+  rec.renderedKey = key;
+  const diff = rec.diff;
+  const body = rec.body;
+  const keepComposerText =
+    rec.composer && rec.composer.el
+      ? rec.composer.el.querySelector("textarea").value
+      : null;
+  body.textContent = "";
+  body.style.height = "";
+
+  if (diff.binary) {
+    body.appendChild(el("div", "placeholder", "Binary file — no diff shown"));
+    return;
+  }
+  if (diff.tooLarge) {
+    body.appendChild(
+      el(
+        "div",
+        "placeholder",
+        "File too large to display — open it in the editor",
+      ),
+    );
+    return;
+  }
+  if (!diff.hunks || diff.hunks.length === 0) {
+    body.appendChild(el("div", "placeholder", "No textual changes"));
     return;
   }
 
-  const language = data.language || "plaintext";
-  // One throwaway model holding every content line, for sync syntax coloring.
-  const allContent = [];
-  data.hunks.forEach(function (h) {
-    h.lines.forEach(function (l) {
-      allContent.push(l.content);
-    });
-  });
-  let model = null;
-  try {
-    model = monaco.editor.createModel(allContent.join("\n"), language);
-  } catch (e) {
-    model = null;
+  // Outdated comments float at the top of the card.
+  const outdated = (diff.comments || []).filter((c) => c.outdated);
+  if (outdated.length) {
+    const box = el("div", "outdated-box");
+    box.appendChild(
+      el("div", "title", "Outdated comments — the lines they were on changed"),
+    );
+    outdated.forEach((c) => box.appendChild(commentEl(rec, c)));
+    body.appendChild(box);
   }
 
-  const frag = document.createDocumentFragment();
-  let lineNo = 0; // 1-based index into the throwaway model
-  data.hunks.forEach(function (h) {
-    const hh = document.createElement("div");
-    hh.className = "review-hunk-header";
-    hh.textContent =
-      h.header || "@@ -" + h.old_start + " +" + h.new_start + " @@";
-    frag.appendChild(hh);
-    h.lines.forEach(function (l) {
-      lineNo += 1;
-      frag.appendChild(buildRow(l, model, lineNo));
-    });
-  });
-  container.appendChild(frag);
+  const colorizers = makeColorizers(diff);
+  diff.hunks.forEach((hunk, index) =>
+    body.appendChild(renderHunk(rec, hunk, index, colorizers)),
+  );
+  colorizers.dispose();
 
-  if (model) {
-    try {
-      model.dispose();
-    } catch (e) {
-      /* ignore */
-    }
+  if (diff.truncated) {
+    body.appendChild(
+      el(
+        "div",
+        "placeholder",
+        "Diff truncated — the file has more changes than shown.",
+      ),
+    );
   }
 
-  if (data.truncated) {
-    const t = document.createElement("div");
-    t.className = "review-placeholder review-truncated";
-    t.textContent = "Diff truncated — file has more changes than shown.";
-    container.appendChild(t);
+  if (keepComposerText != null && rec.composer && rec.composer.el) {
+    rec.composer.el.querySelector("textarea").value = keepComposerText;
   }
-
-  rec.rendered = true;
-  rec.lastHeight = container.offsetHeight;
+  markFocus();
 }
 
-// Build a single unified-diff row: old gutter, new gutter, +/- marker, content.
-function buildRow(line, model, lineNo) {
-  const kind = line.kind || "context";
-  const row = document.createElement("div");
-  row.className = "review-row review-row-" + kind;
+function renderHunk(rec, hunk, index, colorizers) {
+  const wrap = el("div", "hunk");
+  wrap.dataset.index = String(index);
 
-  const gOld = document.createElement("span");
-  gOld.className = "review-gutter review-gutter-old";
-  gOld.textContent = line.old_lineno != null ? String(line.old_lineno) : "";
-  const gNew = document.createElement("span");
-  gNew.className = "review-gutter review-gutter-new";
-  gNew.textContent = line.new_lineno != null ? String(line.new_lineno) : "";
+  const header = el("div", "hunk-header");
+  header.appendChild(el("span", "label", hunk.header));
+  const actions = el("div", "hunk-actions");
+  const sel =
+    rec.selection && rec.selection.hunk === index
+      ? rec.selection.lines.size
+      : 0;
+  const what = sel ? sel + " line" + (sel === 1 ? "" : "s") : "hunk";
+  if (state.caps.stage)
+    actions.appendChild(
+      actionButton(
+        "Stage " + what,
+        "Stage (s / ⌘Y)",
+        () => hunkAction(rec, index, "stage"),
+        "primary",
+      ),
+    );
+  if (state.caps.unstage)
+    actions.appendChild(
+      actionButton(
+        "Unstage " + what,
+        "Unstage (u / ⌘⇧Y)",
+        () => hunkAction(rec, index, "unstage"),
+        "primary",
+      ),
+    );
+  if (state.caps.revert)
+    actions.appendChild(
+      actionButton(
+        "Revert " + what,
+        "Revert in working tree (x / ⌘⌥Z)",
+        () => hunkAction(rec, index, "revert"),
+        "danger",
+      ),
+    );
+  actions.appendChild(
+    actionButton("Comment", "Comment (c)", () =>
+      openComposerForHunk(rec, index),
+    ),
+  );
+  header.appendChild(actions);
+  header.addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;
+    state.focus = { path: rec.item.path, hunk: index };
+    markFocus();
+  });
+  wrap.appendChild(header);
 
-  const marker = document.createElement("span");
-  marker.className = "review-line-marker";
-  marker.textContent = kind === "added" ? "+" : kind === "removed" ? "-" : " ";
-
-  const content = document.createElement("span");
-  content.className = "review-line-content";
-  let html = null;
-  if (model) {
-    try {
-      html = monaco.editor.colorizeModelLine(model, lineNo);
-    } catch (e) {
-      html = null;
-    }
-  }
-  if (html != null) {
-    content.appendChild(applyWordSpans(html, line.spans));
-  } else if (line.spans && line.spans.length) {
-    content.appendChild(highlightTextNode(line.content, 0, line.spans));
+  const rows = el(
+    "div",
+    "rows" + (state.options.layout === "split" ? " split" : ""),
+  );
+  const commentsByEnd = groupCommentsByEnd(rec.diff.comments || []);
+  if (state.options.layout === "split") {
+    renderSplitRows(rec, hunk, index, rows, colorizers, commentsByEnd);
   } else {
-    content.textContent = line.content;
+    hunk.lines.forEach((line, li) => {
+      rows.appendChild(unifiedRow(rec, line, index, li, colorizers));
+      appendLineExtras(rec, rows, line, index, li, commentsByEnd);
+    });
   }
-  // Keep empty lines at full row height.
-  if (content.textContent.length === 0) {
-    content.appendChild(document.createTextNode("​"));
-  }
+  wrap.appendChild(rows);
+  return wrap;
+}
 
+function unifiedRow(rec, line, hunkIndex, lineIndex, colorizers) {
+  const row = el("div", "row " + line.kind);
+  if (isSelected(rec, hunkIndex, lineIndex)) row.classList.add("selected");
+  const gOld = el("span", "gutter", line.old != null ? String(line.old) : "");
+  const gNew = el("span", "gutter", line.new != null ? String(line.new) : "");
+  if (line.kind !== "context") {
+    gOld.classList.add("selectable");
+    gNew.classList.add("selectable");
+    gOld.title = gNew.title = "Select line (shift-click for a range)";
+    const select = (e) => toggleLine(rec, hunkIndex, lineIndex, e.shiftKey);
+    gOld.addEventListener("click", select);
+    gNew.addEventListener("click", select);
+  }
+  const plus = el("button", "add-comment", "+");
+  plus.title = "Comment on this line";
+  plus.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openComposer(rec, hunkIndex, lineIndex);
+  });
+  gOld.appendChild(plus);
   row.appendChild(gOld);
   row.appendChild(gNew);
-  row.appendChild(marker);
-  row.appendChild(content);
+  row.appendChild(
+    el(
+      "span",
+      "marker",
+      line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " ",
+    ),
+  );
+  row.appendChild(codeEl(line, colorizers));
   return row;
 }
 
-// Wrap the colorized line HTML, overlaying word-diff emphasis on the changed
-// UTF-16 ranges. Returns a <span> whose children are the final content nodes.
-function applyWordSpans(html, spans) {
+// Split view: context on both sides; removed/added runs paired line by line.
+function renderSplitRows(
+  rec,
+  hunk,
+  hunkIndex,
+  rows,
+  colorizers,
+  commentsByEnd,
+) {
+  const lines = hunk.lines;
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].kind === "context") {
+      rows.appendChild(
+        splitRow(rec, hunkIndex, [i, lines[i]], [i, lines[i]], colorizers),
+      );
+      appendLineExtras(rec, rows, lines[i], hunkIndex, i, commentsByEnd);
+      i++;
+      continue;
+    }
+    const removed = [];
+    const added = [];
+    while (i < lines.length && lines[i].kind === "removed")
+      removed.push([i, lines[i++]]);
+    while (i < lines.length && lines[i].kind === "added")
+      added.push([i, lines[i++]]);
+    const count = Math.max(removed.length, added.length);
+    for (let k = 0; k < count; k++) {
+      rows.appendChild(
+        splitRow(
+          rec,
+          hunkIndex,
+          removed[k] || null,
+          added[k] || null,
+          colorizers,
+        ),
+      );
+      if (removed[k])
+        appendLineExtras(
+          rec,
+          rows,
+          removed[k][1],
+          hunkIndex,
+          removed[k][0],
+          commentsByEnd,
+        );
+      if (added[k])
+        appendLineExtras(
+          rec,
+          rows,
+          added[k][1],
+          hunkIndex,
+          added[k][0],
+          commentsByEnd,
+        );
+    }
+  }
+}
+
+function splitRow(rec, hunkIndex, left, right, colorizers) {
+  const row = el("div", "row");
+  const side = (entry, which) => {
+    if (!entry) {
+      row.appendChild(el("span", "gutter cell blank"));
+      row.appendChild(el("span", "marker cell blank"));
+      row.appendChild(el("span", "code cell blank"));
+      return;
+    }
+    const [index, line] = entry;
+    const kind = line.kind === "context" ? "" : " " + line.kind;
+    const selected = isSelected(rec, hunkIndex, index) ? " selected" : "";
+    const num = which === "old" ? line.old : line.new;
+    const g = el(
+      "span",
+      "gutter cell" + kind + selected,
+      num != null ? String(num) : "",
+    );
+    if (line.kind !== "context") {
+      g.classList.add("selectable");
+      g.addEventListener("click", (e) =>
+        toggleLine(rec, hunkIndex, index, e.shiftKey),
+      );
+    }
+    const plus = el("button", "add-comment", "+");
+    plus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openComposer(rec, hunkIndex, index);
+    });
+    g.appendChild(plus);
+    row.appendChild(g);
+    row.appendChild(
+      el(
+        "span",
+        "marker cell" + kind + selected,
+        line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " ",
+      ),
+    );
+    const code = codeEl(line, colorizers);
+    code.className += " cell" + kind + selected;
+    row.appendChild(code);
+  };
+  side(left && left[1].kind !== "added" ? left : null, "old");
+  side(right && right[1].kind !== "removed" ? right : null, "new");
+  return row;
+}
+
+// Word highlights help when a line changed a little; when most of it
+// changed they just box every token, so drop them.
+function usefulSpans(line) {
+  const spans = line.spans || [];
+  if (!spans.length || !line.text.length) return spans;
+  const covered = spans.reduce((sum, s) => sum + Math.max(0, s[1] - s[0]), 0);
+  return covered / line.text.length > 0.6 ? [] : spans;
+}
+
+function codeEl(line, colorizers) {
+  const code = el("span", "code");
+  const html = colorizers.html(line);
+  line = Object.assign({}, line, { spans: usefulSpans(line) });
+  if (html != null) {
+    code.appendChild(applySpans(html, line.spans));
+  } else if (line.spans && line.spans.length) {
+    code.appendChild(highlightText(line.text, 0, line.spans));
+  } else {
+    code.textContent = line.text;
+  }
+  if (!code.textContent) code.appendChild(document.createTextNode("​"));
+  return code;
+}
+
+// Colorize old-side and new-side lines with separate models so tokenizer
+// state (multi-line strings/comments) doesn't bleed between the two sides.
+function makeColorizers(diff) {
+  const language = diff.language || "plaintext";
+  const oldLines = [];
+  const newLines = [];
+  const indexOld = new Map();
+  const indexNew = new Map();
+  diff.hunks.forEach((h) =>
+    h.lines.forEach((l) => {
+      if (l.kind !== "added") {
+        oldLines.push(l.text);
+        indexOld.set(l, oldLines.length);
+      }
+      if (l.kind !== "removed") {
+        newLines.push(l.text);
+        indexNew.set(l, newLines.length);
+      }
+    }),
+  );
+  let oldModel = null;
+  let newModel = null;
+  try {
+    oldModel = monaco.editor.createModel(oldLines.join("\n"), language);
+    newModel = monaco.editor.createModel(newLines.join("\n"), language);
+  } catch (e) {
+    /* plaintext fallback */
+  }
+  return {
+    html(line) {
+      try {
+        if (line.kind === "removed")
+          return oldModel
+            ? monaco.editor.colorizeModelLine(oldModel, indexOld.get(line))
+            : null;
+        return newModel
+          ? monaco.editor.colorizeModelLine(newModel, indexNew.get(line))
+          : null;
+      } catch (e) {
+        return null;
+      }
+    },
+    dispose() {
+      if (oldModel) oldModel.dispose();
+      if (newModel) newModel.dispose();
+    },
+  };
+}
+
+function applySpans(html, spans) {
   const wrapper = document.createElement("span");
   wrapper.innerHTML = html;
   if (!spans || spans.length === 0) return wrapper;
-
-  // Collect text nodes first — splitting them while walking is unsafe.
-  const textNodes = [];
+  const nodes = [];
   const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, null);
   let n;
-  while ((n = walker.nextNode())) textNodes.push(n);
-
+  while ((n = walker.nextNode())) nodes.push(n);
   let offset = 0;
-  textNodes.forEach(function (tn) {
+  nodes.forEach((tn) => {
     const text = tn.nodeValue;
-    const frag = highlightTextNode(text, offset, spans);
+    const frag = highlightText(text, offset, spans);
     offset += text.length;
     if (tn.parentNode) tn.parentNode.replaceChild(frag, tn);
   });
   return wrapper;
 }
 
-// Split `text` (whose first char is at global UTF-16 `globalStart`) into a
-// fragment where ranges intersecting `spans` are wrapped in <span class=word>.
-function highlightTextNode(text, globalStart, spans) {
+function highlightText(text, globalStart, spans) {
   const frag = document.createDocumentFragment();
-  const len = text.length;
   let pos = 0;
-  for (let i = 0; i < spans.length && pos < len; i++) {
-    const s = spans[i];
-    const localStart = Math.max(pos, s.start - globalStart);
-    const localEnd = Math.min(len, s.end - globalStart);
-    if (localEnd <= 0 || localStart >= len || localEnd <= localStart) continue;
-    if (localStart > pos) {
-      frag.appendChild(document.createTextNode(text.slice(pos, localStart)));
-    }
-    const mark = document.createElement("span");
-    mark.className = "review-word";
-    mark.textContent = text.slice(localStart, localEnd);
-    frag.appendChild(mark);
-    pos = localEnd;
+  for (const span of spans) {
+    const start = Math.max(pos, span[0] - globalStart);
+    const end = Math.min(text.length, span[1] - globalStart);
+    if (end <= 0 || start >= text.length || end <= start) continue;
+    if (start > pos)
+      frag.appendChild(document.createTextNode(text.slice(pos, start)));
+    frag.appendChild(el("span", "word", text.slice(start, end)));
+    pos = end;
   }
-  if (pos < len) frag.appendChild(document.createTextNode(text.slice(pos)));
+  if (pos < text.length)
+    frag.appendChild(document.createTextNode(text.slice(pos)));
   return frag;
 }
 
 // ---------------------------------------------------------------------------
-// Clear a section's rows.
-//
-// keepSpacer: when true (virtualized-out), leave a spacer div of the last-known
-// height so the page scroll position does not jump. When false (collapsed), the
-// body is hidden anyway so the container is just reset.
+// Line selection
 // ---------------------------------------------------------------------------
-function clearSection(rec, keepSpacer) {
-  if (!rec || !rec.diffContainerEl) return;
-  rec.rendered = false;
-  rec.diffContainerEl.textContent = "";
-  if (keepSpacer && rec.lastHeight > 0) {
-    const spacer = document.createElement("div");
-    spacer.className = "review-spacer";
-    spacer.style.height = rec.lastHeight + "px";
-    rec.diffContainerEl.appendChild(spacer);
-    rec.diffContainerEl.style.height = rec.lastHeight + "px";
+function isSelected(rec, hunkIndex, lineIndex) {
+  return !!(
+    rec.selection &&
+    rec.selection.hunk === hunkIndex &&
+    rec.selection.lines.has(lineIndex)
+  );
+}
+
+function toggleLine(rec, hunkIndex, lineIndex, extend) {
+  const lines = rec.diff.hunks[hunkIndex].lines;
+  if (!rec.selection || rec.selection.hunk !== hunkIndex) {
+    rec.selection = { hunk: hunkIndex, lines: new Set(), anchor: lineIndex };
+  }
+  const sel = rec.selection;
+  if (extend && sel.anchor != null) {
+    const [a, b] = [
+      Math.min(sel.anchor, lineIndex),
+      Math.max(sel.anchor, lineIndex),
+    ];
+    for (let i = a; i <= b; i++)
+      if (lines[i].kind !== "context") sel.lines.add(i);
   } else {
-    rec.diffContainerEl.style.height = "auto";
+    if (sel.lines.has(lineIndex)) sel.lines.delete(lineIndex);
+    else sel.lines.add(lineIndex);
+    sel.anchor = lineIndex;
   }
+  if (sel.lines.size === 0) rec.selection = null;
+  state.focus = { path: rec.item.path, hunk: hunkIndex };
+  renderBody(rec);
 }
 
-// ---------------------------------------------------------------------------
-// SetTheme: define + apply the Monaco theme, and map colors to CSS variables
-// used by the section headers/rows (mirrors editor.js's theme application).
-// ---------------------------------------------------------------------------
-function handleSetTheme(cmd) {
-  const theme = cmd.theme;
-  if (!theme) return;
-
-  monaco.editor.defineTheme("impulse-review-theme", {
-    base: theme.base || "vs-dark",
-    inherit: theme.inherit !== false,
-    rules: (theme.rules || []).map(function (r) {
-      const rule = { token: r.token };
-      if (r.foreground) rule.foreground = r.foreground;
-      if (r.font_style) rule.fontStyle = r.font_style;
-      return rule;
-    }),
-    colors: theme.colors || {},
+function hunkAction(rec, hunkIndex, action) {
+  if (rec.busy || !rec.diff) return;
+  const hunk = rec.diff.hunks[hunkIndex];
+  if (!hunk) return;
+  const lines =
+    rec.selection && rec.selection.hunk === hunkIndex
+      ? Array.from(rec.selection.lines).sort((a, b) => a - b)
+      : null;
+  rec.selection = null;
+  post({
+    type: "HunkAction",
+    action,
+    path: rec.item.path,
+    hunkIndex,
+    hunkId: hunk.id,
+    lines,
   });
-  monaco.editor.setTheme("impulse-review-theme");
+}
 
-  if (theme.colors) {
-    currentThemeColors = theme.colors;
-    applyThemeCssVars(theme.colors);
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+function groupCommentsByEnd(comments) {
+  const map = new Map();
+  comments
+    .filter((c) => !c.outdated)
+    .forEach((c) => {
+      const key = c.side + ":" + c.endLine;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    });
+  return map;
+}
+
+function appendLineExtras(
+  rec,
+  rows,
+  line,
+  hunkIndex,
+  lineIndex,
+  commentsByEnd,
+) {
+  const keys = [];
+  if (line.new != null && line.kind !== "removed") keys.push("new:" + line.new);
+  if (line.old != null && line.kind === "removed") keys.push("old:" + line.old);
+  keys.forEach((key) =>
+    (commentsByEnd.get(key) || []).forEach((c) =>
+      rows.appendChild(commentEl(rec, c)),
+    ),
+  );
+  if (
+    rec.composer &&
+    rec.composer.hunk === hunkIndex &&
+    rec.composer.lineIndex === lineIndex
+  ) {
+    rows.appendChild(composerEl(rec));
   }
 }
 
-function isValidCssColor(c) {
-  return (
-    typeof c === "string" &&
-    /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c)
+function commentEl(rec, c) {
+  const box = el("div", "comment" + (c.outdated ? " outdated" : ""));
+  const meta = el("div", "meta");
+  meta.appendChild(
+    el(
+      "span",
+      "",
+      (c.side === "old" ? "removed line " : "line ") +
+        (c.endLine > c.line ? c.line + "–" + c.endLine : c.line),
+    ),
+  );
+  meta.appendChild(el("span", "spacer"));
+  const edit = el("button", "act", "Edit");
+  edit.addEventListener("click", () => editCommentInline(box, c));
+  const del = el("button", "act danger", "Delete");
+  del.addEventListener("click", () =>
+    post({ type: "DeleteComment", id: c.id }),
+  );
+  meta.appendChild(edit);
+  meta.appendChild(del);
+  box.appendChild(meta);
+  box.appendChild(el("div", "body", c.text));
+  return box;
+}
+
+function editCommentInline(box, c) {
+  const body = box.querySelector(".body");
+  const area = document.createElement("textarea");
+  area.value = c.text;
+  area.style.width = "100%";
+  area.style.minHeight = "48px";
+  area.style.background = "transparent";
+  area.style.color = "var(--text)";
+  area.style.border = "0";
+  area.style.outline = "none";
+  area.style.font = "inherit";
+  body.replaceWith(area);
+  area.focus();
+  area.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      post({ type: "EditComment", id: c.id, text: area.value });
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      area.replaceWith(body);
+    }
+  });
+}
+
+function openComposerForHunk(rec, hunkIndex) {
+  const lines = rec.diff.hunks[hunkIndex].lines;
+  let target = -1;
+  if (
+    rec.selection &&
+    rec.selection.hunk === hunkIndex &&
+    rec.selection.lines.size
+  ) {
+    target = Math.max.apply(null, Array.from(rec.selection.lines));
+  } else {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].kind !== "context") {
+        target = i;
+        break;
+      }
+    }
+  }
+  if (target < 0) target = lines.length - 1;
+  openComposer(rec, hunkIndex, target);
+}
+
+function openComposer(rec, hunkIndex, lineIndex) {
+  const hunk = rec.diff.hunks[hunkIndex];
+  // A selection in this hunk widens the comment to the selected range.
+  let indices = [lineIndex];
+  if (
+    rec.selection &&
+    rec.selection.hunk === hunkIndex &&
+    rec.selection.lines.has(lineIndex)
+  ) {
+    indices = Array.from(rec.selection.lines).sort((a, b) => a - b);
+  }
+  const anchorLine = hunk.lines[lineIndex];
+  const side = anchorLine.kind === "removed" ? "old" : "new";
+  const sideLines = indices
+    .map((i) => hunk.lines[i])
+    .filter((l) =>
+      side === "old" ? l.kind === "removed" : l.kind !== "removed",
+    );
+  const numbers = sideLines
+    .map((l) => (side === "old" ? l.old : l.new))
+    .filter((n) => n != null);
+  const line = numbers.length
+    ? Math.min.apply(null, numbers)
+    : side === "old"
+      ? anchorLine.old
+      : anchorLine.new;
+  const endLine = numbers.length ? Math.max.apply(null, numbers) : line;
+  const snippet = sideLines.map((l) => l.text).join("\n");
+  rec.composer = {
+    hunk: hunkIndex,
+    lineIndex: indices[indices.length - 1],
+    side,
+    line,
+    endLine,
+    snippet,
+    el: null,
+  };
+  renderBody(rec);
+  const area =
+    rec.composer &&
+    rec.composer.el &&
+    rec.composer.el.querySelector("textarea");
+  if (area) area.focus();
+}
+
+function composerEl(rec) {
+  const c = rec.composer;
+  const box = el("div", "composer");
+  const area = document.createElement("textarea");
+  area.placeholder = "Leave a comment for the agent or yourself…";
+  box.appendChild(area);
+  const buttons = el("div", "buttons");
+  buttons.appendChild(
+    el(
+      "span",
+      "hint",
+      (c.side === "old" ? "Removed line " : "Line ") +
+        (c.endLine > c.line ? c.line + "–" + c.endLine : c.line) +
+        " · ⌘↩ to save",
+    ),
+  );
+  const cancel = actionButton("Cancel", "Cancel (Esc)", () =>
+    closeComposer(rec),
+  );
+  const save = actionButton(
+    "Comment",
+    "Save (⌘↩)",
+    () => saveComposer(rec, area.value),
+    "primary",
+  );
+  buttons.appendChild(cancel);
+  buttons.appendChild(save);
+  box.appendChild(buttons);
+  area.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveComposer(rec, area.value);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeComposer(rec);
+    }
+  });
+  c.el = box;
+  return box;
+}
+
+function saveComposer(rec, text) {
+  const c = rec.composer;
+  if (!c || !text.trim()) return closeComposer(rec);
+  post({
+    type: "AddComment",
+    path: rec.item.path,
+    side: c.side,
+    line: c.line,
+    endLine: c.endLine,
+    text,
+    snippet: c.snippet,
+  });
+  rec.composer = null;
+  rec.selection = null;
+}
+
+function closeComposer(rec) {
+  rec.composer = null;
+  renderBody(rec);
+}
+
+function firstChangedLine(rec) {
+  if (!rec.diff || !rec.diff.hunks.length) return null;
+  const h = rec.diff.hunks[0];
+  const line = h.lines.find((l) => l.kind !== "context") || h.lines[0];
+  return line ? line.new || line.old || null : null;
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard
+// ---------------------------------------------------------------------------
+function visiblePaths() {
+  return state.order.filter(
+    (p) =>
+      !state.filter || p.toLowerCase().includes(state.filter.toLowerCase()),
   );
 }
 
-function applyThemeCssVars(colors) {
-  const root = document.documentElement.style;
-  const set = function (cssVar, value, fallback) {
-    root.setProperty(cssVar, isValidCssColor(value) ? value : fallback);
-  };
-
-  set("--review-bg", colors["editor.background"], "#1a1b26");
-  set("--review-fg", colors["editor.foreground"], "#c0caf5");
-  set("--review-header-bg", colors["editorGutter.background"], "#1f2335");
-  set(
-    "--review-header-hover-bg",
-    colors["editor.lineHighlightBackground"],
-    "#292e42",
+function markFocus() {
+  document
+    .querySelectorAll(".hunk.focused")
+    .forEach((h) => h.classList.remove("focused"));
+  document
+    .querySelectorAll(".card.focused-file")
+    .forEach((c) => c.classList.remove("focused-file"));
+  if (!state.focus) return;
+  const rec = files.get(state.focus.path);
+  if (!rec) return;
+  rec.card.classList.add("focused-file");
+  const hunk = rec.body.querySelector(
+    '.hunk[data-index="' + state.focus.hunk + '"]',
   );
-  set("--review-border", colors["editor.lineHighlightBackground"], "#292e42");
-  set("--review-muted", colors["editorLineNumber.foreground"], "#565f89");
-  set("--review-added", colors["impulse.diffAddedColor"], "#9ece6a");
-  set("--review-modified", colors["impulse.diffModifiedColor"], "#e0af68");
-  set("--review-deleted", colors["impulse.diffDeletedColor"], "#f7768e");
-  // Renamed reuses the modified accent unless a dedicated color is provided.
-  set("--review-renamed", colors["impulse.diffModifiedColor"], "#7aa2f7");
+  if (hunk) hunk.classList.add("focused");
+}
+
+function moveHunk(delta) {
+  const paths = visiblePaths();
+  if (!paths.length) return;
+  let { path, hunk } = state.focus || {
+    path: state.currentPath || paths[0],
+    hunk: -1,
+  };
+  let pi = Math.max(0, paths.indexOf(path));
+  for (let guard = 0; guard < paths.length * 2 + 2; guard++) {
+    const rec = files.get(paths[pi]);
+    const count = rec && rec.expanded && rec.diff ? rec.diff.hunks.length : 0;
+    const next = hunk + delta;
+    if (next >= 0 && next < count) {
+      state.focus = { path: paths[pi], hunk: next };
+      markFocus();
+      const el = rec.body.querySelector('.hunk[data-index="' + next + '"]');
+      if (el) el.scrollIntoView({ block: "nearest" });
+      setCurrent(paths[pi]);
+      return;
+    }
+    pi += delta;
+    if (pi < 0 || pi >= paths.length) return;
+    const nextRec = files.get(paths[pi]);
+    hunk =
+      delta > 0 ? -1 : nextRec && nextRec.diff ? nextRec.diff.hunks.length : 0;
+    if (nextRec && !nextRec.diff) {
+      // Not loaded yet: jump to the file and let it load.
+      focusFile(paths[pi], true);
+      return;
+    }
+  }
+}
+
+function moveFile(delta, unviewedOnly) {
+  const paths = visiblePaths();
+  if (!paths.length) return;
+  const current = state.focus ? state.focus.path : state.currentPath;
+  let i = paths.indexOf(current);
+  for (let step = 0; step < paths.length; step++) {
+    i = i + delta;
+    if (i < 0 || i >= paths.length) return;
+    if (!unviewedOnly || !files.get(paths[i]).item.viewed) {
+      focusFile(paths[i], true);
+      return;
+    }
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target && e.target.tagName) || "";
+  if (tag === "TEXTAREA" || tag === "INPUT") {
+    if (e.key === "Escape" && tag === "INPUT") e.target.blur();
+    return;
+  }
+  const rec = state.focus && files.get(state.focus.path);
+  const key = e.key;
+  const cmd = e.metaKey;
+  if (cmd && (key === "y" || key === "Y") && rec) {
+    e.preventDefault();
+    if (e.shiftKey) {
+      if (state.caps.unstage) hunkAction(rec, state.focus.hunk, "unstage");
+    } else if (state.caps.stage) {
+      hunkAction(rec, state.focus.hunk, "stage");
+    }
+    return;
+  }
+  if (
+    cmd &&
+    e.altKey &&
+    (key === "z" || key === "Ω" || e.code === "KeyZ") &&
+    rec &&
+    state.caps.revert
+  ) {
+    e.preventDefault();
+    hunkAction(rec, state.focus.hunk, "revert");
+    return;
+  }
+  if (cmd || e.ctrlKey || e.altKey) return;
+  switch (key) {
+    case "j":
+      moveHunk(1);
+      break;
+    case "k":
+      moveHunk(-1);
+      break;
+    case "n":
+      moveFile(1, false);
+      break;
+    case "p":
+      moveFile(-1, false);
+      break;
+    case "N":
+      moveFile(1, true);
+      break;
+    case "s":
+      if (rec && state.caps.stage) hunkAction(rec, state.focus.hunk, "stage");
+      break;
+    case "u":
+      if (rec && state.caps.unstage)
+        hunkAction(rec, state.focus.hunk, "unstage");
+      break;
+    case "x":
+      if (rec && state.caps.revert) hunkAction(rec, state.focus.hunk, "revert");
+      break;
+    case "v":
+      if (rec) setViewed(rec.item.path, !rec.item.viewed, true);
+      else if (state.currentPath)
+        setViewed(
+          state.currentPath,
+          !files.get(state.currentPath).item.viewed,
+          true,
+        );
+      break;
+    case "c":
+      if (rec && rec.diff) openComposerForHunk(rec, state.focus.hunk);
+      break;
+    case "o": {
+      const target = rec || files.get(state.currentPath);
+      if (target) {
+        let line = firstChangedLine(target);
+        if (rec && rec.diff && rec.diff.hunks[state.focus.hunk]) {
+          const h = rec.diff.hunks[state.focus.hunk];
+          const l = h.lines.find((x) => x.kind !== "context") || h.lines[0];
+          line = l.new || l.old || line;
+        }
+        post({ type: "OpenFile", path: target.item.path, line });
+      }
+      break;
+    }
+    case "Enter":
+    case " ": {
+      const target = rec || files.get(state.currentPath);
+      if (target) toggleExpanded(target);
+      break;
+    }
+    case "Escape":
+      files.forEach((r) => {
+        if (r.selection) {
+          r.selection = null;
+          renderBody(r);
+        }
+      });
+      break;
+    case "t":
+    case "T":
+    case "/":
+      $("#nav-filter").focus();
+      break;
+    default:
+      return;
+  }
+  e.preventDefault();
+});
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function svg(inner, className) {
+  const wrap = document.createElement("span");
+  wrap.innerHTML =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="' +
+    (className || "") +
+    '">' +
+    inner +
+    "</svg>";
+  return wrap.firstChild;
 }

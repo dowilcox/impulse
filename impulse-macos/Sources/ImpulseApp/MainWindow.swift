@@ -544,6 +544,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     case "review": openDiffReview()
     case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
     case "changes": showChangesPanel()
+    case "review-split":
+      for case .diffReview(_, let review) in tabManager.tabs { review.setLayout("split") }
     default: NSLog("DebugSnapshot: unknown action '\(action)'")
     }
   }
@@ -2233,21 +2235,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// repository root. If the directory is not inside a git repository, an
   /// alert is shown and no tab is created.
   private func openDiffReview() {
+    if let repository = windowModel.repository {
+      tabManager.addReviewTab(repository: repository, host: self)
+      return
+    }
     let candidate = getActiveCwd() ?? fileTreeRootPath
     guard !candidate.isEmpty else {
       presentNotAGitRepoAlert()
       return
     }
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let changeSet = ImpulseCore.listChangedFiles(repoPath: candidate)
-      DispatchQueue.main.async { [weak self] in
-        guard let self else { return }
-        guard let changeSet, !changeSet.repoRoot.isEmpty else {
-          self.presentNotAGitRepoAlert()
-          return
-        }
-        self.tabManager.addDiffReviewTab(repoRoot: changeSet.repoRoot)
+    GitRepositoryStore.shared.resolve(directory: candidate) { [weak self] state in
+      guard let self else { return }
+      guard let state else {
+        self.presentNotAGitRepoAlert()
+        return
       }
+      self.tabManager.addReviewTab(repository: state, host: self)
     }
   }
 
@@ -2932,7 +2935,8 @@ extension MainWindowController: GitPanelHost {
 
   func gitOpenReview(scope: DiffScope, focusPath: String?) {
     guard let repository = windowModel.repository else { return }
-    tabManager.addDiffReviewTab(repoRoot: repository.root, scope: scope, focusPath: focusPath)
+    tabManager.addReviewTab(
+      repository: repository, scope: scope, focusPath: focusPath, host: self)
   }
 
   func gitPresentError(_ error: GitOperationError, title: String) {

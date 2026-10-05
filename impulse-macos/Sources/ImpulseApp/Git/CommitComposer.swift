@@ -92,21 +92,19 @@ struct CommitComposer: View {
 
       HStack(spacing: 6) {
         commitButton
-        Menu {
-          Button("Commit") { commit(thenPush: false) }
-          Button("Commit & Push") { commit(thenPush: true) }
-          Divider()
-          Button("Amend Last Commit") {
-            amend = true
-            commit(thenPush: false)
-          }
+        ChromeMenuButton(help: "More commit options") {
+          [
+            ChromeMenuItem("Commit") { commit(thenPush: false) },
+            ChromeMenuItem("Commit & Push") { commit(thenPush: true) },
+            .separator,
+            ChromeMenuItem("Amend Last Commit") {
+              amend = true
+              commit(thenPush: false)
+            },
+          ]
         } label: {
-          Icon(.chevronDown, size: 12)
+          Icon(.chevronDown, size: 12).foregroundStyle(chrome.textSecondary)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("More commit options")
         Spacer(minLength: 0)
         KeyHint("⌘↩")
       }

@@ -45,7 +45,7 @@ enum TabEntry {
   case terminal(TerminalContainer)
   case editor(EditorTab)
   case imagePreview(path: String, view: NSView)
-  case diffReview(repoRoot: String, view: DiffReviewTab)
+  case diffReview(repoRoot: String, view: ReviewSurface)
 
   /// The view to display in the content area.
   var view: NSView {
@@ -76,7 +76,7 @@ enum TabEntry {
       return (path as NSString).lastPathComponent
     case .diffReview(let repoRoot, _):
       let name = (repoRoot as NSString).lastPathComponent
-      return name.isEmpty ? "Review Changes" : "Review: \(name)"
+      return name.isEmpty ? "Review" : "Review · \(name)"
     }
   }
 
@@ -456,23 +456,27 @@ final class TabManager: NSObject {
   /// one already exists for this exact `repoRoot` it is selected, focused, and
   /// reloaded; otherwise a new tab is created. A different repo gets its own tab
   /// so the user never reviews/commits/discards against a stale repository.
-  func addDiffReviewTab(repoRoot: String, scope: DiffScope = .uncommitted, focusPath: String? = nil) {
+  /// Open (or reuse) the review tab for a repository, optionally switching
+  /// its scope and scrolling to a file.
+  func addReviewTab(
+    repository: GitRepositoryState, scope: DiffScope? = nil, focusPath: String? = nil,
+    host: GitPanelHost?
+  ) {
     if let existingIndex = tabs.firstIndex(where: {
-      if case .diffReview(let r, _) = $0 { return r == repoRoot }
+      if case .diffReview(let r, _) = $0 { return r == repository.root }
       return false
     }) {
       selectTab(index: existingIndex)
-      tabs[existingIndex].focus()
-      // Refresh on re-selection so the diff reflects the current working tree.
       if case .diffReview(_, let view) = tabs[existingIndex] {
-        view.reloadAndRender()
+        view.show(scope: scope, focusPath: focusPath)
+        view.refresh()
       }
+      tabs[existingIndex].focus()
       return
     }
-
-    let reviewTab = DiffReviewTab(repoRoot: repoRoot, theme: theme)
-    let entry = TabEntry.diffReview(repoRoot: repoRoot, view: reviewTab)
-    insertTab(entry)
+    let review = ReviewSurface(
+      repository: repository, scope: scope, focusPath: focusPath, theme: theme, host: host)
+    insertTab(TabEntry.diffReview(repoRoot: repository.root, view: review))
   }
 
   /// Detect the Monaco language ID for a file path.

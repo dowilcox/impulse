@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 /// Headless visual check: `Impulse Dev --impulse-snapshot <dir>` launches,
 /// waits for the UI to settle, renders every visible window to
@@ -104,23 +105,55 @@ enum DebugSnapshot {
 
     let captureAt = delay + Double(actions.count) * 0.6
     DispatchQueue.main.asyncAfter(deadline: .now() + captureAt) {
+      let targets = NSApp.windows.enumerated().filter { $0.element.isVisible }
       var written: [String] = []
-      for (index, window) in NSApp.windows.enumerated() where window.isVisible {
+      let group = DispatchGroup()
+      for (index, window) in targets {
         window.alphaValue = 0
         guard let view = window.contentView?.superview ?? window.contentView else { continue }
         view.layoutSubtreeIfNeeded()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
         view.cacheDisplay(in: view.bounds, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else { continue }
-        let name = "window-\(index).png"
-        let url = outputDirectory.appendingPathComponent(name)
-        if (try? png.write(to: url)) != nil { written.append(name) }
+        // WebViews don't draw through cacheDisplay; snapshot them separately
+        // and composite them in place.
+        let webViews = Self.webViews(in: view)
+        for webView in webViews {
+          group.enter()
+          webView.takeSnapshot(with: nil) { image, _ in
+            defer { group.leave() }
+            guard let image else { return }
+            let frame = webView.convert(webView.bounds, to: view)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            let flipped = view.isFlipped
+            let y = flipped ? view.bounds.height - frame.maxY : frame.minY
+            image.draw(in: NSRect(x: frame.minX, y: y, width: frame.width, height: frame.height))
+            NSGraphicsContext.restoreGraphicsState()
+          }
+        }
+        group.notify(queue: .main) {
+          guard let png = rep.representation(using: .png, properties: [:]) else { return }
+          let name = "window-\(index).png"
+          if (try? png.write(to: outputDirectory.appendingPathComponent(name))) != nil {
+            written.append(name)
+          }
+        }
       }
-      var report = "captured: \(written.joined(separator: ", "))\n"
-      report += hitTestReport()
-      let log = outputDirectory.appendingPathComponent("snapshot.log")
-      try? report.write(to: log, atomically: true, encoding: .utf8)
-      exit(0)
+      group.notify(queue: .main) {
+        // Give the per-window notify blocks (queued first) a turn to finish.
+        DispatchQueue.main.async {
+          var report = "captured: \(written.sorted().joined(separator: ", "))\n"
+          report += hitTestReport()
+          let log = outputDirectory.appendingPathComponent("snapshot.log")
+          try? report.write(to: log, atomically: true, encoding: .utf8)
+          exit(0)
+        }
+      }
     }
+  }
+
+  private static func webViews(in view: NSView) -> [WKWebView] {
+    if let web = view as? WKWebView { return web.isHidden ? [] : [web] }
+    return view.subviews.flatMap { webViews(in: $0) }
   }
 }
