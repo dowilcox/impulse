@@ -544,6 +544,44 @@
       #expect(divergence.incoming == [theirs])
     }
 
+    @Test func queryLimitsAuthorDatesAndPath() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "First")
+      try repo.write("b.txt", "two\n")
+      try repo.git("add", "b.txt")
+      try repo.git("commit", "-q", "--author=Jane Doe <jane@example.com>", "-m", "Jane's change")
+
+      let jane = try GitLog.entries(root: repo.root, query: .parse("author:JANE")).get()
+      #expect(jane.map(\.subject) == ["Jane's change"], "author matches case-insensitively")
+      let byPath = try GitLog.entries(root: repo.root, query: .parse("path:a.txt")).get()
+      #expect(byPath.map(\.subject) == ["First"])
+      // Commits are dated 2026-01-01.
+      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2025-12-31")).get().count == 2)
+      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2026-01-02")).get().isEmpty)
+      #expect(try GitLog.entries(root: repo.root, query: .parse("until:2025-12-31")).get().isEmpty)
+    }
+
+    @Test func forkPointFromTheDefaultBranch() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "base")
+      let base = try repo.git("rev-parse", "HEAD")
+      #expect(GitLog.forkPoint(root: repo.root) == nil, "on the default branch itself")
+      try repo.git("checkout", "-q", "-b", "topic")
+      try repo.commit(["b.txt": "work\n"], message: "topic work")
+      let work = try repo.git("rev-parse", "HEAD")
+      try repo.git("checkout", "-q", "main")
+      try repo.commit(["c.txt": "later\n"], message: "main moves on")
+      try repo.git("checkout", "-q", "topic")
+
+      let fork = try #require(GitLog.forkPoint(root: repo.root))
+      #expect(fork.base == "main")
+      #expect(fork.sha == base)
+      #expect(fork.branchOnly == [work])
+      #expect(GitLog.forkPoint(root: repo.root, limit: 0) == nil, "too long to list")
+    }
+
     @Test func allBranchesSkipsPrivateRefs() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

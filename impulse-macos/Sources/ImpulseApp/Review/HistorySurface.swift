@@ -17,12 +17,26 @@ final class HistoryModel {
   private(set) var isLoading = false
   private(set) var reachedEnd = false
   var error: String?
-  var filter = ""
+  /// The filter field: free text plus `author:` `path:` `since:` `until:`.
+  var filter = "" {
+    didSet {
+      query = HistoryQuery.parse(filter)
+      scheduleQueryReload()
+    }
+  }
+  private(set) var query = HistoryQuery()
+  /// The tokens the loaded pages were read with (the loader reads this).
+  @ObservationIgnored private(set) var appliedQuery = HistoryQuery()
+  @ObservationIgnored private var queryReload: DispatchWorkItem?
   var selectedSha: String?
   var palette: ChromePalette
   /// Commits not on the upstream yet, and upstream commits not here yet.
   private(set) var outgoing: Set<String> = []
   private(set) var incoming: Set<String> = []
+  /// Where HEAD left the default branch; older commits are dimmed.
+  private(set) var forkPoint: GitLog.ForkPoint?
+  @ObservationIgnored var forkPointLoader: (() -> GitLog.ForkPoint?)?
+  @ObservationIgnored var userNameLoader: (() -> String?)?
   /// The commit picked with "Select for Compare".
   var compareBase: LogEntry?
   /// A commit to select once paging reaches it.
@@ -56,31 +70,59 @@ final class HistoryModel {
     self.palette = palette
   }
 
-  /// Rows the list shows (all, or those matching the filter).
+  /// Rows the list shows (all, or those matching the filter's text).
   var visible: [(entry: LogEntry, row: GraphRow?)] {
-    let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
-    guard !query.isEmpty else {
+    let text = query.text.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !text.isEmpty else {
       return zip(entries, rows).map { ($0, Optional($1)) }
     }
     return entries.filter {
-      $0.subject.lowercased().contains(query) || $0.author.lowercased().contains(query)
-        || $0.sha.hasPrefix(query) || $0.refs.contains { $0.lowercased().contains(query) }
+      $0.subject.lowercased().contains(text) || $0.author.lowercased().contains(text)
+        || $0.sha.hasPrefix(text) || $0.refs.contains { $0.lowercased().contains(text) }
     }.map { ($0, nil) }
   }
 
   var maxLanes: Int { min(rows.map(\.width).max() ?? 1, 8) }
 
+  /// The graph only makes sense for unfiltered history.
+  var showsGraph: Bool { query == HistoryQuery() }
+
+  /// On HEAD's history, from before the branch forked off the default branch.
+  func isBeforeFork(_ sha: String) -> Bool {
+    guard scope == .head, let forkPoint else { return false }
+    return !forkPoint.branchOnly.contains(sha)
+  }
+
+  /// Re-read history when the filter's tokens change (typing settles first).
+  private func scheduleQueryReload() {
+    queryReload?.cancel()
+    guard query.server != appliedQuery else { return }
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, self.query.server != self.appliedQuery else { return }
+      self.reload()
+    }
+    queryReload = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+  }
+
   func reload() {
     entries = []
     rows = []
     reachedEnd = false
+    appliedQuery = query.server
     loadMore()
-    guard let divergenceLoader else { return }
+    let divergenceLoader = divergenceLoader
+    let forkPointLoader = forkPointLoader
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let divergence = divergenceLoader()
+      let divergence = divergenceLoader?()
+      let fork = forkPointLoader?()
       DispatchQueue.main.async {
-        self?.outgoing = divergence.outgoing
-        self?.incoming = divergence.incoming
+        guard let self else { return }
+        if let divergence {
+          self.outgoing = divergence.outgoing
+          self.incoming = divergence.incoming
+        }
+        self.forkPoint = fork
       }
     }
   }
@@ -108,11 +150,17 @@ final class HistoryModel {
     guard !isLoading, !reachedEnd, let loader else { return }
     isLoading = true
     let skip = entries.count
+    let applied = appliedQuery
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let result = loader(skip)
       DispatchQueue.main.async {
         guard let self else { return }
         self.isLoading = false
+        // The filter changed while this page was loading: start over.
+        guard applied == self.appliedQuery else {
+          self.reload()
+          return
+        }
         switch result {
         case .success(let page):
           self.error = nil
@@ -181,7 +229,8 @@ final class HistorySurface: NSView {
     let root = repository.root
     model.loader = { [weak model] skip in
       GitLog.entries(
-        root: root, scope: model?.scope ?? .head, path: model?.path, skip: skip, limit: Self.pageSize)
+        root: root, scope: model?.scope ?? .head, path: model?.path,
+        query: model?.appliedQuery ?? HistoryQuery(), skip: skip, limit: Self.pageSize)
     }
     model.onSelect = { [weak self] entry in
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
@@ -189,6 +238,8 @@ final class HistorySurface: NSView {
     model.onAction = { [weak self] action, entry in self?.perform(action, on: entry) }
     model.onShowCommit = { [weak self] sha in self?.review.show(scope: .commit(sha: sha), focusPath: path) }
     model.divergenceLoader = { GitLog.divergence(root: root) }
+    model.forkPointLoader = { GitLog.forkPoint(root: root) }
+    model.userNameLoader = { GitLog.userName(root: root) }
     model.detailsLoader = { GitLog.details(root: root, sha: $0) }
     setup()
     model.reload()
@@ -327,7 +378,7 @@ struct HistoryListView: View {
           ScrollView {
             LazyVStack(spacing: 0) {
               let rows = model.visible
-              let lanes = model.filter.isEmpty ? model.maxLanes : 0
+              let lanes = model.showsGraph ? model.maxLanes : 0
               ForEach(rows, id: \.entry.sha) { item in
                 HistoryRowView(
                   entry: item.entry, row: item.row, lanes: lanes,
@@ -367,6 +418,31 @@ struct HistoryListView: View {
     }
   }
 
+  private var filterMenu: some View {
+    ChromeMenuButton(help: "Filter presets") {
+      [
+        ChromeMenuItem("My Commits") {
+          DispatchQueue.global(qos: .userInitiated).async {
+            let name = model.userNameLoader?()
+            DispatchQueue.main.async {
+              guard let name else { return }
+              model.filter = HistoryQuery.setting("author", to: name, in: model.filter)
+            }
+          }
+        },
+        .separator,
+        ChromeMenuItem("Last 7 Days") { model.filter = HistoryQuery.setting("since", to: "1w", in: model.filter) },
+        ChromeMenuItem("Last 30 Days") { model.filter = HistoryQuery.setting("since", to: "30d", in: model.filter) },
+        ChromeMenuItem("Last Year") { model.filter = HistoryQuery.setting("since", to: "1y", in: model.filter) },
+        .separator,
+        ChromeMenuItem("Clear Filter", isEnabled: !model.filter.isEmpty) { model.filter = "" },
+      ]
+    } label: {
+      Icon(.listFilter, size: 13)
+        .foregroundStyle(model.query.hasServerFilters ? model.palette.accent : model.palette.textSecondary)
+    }
+  }
+
   private var header: some View {
     let chrome = model.palette
     return HStack(spacing: 8) {
@@ -393,10 +469,12 @@ struct HistoryListView: View {
       }
       Spacer(minLength: 4)
       TextField(
-        "Filter", text: Binding(get: { model.filter }, set: { model.filter = $0 })
+        "Filter or author:…", text: Binding(get: { model.filter }, set: { model.filter = $0 })
       )
       .textFieldStyle(.roundedBorder)
-      .frame(maxWidth: 170)
+      .frame(maxWidth: 260)
+      .help("Text matches subjects, authors, SHAs and refs. author:name, path:dir/, since:2w, until:2026-01-01 search all of history.")
+      filterMenu
     }
     .padding(.horizontal, 10)
     .frame(height: 36)
@@ -436,9 +514,17 @@ private struct HistoryRowView: View {
       ForEach(entry.refs, id: \.self) { ref in
         RefChip(ref: ref)
       }
+      if model.scope == .head, let fork = model.forkPoint, fork.sha == entry.sha {
+        Icon(.gitFork, size: 10)
+          .foregroundStyle(chrome.textSecondary)
+          .frame(width: 17, height: 17)
+          .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(chrome.textTertiary.opacity(0.5)))
+          .help("Fork point: this branch left \(fork.base) here")
+          .accessibilityLabel("Fork point from \(fork.base)")
+      }
       Text(entry.subject)
         .font(ChromeFont.ui(12, weight: entry.refs.contains { $0.hasPrefix("HEAD") } ? .semibold : .regular))
-        .foregroundStyle(chrome.text)
+        .foregroundStyle(beforeFork ? chrome.textTertiary : chrome.text)
         .lineLimit(1)
         .truncationMode(.tail)
       Spacer(minLength: 6)
@@ -467,6 +553,10 @@ private struct HistoryRowView: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(entry.subject), \(entry.author), \(entry.shortSha)")
   }
+
+  /// Already on the default branch when this branch forked: greyed out so
+  /// the branch's own work stands out.
+  private var beforeFork: Bool { model.isBeforeFork(entry.sha) }
 
   private var laneColors: [Color] {
     [chrome.accent, chrome.success, chrome.warning, chrome.info, chrome.danger, chrome.gitRenamed]

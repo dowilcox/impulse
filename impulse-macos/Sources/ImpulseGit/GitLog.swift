@@ -1,6 +1,7 @@
 // Commit history for the History surface, read with `git log` in pages.
 
 import Foundation
+import ImpulseKit
 
 public struct LogEntry: Equatable, Sendable {
   public let sha: String
@@ -24,21 +25,25 @@ public enum GitLog {
   }
 
   /// A page of history, newest first in topological order. `path` limits it
-  /// to commits touching that path (following renames for a single file).
+  /// to commits touching that path (following renames for a single file);
+  /// `query` adds author/date limits and a path of its own.
   public static func entries(
-    root: String, scope: Scope = .head, path: String? = nil, skip: Int = 0, limit: Int = 300
+    root: String, scope: Scope = .head, path: String? = nil, query: HistoryQuery = HistoryQuery(),
+    skip: Int = 0, limit: Int = 300
   ) -> Result<[LogEntry], GitOperationError> {
     var args = [
       "log", "--topo-order", "--no-color", "--decorate=short",
       "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%D%x1e",
       "--skip=\(max(0, skip))", "-n", "\(max(1, limit))",
-    ]
+    ] + query.gitArguments
     switch scope {
     case .head: args.append("HEAD")
     case .all: args += ["--branches", "--tags", "--remotes", "HEAD"]
     }
     if let path {
       if scope == .head, !path.hasSuffix("/") { args.insert("--follow", at: 1) }
+      args += ["--", path]
+    } else if let path = query.path {
       args += ["--", path]
     }
     return GitOperations.git(args, in: root, timeout: 60).map { parse($0.stdout) }
@@ -80,6 +85,41 @@ public enum GitLog {
       }
     }
     return (outgoing, incoming)
+  }
+
+  /// `user.name` for this repository ("My Commits").
+  public static func userName(root: String) -> String? {
+    guard case .success(let result) = GitOperations.git(["config", "user.name"], in: root) else { return nil }
+    let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? nil : name
+  }
+
+  /// Where the current branch left the default branch.
+  public struct ForkPoint: Equatable, Sendable {
+    /// The default branch ("origin/main").
+    public let base: String
+    /// The merge base of HEAD and `base`.
+    public let sha: String
+    /// Commits on HEAD that `base` doesn't have.
+    public let branchOnly: Set<String>
+  }
+
+  /// HEAD's fork point from the default branch; nil on the default branch
+  /// itself, without one, or when the branch is too long to list.
+  public static func forkPoint(root: String, limit: Int = 2000) -> ForkPoint? {
+    guard let base = GitClient.defaultBaseBranch(repoPath: root),
+      case .success(let head) = GitOperations.git(["rev-parse", "--abbrev-ref", "HEAD"], in: root)
+    else { return nil }
+    let branch = head.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    if branch == base || base.hasSuffix("/" + branch) { return nil }
+    guard case .success(let mergeBase) = GitOperations.git(["merge-base", "HEAD", base], in: root),
+      case .success(let list) = GitOperations.git(
+        ["rev-list", "--max-count=\(limit + 1)", "HEAD", "^\(base)"], in: root)
+    else { return nil }
+    let sha = mergeBase.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let commits = list.stdout.split(separator: "\n").map(String.init)
+    guard !sha.isEmpty, commits.count <= limit else { return nil }
+    return ForkPoint(base: base, sha: sha, branchOnly: Set(commits))
   }
 
   static func parse(_ output: String) -> [LogEntry] {

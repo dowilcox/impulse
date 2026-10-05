@@ -1018,6 +1018,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       } else if action == "history" {
         showHistory()
+      } else if action.hasPrefix("history-filter="), let repository = windowModel.repository {
+        tabManager.addHistoryTab(repository: repository, host: self)
+        if case let index = tabManager.selectedIndex, tabManager.tabs.indices.contains(index),
+          case .history(_, let view) = tabManager.tabs[index].focused
+        {
+          view.model.filter = String(action.dropFirst(15))
+        }
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
       } else if action.hasPrefix("replace="), let colon = action.firstIndex(of: ":") {

@@ -581,7 +581,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ## M7: History, conflicts, branches, PRs
 
-- [ ] **History surface:** (done: lane graph, ref chips, incoming/outgoing markers, text filter, paging; left: fork-point dimming, author/path/date filters)
+- [x] **History surface:** (lane graph, ref chips, incoming/outgoing markers, paging; the filter field takes free text plus `author:` `path:` `since:` `until:` tokens that go to `git log`, with presets; commits from before the fork point off the default branch are dimmed and the fork point is marked)
   - lane graph (`ImpulseKit/Git/GraphLayout.swift`, tested against `git log --graph` shapes);
   - ref chips; incoming/outgoing markers; fork-point dimming;
   - search and filters (message, author, SHA, path, date); paging.
