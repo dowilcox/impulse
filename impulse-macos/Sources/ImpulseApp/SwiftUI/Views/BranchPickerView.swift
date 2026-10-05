@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Warp-style branch switcher shown from the input bar's git chip: a search
 /// field over a filtered list of the repo's local branches. Selecting one
-/// invokes `onSelect` (which runs `git checkout`).
+/// invokes `onSelect` (which runs `git switch`).
 struct BranchPickerView: View {
   let currentBranch: String
   let cwd: String
@@ -72,9 +72,13 @@ struct BranchPickerView: View {
       }
     }
     .frame(width: 320)
-    .onAppear {
-      branches = ImpulseCore.gitBranches(path: cwd)
-      searchFocused = true
+    .onAppear { searchFocused = true }
+    .task(id: cwd) {
+      // Listing branches opens the repository; keep it off the main thread.
+      let dir = cwd
+      branches = await Task.detached(priority: .userInitiated) {
+        ImpulseCore.gitBranches(path: dir)
+      }.value
     }
   }
 

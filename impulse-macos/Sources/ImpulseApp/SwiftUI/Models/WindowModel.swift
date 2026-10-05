@@ -164,6 +164,9 @@ final class WindowModel {
   var onClearTerminal: (() -> Void)?
   /// Run a command from the input bar in the active terminal.
   var onRunCommand: ((String) -> Void)?
+  /// Switch the current repository to a branch (runs `git switch` off the
+  /// main thread; errors are reported by the window).
+  var onSwitchBranch: ((String) -> Void)?
   /// Send a password-prompt reply verbatim (no trimming; empty allowed).
   var onSendSecureInput: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.

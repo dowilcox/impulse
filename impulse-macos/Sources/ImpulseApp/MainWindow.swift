@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseGit
 import SwiftUI
 import os.log
 
@@ -320,6 +321,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
     windowModel.onRunCommand = { [weak self] command in
       self?.tabManager.selectedTerminal?.activeTerminal?.runCommand(command)
+    }
+    windowModel.onSwitchBranch = { [weak self] branch in
+      self?.switchBranch(to: branch)
     }
     windowModel.onSendSecureInput = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.sendSecureLine(text)
@@ -2621,6 +2625,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       }
     }
     return nil
+  }
+
+  /// Switch the active tab's repository to `branch` with `git switch`, off the
+  /// main thread. On failure, explains why in a sheet (dirty tree, unknown
+  /// branch, index.lock held by another process, ...).
+  private func switchBranch(to branch: String) {
+    let cwd = windowModel.currentCwd
+    guard !cwd.isEmpty else { return }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let root = GitClient.repoRoot(forPath: cwd) ?? cwd
+      let result = GitCLI.run(["switch", branch], in: root)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        switch result {
+        case .success:
+          self.invalidateGitBranchCache()
+          self.fileTreeData.refreshGitStatus()
+          self.updateStatusBar()
+          self.tabManager.syncToWindowModel()
+        case .failure(let error):
+          self.presentGitError(error, title: "Couldn't switch to \(branch)")
+        }
+      }
+    }
+  }
+
+  /// Shows a git failure as a window-modal sheet: the plain-English message,
+  /// with git's own output as detail.
+  func presentGitError(_ error: GitCLIError, title: String) {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = title
+    let detail = error.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    alert.informativeText =
+      detail.isEmpty || error.kind == .other ? error.message : "\(error.message)\n\n\(detail)"
+    alert.addButton(withTitle: "OK")
+    alert.beginSheetModal(for: window)
   }
 
   /// Invalidates the git branch cache (e.g. after a save or CWD change).

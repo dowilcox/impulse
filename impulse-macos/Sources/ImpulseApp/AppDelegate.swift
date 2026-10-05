@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseGit
 
 // MARK: - AppDelegate
 
@@ -48,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Pre-warm a WebView with Monaco so the first editor tab opens instantly.
     EditorWebViewPool.shared.warmUp()
+
+    // Capture the login-shell PATH (and resolve git) in the background so the
+    // first git operation doesn't pay for spawning a login shell.
+    DispatchQueue.global(qos: .utility).async {
+      _ = GitCLI.gitPath()
+    }
 
     // Pre-scan PATH so the first input-bar completion keystroke is instant,
     // and install the bundled terminal/UI fonts into ~/Library/Fonts.

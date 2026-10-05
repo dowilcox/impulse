@@ -37,7 +37,7 @@ struct StatusBarView: View {
     }
     if let branch = model.gitBranch, !branch.isEmpty {
       // Inert while a TUI owns the grid — a checkout would type into the program.
-      BranchChip(model: model, branch: branch, interactive: !model.terminalDirectInteraction)
+      BranchChip(model: model, branch: branch)
     }
     // Surface uncommitted changes even while a TUI (e.g. Claude Code) owns the
     // grid — opening the diff review is a mouse action, so it's safe here.

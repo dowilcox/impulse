@@ -41,11 +41,10 @@ struct ContextChip: View {
 
 /// The git-branch chip. Shared by the input bar and the status bar so both look
 /// identical (capsule, branch glyph, chevron). When `interactive` is true it's a
-/// branch-switcher button: tap to open the picker, choosing a branch runs `git
-/// checkout` in the active terminal. When false it renders the exact same chip
-/// but inert — used in the status bar while a TUI (Claude Code) owns the grid,
-/// where typing a checkout command would land in the program instead of the
-/// shell.
+/// branch-switcher button: tap to open the picker; choosing a branch runs
+/// `git switch` in the background (never typed into a terminal, so it works from
+/// editor tabs and while a TUI owns the grid). When false it renders the same
+/// chip, inert.
 struct BranchChip: View {
   var model: WindowModel
   let branch: String
@@ -75,20 +74,12 @@ struct BranchChip: View {
         ) { selected in
           showPicker = false
           guard selected != branch else { return }
-          model.onRunCommand?("git checkout \(Self.shellQuoted(selected))")
+          model.onSwitchBranch?(selected)
         }
       }
     } else {
       chip
     }
-  }
-
-  /// Minimal POSIX single-quote escaping for a branch name.
-  static func shellQuoted(_ value: String) -> String {
-    if value.allSatisfy({ $0.isLetter || $0.isNumber || "._-/".contains($0) }) {
-      return value
-    }
-    return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
 }
 
