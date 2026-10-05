@@ -309,3 +309,114 @@
     }
   }
 #endif
+
+#if canImport(Testing)
+  @Suite(.serialized)
+  struct SafetySnapshotTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func snapshotRestoresDiscardedAndUntrackedWork() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "committed\n"])
+      try repo.write("a.txt", "staged edit\n")
+      try repo.git("add", "a.txt")
+      try repo.write("a.txt", "worktree edit\n")
+      try repo.write("notes.md", "untracked notes\n")
+      let indexBefore = try repo.git("diff", "--cached")
+
+      let snapshot = try SafetySnapshots.create(reason: "Discard everything", root: repo.root).get()
+      // The real index is untouched by taking a snapshot.
+      #expect(try repo.git("diff", "--cached") == indexBefore)
+      #expect(try repo.git("status", "--porcelain").contains("?? notes.md"))
+
+      // Destroy the work.
+      try repo.git("reset", "-q", "--hard")
+      try FileManager.default.removeItem(atPath: repo.root + "/notes.md")
+      #expect(try repo.read("a.txt") == "committed\n")
+
+      _ = try SafetySnapshots.restore(snapshot, root: repo.root).get()
+      #expect(try repo.read("a.txt") == "worktree edit\n")
+      #expect(try repo.read("notes.md") == "untracked notes\n")
+      #expect(try repo.git("diff", "--cached") == indexBefore)
+
+      let listed = SafetySnapshots.list(root: repo.root)
+      #expect(listed.first?.ref == snapshot.ref)
+      #expect(listed.first?.reason == "Discard everything")
+      #expect(listed.first?.indexTree == snapshot.indexTree)
+      // Snapshot refs aren't branches.
+      #expect(GitOperations.branches(root: repo.root).local == ["main"])
+
+      SafetySnapshots.prune(root: repo.root, keep: 0)
+      #expect(SafetySnapshots.list(root: repo.root).isEmpty)
+    }
+
+    @Test func snapshotWorksWithoutAnyCommits() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.write("first.txt", "hello\n")
+      let snapshot = try SafetySnapshots.create(reason: "before", root: repo.root).get()
+      try FileManager.default.removeItem(atPath: repo.root + "/first.txt")
+      _ = try SafetySnapshots.restore(snapshot, root: repo.root).get()
+      #expect(try repo.read("first.txt") == "hello\n")
+    }
+  }
+#endif
+
+#if canImport(Testing)
+  struct RepoWatcherTests {
+    @Test func classifiesGitDirectoryPaths() {
+      #expect(RepoWatcher.classifyGitPath("index") == .index)
+      #expect(RepoWatcher.classifyGitPath("HEAD") == .refs)
+      #expect(RepoWatcher.classifyGitPath("refs/heads/main") == .refs)
+      #expect(RepoWatcher.classifyGitPath("refs/stash") == .refs)
+      #expect(RepoWatcher.classifyGitPath("MERGE_HEAD") == .operation)
+      #expect(RepoWatcher.classifyGitPath("rebase-merge/msgnum") == .operation)
+      #expect(RepoWatcher.classifyGitPath("objects/ab/cdef") == [])
+      #expect(RepoWatcher.classifyGitPath("index.lock") == [])
+      #expect(RepoWatcher.classifyGitPath("worktrees/feature/index") == .index)
+      #expect(RepoWatcher.classifyGitPath("worktrees/feature/HEAD") == .refs)
+    }
+
+    @Test func reportsWorkingTreeAndIndexChanges() async throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      let snapshot = try #require(GitClient.snapshot(forPath: repo.root))
+
+      let received = LockedChanges()
+      let watcher = RepoWatcher(
+        root: snapshot.root, gitDir: snapshot.gitDir, commonDir: snapshot.commonDir,
+        debounce: 0.05
+      ) { change in received.add(change) }
+      watcher.start()
+      defer { watcher.stop() }
+      try await Task.sleep(for: .milliseconds(300))
+
+      try repo.write("a.txt", "2\n")
+      try repo.git("add", "a.txt")
+      for _ in 0..<40 where !received.value.contains([.workingTree, .index]) {
+        try await Task.sleep(for: .milliseconds(100))
+      }
+      #expect(received.value.contains(.workingTree))
+      #expect(received.value.contains(.index))
+    }
+  }
+
+  final class LockedChanges: @unchecked Sendable {
+    private let lock = NSLock()
+    private var changes: RepoWatcher.Change = []
+    func add(_ change: RepoWatcher.Change) {
+      lock.lock()
+      changes.formUnion(change)
+      lock.unlock()
+    }
+    var value: RepoWatcher.Change {
+      lock.lock()
+      defer { lock.unlock() }
+      return changes
+    }
+  }
+#endif

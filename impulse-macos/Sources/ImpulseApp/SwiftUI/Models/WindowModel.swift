@@ -57,6 +57,12 @@ final class WindowModel {
   var sidebarWidth: CGFloat = 250
   var showHiddenFiles: Bool = false
 
+  // MARK: Git
+
+  /// The repository of the active tab's working directory (nil outside a
+  /// repository). Shared with other windows via GitRepositoryStore.
+  var repository: GitRepositoryState?
+
   // MARK: Workbench docks
   //
   // The left dock is the sidebar (`sidebarVisible` / `sidebarWidth` /

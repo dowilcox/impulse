@@ -3,9 +3,9 @@ import ImpulseGit
 
 /// Headless owner of the sidebar file tree data.
 ///
-/// Holds the root nodes, filesystem watchers (root + expanded subdirectories
-/// + .git/index), the periodic git status poll, incremental patch
-/// application, and expansion-state persistence. The SwiftUI sidebar
+/// Holds the root nodes, filesystem watchers (root + expanded subdirectories),
+/// git-status badge refreshes, incremental patch application, and
+/// expansion-state persistence. The SwiftUI sidebar
 /// (`FileTreeListView`) renders the nodes via `WindowModel`; this class never
 /// touches a view.
 ///
@@ -36,19 +36,8 @@ final class FileTreeDataController {
     // Subdirectory watchers — keyed by path
     private var subdirWatchers: [String: (fd: Int32, source: DispatchSourceFileSystemObject)] = [:]
 
-    // .git/index watcher — fires on stage/commit/reset/checkout
-    private var gitIndexDescriptor: Int32 = -1
-    private var gitIndexSource: DispatchSourceFileSystemObject?
-    private var gitIndexDebounce: DispatchWorkItem?
-
-    // Periodic git status timer — catches content changes that don't trigger
-    // directory watchers (editing a file doesn't fire the parent dir's DispatchSource).
-    private var gitStatusTimer: DispatchSourceTimer?
-    private var lastGitStatusHash: Int = 0
-
-    // App activation observers — the git poll timer is paused while the app
-    // is in the background to avoid periodic full-repo scans on battery.
-    private var appActiveObservers: [NSObjectProtocol] = []
+    // Git badges are refreshed by the window when its repository's
+    // RepoWatcher reports changes (see GitRepositoryState), not by polling.
 
     // Debounce work item for git status refresh.
     private var gitRefreshDebounce: DispatchWorkItem?
@@ -60,38 +49,16 @@ final class FileTreeDataController {
     private var needsAnotherRefresh = false
     private var pendingFileTreeEvents: [ImpulseCore.FileTreeWatchEvent] = []
 
-    // Guard against overlapping git status calls from poll timer and
-    // refreshGitStatus() running concurrently.
+    // Guard against overlapping git status refreshes.
     private var isGitStatusInProgress = false
     private var needsAnotherGitStatus = false
 
     // MARK: Initialisation
 
-    init() {
-        // Pause the periodic git status poll while the app is inactive; one
-        // immediate poll on reactivation catches changes made while away
-        // (e.g. git operations run from another app).
-        appActiveObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                self?.stopGitStatusTimer()
-            }
-        )
-        appActiveObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                guard let self, !self.rootPath.isEmpty else { return }
-                self.startGitStatusTimer()
-                self.pollGitStatus()
-            }
-        )
-    }
+    init() {}
 
     deinit {
         stopWatching()
-        appActiveObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: Public API
@@ -320,10 +287,6 @@ final class FileTreeDataController {
         self.dispatchSource = source
         source.resume()
 
-        // Also watch .git/index for staging/commit changes and start the
-        // periodic git status timer.
-        startGitIndexWatcher()
-        startGitStatusTimer()
     }
 
     /// Start watching an expanded subdirectory. Capped at 64 file descriptors
@@ -379,8 +342,6 @@ final class FileTreeDataController {
         gitRefreshDebounce = nil
 
         stopAllSubdirWatchers()
-        stopGitIndexWatcher()
-        stopGitStatusTimer()
 
         if let source = dispatchSource {
             source.cancel()
@@ -390,143 +351,6 @@ final class FileTreeDataController {
         } else if watchedFileDescriptor >= 0 {
             close(watchedFileDescriptor)
             watchedFileDescriptor = -1
-        }
-    }
-
-    // MARK: .git/index Watcher
-
-    /// Find the `.git/index` file for the current root and watch it.
-    /// Fires on stage, commit, reset, checkout — any index mutation.
-    private func startGitIndexWatcher() {
-        stopGitIndexWatcher()
-        guard !rootPath.isEmpty else { return }
-
-        let currentRootPath = rootPath
-
-        // Resolve the git directory on a background thread (opening the repo
-        // touches the filesystem). Use libgit2's per-worktree gitdir rather
-        // than `<root>/.git/index`: in a linked worktree `.git` is a file and
-        // the index lives under the main repo's `.git/worktrees/<name>/`.
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let gitDir = GitClient.gitDirectory(forPath: currentRootPath) else { return }
-            let indexPath = (gitDir as NSString).appendingPathComponent("index")
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                // If the root changed while we were resolving, bail out.
-                guard self.rootPath == currentRootPath else { return }
-
-                let fd = open(indexPath, O_EVTONLY)
-                guard fd >= 0 else { return }
-                self.gitIndexDescriptor = fd
-
-                let source = DispatchSource.makeFileSystemObjectSource(
-                    fileDescriptor: fd,
-                    eventMask: [.write, .rename, .delete],
-                    queue: .main
-                )
-                source.setEventHandler { [weak self] in
-                    self?.handleGitIndexEvent()
-                }
-                source.setCancelHandler { [fd] in
-                    close(fd)
-                }
-                self.gitIndexSource = source
-                source.resume()
-            }
-        }
-    }
-
-    private func stopGitIndexWatcher() {
-        gitIndexDebounce?.cancel()
-        gitIndexDebounce = nil
-        if let source = gitIndexSource {
-            source.cancel()
-            gitIndexSource = nil
-            gitIndexDescriptor = -1
-        } else if gitIndexDescriptor >= 0 {
-            close(gitIndexDescriptor)
-            gitIndexDescriptor = -1
-        }
-    }
-
-    /// Debounced handler for .git/index changes — refreshes git status only
-    /// (no full tree rebuild needed).
-    private func handleGitIndexEvent() {
-        gitIndexDebounce?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.refreshGitStatus()
-            // The index file may have been replaced (atomic write); rewatch.
-            self.startGitIndexWatcher()
-        }
-        gitIndexDebounce = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-    }
-
-    // MARK: Periodic Git Status Timer
-
-    /// Start a repeating timer that polls git status periodically.
-    /// Catches file-content edits that directory watchers can't see.
-    private func startGitStatusTimer() {
-        stopGitStatusTimer()
-        guard !rootPath.isEmpty else { return }
-
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(2))
-        timer.setEventHandler { [weak self] in
-            self?.pollGitStatus()
-        }
-        gitStatusTimer = timer
-        timer.resume()
-    }
-
-    private func stopGitStatusTimer() {
-        gitStatusTimer?.cancel()
-        gitStatusTimer = nil
-    }
-
-    /// Lightweight poll: fetch batch git statuses via libgit2 and only update
-    /// the tree if the status map changed since the last poll.
-    private func pollGitStatus() {
-        guard !rootPath.isEmpty else { return }
-        // Skip if a git status call is already in progress (from refreshGitStatus
-        // or a previous poll). The next timer tick will pick up the change.
-        guard !isGitStatusInProgress else { return }
-        isGitStatusInProgress = true
-        let root = rootPath
-        let nodes = rootNodes
-        let previousHash = lastGitStatusHash
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let batchStatuses = ImpulseCore.getAllGitStatuses(repoPath: root)
-
-            // Compute a stable hash from sorted status entries.
-            var hasher = Hasher()
-            for dirPath in batchStatuses.keys.sorted() {
-                hasher.combine(dirPath)
-                let entries = batchStatuses[dirPath]!
-                for name in entries.keys.sorted() {
-                    hasher.combine(name)
-                    hasher.combine(entries[name])
-                }
-            }
-            let hash = hasher.finalize()
-
-            guard hash != previousHash else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.isGitStatusInProgress = false
-                }
-                return
-            }
-
-            // Hash changed — apply the already-fetched statuses directly
-            // (avoids a redundant getAllGitStatuses FFI call).
-            FileTreeNode.applyGitStatuses(nodes: nodes, dirPath: root, batchStatuses: batchStatuses)
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.isGitStatusInProgress = false
-                self.lastGitStatusHash = hash
-            }
         }
     }
 

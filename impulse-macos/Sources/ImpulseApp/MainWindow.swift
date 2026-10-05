@@ -111,10 +111,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: Git State
 
-  /// Cached git branch name for the current working directory.
-  private var cachedGitBranch: String?
-  /// The directory path for which `cachedGitBranch` was computed.
-  private var cachedGitBranchDir: String = ""
+  /// Mirrors the active repository's snapshot into the window model.
+  private var repositoryObservation: ObservationLoop?
+  /// Change listener on the active repository (file tree badges).
+  private var repositoryListener: (state: GitRepositoryState, token: UUID)?
 
   // MARK: LSP State (internal for MainWindowController+LSP extension)
 
@@ -251,12 +251,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       guard let self else { return }
       self.windowModel.updateFileTree(nodes, rootPath: self.fileTreeRootPath)
       self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: nodes)
-      // Keep the Review Changes chip current even when no tab/cwd change fires
-      // (e.g. a TUI like Claude Code editing files in place). Git status polling
-      // and the .git/index watcher drive this callback.
-      if !self.windowModel.currentCwd.isEmpty {
-        self.refreshReviewSummary(cwd: self.windowModel.currentCwd)
-      }
     }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
@@ -873,39 +867,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     hideTerminalSearch()
   }
 
-  /// Recompute the working-tree change summary (changed-file count + aggregate
-  /// +/- line counts) for the context-bar Review Changes chip. Runs off the main
-  /// thread; results are dropped if the active cwd changes before they return.
-  private func refreshReviewSummary(cwd: String) {
-    guard !cwd.isEmpty else {
-      windowModel.reviewChangedFileCount = 0
-      windowModel.reviewAddedLines = 0
-      windowModel.reviewRemovedLines = 0
-      return
-    }
-    DispatchQueue.global(qos: .utility).async { [weak self] in
-      let summary = ImpulseCore.listChangedFiles(repoPath: cwd)
-      DispatchQueue.main.async {
-        guard let self = self, self.windowModel.currentCwd == cwd else { return }
-        self.windowModel.reviewChangedFileCount = summary?.files.count ?? 0
-        self.windowModel.reviewAddedLines = Int(summary?.totalAdded ?? 0)
-        self.windowModel.reviewRemovedLines = Int(summary?.totalRemoved ?? 0)
-      }
-    }
-  }
-
   /// Updates the status bar with information from the currently active tab.
   func updateStatusBar() {
     guard let tabInfo = tabManager.activeTabInfo else { return }
 
     if let shellName = tabInfo.shellName {
       let cwd = tabInfo.cwd ?? NSHomeDirectory()
-      let branch = gitBranch(forDirectory: cwd)
       // Sync to SwiftUI
       windowModel.shellName = shellName
       windowModel.currentCwd = cwd
-      windowModel.gitBranch = branch
-      refreshReviewSummary(cwd: cwd)
+      bindRepository(forDirectory: cwd)
       windowModel.cursorLine = nil
       windowModel.cursorCol = nil
       windowModel.currentLanguage = nil
@@ -920,14 +891,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       windowModel.terminalDirectInteraction = active?.isDirectInteraction ?? false
     } else if let language = tabInfo.language {
       let cwd = tabInfo.cwd ?? ""
-      let branch = cwd.isEmpty ? nil : gitBranch(forDirectory: cwd)
       // Sync to SwiftUI
       windowModel.shellName = ""
       // An editor tab never owns a TUI — keep the status-bar pills interactive.
       windowModel.terminalDirectInteraction = false
       windowModel.currentCwd = cwd
-      windowModel.gitBranch = branch
-      refreshReviewSummary(cwd: cwd)
+      bindRepository(forDirectory: cwd)
       windowModel.cursorLine = tabInfo.cursorLine
       windowModel.cursorCol = tabInfo.cursorCol
       windowModel.currentLanguage = language
@@ -1478,7 +1447,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // Same directory — just refresh git status (a command
             // may have changed git state without changing CWD).
             self.fileTreeData.refreshGitStatus()
-            self.invalidateGitBranchCache()
+            self.windowModel.repository?.refresh()
           } else {
             self.switchFileTreeRoot(dir)
           }
@@ -1609,12 +1578,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let cwd =
           editor.projectDirectory
           ?? (filePath as NSString).deletingLastPathComponent
-        let branch = cwd.isEmpty ? nil : self.gitBranch(forDirectory: cwd)
         // Sync to SwiftUI
         self.windowModel.cursorLine = Int(line)
         self.windowModel.cursorCol = Int(col)
         self.windowModel.currentCwd = cwd
-        self.windowModel.gitBranch = branch
+        self.bindRepository(forDirectory: cwd)
         self.windowModel.currentLanguage = editor.language
       }
     )
@@ -2029,7 +1997,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private func postSaveActions(editor: EditorTab, path: String) {
     tabManager.refreshSegmentLabels()
     lspDidSave(editor: editor)
-    invalidateGitBranchCache()
     applyGitDiffDecorations(editor: editor)
     // Direct git status refresh (skip the debounce — saves are explicit
     // user actions that warrant immediate feedback).
@@ -2457,14 +2424,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // Drop any active search and its results so stale matches from the old
     // root don't linger against the new project.
     windowModel.resetSearch()
-    invalidateGitBranchCache()
 
-    // Immediate UI update with no branch yet.
     let shellName = LoginShell.defaultShellName()
     if updateStatusBar {
       windowModel.currentCwd = dir
-      windowModel.gitBranch = nil
       windowModel.shellName = shellName
+      bindRepository(forDirectory: dir)
     }
 
     // Show cached tree instantly if available. Skip git refresh since the
@@ -2479,88 +2444,103 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let showHidden = fileTreeData.showHidden
     DispatchQueue.global(qos: .userInitiated).async {
       let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
-      let branch = ImpulseCore.gitBranch(path: dir)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.fileTreeRootPath == dir else { return }
         self.fileTreeData.updateTree(nodes: nodes, rootPath: dir)
         self.fileTreeCacheInsert(key: dir, nodes: nodes)
         self.windowModel.updateFileTree(nodes, rootPath: dir)
-        if updateStatusBar {
-          self.windowModel.currentCwd = dir
-          self.windowModel.gitBranch = branch
-        }
       }
     }
   }
 
-  // MARK: - Git Branch Cache
+  // MARK: - Active repository
 
-  /// Returns the git branch for a directory, using a cache to avoid
-  /// redundant calls (e.g. on every cursor move).
-  private func gitBranch(forDirectory dir: String) -> String? {
-    if dir == cachedGitBranchDir {
-      return cachedGitBranch
+  /// Make the repository containing `dir` the window's active repository
+  /// (titlebar breadcrumb, status bar, diff pill all follow it live).
+  private func bindRepository(forDirectory dir: String) {
+    guard !dir.isEmpty else {
+      setRepository(nil)
+      return
     }
-    // Cache miss — dispatch the FFI call to a background queue so we don't
-    // block the main thread (this is called on every cursor move for editors).
-    // Return nil immediately and update the status bar asynchronously.
-    cachedGitBranchDir = dir
-    cachedGitBranch = nil
-    DispatchQueue.global(qos: .utility).async { [weak self] in
-      let branch = ImpulseCore.gitBranch(path: dir)
-      DispatchQueue.main.async { [weak self] in
-        guard let self, self.cachedGitBranchDir == dir else { return }
-        self.cachedGitBranch = branch
-        // Refresh the status bar with the resolved branch.
-        self.updateStatusBar()
+    if let current = windowModel.repository,
+      dir == current.root || dir.hasPrefix(current.root + "/")
+    {
+      return
+    }
+    GitRepositoryStore.shared.resolve(directory: dir) { [weak self] state in
+      guard let self, self.windowModel.currentCwd == dir else { return }
+      self.setRepository(state)
+    }
+  }
+
+  private func setRepository(_ state: GitRepositoryState?) {
+    guard windowModel.repository !== state else { return }
+    if let previous = repositoryListener {
+      previous.state.removeChangeListener(previous.token)
+      repositoryListener = nil
+    }
+    windowModel.repository = state
+    if let state {
+      // Working-tree and index changes recolor the file tree's git badges.
+      let token = state.addChangeListener { [weak self] _ in
+        self?.fileTreeData.refreshGitStatus()
+      }
+      repositoryListener = (state, token)
+    }
+    if repositoryObservation == nil {
+      repositoryObservation = ObservationLoop(owner: self) { [weak self] in
+        self?.syncRepositoryToModel()
       }
     }
-    return nil
+  }
+
+  private func syncRepositoryToModel() {
+    let snapshot = windowModel.repository?.snapshot
+    let branch = snapshot.map { snap in
+      snap.branch ?? snap.headOid.map { String($0.prefix(7)) } ?? ""
+    }
+    windowModel.gitBranch = (branch?.isEmpty ?? true) ? nil : branch
+    windowModel.reviewChangedFileCount = snapshot?.changedFileCount ?? 0
+    windowModel.reviewAddedLines = snapshot?.totalAdded ?? 0
+    windowModel.reviewRemovedLines = snapshot?.totalRemoved ?? 0
   }
 
   /// Switch the active tab's repository to `branch` with `git switch`, off the
   /// main thread. On failure, explains why in a sheet (dirty tree, unknown
   /// branch, index.lock held by another process, ...).
   func switchBranch(to branch: String) {
-    let cwd = windowModel.currentCwd
-    guard !cwd.isEmpty else { return }
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let root = GitClient.repoRoot(forPath: cwd) ?? cwd
-      let result = GitCLI.run(["switch", branch], in: root)
-      DispatchQueue.main.async {
-        guard let self else { return }
-        switch result {
-        case .success:
-          self.invalidateGitBranchCache()
-          self.fileTreeData.refreshGitStatus()
-          self.updateStatusBar()
-          self.tabManager.syncToWindowModel()
-        case .failure(let error):
-          self.presentGitError(error, title: "Couldn't switch to \(branch)")
-        }
+    guard let repository = windowModel.repository else { return }
+    repository.run("Switching to \(branch)…") { root in
+      GitOperations.switchBranch(branch, root: root)
+    } completion: { [weak self] result, _ in
+      guard let self else { return }
+      switch result {
+      case .success:
+        self.fileTreeData.refreshGitStatus()
+        self.tabManager.syncToWindowModel()
+      case .failure(let error):
+        self.presentGitError(error, title: "Couldn't switch to \(branch)")
       }
     }
   }
 
   /// Shows a git failure as a window-modal sheet: the plain-English message,
   /// with git's own output as detail.
-  func presentGitError(_ error: GitCLIError, title: String) {
+  func presentGitError(_ error: GitOperationError, title: String) {
     guard let window else { return }
     let alert = NSAlert()
     alert.alertStyle = .warning
     alert.messageText = title
-    let detail = error.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    let detail = (error.output ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let isGeneric: Bool = {
+      if case .cli(let cli) = error { return cli.kind == .other }
+      return false
+    }()
     alert.informativeText =
-      detail.isEmpty || error.kind == .other ? error.message : "\(error.message)\n\n\(detail)"
+      detail.isEmpty || isGeneric ? error.message : "\(error.message)\n\n\(detail)"
     alert.addButton(withTitle: "OK")
     alert.beginSheetModal(for: window)
-  }
-
-  /// Invalidates the git branch cache (e.g. after a save or CWD change).
-  private func invalidateGitBranchCache() {
-    cachedGitBranchDir = ""
-    cachedGitBranch = nil
   }
 
   // MARK: - Git Diff Decorations
