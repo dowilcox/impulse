@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import os.log
 
 // MARK: - TerminalTab
@@ -126,6 +127,22 @@ class TerminalTab: NSView {
         object: self,
         userInfo: ["interactive": interactive]
       )
+    }
+    renderer.resolvePath = { [weak self] candidate in
+      guard let self else { return nil }
+      let base = self.currentWorkingDirectory.isEmpty ? NSHomeDirectory() : self.currentWorkingDirectory
+      let path = TerminalPathDetector.resolve(candidate, in: base)
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        !isDirectory.boolValue
+      else { return nil }
+      return path
+    }
+    renderer.onOpenPath = { path, line, column in
+      var info: [String: Any] = ["path": path]
+      if let line { info["line"] = line }
+      if let column { info["column"] = column }
+      NotificationCenter.default.post(name: .impulseOpenFile, object: nil, userInfo: info)
     }
     renderer.onRequestInputFocus = { [weak self] in
       guard let self else { return }

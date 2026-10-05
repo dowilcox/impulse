@@ -1070,9 +1070,8 @@ final class TabManager: NSObject {
       let editor = makeEditorTab(
         path: path, content: loaded.text, largeFile: loaded.large,
         projectDirectory: projectDirectory,
-        // Saved 1-based (as Monaco reports it); go-to positions are 0-based.
-        goToLine: surface.line.map { UInt32(max(1, $0) - 1) },
-        goToColumn: surface.column.map { UInt32(max(1, $0) - 1) })
+        goToLine: surface.line.map { UInt32(max(1, $0)) },
+        goToColumn: surface.column.map { UInt32(max(1, $0)) })
       openFilePaths.insert(path)
       return .editor(editor)
     default:

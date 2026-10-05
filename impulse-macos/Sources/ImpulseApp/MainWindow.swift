@@ -1486,11 +1486,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
           }
           let line = Self.lineNumber(from: notification.userInfo)
+          let column = (notification.userInfo?["column"] as? Int).map { UInt32(max(1, $0)) }
           self.tabManager.addEditorTab(
             path: path,
             projectDirectory: self.fileTreeRootPath,
             goToLine: line,
-            goToColumn: line == nil ? nil : 1,
+            goToColumn: line == nil ? nil : (column ?? 1),
             beside: notification.userInfo?["beside"] as? Bool ?? false
           )
           // Navigate to specific line if provided (e.g. from search results).
@@ -1498,7 +1499,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.trackEditorTab(editor, forPath: path)
             self.lspDidOpenIfNeeded(path: path)
             if let line {
-              editor.goToPosition(line: line, column: 1)
+              editor.goToPosition(line: line, column: column ?? 1)
             }
           }
         }

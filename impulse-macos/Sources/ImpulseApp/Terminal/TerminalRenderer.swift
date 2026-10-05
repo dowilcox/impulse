@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import ImpulseKit
 import os.log
 
 // MARK: - Font Metrics
@@ -390,6 +391,13 @@ class TerminalRenderer: NSView {
     private var hoverLinkStartCol: Int = 0
     private var hoverLinkEndCol: Int = 0
     private var hoverLinkUri: String?
+    /// The file reference under the pointer (opens in the editor on ⌘-click).
+    private var hoverLinkPath: (path: String, line: Int?, column: Int?)?
+    /// Absolute path of an existing file a candidate refers to (relative to
+    /// the terminal's directory), or nil. Set by the owning TerminalTab.
+    var resolvePath: ((String) -> String?)?
+    /// Open a file in the editor at an optional 1-based line and column.
+    var onOpenPath: ((String, Int?, Int?) -> Void)?
     private var trackingArea: NSTrackingArea?
 
     /// Regex for auto-detecting plain URLs in terminal output.
@@ -2361,6 +2369,7 @@ class TerminalRenderer: NSView {
         let wasLink = hoverIsLink
         hoverIsLink = false
         hoverLinkUri = nil
+        hoverLinkPath = nil
         hoverLinkStartCol = 0
         hoverLinkEndCol = 0
 
@@ -2393,6 +2402,12 @@ class TerminalRenderer: NSView {
                 hoverLinkUri = uri
                 hoverLinkStartCol = s
                 hoverLinkEndCol = e
+            } else if let found = detectPathAt(col: colI, row: rowI, grid: grid) {
+                // 3. A file reference (`src/x.rs:12:5`) that exists on disk.
+                hoverIsLink = true
+                hoverLinkPath = (found.path, found.line, found.column)
+                hoverLinkStartCol = found.startCol
+                hoverLinkEndCol = found.endCol
             }
         }
 
@@ -2441,6 +2456,38 @@ class TerminalRenderer: NSView {
         hoverRow = -1
         hoverLinkStartCol = 0
         hoverLinkEndCol = 0
+    }
+
+    /// The existing file referenced at a column (see `TerminalPathDetector`),
+    /// with its column range on the row.
+    private func detectPathAt(
+        col: Int, row: Int, grid: GridBufferReader
+    ) -> (path: String, line: Int?, column: Int?, startCol: Int, endCol: Int)? {
+        guard let resolvePath else { return nil }
+        // Row text in UTF-16 units, with the grid column of each unit.
+        var units: [UInt16] = []
+        var colForUnit: [Int] = []
+        var hovered: Int?
+        for c in 0..<grid.cols {
+            let cell = grid.cell(row: row, col: c)
+            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+            let scalar = cell.character.value == 0 ? UnicodeScalar(0x20)! : cell.character
+            if c == col { hovered = units.count }
+            for unit in String(Character(scalar)).utf16 {
+                units.append(unit)
+                colForUnit.append(c)
+            }
+        }
+        guard let hovered,
+            let match = TerminalPathDetector.match(
+                in: String(decoding: units, as: UTF16.self), at: hovered),
+            let absolute = resolvePath(match.path),
+            match.range.upperBound <= colForUnit.count
+        else { return nil }
+        return (
+            absolute, match.line, match.column,
+            colForUnit[match.range.lowerBound], colForUnit[match.range.upperBound - 1] + 1
+        )
     }
 
     /// Scan the row's text for a URL pattern and return the match that
@@ -2544,9 +2591,24 @@ class TerminalRenderer: NSView {
             let colI = Int(col)
             let rowI = Int(row)
             var uri: String? = backend?.hyperlinkAt(col: colI, row: rowI)
-            if uri == nil, let grid = backend?.gridSnapshot(),
-               let detected = detectUrlAt(col: colI, row: rowI, grid: grid) {
-                uri = detected.uri
+            var path: (path: String, line: Int?, column: Int?)?
+            if uri == nil, let grid = backend?.gridSnapshot() {
+                if let detected = detectUrlAt(col: colI, row: rowI, grid: grid) {
+                    uri = detected.uri
+                } else if let found = detectPathAt(col: colI, row: rowI, grid: grid) {
+                    path = (found.path, found.line, found.column)
+                }
+            }
+            // file:// links (OSC 8 or plain) open in the editor too.
+            if let uri, let url = URL(string: uri), url.isFileURL,
+                let onOpenPath, !url.hasDirectoryPath
+            {
+                onOpenPath(url.path, nil, nil)
+                return
+            }
+            if let path, let onOpenPath {
+                onOpenPath(path.path, path.line, path.column)
+                return
             }
             if let uri, let url = URL(string: uri) {
                 NSWorkspace.shared.open(url)

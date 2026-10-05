@@ -843,9 +843,10 @@ function handleResolveDefinition(cmd) {
   }
 }
 
+// Positions from the host are 1-based, like Monaco's.
 function handleGoToPosition(cmd) {
-  const line = (cmd.line || 0) + 1;
-  const column = (cmd.column || 0) + 1;
+  const line = Math.max(1, cmd.line || 1);
+  const column = Math.max(1, cmd.column || 1);
   editor.setPosition({ lineNumber: line, column: column });
   editor.revealPositionInCenter({ lineNumber: line, column: column });
   editor.focus();

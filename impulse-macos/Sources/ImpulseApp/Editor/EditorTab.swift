@@ -618,6 +618,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
 
     /// Navigate the editor cursor to the given line and column.
+    /// Move the cursor to a 1-based line and column and reveal it.
     func goToPosition(line: UInt32, column: UInt32) {
         sendCommand(.goToPosition(line: line, column: column))
     }
