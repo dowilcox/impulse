@@ -231,6 +231,8 @@ final class WindowModel {
   /// Open the Review Changes tab for the current workspace git root.
   var onOpenDiffReview: (() -> Void)?
   var onShowCommandPalette: (() -> Void)?
+  /// Open the branch switcher (palette in branch mode).
+  var onShowBranchSwitcher: (() -> Void)?
   var onToggleRightDock: (() -> Void)?
 
   // MARK: Methods

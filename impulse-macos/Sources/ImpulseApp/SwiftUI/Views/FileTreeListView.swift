@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import SwiftUI
 
 /// Displays the project file tree as a flat, virtualized scrollable list.
@@ -273,41 +274,28 @@ private struct FlatFileRowView: View {
       }
     }
 
-    if !node.isDirectory,
-      node.gitStatus == .modified || node.gitStatus == .added
+    if !node.isDirectory, let repository = model.repository,
+      node.path.hasPrefix(repository.root + "/"),
+      [.modified, .added, .untracked, .deleted, .renamed].contains(node.gitStatus)
     {
+      let relative = String(node.path.dropFirst(repository.root.count + 1))
+      let actions = GitActions(repository: repository, host: model.gitHost)
       Divider()
-      Button("Discard Changes", role: .destructive) {
-        let alert = NSAlert()
-        alert.messageText = "Discard Changes"
-        alert.informativeText =
-          "Are you sure you want to discard all changes to \"\(node.name)\"? This cannot be undone."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.hasDestructiveAction = true
-        let path = node.path
-        let root = model.fileTreeRootPath
-        let discard: (NSApplication.ModalResponse) -> Void = { response in
-          guard response == .alertFirstButtonReturn else { return }
-          // Checkout touches the index and the file; keep it off the main thread.
-          DispatchQueue.global(qos: .userInitiated).async {
-            let ok = ImpulseCore.gitDiscardChanges(filePath: path, workspaceRoot: root)
-            DispatchQueue.main.async {
-              guard ok else { return }
-              NotificationCenter.default.post(
-                name: .impulseReloadEditorFile,
-                object: nil,
-                userInfo: ["path": path]
-              )
-              model.onRefreshTree?()
-            }
-          }
-        }
-        if let window = NSApp.keyWindow {
-          alert.beginSheetModal(for: window, completionHandler: discard)
+      Button("Open Changes") {
+        model.gitHost?.gitOpenReview(scope: .uncommitted, focusPath: relative)
+      }
+      Button("Stage") {
+        actions.stage([FileChange(path: relative, status: .modified)])
+      }
+      Button("Discard Changes…", role: .destructive) {
+        // Untracked files go to the Trash; tracked files are restored to
+        // HEAD (staged and unstaged). Both can be undone from the toast.
+        if node.gitStatus == .untracked {
+          actions.discard([FileChange(path: relative, status: .untracked)])
+        } else if node.gitStatus == .added {
+          actions.unstage([FileChange(path: relative, status: .added)])
         } else {
-          discard(alert.runModal())
+          actions.discard([FileChange(path: relative, status: .modified)], includeStaged: true)
         }
       }
     }

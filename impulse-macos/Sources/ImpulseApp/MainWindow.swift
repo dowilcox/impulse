@@ -457,6 +457,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onShowCommandPalette = { [weak self] in
       self?.showCommandPalette()
     }
+    windowModel.onShowBranchSwitcher = { [weak self] in
+      self?.showBranchSwitcher()
+    }
     windowModel.onToggleRightDock = { [weak self] in
       self?.toggleRightDock()
     }
@@ -1404,6 +1407,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .impulseSwitchBranch, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.showBranchSwitcher()
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .terminalCommandBlockChanged, object: nil, queue: .main) {
         [weak self] notification in
         guard let self,
@@ -2245,12 +2254,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: - Review Changes
 
-  /// Opens the Review Changes tab for the current workspace's git repository.
-  ///
-  /// Resolves the repo root from the active tab's directory (or the file-tree
-  /// root) off the main thread via `listChangedFiles`, which returns the
-  /// repository root. If the directory is not inside a git repository, an
-  /// alert is shown and no tab is created.
+  /// Opens the review for the active repository (resolving it from the active
+  /// tab's directory or the file-tree root when needed). Outside a git
+  /// repository, explains why instead.
   private func openDiffReview() {
     if let repository = windowModel.repository {
       tabManager.addReviewTab(repository: repository, host: self)
@@ -2549,18 +2555,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// branch, index.lock held by another process, ...).
   func switchBranch(to branch: String) {
     guard let repository = windowModel.repository else { return }
-    repository.run("Switching to \(branch)…") { root in
-      GitOperations.switchBranch(branch, root: root)
-    } completion: { [weak self] result, _ in
-      guard let self else { return }
-      switch result {
-      case .success:
-        self.fileTreeData.refreshGitStatus()
-        self.tabManager.syncToWindowModel()
-      case .failure(let error):
-        self.presentGitError(error, title: "Couldn't switch to \(branch)")
-      }
-    }
+    GitActions(repository: repository, host: self).switchBranch(branch)
+  }
+
+  /// Open the branch switcher (the palette in branch mode).
+  func showBranchSwitcher() {
+    showPalette(prefix: "b:")
   }
 
   /// Shows a git failure as a window-modal sheet: the plain-English message,
@@ -3001,6 +3001,11 @@ extension MainWindowController: PaletteHost {
 
   func paletteSwitchBranch(_ branch: String) {
     switchBranch(to: branch)
+  }
+
+  func paletteCreateBranch(_ name: String) {
+    guard let repository = windowModel.repository else { return }
+    GitActions(repository: repository, host: self).createBranch(name)
   }
 
   func paletteSelectTab(_ index: Int) {

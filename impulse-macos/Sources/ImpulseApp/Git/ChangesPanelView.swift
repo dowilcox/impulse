@@ -37,7 +37,6 @@ private struct ChangesPanelContent: View {
   @State private var stashesExpanded = false
   @State private var stashes: [GitOperations.StashEntry] = []
   @State private var selection: String? = nil
-  @State private var showBranchPicker = false
 
   var body: some View {
     let snapshot = repository.snapshot
@@ -75,7 +74,7 @@ private struct ChangesPanelContent: View {
   private func header(_ snapshot: RepoSnapshot?) -> some View {
     HStack(spacing: 6) {
       Button {
-        showBranchPicker.toggle()
+        model.onShowBranchSwitcher?()
       } label: {
         HStack(spacing: 5) {
           Icon(.gitBranch, size: 13).foregroundStyle(chrome.textSecondary)
@@ -91,16 +90,7 @@ private struct ChangesPanelContent: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(ChromePressStyle())
-      .help("Switch branch")
-      .popover(isPresented: $showBranchPicker, arrowEdge: .bottom) {
-        BranchPickerView(
-          currentBranch: snapshot?.branch ?? "", cwd: repository.root, accent: chrome.accent
-        ) { selected in
-          showBranchPicker = false
-          guard selected != snapshot?.branch else { return }
-          actions.switchBranch(selected)
-        }
-      }
+      .help("Switch branch (⌃⌘B)")
       Spacer(minLength: 4)
       if let snapshot {
         syncIndicator(snapshot)

@@ -140,6 +140,14 @@ enum Keybindings {
             modifierFlags: [.command, .option]
         ),
         BuiltinKeybinding(
+            id: "switch_branch",
+            description: "Switch Branch",
+            category: "Git",
+            defaultShortcut: "Ctrl+Cmd+B",
+            keyEquivalent: "b",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
             id: "show_changes",
             description: "Show Changes (Git)",
             category: "Navigation",

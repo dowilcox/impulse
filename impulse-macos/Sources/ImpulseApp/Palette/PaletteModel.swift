@@ -13,6 +13,7 @@ protocol PaletteHost: AnyObject {
   func paletteOpenFile(_ path: String, line: UInt32?, column: UInt32?)
   func paletteGoToLine(_ line: UInt32, column: UInt32?)
   func paletteSwitchBranch(_ branch: String)
+  func paletteCreateBranch(_ name: String)
   func paletteSelectTab(_ index: Int)
 }
 
@@ -368,16 +369,29 @@ final class PaletteModel {
     let current = host?.paletteCurrentBranch
     func build(_ names: [String]) {
       let ranked = FuzzyMatcher.rank(names, query: term) { $0 }
-      rows = ranked.map { entry in
+      var built: [PaletteRow] = ranked.map { entry in
         let name = entry.item
+        let isRemote = remoteBranchNames.contains(name)
         return PaletteRow(
-          id: "branch:" + name, glyph: .lucide(.gitBranch), title: name,
-          highlights: entry.match.positions, trailing: name == current ? "current" : nil
+          id: "branch:" + name, glyph: .lucide(isRemote ? .globe : .gitBranch), title: name,
+          highlights: entry.match.positions,
+          trailing: name == current ? "current" : isRemote ? "remote" : nil
         ) { [weak self] in
           guard name != current else { return }
-          self?.host?.paletteSwitchBranch(name)
+          self?.host?.paletteSwitchBranch(isRemote ? Self.localName(forRemote: name) : name)
         }
       }
+      let trimmed = term.trimmingCharacters(in: .whitespaces)
+      if !trimmed.isEmpty, !names.contains(trimmed), Self.isValidBranchName(trimmed) {
+        built.append(
+          PaletteRow(
+            id: "branch-create:" + trimmed, glyph: .lucide(.gitBranchPlus),
+            title: "Create branch “\(trimmed)”", subtitle: current.map { "from \($0)" }
+          ) { [weak self] in
+            self?.host?.paletteCreateBranch(trimmed)
+          })
+      }
+      rows = built
       emptyMessage = names.isEmpty ? "Not a git repository" : "No matching branches"
     }
     if let branches {
@@ -387,17 +401,39 @@ final class PaletteModel {
     let root = fileIndexRoot
     isBusy = true
     Self.worker.async { [weak self] in
-      let names = GitClient.branches(forPath: root)
+      let lists = GitOperations.branches(root: root)
       DispatchQueue.main.async {
         guard let self else { return }
         self.isBusy = false
-        // Current branch first.
-        self.branches = names.filter { $0 == current } + names.filter { $0 != current }
+        // Local branches (most recent first, current on top), then remotes
+        // that don't already have a local branch.
+        let local = lists.local.filter { $0 == current } + lists.local.filter { $0 != current }
+        let remote = lists.remote.filter { !lists.local.contains(Self.localName(forRemote: $0)) }
+        self.remoteBranchNames = Set(remote)
+        self.branches = local + remote
         if self.mode == .branches { self.refresh() }
       }
     }
     rows = []
     emptyMessage = "Loading branches…"
+  }
+
+  @ObservationIgnored private var remoteBranchNames: Set<String> = []
+
+  /// "origin/feature" → "feature" (git switch creates a tracking branch).
+  static func localName(forRemote name: String) -> String {
+    guard let slash = name.firstIndex(of: "/") else { return name }
+    return String(name[name.index(after: slash)...])
+  }
+
+  /// Rough `git check-ref-format --branch` rules, enough to avoid offering
+  /// obviously invalid names.
+  static func isValidBranchName(_ name: String) -> Bool {
+    guard !name.isEmpty, !name.hasPrefix("-"), !name.hasPrefix("/"), !name.hasSuffix("/"),
+      !name.hasSuffix(".lock"), !name.hasSuffix("."), !name.contains("..")
+    else { return false }
+    let forbidden = CharacterSet(charactersIn: " ~^:?*[\\").union(.controlCharacters)
+    return name.unicodeScalars.allSatisfy { !forbidden.contains($0) } && !name.contains("@{")
   }
 
   // MARK: Tabs

@@ -89,16 +89,35 @@ private struct WorkspaceBreadcrumb: View {
           .truncationMode(.middle)
       }
       if let branch = model.gitBranch, !branch.isEmpty {
-        Icon(.gitBranch, size: 11)
-          .foregroundStyle(chrome.textTertiary)
-        Text(branch)
-          .font(ChromeFont.ui(11.5))
-          .foregroundStyle(chrome.textSecondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
+        Button {
+          model.onShowBranchSwitcher?()
+        } label: {
+          HStack(spacing: 4) {
+            Icon(.gitBranch, size: 11)
+              .foregroundStyle(chrome.textTertiary)
+            Text(branch)
+              .font(ChromeFont.ui(11.5))
+              .foregroundStyle(chrome.textSecondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            if let repo = model.repository?.snapshot, repo.ahead > 0 || repo.behind > 0 {
+              Text(syncText(repo.ahead, repo.behind))
+                .font(ChromeFont.mono(10.5))
+                .foregroundStyle(chrome.textTertiary)
+            }
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(ChromePressStyle())
+        .help("Switch branch (⌃⌘B)")
       }
     }
     .help(model.fileTreeRootPath)
+  }
+
+  private func syncText(_ ahead: Int, _ behind: Int) -> String {
+    [ahead > 0 ? "↑\(ahead)" : nil, behind > 0 ? "↓\(behind)" : nil].compactMap { $0 }
+      .joined(separator: " ")
   }
 
   private var projectName: String {

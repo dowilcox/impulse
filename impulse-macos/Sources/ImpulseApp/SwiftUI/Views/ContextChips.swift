@@ -50,7 +50,6 @@ struct BranchChip: View {
   let branch: String
   var interactive: Bool = true
 
-  @State private var showPicker = false
 
   private var chip: some View {
     ContextChip(
@@ -60,23 +59,12 @@ struct BranchChip: View {
   var body: some View {
     if interactive {
       Button {
-        showPicker.toggle()
+        model.onShowBranchSwitcher?()
       } label: {
         chip
       }
       .buttonStyle(.plain)
       .help("Switch branch")
-      .popover(isPresented: $showPicker, arrowEdge: .top) {
-        BranchPickerView(
-          currentBranch: branch,
-          cwd: model.currentCwd,
-          accent: model.theme.colorAccent
-        ) { selected in
-          showPicker = false
-          guard selected != branch else { return }
-          model.onSwitchBranch?(selected)
-        }
-      }
     } else {
       chip
     }

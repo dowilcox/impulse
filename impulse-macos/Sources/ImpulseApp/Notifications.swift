@@ -138,6 +138,8 @@ extension Notification.Name {
     static let impulseToggleRightDock = Notification.Name("impulseToggleRightDock")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
+    /// Opens the branch switcher in the frontmost window.
+    static let impulseSwitchBranch = Notification.Name("impulseSwitchBranch")
     /// Requests project-wide find.
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
     /// Requests toggling markdown preview in the active editor tab.

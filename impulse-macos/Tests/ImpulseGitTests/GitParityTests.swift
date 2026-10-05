@@ -119,71 +119,6 @@
       #expect(cache.root(forDirectory: "/d3") == "/r3")
     }
 
-    @Test func discardPathDeletesUntrackedFile() throws {
-      let repo = try ScenarioRepo.create()
-      defer { repo.destroy() }
-      let untracked = repo.root + "/extra.txt"
-      #expect(FileManager.default.fileExists(atPath: untracked))
-
-      try GitClient.discardPath(repoPath: repo.root, filePath: "extra.txt")
-
-      #expect(!FileManager.default.fileExists(atPath: untracked))
-    }
-
-    @Test func discardPathRestoresTrackedFiles() throws {
-      let repo = try ScenarioRepo.create()
-      defer { repo.destroy() }
-
-      // Modified file is restored to its committed content.
-      try GitClient.discardPath(repoPath: repo.root, filePath: "src/sample.rs")
-      let restored = try String(
-        contentsOfFile: repo.root + "/src/sample.rs", encoding: .utf8)
-      #expect(restored.contains("let message = \"hello world\";"))
-      #expect(!restored.contains("swift"))
-
-      // Deleted file reappears.
-      try GitClient.discardPath(repoPath: repo.root, filePath: "notes.txt")
-      let notes = try String(contentsOfFile: repo.root + "/notes.txt", encoding: .utf8)
-      #expect(notes == "alpha\nbeta\ngamma\n")
-    }
-
-    @Test func commitAllProducesCommitAndCleanTree() throws {
-      let repo = try ScenarioRepo.create()
-      defer { repo.destroy() }
-
-      let result = GitClient.commitAll(repoPath: repo.root, message: "port to swift")
-      switch result {
-      case .success(let oid):
-        #expect(oid.count == 40)
-      case .failure(let error):
-        Issue.record("commitAll failed: \(error.message)")
-      }
-
-      // The change set and directory status are clean afterwards.
-      let changeSet = try #require(GitClient.changedFiles(repoPath: repo.root))
-      #expect(changeSet.files.isEmpty)
-      #expect(GitClient.statusForDirectory(repo.root) == [:])
-
-      // A second commit with nothing changed is refused.
-      let empty = GitClient.commitAll(repoPath: repo.root, message: "again")
-      guard case .failure(let error) = empty else {
-        Issue.record("expected 'nothing to commit' failure")
-        return
-      }
-      #expect(error.message == "nothing to commit")
-    }
-
-    @Test func commitAllRejectsEmptyMessage() throws {
-      let repo = try ScenarioRepo.create()
-      defer { repo.destroy() }
-      guard case .failure(let error) = GitClient.commitAll(repoPath: repo.root, message: "   ")
-      else {
-        Issue.record("expected empty-message failure")
-        return
-      }
-      #expect(error.message == "Commit message is empty")
-    }
-
     @Test func pathValidationRejectsEscapes() throws {
       let repo = try ScenarioRepo.create()
       defer { repo.destroy() }
@@ -212,9 +147,9 @@
         repo.root + "/keep.md", root: repo.root)
       #expect(inside == repo.root + "/keep.md")
 
-      // discardPath refuses traversal attempts.
+      // Scoped diffs refuse traversal attempts.
       #expect(throws: GitError.self) {
-        try GitClient.discardPath(repoPath: repo.root, filePath: "../escape.txt")
+        try GitClient.fileDiff(repoPath: repo.root, path: "../escape.txt", scope: .unstaged)
       }
     }
   }

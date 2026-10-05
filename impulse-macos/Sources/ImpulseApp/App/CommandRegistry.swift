@@ -49,8 +49,9 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.showChangesPanel() },
       AppCommand(
         id: "switch_branch", title: "Switch Branch…", category: "Git",
-        keywords: ["checkout", "git"], icon: .gitBranch
-      ) { [weak controller] in controller?.showPalette(prefix: "b:") },
+        keywords: ["checkout", "git", "create branch"], icon: .gitBranch,
+        keybindingId: "switch_branch"
+      ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
         id: "switch_tab", title: "Switch Tab…", category: "Tabs",
         keywords: ["go to tab"], icon: .layers

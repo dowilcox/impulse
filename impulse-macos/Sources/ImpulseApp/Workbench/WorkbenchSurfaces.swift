@@ -8,7 +8,6 @@ import SwiftUI
 /// right.
 struct WorkbenchStatusBar: View {
   var model: WindowModel
-  @State private var showBranchPicker = false
 
   var body: some View {
     HStack(spacing: 2) {
@@ -26,19 +25,10 @@ struct WorkbenchStatusBar: View {
   @ViewBuilder
   private var leftItems: some View {
     if let branch = model.gitBranch, !branch.isEmpty {
-      StatusItem(icon: .gitBranch, help: "Switch branch") {
-        showBranchPicker.toggle()
+      StatusItem(icon: .gitBranch, help: "Switch branch (⌃⌘B)") {
+        model.onShowBranchSwitcher?()
       } label: {
         Text(branch)
-      }
-      .popover(isPresented: $showBranchPicker, arrowEdge: .top) {
-        BranchPickerView(
-          currentBranch: branch, cwd: model.currentCwd, accent: model.palette.accent
-        ) { selected in
-          showBranchPicker = false
-          guard selected != branch else { return }
-          model.onSwitchBranch?(selected)
-        }
       }
     }
     if model.reviewChangedFileCount > 0 {

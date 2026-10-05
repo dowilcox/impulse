@@ -321,13 +321,61 @@ struct GitActions {
 
   // MARK: Branches & stash
 
+  /// Switch branches. If local changes would be overwritten, offer to stash
+  /// them first (and to pop them afterwards).
   func switchBranch(_ name: String) {
     repository.run("Switching to \(name)…") { GitOperations.switchBranch(name, root: $0) }
-    completion: { result, _ in report(result, failure: "Couldn't switch to \(name)") }
+    completion: { result, _ in
+      guard case .failure(let error) = result else { return }
+      if case .cli(let cli) = error, cli.kind == .localChangesWouldBeOverwritten {
+        host?.gitConfirm(
+          title: "Your changes would be overwritten",
+          message: "Stash your uncommitted changes, then switch to \(name)? You can pop the stash afterwards.",
+          confirmTitle: "Stash & Switch", destructive: false
+        ) { proceed in
+          guard proceed else { return }
+          stashAndSwitch(name)
+        }
+      } else {
+        host?.gitPresentError(error, title: "Couldn't switch to \(name)")
+      }
+    }
+  }
+
+  private func stashAndSwitch(_ name: String) {
+    repository.run("Switching to \(name)…") { root in
+      let stashed = GitOperations.stash(
+        message: "Impulse: before switching to \(name)", includeUntracked: true, root: root)
+      if case .failure = stashed { return stashed }
+      return GitOperations.switchBranch(name, root: root)
+    } completion: { result, _ in
+      switch result {
+      case .success:
+        let repository = self.repository
+        let host = self.host
+        host?.toasts.show(
+          Toast(
+            kind: .success, message: "Stashed your changes and switched to \(name)",
+            actionTitle: "Pop Stash",
+            action: {
+              repository.run { GitOperations.stashApply(0, pop: true, root: $0) } completion: {
+                result, _ in
+                if case .failure(let error) = result {
+                  host?.gitPresentError(error, title: "Couldn't pop the stash")
+                }
+              }
+            }, lifetime: 12))
+      case .failure(let error):
+        host?.gitPresentError(error, title: "Couldn't switch to \(name)")
+      }
+    }
   }
 
   func createBranch(_ name: String) {
     repository.run { GitOperations.createBranch(name, root: $0) } completion: { result, _ in
+      if case .success = result {
+        host?.toasts.show(Toast(kind: .success, message: "Created and switched to \(name)"))
+      }
       report(result, failure: "Couldn't create \(name)")
     }
   }
