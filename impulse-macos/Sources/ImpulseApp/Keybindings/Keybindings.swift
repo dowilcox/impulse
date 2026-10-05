@@ -474,6 +474,11 @@ enum Keybindings {
         guard let builtin = builtins.first(where: { $0.id == id }) else {
             return nil
         }
+        if let overrideStr = overrides[id], overrideStr.lowercased() == unbound {
+            return BuiltinKeybinding(
+                id: builtin.id, description: builtin.description, category: builtin.category,
+                defaultShortcut: "", keyEquivalent: "", modifierFlags: [])
+        }
         if let overrideStr = overrides[id], !overrideStr.isEmpty {
             let parsed = parseShortcut(overrideStr)
             return BuiltinKeybinding(
@@ -486,6 +491,57 @@ enum Keybindings {
             )
         }
         return builtin
+    }
+
+    /// The override value that removes a command's shortcut.
+    static let unbound = "none"
+
+    /// "Cmd+Shift+K" for a key press, or nil for keys that can't be a
+    /// shortcut (lone modifiers). Modifiers in macOS order: ⌃⌥⇧⌘.
+    static func shortcutString(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> String? {
+        let special: [UInt16: String] = [
+            123: "Left", 124: "Right", 125: "Down", 126: "Up", 36: "Return", 76: "Return", 48: "Tab",
+            49: "Space", 51: "Delete", 117: "Delete", 53: "Escape",
+            122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8", 101: "F9",
+            109: "F10", 103: "F11", 111: "F12",
+        ]
+        let key: String
+        if let name = special[keyCode] {
+            key = name
+        } else if let characters, characters.count == 1, let character = characters.first,
+            !character.isWhitespace
+        {
+            key = character.isLetter ? character.uppercased() : String(character)
+        } else {
+            return nil
+        }
+        var parts: [String] = []
+        if modifiers.contains(.control) { parts.append("Ctrl") }
+        if modifiers.contains(.option) { parts.append("Alt") }
+        if modifiers.contains(.shift) { parts.append("Shift") }
+        if modifiers.contains(.command) { parts.append("Cmd") }
+        return (parts + [key]).joined(separator: "+")
+    }
+
+    /// Commands that share an effective shortcut, keyed by that shortcut in
+    /// symbol notation ("⌘D": ["split_right", …]). Only shortcuts used more
+    /// than once are listed.
+    static func conflicts(overrides: [String: String], extra: [(id: String, shortcut: String)] = [])
+        -> [String: [String]]
+    {
+        var byShortcut: [String: [String]] = [:]
+        for builtin in builtins {
+            guard let effective = getKeybinding(id: builtin.id, overrides: overrides),
+                !effective.keyEquivalent.isEmpty,
+                let symbol = symbolDisplay(shortcut: effective.defaultShortcut)
+            else { continue }
+            byShortcut[symbol, default: []].append(builtin.id)
+        }
+        for item in extra {
+            guard let symbol = symbolDisplay(shortcut: item.shortcut) else { continue }
+            byShortcut[symbol, default: []].append(item.id)
+        }
+        return byShortcut.filter { $0.value.count > 1 }
     }
 
     /// Ordered list of keybinding categories for display purposes.
@@ -537,6 +593,7 @@ enum Keybindings {
     /// Returns a human-readable shortcut string for a keybinding, like
     /// "Cmd+Shift+B". Takes into account user overrides from settings.
     static func shortcutDisplay(forId id: String, overrides: [String: String] = [:]) -> String? {
+        if let override_ = overrides[id], override_.lowercased() == unbound { return nil }
         if let override_ = overrides[id], !override_.isEmpty {
             return override_
         }

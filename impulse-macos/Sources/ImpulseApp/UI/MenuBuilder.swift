@@ -28,8 +28,8 @@ enum MenuBuilder {
         overrides: [String: String],
         to item: NSMenuItem
     ) {
-        guard let keybinding = Keybindings.getKeybinding(id: id, overrides: overrides),
-              !keybinding.keyEquivalent.isEmpty else { return }
+        // Unbound commands (empty key equivalent) clear the item's shortcut.
+        guard let keybinding = Keybindings.getKeybinding(id: id, overrides: overrides) else { return }
         item.keyEquivalent = keybinding.keyEquivalent
         item.keyEquivalentModifierMask = keybinding.modifierFlags
     }

@@ -919,6 +919,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action == "keybindings" {
+        openKeybindings()
       } else if action == "settings" {
         openSettings()
       } else if action.hasPrefix("settings=") {
@@ -977,13 +979,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let tool = tabManager.openTool(kind: "settings") { SettingsSurface(palette: palette) }
     guard let surface = tool as? SettingsSurface else { return }
     surface.model.onOpenSettingsFile = { [weak self] in self?.openSettingsFile() }
-    surface.model.onOpenKeybindings = {
-      (NSApp.delegate as? AppDelegate)?.showClassicSettings(pane: "keybindings")
-    }
+    surface.model.onOpenKeybindings = { [weak self] in self?.openKeybindings() }
     surface.model.onOpenClassicPane = { pane in
       (NSApp.delegate as? AppDelegate)?.showClassicSettings(pane: pane)
     }
     if let query { surface.reveal(query: query) } else { surface.focusTool() }
+  }
+
+  /// Keyboard shortcuts as a tab.
+  func openKeybindings() {
+    let palette = windowModel.palette
+    tabManager.openTool(kind: "keybindings") { KeybindingsSurface(palette: palette) }
   }
 
   /// settings.json in an editor tab, validated against the settings schema.

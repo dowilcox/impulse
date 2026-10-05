@@ -208,6 +208,7 @@ struct SettingsView: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 22)
         .frame(maxWidth: 820, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
   }

@@ -270,7 +270,7 @@ enum SettingsCatalog {
     }
     let stringArray: [String: Any] = ["type": "array", "items": ["type": "string"]]
     properties["keybinding_overrides"] = [
-      "type": "object", "description": "Shortcut per command id, e.g. \"split_right\": \"Cmd+D\" (empty unbinds).",
+      "type": "object", "description": "Shortcut per command id, e.g. \"split_right\": \"Cmd+D\" (\"none\" removes it).",
       "additionalProperties": ["type": "string"],
     ]
     properties["custom_keybindings"] = [
