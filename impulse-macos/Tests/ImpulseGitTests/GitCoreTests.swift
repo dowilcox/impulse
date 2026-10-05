@@ -510,6 +510,21 @@
       #expect(file[0].refs.contains("topic"))
     }
 
+    @Test func detailsCarryTheWholeMessage() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "First")
+      try repo.commit(["a.txt": "two\n"], message: "Second change\n\nWhy it matters.\nMore detail.")
+      let head = try repo.git("rev-parse", "HEAD")
+      let details = try #require(GitLog.details(root: repo.root, sha: "HEAD"))
+      #expect(details.sha == head)
+      #expect(details.parents == [try repo.git("rev-parse", "HEAD~1")])
+      #expect(details.subject == "Second change")
+      #expect(details.body == "Why it matters.\nMore detail.")
+      #expect(details.author == "Impulse Test")
+      #expect(GitLog.details(root: repo.root, sha: "nope") == nil)
+    }
+
     @Test func divergenceSplitsIncomingAndOutgoing() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

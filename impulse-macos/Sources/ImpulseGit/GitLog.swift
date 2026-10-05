@@ -44,6 +44,25 @@ public enum GitLog {
     return GitOperations.git(args, in: root, timeout: 60).map { parse($0.stdout) }
   }
 
+  /// Everything about one commit, for its details header.
+  public static func details(root: String, sha: String) -> CommitDetails? {
+    guard
+      case .success(let result) = GitOperations.git(
+        ["show", "-s", "--no-color", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%B", sha],
+        in: root)
+    else { return nil }
+    let fields = result.stdout.components(separatedBy: "\u{1f}")
+    guard fields.count >= 8 else { return nil }
+    return CommitDetails(
+      sha: fields[0],
+      parents: fields[1].split(separator: " ").map(String.init),
+      author: fields[2], email: fields[3],
+      date: Date(timeIntervalSince1970: Double(fields[4]) ?? 0),
+      committer: fields[5],
+      committerDate: Date(timeIntervalSince1970: Double(fields[6]) ?? 0),
+      message: fields[7...].joined(separator: "\u{1f}").trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
   /// Commits on HEAD that its upstream doesn't have yet (outgoing) and the
   /// other way round (incoming). Both empty without an upstream.
   public static func divergence(root: String, limit: Int = 2000) -> (outgoing: Set<String>, incoming: Set<String>) {
@@ -78,5 +97,24 @@ public enum GitLog {
         refs: fields[6].isEmpty
           ? [] : fields[6].components(separatedBy: ", ").filter { !$0.isEmpty })
     }
+  }
+}
+
+public struct CommitDetails: Equatable, Sendable {
+  public let sha: String
+  public let parents: [String]
+  public let author: String
+  public let email: String
+  public let date: Date
+  public let committer: String
+  public let committerDate: Date
+  /// Subject and body.
+  public let message: String
+
+  public var subject: String { message.components(separatedBy: "\n").first ?? "" }
+  /// The message after the subject line.
+  public var body: String {
+    message.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }

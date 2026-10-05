@@ -30,8 +30,25 @@ final class HistoryModel {
   /// Bumped when the list should scroll to the selection again.
   private(set) var scrollToken = 0
   @ObservationIgnored var divergenceLoader: (() -> (outgoing: Set<String>, incoming: Set<String>))?
+  /// The selected commit's full details (message body, committer, parents).
+  private(set) var details: CommitDetails?
+  @ObservationIgnored var detailsLoader: ((String) -> CommitDetails?)?
+
+  /// Load the details for `sha` (shown above its diff).
+  func loadDetails(_ sha: String) {
+    guard let detailsLoader, details?.sha != sha else { return }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let loaded = detailsLoader(sha)
+      DispatchQueue.main.async {
+        guard let self, self.selectedSha.map({ loaded?.sha.hasPrefix($0) ?? false }) ?? false else { return }
+        self.details = loaded
+      }
+    }
+  }
 
   @ObservationIgnored var onSelect: ((LogEntry) -> Void)?
+  /// Show a commit's changes by SHA (it may not be loaded in the list yet).
+  @ObservationIgnored var onShowCommit: ((String) -> Void)?
   @ObservationIgnored var onAction: ((HistoryAction, LogEntry) -> Void)?
   @ObservationIgnored var loader: ((Int) -> Result<[LogEntry], GitOperationError>)?
 
@@ -68,10 +85,17 @@ final class HistoryModel {
     }
   }
 
+  /// Select and show a commit by SHA.
+  func show(_ sha: String) {
+    reveal(sha)
+    onShowCommit?(sha)
+  }
+
   /// Select `sha`, paging further into history until it shows up (the
   /// caller shows the commit itself right away).
   func reveal(_ sha: String) {
     selectedSha = sha
+    loadDetails(sha)
     if entries.contains(where: { $0.sha == sha }) {
       scrollToken += 1
     } else {
@@ -105,8 +129,7 @@ final class HistoryModel {
               self.pendingReveal = nil
             }
           } else if self.selectedSha == nil, let first = self.entries.first {
-            self.selectedSha = first.sha
-            self.onSelect?(first)
+            self.select(first)
           }
         case .failure(let failure):
           self.error = failure.message
@@ -119,6 +142,7 @@ final class HistoryModel {
   func select(_ entry: LogEntry) {
     selectedSha = entry.sha
     onSelect?(entry)
+    loadDetails(entry.sha)
   }
 
   /// ↑/↓ through the visible rows.
@@ -163,7 +187,9 @@ final class HistorySurface: NSView {
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
     }
     model.onAction = { [weak self] action, entry in self?.perform(action, on: entry) }
+    model.onShowCommit = { [weak self] sha in self?.review.show(scope: .commit(sha: sha), focusPath: path) }
     model.divergenceLoader = { GitLog.divergence(root: root) }
+    model.detailsLoader = { GitLog.details(root: root, sha: $0) }
     setup()
     model.reload()
   }
@@ -185,7 +211,8 @@ final class HistorySurface: NSView {
     divider.boxType = .custom
     divider.borderWidth = 0
     divider.fillColor = model.palette.nsHairline
-    for view in [list, divider, review] as [NSView] {
+    let details = WorkbenchHosting.make(CommitDetailsView(model: model), intrinsicHeight: true)
+    for view in [list, divider, details, review] as [NSView] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
     }
@@ -198,7 +225,10 @@ final class HistorySurface: NSView {
       divider.bottomAnchor.constraint(equalTo: bottomAnchor),
       divider.leadingAnchor.constraint(equalTo: list.trailingAnchor),
       divider.widthAnchor.constraint(equalToConstant: 1),
-      review.topAnchor.constraint(equalTo: topAnchor),
+      details.topAnchor.constraint(equalTo: topAnchor),
+      details.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+      details.trailingAnchor.constraint(equalTo: trailingAnchor),
+      review.topAnchor.constraint(equalTo: details.bottomAnchor),
       review.bottomAnchor.constraint(equalTo: bottomAnchor),
       review.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
       review.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -224,8 +254,7 @@ final class HistorySurface: NSView {
 
   /// Select a commit (e.g. from blame) and show its changes.
   func reveal(sha: String) {
-    model.reveal(sha)
-    review.show(scope: .commit(sha: sha), focusPath: model.path)
+    model.show(sha)
   }
 
   private func perform(_ action: HistoryAction, on entry: LogEntry) {
@@ -465,6 +494,85 @@ private struct HistoryRowView: View {
     }
     Button("Copy SHA") { model.onAction?(.copySha, entry) }
     Button("Copy Subject") { model.onAction?(.copySubject, entry) }
+  }
+}
+
+/// The selected commit: message, who and when, SHA and parents.
+private struct CommitDetailsView: View {
+  var model: HistoryModel
+  @State private var expanded = false
+
+  private static let dates: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+  }()
+
+  var body: some View {
+    let chrome = model.palette
+    VStack(alignment: .leading, spacing: 6) {
+      if let details = model.details {
+        Text(details.subject)
+          .font(ChromeFont.ui(13, weight: .semibold))
+          .foregroundStyle(chrome.text)
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+        if !details.body.isEmpty {
+          Text(details.body)
+            .font(ChromeFont.ui(12))
+            .foregroundStyle(chrome.textSecondary)
+            .lineLimit(expanded ? nil : 4)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+          if details.body.components(separatedBy: "\n").count > 4 {
+            Button(expanded ? "Show less" : "Show more") { expanded.toggle() }
+              .buttonStyle(.plain)
+              .font(ChromeFont.ui(11))
+              .foregroundStyle(chrome.accent)
+          }
+        }
+        HStack(spacing: 6) {
+          Text(details.author).font(ChromeFont.ui(11.5, weight: .medium)).foregroundStyle(chrome.text)
+          Text(Self.dates.string(from: details.date)).font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textTertiary)
+          if details.committer != details.author {
+            Text("· committed by \(details.committer)").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textTertiary)
+          }
+          Spacer(minLength: 6)
+          shaChip(details.sha, help: "Copy SHA") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(details.sha, forType: .string)
+          }
+          ForEach(details.parents, id: \.self) { parent in
+            shaChip(parent, help: "Show parent", icon: .arrowDown) { model.show(parent) }
+          }
+        }
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, model.details == nil ? 0 : 10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(chrome.panel)
+    .overlay(alignment: .bottom) {
+      if model.details != nil { Rectangle().fill(chrome.hairline).frame(height: 1) }
+    }
+    .onChange(of: model.details?.sha) { _, _ in expanded = false }
+  }
+
+  private func shaChip(_ sha: String, help: String, icon: LucideIcon = .copy, action: @escaping () -> Void) -> some View {
+    let chrome = model.palette
+    return Button(action: action) {
+      HStack(spacing: 3) {
+        Icon(icon, size: 9)
+        Text(sha.prefix(7)).font(ChromeFont.mono(10.5))
+      }
+      .foregroundStyle(chrome.textSecondary)
+      .padding(.horizontal, 5)
+      .frame(height: 18)
+      .background(RoundedRectangle(cornerRadius: 4).fill(chrome.raised))
+    }
+    .buttonStyle(.plain)
+    .help(help)
   }
 }
 
