@@ -97,11 +97,6 @@ public struct RecentCommandStore: Codable, Hashable {
     }
   }
 
-  public func score(id: String) -> Int64 {
-    guard let index = items.firstIndex(where: { $0.id == id }) else { return 0 }
-    let recent = items[index]
-    return 10_000 - (Int64(index) * 250) + Int64(min(recent.useCount, 100))
-  }
 }
 
 public enum CommandPalette {
@@ -199,29 +194,6 @@ public enum CommandPalette {
     return String(format: "custom:external:%016llx", stableHash(Array(value.utf8)))
   }
 
-  public static func filterItems(
-    _ items: [CommandPaletteItem], recents: RecentCommandStore, query: String
-  ) -> [CommandPaletteItem] {
-    let terms = query.split(whereSeparator: { $0.isWhitespace })
-      .map { $0.lowercased() }
-      .filter { !$0.isEmpty }
-
-    var seenIds = Set<String>()
-    var scored: [(score: Int64, index: Int, item: CommandPaletteItem)] = []
-    for (index, item) in items.enumerated() {
-      guard seenIds.insert(item.id).inserted else { continue }
-      guard let queryScore = scoreQuery(item: item, terms: terms) else { continue }
-      scored.append((queryScore + recents.score(id: item.id), index, item))
-    }
-
-    scored.sort { a, b in
-      if a.score != b.score { return a.score > b.score }
-      if a.index != b.index { return a.index < b.index }
-      return a.item.title < b.item.title
-    }
-    return scored.map(\.item)
-  }
-
   /// Builds palette items from raw search results, mirroring the Rust
   /// `search_result_items` (stable FNV-based ids, payload with path/line/column).
   public static func searchResultItems(root: String, results: [SearchResult])
@@ -275,32 +247,6 @@ public enum CommandPalette {
       source: "dynamic",
       payload: payload
     )
-  }
-
-  private static func scoreQuery(item: CommandPaletteItem, terms: [String]) -> Int64? {
-    if terms.isEmpty { return 0 }
-
-    let title = item.title.lowercased()
-    let category = item.category.lowercased()
-    let keywords = item.keywords.map { $0.lowercased() }
-
-    var score: Int64 = 0
-    for term in terms {
-      if title == term {
-        score += 2_000
-      } else if title.hasPrefix(term) {
-        score += 1_500
-      } else if title.contains(term) {
-        score += 1_000
-      } else if category.contains(term) {
-        score += 500
-      } else if keywords.contains(where: { $0.contains(term) }) {
-        score += 250
-      } else {
-        return nil
-      }
-    }
-    return score
   }
 
   /// FNV-1a, matching the Rust `stable_hash`.

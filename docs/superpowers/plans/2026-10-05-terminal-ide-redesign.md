@@ -225,7 +225,7 @@ foundations ├──────────── Track B: git ─────
   - `@` and `#` arrive in M8;
   - recents persisted to Application Support.
 - [x] **⌘P quick open** is a real fuzzy file finder over the workspace file index, gitignore-aware via existing `FileSearch`. Today it aliases project search (`MainWindow.swift:1610-1615`).
-- [ ] **Switch over** from `CommandPalette.filterItems`. Update or retire `Phase1ParityTests` palette fixtures in the same commit, with the reason: "palette moves to fuzzy scoring; old substring scorer retired".
+- [x] **Switch over** from `CommandPalette.filterItems`. Update or retire `Phase1ParityTests` palette fixtures in the same commit, with the reason: "palette moves to fuzzy scoring; old substring scorer retired".
 
 ### 1.4 Settings and keybindings surfaces
 

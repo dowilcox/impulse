@@ -112,25 +112,10 @@
       #expect(item == expected)
     }
 
-    struct FilterCase: Decodable {
-      let query: String
-      let results: [CommandPaletteItem]
-    }
-
-    @Test func filterMatchesFixture() throws {
-      let cases = try Fixtures.decode([FilterCase].self, from: "palette_filter.json")
-      #expect(cases.count >= 5)
-      let items = CommandPalette.builtinItems()
-      let recents = RecentCommandStore()
-      for c in cases {
-        let got = CommandPalette.filterItems(items, recents: recents, query: c.query)
-        #expect(got == c.results, "query=\(c.query)")
-      }
-    }
-
+    // The palette ranks with FuzzyMatcher now; the old substring scorer
+    // (filterItems) and its palette_filter.json fixture are retired.
     struct RecentsFixture: Decodable {
       let store: RecentCommandStore
-      let results: [CommandPaletteItem]
     }
 
     @Test func recentsRecordingMatchesFixture() throws {
@@ -141,8 +126,6 @@
       recents.record(items[4], nowMs: nowMs - 60_000, maxItems: 50)
       recents.record(items[1], nowMs: nowMs, maxItems: 50)
       #expect(recents == fixture.store)
-      #expect(
-        CommandPalette.filterItems(items, recents: recents, query: "") == fixture.results)
     }
 
     // Ported from the Rust unit tests in command_palette.rs.

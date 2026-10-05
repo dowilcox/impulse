@@ -22,7 +22,6 @@
         "close_risk.json",
         "glob.json",
         "palette_items.json",
-        "palette_filter.json",
         "file_tree_patch.json",
         "path_to_uri.json",
         "language_from_uri.json",
