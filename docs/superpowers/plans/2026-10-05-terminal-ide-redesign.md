@@ -622,7 +622,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 - [x] **Project-wide find & replace** with preview.
 - [ ] **Optional vim mode** (monaco-vim, vendored).
 - [x] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
-- [ ] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace.
+- [x] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace. (starts in the front window's folder; off by default; the hotkey itself needs a manual check)
 - [ ] **Accessibility pass:** (partly: terminal text area and agent announcements done; VoiceOver walkthrough and Full Keyboard Access need a person at the Mac)
   - VoiceOver walkthrough of every surface;
   - terminal AXTextArea (value, selected range, line-for-index);
