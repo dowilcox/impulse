@@ -285,6 +285,11 @@ require(["vs/editor/editor.main"], function () {
         keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
         command: "-editor.action.insertCursorBelow",
       },
+      // ⇧⌘O is the app's Go to Symbol (palette @ mode, from the language server).
+      {
+        keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO,
+        command: "-editor.action.quickOutline",
+      },
     ]);
   } catch (e) {
     // Older Monaco without keybinding rules: the editor keeps them.

@@ -2124,6 +2124,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // Quick Open — show sidebar in search mode
     notificationObservers.append(
+      nc.addObserver(forName: .impulseGoToSymbol, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.showPalette(prefix: "@")
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .impulseQuickOpen, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showSearchSidebarAndFocus()
@@ -3823,6 +3829,11 @@ extension MainWindowController: PaletteHost {
       PullRequestMonitor.shared.isAvailable
     else { return completion(nil) }
     PullRequestMonitor.shared.list(root: repository.root, completion: completion)
+  }
+
+  func paletteDocumentSymbols(_ completion: @escaping ([OutlineSymbol]?) -> Void) {
+    guard let editor = tabManager.selectedEditor else { return completion(nil) }
+    documentSymbols(for: editor, completion: completion)
   }
 
   func paletteOpenSetting(_ key: String) {

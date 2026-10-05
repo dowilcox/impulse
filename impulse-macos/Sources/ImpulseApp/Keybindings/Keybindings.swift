@@ -357,6 +357,14 @@ enum Keybindings {
             modifierFlags: [.control, .shift]
         ),
         BuiltinKeybinding(
+            id: "go_to_symbol",
+            description: "Go to Symbol in File",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Shift+O",
+            keyEquivalent: "o",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "quick_open",
             description: "Go to File",
             category: "Navigation",

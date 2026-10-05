@@ -31,6 +31,8 @@ protocol PaletteHost: AnyObject {
   func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary)
   /// Open the Settings tab at one setting.
   func paletteOpenSetting(_ key: String)
+  /// The focused editor's symbols (nil: no editor or no language server).
+  func paletteDocumentSymbols(_ completion: @escaping ([OutlineSymbol]?) -> Void)
 }
 
 /// One result row.
@@ -58,7 +60,7 @@ struct PaletteRow: Identifiable {
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, symbols, help
 
     var placeholder: String {
       switch self {
@@ -72,6 +74,7 @@ final class PaletteModel {
       case .history: return "Search history…  @here @repo @failed @today"
       case .pullRequests: return "Check out a pull request into a new task…"
       case .settings: return "Find a setting…"
+      case .symbols: return "Go to symbol in this file…"
       case .help: return "Palette modes"
       }
     }
@@ -88,6 +91,7 @@ final class PaletteModel {
       case .history: return .history
       case .pullRequests: return .gitPullRequest
       case .settings: return .settings
+      case .symbols: return .code
       case .help: return .info
       }
     }
@@ -114,6 +118,7 @@ final class PaletteModel {
   @ObservationIgnored private var fileIndexDate: Date = .distantPast
   @ObservationIgnored private var branches: [String]?
   @ObservationIgnored private var pullRequests: [PullRequestSummary]?
+  @ObservationIgnored private var symbols: [OutlineSymbol]?
   @ObservationIgnored private var generation = 0
   @ObservationIgnored private var textSearchWork: DispatchWorkItem?
 
@@ -125,6 +130,7 @@ final class PaletteModel {
   func prepare(prefix: String) {
     branches = nil
     pullRequests = nil
+    symbols = nil
     let root = host?.paletteRoot ?? ""
     if root != fileIndexRoot || Date().timeIntervalSince(fileIndexDate) > 20 {
       fileIndexRoot = root
@@ -171,6 +177,7 @@ final class PaletteModel {
     if query.hasPrefix("h:") { return (.history, String(query.dropFirst(2))) }
     if query.hasPrefix("pr:") { return (.pullRequests, String(query.dropFirst(3))) }
     if query.hasPrefix("set:") { return (.settings, String(query.dropFirst(4))) }
+    if query.hasPrefix("@") { return (.symbols, String(query.dropFirst())) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -193,6 +200,7 @@ final class PaletteModel {
     case .history: refreshHistory(trimmed)
     case .pullRequests: refreshPullRequests(trimmed)
     case .settings: refreshSettings(trimmed)
+    case .symbols: refreshSymbols(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -549,6 +557,64 @@ final class PaletteModel {
     emptyMessage = text.isEmpty && filter == HistoryFilter() ? "No history yet" : "No matching commands"
   }
 
+  // MARK: Symbols
+
+  private func refreshSymbols(_ term: String) {
+    func build(_ list: [OutlineSymbol]) {
+      let entries: [(item: OutlineSymbol, positions: [Int])] =
+        term.isEmpty
+        ? list.map { ($0, []) }
+        : FuzzyMatcher.rank(list, query: term) { $0.name }.map { ($0.item, $0.match.positions) }
+      rows = entries.map { entry in
+        let symbol = entry.item
+        let indent = term.isEmpty ? String(repeating: "  ", count: min(symbol.depth, 6)) : ""
+        let subtitle = ([symbol.container.joined(separator: " › ")].filter { !$0.isEmpty } + [symbol.detail ?? ""])
+          .filter { !$0.isEmpty }.joined(separator: "  ")
+        return PaletteRow(
+          id: "symbol:\(symbol.line):\(symbol.column):\(symbol.name)", glyph: .lucide(Self.icon(forSymbolKind: symbol.kind)),
+          title: indent + symbol.name,
+          highlights: entry.positions.map { $0 + indent.count },
+          subtitle: subtitle.isEmpty ? nil : subtitle,
+          trailing: "\(symbol.kindName) · \(symbol.line)"
+        ) { [weak self] in
+          self?.host?.paletteGoToLine(UInt32(symbol.line), column: UInt32(symbol.column))
+        }
+      }
+      emptyMessage = list.isEmpty ? "No symbols in this file" : "No matching symbols"
+    }
+    if let symbols {
+      build(symbols)
+      return
+    }
+    guard host?.paletteHasEditor == true else {
+      rows = []
+      emptyMessage = "Open a file to see its symbols"
+      return
+    }
+    isBusy = true
+    rows = []
+    emptyMessage = "Asking the language server…"
+    host?.paletteDocumentSymbols { [weak self] list in
+      guard let self else { return }
+      self.isBusy = false
+      guard let list else {
+        self.emptyMessage = "No language server for this file"
+        return
+      }
+      self.symbols = list
+      if self.mode == .symbols { self.refresh() }
+    }
+  }
+
+  private static func icon(forSymbolKind kind: Int) -> LucideIcon {
+    switch kind {
+    case 5, 10, 11, 23, 26: return .layers  // class, enum, interface, struct, type parameter
+    case 6, 9, 12, 25: return .code  // method, constructor, function, operator
+    case 2, 3, 4: return .package  // module, namespace, package
+    default: return .tag
+    }
+  }
+
   // MARK: Settings
 
   private func refreshSettings(_ term: String) {
@@ -670,6 +736,7 @@ final class PaletteModel {
       ("h:", "Search command history", .history),
       ("pr:", "Check out a pull request", .gitPullRequest),
       ("set:", "Find a setting", .settings),
+      ("@", "Go to a symbol in this file", .code),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(

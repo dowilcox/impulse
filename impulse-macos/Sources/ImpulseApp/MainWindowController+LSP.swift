@@ -53,6 +53,25 @@ extension MainWindowController {
     editorTab.applyDiagnostics(uri: uri, markers: markers)
   }
 
+  /// The symbols in an editor's file, from its language server (nil when
+  /// there's no server, or it doesn't answer).
+  func documentSymbols(for editor: EditorTab, completion: @escaping ([OutlineSymbol]?) -> Void) {
+    guard let path = editor.filePath else { return completion(nil) }
+    lspDidOpenIfNeeded(path: path)
+    let uri = filePathToUri(path)
+    let language = editor.lspLanguage
+    let params = encodeLspJSON(["textDocument": ["uri": uri]])
+    lspQueue.async { [weak self] in
+      let response = self?.core.lspRequest(
+        languageId: language, fileUri: uri, method: "textDocument/documentSymbol", paramsJson: params)
+      // An {"error": …} envelope means no server (or it failed): nil.
+      let data = response.flatMap { $0.data(using: .utf8) }
+      let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
+      let symbols = failed ? nil : data.map(DocumentSymbols.parse)
+      DispatchQueue.main.async { completion(symbols) }
+    }
+  }
+
   /// Keep every file's diagnostics for the Problems panel, open or not
   /// (servers like rust-analyzer report the whole workspace).
   private func recordProblems(path: String, _ diagnosticsArray: [[String: Any]]) {

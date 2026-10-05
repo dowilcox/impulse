@@ -284,6 +284,13 @@ enum MenuBuilder {
         applyKeybinding("quick_open", overrides: overrides, to: quickOpenItem)
         menu.addItem(quickOpenItem)
 
+        let symbolItem = NSMenuItem(title: "Go to Symbol in File…",
+                                    action: #selector(MenuActions.menuGoToSymbol(_:)),
+                                    keyEquivalent: "O")
+        symbolItem.target = MenuActions.shared
+        applyKeybinding("go_to_symbol", overrides: overrides, to: symbolItem)
+        menu.addItem(symbolItem)
+
         let findInProjectItem = NSMenuItem(title: "Find in Project",
                                            action: #selector(MenuActions.menuFindInProject(_:)),
                                            keyEquivalent: "F")
@@ -581,6 +588,10 @@ final class MenuActions: NSObject {
 
     @objc func menuShowCommandPalette(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseShowCommandPalette, object: nil)
+    }
+
+    @objc func menuGoToSymbol(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseGoToSymbol, object: nil)
     }
 
     @objc func menuQuickOpen(_ sender: Any?) {
