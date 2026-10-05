@@ -196,7 +196,7 @@ foundations ├──────────── Track B: git ─────
   - Add `Icon` enum mapping.
   - Material file icons stay for the tree.
 - [ ] **Component Gallery:** a debug-only window (Debug menu in Dev builds) showing every component × every built-in theme × light/dark.
-- [ ] **Accessibility baseline:** focus rings, `accessibilityLabel` on all icon-only buttons, Reduce Motion / Contrast / Transparency honored.
+- [ ] **Accessibility baseline:** focus rings, `accessibilityLabel` on all icon-only buttons, Reduce Motion / Contrast / Transparency honored. (partly: icon buttons are labeled and Reduce Motion is honored; focus rings and Increase Contrast/Reduce Transparency still to check)
 
 ### 1.2 Window and layout
 
@@ -623,7 +623,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 - [ ] **Optional vim mode** (monaco-vim, vendored).
 - [ ] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
 - [ ] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace.
-- [ ] **Accessibility pass:**
+- [ ] **Accessibility pass:** (partly: terminal text area and agent announcements done; VoiceOver walkthrough and Full Keyboard Access need a person at the Mac)
   - VoiceOver walkthrough of every surface;
   - terminal AXTextArea (value, selected range, line-for-index);
   - announcements for agent status changes;
