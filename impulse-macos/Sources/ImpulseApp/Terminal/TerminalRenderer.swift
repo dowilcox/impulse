@@ -109,6 +109,14 @@ class TerminalRenderer: NSView {
         }
     }
     var onBlockSelectionKey: ((BlockSelectionKey) -> Void)?
+    /// Bookmarked blocks (a ribbon in the left gutter of their first row).
+    var bookmarkedBlockIds: Set<UInt64> = [] {
+        didSet {
+            guard bookmarkedBlockIds != oldValue else { return }
+            for id in oldValue.symmetricDifference(bookmarkedBlockIds) { invalidateBlockRows(id) }
+        }
+    }
+    var onToggleBookmark: ((UInt64) -> Void)?
     var onToggleBlockSelection: ((UInt64) -> Void)?
     private var contextBlockId: UInt64?
 
@@ -1533,6 +1541,28 @@ class TerminalRenderer: NSView {
         let ch = fontMetrics.cellHeight
         let fullWidth = bounds.width
 
+        // Bookmark ribbons in the gutter of each bookmarked block's first row.
+        for block in overlay.blocks where bookmarkedBlockIds.contains(block.id) {
+            let row = Int(block.startRow)
+            guard row >= 0, row < lines, drawRows.contains(row), !frameCollapsedRows.contains(row) else {
+                continue
+            }
+            // Hangs from the block's top edge in the right margin.
+            let top = blockBorderY(row).rounded()
+            let width = min(7, max(4, padding - 2))
+            let left = bounds.width - (padding + width) / 2
+            let ribbon = CGMutablePath()
+            ribbon.move(to: CGPoint(x: left, y: top))
+            ribbon.addLine(to: CGPoint(x: left + width, y: top))
+            ribbon.addLine(to: CGPoint(x: left + width, y: top + ch))
+            ribbon.addLine(to: CGPoint(x: left + width / 2, y: top + ch - 4))
+            ribbon.addLine(to: CGPoint(x: left, y: top + ch))
+            ribbon.closeSubpath()
+            context.setFillColor(blockAccentColor)
+            context.addPath(ribbon)
+            context.fillPath()
+        }
+
         // Exit status and duration at the right of each finished block's
         // first row, where the shell left that space blank.
         for block in overlay.blocks where block.id != hoveredBlockId {
@@ -1820,6 +1850,18 @@ class TerminalRenderer: NSView {
             send.isEnabled = !block.isRunning
             menu.addItem(send)
         }
+
+        if onToggleBookmark != nil {
+            let bookmark = NSMenuItem(
+                title: bookmarkedBlockIds.contains(block.id) ? "Remove Bookmark" : "Bookmark Block",
+                action: #selector(contextToggleBookmark(_:)), keyEquivalent: "")
+            bookmark.target = self
+            menu.addItem(bookmark)
+        }
+    }
+
+    @objc private func contextToggleBookmark(_ sender: Any?) {
+        if let contextBlockId { onToggleBookmark?(contextBlockId) }
     }
 
     @objc private func contextSendBlockToAgent(_ sender: Any?) {

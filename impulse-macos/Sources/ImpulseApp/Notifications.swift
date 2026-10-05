@@ -165,6 +165,8 @@ extension Notification.Name {
     /// Opens the branch switcher in the frontmost window.
     static let impulseSwitchBranch = Notification.Name("impulseSwitchBranch")
     static let impulseManageBranches = Notification.Name("impulseManageBranches")
+    /// A Command Blocks menu item (userInfo["command"]) for the focused terminal.
+    static let impulseBlockCommand = Notification.Name("impulseBlockCommand")
     /// A pull request's checks finished (object: GitRepositoryState).
     static let pullRequestChecksFinished = Notification.Name("impulsePullRequestChecksFinished")
     /// Requests project-wide find.

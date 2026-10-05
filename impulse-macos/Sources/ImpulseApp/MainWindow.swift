@@ -871,6 +871,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action.hasPrefix("block="), let terminal = tabManager.selectedTerminal?.activeTerminal {
+        terminal.performBlockCommand(String(action.dropFirst(6)))
       } else if action.hasPrefix("select-blocks="), let terminal = tabManager.selectedTerminal?.activeTerminal {
         terminal.beginBlockSelection()
         for _ in 1..<max(1, Int(action.dropFirst(14)) ?? 1) { terminal.handleBlockSelectionKey(.up(extend: true)) }
@@ -1819,6 +1821,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseOpenWorkspace, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.presentOpenWorkspacePanel()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseBlockCommand, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, self.window?.isKeyWindow == true,
+          let command = notification.userInfo?["command"] as? String,
+          let terminal = self.tabManager.selectedTerminal?.activeTerminal
+        else { return }
+        terminal.performBlockCommand(command)
       }
     )
     notificationObservers.append(

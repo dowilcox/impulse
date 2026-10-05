@@ -366,6 +366,34 @@ enum MenuBuilder {
         panesItem.submenu = panesMenu
         menu.addItem(panesItem)
 
+        let blocksItem = NSMenuItem(title: "Command Blocks", action: nil, keyEquivalent: "")
+        let blocksMenu = NSMenu(title: "Command Blocks")
+        let blockCommands: [(String, String)?] = [
+            ("select_blocks", "Select Blocks"),
+            nil,
+            ("previous_block", "Previous Block"),
+            ("next_block", "Next Block"),
+            ("last_failed_block", "Last Failed Block"),
+            nil,
+            ("toggle_block_bookmark", "Bookmark Block"),
+            ("previous_block_bookmark", "Previous Bookmark"),
+            ("next_block_bookmark", "Next Bookmark"),
+        ]
+        for entry in blockCommands {
+            guard let (id, title) = entry else {
+                blocksMenu.addItem(.separator())
+                continue
+            }
+            let blockItem = NSMenuItem(
+                title: title, action: #selector(MenuActions.menuBlockCommand(_:)), keyEquivalent: "")
+            blockItem.target = MenuActions.shared
+            blockItem.representedObject = id
+            applyKeybinding(id, overrides: overrides, to: blockItem)
+            blocksMenu.addItem(blockItem)
+        }
+        blocksItem.submenu = blocksMenu
+        menu.addItem(blocksItem)
+
         menu.addItem(.separator())
 
         let fontIncreaseItem = NSMenuItem(title: "Increase Font Size",
@@ -572,6 +600,12 @@ final class MenuActions: NSObject {
 
     @objc func menuToggleRightDock(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseToggleRightDock, object: nil)
+    }
+
+    @objc func menuBlockCommand(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? String else { return }
+        NotificationCenter.default.post(
+            name: .impulseBlockCommand, object: nil, userInfo: ["command": command])
     }
 
     @objc func menuPaneCommand(_ sender: NSMenuItem) {

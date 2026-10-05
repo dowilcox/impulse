@@ -170,6 +170,46 @@ enum Keybindings {
             modifierFlags: [.command, .shift]
         ),
         BuiltinKeybinding(
+            id: "toggle_block_bookmark",
+            description: "Bookmark Command Block",
+            category: "Blocks",
+            defaultShortcut: "Cmd+Shift+K",
+            keyEquivalent: "k",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
+            id: "previous_block_bookmark",
+            description: "Previous Bookmarked Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "next_block_bookmark",
+            description: "Next Bookmarked Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "previous_block",
+            description: "Previous Command Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "next_block",
+            description: "Next Command Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
             id: "equalize_panes",
             description: "Even Out Panes",
             category: "Panes",

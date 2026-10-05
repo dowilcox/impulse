@@ -213,6 +213,9 @@ class TerminalTab: NSView {
     renderer.onToggleBlockSelection = { [weak self] id in
       self?.toggleBlockSelection(id)
     }
+    renderer.onToggleBookmark = { [weak self] id in
+      self?.toggleBookmarks([id])
+    }
     renderer.onSendBlockToAgent = { [weak self] id in
       guard let self, let text = self.agentDescription(ofBlock: id) else { return }
       NotificationCenter.default.post(
@@ -1313,6 +1316,58 @@ class TerminalTab: NSView {
   /// Make this terminal the first responder.
   func focus() {
     window?.makeFirstResponder(renderer)
+  }
+
+  // MARK: Block commands and bookmarks
+
+  /// Bookmarked blocks (this session).
+  private var bookmarkedBlocks: Set<UInt64> = []
+
+  /// A Command Blocks menu / keybinding command.
+  func performBlockCommand(_ command: String) {
+    switch command {
+    case "select_blocks": beginBlockSelection()
+    case "previous_block": jumpToPreviousCommandBlock()
+    case "next_block": jumpToNextCommandBlock()
+    case "last_failed_block": jumpToLastFailedCommandBlock()
+    case "toggle_block_bookmark":
+      // The selected blocks, else the one navigated to, else the newest.
+      let targets =
+        !blockSelection.isEmpty
+        ? blockSelection : [selectedCommandBlockId ?? navigableCommandBlocks().last?.id].compactMap { $0 }
+      toggleBookmarks(targets)
+    case "previous_block_bookmark": jumpToBookmark(-1)
+    case "next_block_bookmark": jumpToBookmark(1)
+    default: break
+    }
+  }
+
+  private func toggleBookmarks(_ ids: [UInt64]) {
+    guard !ids.isEmpty else { return }
+    let adding = !ids.allSatisfy(bookmarkedBlocks.contains)
+    for id in ids {
+      if adding { bookmarkedBlocks.insert(id) } else { bookmarkedBlocks.remove(id) }
+    }
+    renderer.bookmarkedBlockIds = bookmarkedBlocks
+  }
+
+  /// Highlight and scroll to the next (+1) or previous (-1) bookmark,
+  /// wrapping around.
+  private func jumpToBookmark(_ direction: Int) {
+    let ids = navigableCommandBlocks().map(\.id)
+    let marked = ids.filter(bookmarkedBlocks.contains)
+    guard !marked.isEmpty else { return }
+    let current = blockSelectionCursor ?? selectedCommandBlockId
+    let position = current.flatMap { ids.firstIndex(of: $0) }
+    let target: UInt64
+    if direction > 0 {
+      target = marked.first { id in position.map { ids.firstIndex(of: id)! > $0 } ?? true } ?? marked[0]
+    } else {
+      target = marked.last { id in position.map { ids.firstIndex(of: id)! < $0 } ?? true } ?? marked[marked.count - 1]
+    }
+    selectedCommandBlockId = target
+    renderer.highlightedBlockId = target
+    if backend?.scrollToCommandBlock(id: target) == true { renderer.needsDisplay = true }
   }
 
   // MARK: Block selection
