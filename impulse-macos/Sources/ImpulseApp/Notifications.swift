@@ -153,6 +153,8 @@ extension Notification.Name {
     static let terminalAgentChanged = Notification.Name("impulse.terminalAgentChanged")
     /// Go to the next agent waiting for the user.
     static let impulseNextAgent = Notification.Name("impulseNextAgent")
+    /// An editor tab closed (userInfo "path"); `impulse edit` waits for it.
+    static let impulseEditorClosed = Notification.Name("impulseEditorClosed")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.

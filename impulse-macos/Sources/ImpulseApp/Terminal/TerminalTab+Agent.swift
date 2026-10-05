@@ -71,13 +71,30 @@ extension TerminalTab {
     agentMachine.handle(.exited, at: Date())
     recordTurnBoundary(from: before, to: .exited)
     agent = nil
+    agentFromHooks = false
     agentTickTimer?.invalidate()
     agentTickTimer = nil
     agentTickDeadline = nil
     NotificationCenter.default.post(name: .terminalAgentChanged, object: self)
   }
 
+  /// An agent's hook (or `impulse status`) reported in. Starts tracking
+  /// the agent if it wasn't recognized yet.
+  func agentHook(_ hook: AgentHook, agentID: String?) {
+    if agent == nil {
+      agent =
+        KnownAgents.builtIn.first { $0.id == agentID }
+        ?? AgentKind(id: agentID ?? "agent", displayName: agentID?.capitalized ?? "Agent", names: [])
+      agentMachine = AgentStateMachine(now: Date())
+      agentFromHooks = true
+      NotificationCenter.default.post(name: .terminalAgentChanged, object: self)
+    }
+    agentEvent(.hook(hook))
+  }
+
   private func probeForegroundAgent() {
+    // Hooks vouch for the agent while its command runs.
+    if agentFromHooks, isCommandRunning { return }
     guard isCommandRunning, let backend, let leader = backend.foregroundPid(),
       leader != pid_t(backend.childPid())
     else {

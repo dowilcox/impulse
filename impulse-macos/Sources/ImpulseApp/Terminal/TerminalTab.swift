@@ -1,5 +1,6 @@
 import AppKit
 import ImpulseKit
+import ImpulseProtocol
 import os.log
 
 // MARK: - TerminalTab
@@ -22,6 +23,11 @@ class TerminalTab: NSView {
 
   /// Stable identity (desktop notifications point back at it).
   let id = UUID()
+  /// Names this pane to the `impulse` CLI (IMPULSE_PANE_TOKEN).
+  let controlToken = UUID().uuidString
+  /// The agent was announced by its hooks (keep it while the command runs
+  /// even if the process isn't one Impulse recognizes).
+  var agentFromHooks = false
 
   /// The coding agent running in this terminal, if any, and what it's doing
   /// (maintained by TerminalTab+Agent).
@@ -1050,6 +1056,19 @@ class TerminalTab: NSView {
   /// Spawn the user's login shell inside this terminal.
   /// If `initialCommand` is provided, it is sent to the PTY immediately after
   /// the process starts.
+  /// The bundled `impulse` CLI: Contents/Resources/bin in the app, or next
+  /// to the executable in a development build.
+  static let cliPath: String? = {
+    var candidates: [String] = []
+    if let resources = Bundle.main.resourceURL {
+      candidates.append(resources.appendingPathComponent("bin/impulse").path)
+    }
+    if let executable = Bundle.main.executableURL {
+      candidates.append(executable.deletingLastPathComponent().appendingPathComponent("impulse").path)
+    }
+    return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+  }()
+
   /// The rule under replayed output from a previous session.
   static let restoredRuleText = "restored from the previous session"
 
@@ -1072,6 +1091,14 @@ class TerminalTab: NSView {
       "TERM_PROGRAM": "Impulse",
       "COLORTERM": "truecolor",
     ]
+    // The `impulse` CLI finds this window and pane through these.
+    if let socket = ControlServer.shared.socketPath {
+      envDict[ControlProtocol.socketKey] = socket
+      envDict[ControlProtocol.tokenKey] = controlToken
+    }
+    if let cli = Self.cliPath {
+      envDict[ControlProtocol.cliKey] = cli
+    }
 
     // Dangerous linker/loader environment variables.
     let dangerousEnvKeys: Set<String> = [
@@ -1089,7 +1116,14 @@ class TerminalTab: NSView {
       if key == "TERM" || key == "TERM_PROGRAM" || key == "COLORTERM" { continue }
       if dangerousEnvKeys.contains(key) { continue }
       if parentOnlyEnvKeys.contains(key) { continue }
+      // Impulse launched from another Impulse terminal: use our own.
+      if key.hasPrefix("IMPULSE_") { continue }
       envDict[key] = value
+    }
+    // `impulse` on PATH inside Impulse terminals.
+    if let cli = Self.cliPath {
+      let folder = (cli as NSString).deletingLastPathComponent
+      envDict["PATH"] = folder + ":" + (envDict["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
     }
 
     var args: [String] = []

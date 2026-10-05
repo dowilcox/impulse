@@ -262,6 +262,14 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES}"
 # Copy binary
 cp "${SWIFT_BIN}" "${MACOS_DIR}/${APP_NAME}"
 
+# The `impulse` command-line tool; the app puts Contents/Resources/bin on
+# PATH inside its terminals.
+CLI_BIN="impulse-macos/.build/release/impulse"
+if [[ -f "${CLI_BIN}" ]]; then
+    mkdir -p "${RESOURCES}/bin"
+    cp "${CLI_BIN}" "${RESOURCES}/bin/impulse"
+fi
+
 # Copy SwiftPM bundle resources (Monaco assets, icons, etc.)
 # Place in Contents/Resources/ — the standard macOS location for app resources.
 BUNDLE_RESOURCES="impulse-macos/.build/release/ImpulseApp_ImpulseApp.bundle"
@@ -710,6 +718,14 @@ RPLIST
             --sign "${IMPULSE_SIGN_IDENTITY}" \
             --timestamp \
             "${RESOURCES}/ImpulseApp_ImpulseApp.bundle"
+    fi
+
+    if [[ -f "${RESOURCES}/bin/impulse" ]]; then
+        echo "    Signing command-line tool..."
+        codesign --force --options runtime \
+            --sign "${IMPULSE_SIGN_IDENTITY}" \
+            --timestamp \
+            "${RESOURCES}/bin/impulse"
     fi
 
     # Sign the app bundle (inside-out: resource bundle first, then the .app)

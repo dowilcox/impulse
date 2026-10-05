@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseProtocol
 import ImpulseGit
 
 // MARK: - AppDelegate
@@ -47,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
     DesktopNotifier.shared.activate()
+    // Before any terminal starts, so they get IMPULSE_SOCKET.
+    ControlServer.shared.handler = { [weak self] request, reply in
+      self?.handleControl(request, reply: reply)
+    }
+    ControlServer.shared.start()
     // The Dock badge counts terminals (in any window) that need attention.
     NotificationCenter.default.addObserver(
       forName: .terminalAttentionChanged, object: nil, queue: .main
@@ -329,6 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     persistSessionStateFromOpenWindows()
+    ControlServer.shared.stop()
 
     // Persist window geometry from the frontmost window.
     if let front = windowControllers.first(where: { $0.window?.isKeyWindow == true })
@@ -372,6 +379,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   // MARK: Window Management
+
+  /// Route an `impulse` request to the window holding the calling pane, or
+  /// the frontmost window.
+  private func handleControl(_ request: ControlRequest, reply: @escaping (ControlResponse) -> Void) {
+    if let token = request.token {
+      for controller in windowControllers {
+        if let terminal = controller.terminal(controlToken: token) {
+          controller.handleControl(request, terminal: terminal, reply: reply)
+          return
+        }
+      }
+    }
+    guard
+      let controller = windowControllers.first(where: { $0.window?.isKeyWindow == true })
+        ?? windowControllers.first
+    else {
+      reply(ControlResponse(ok: false, message: "No Impulse window is open."))
+      return
+    }
+    controller.handleControl(request, terminal: nil, reply: reply)
+  }
 
   /// Reopen every saved window (the first reuses the launch window), then
   /// bring the one that was active to the front.

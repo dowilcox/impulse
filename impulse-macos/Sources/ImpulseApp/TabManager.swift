@@ -638,6 +638,10 @@ final class TabManager: NSObject {
       container.terminateAllProcesses()
     case .editor(let editor):
       editor.cleanup()
+      if let path = editor.filePath {
+        NotificationCenter.default.post(
+          name: .impulseEditorClosed, object: nil, userInfo: ["path": path])
+      }
     case .imagePreview:
       break
     case .diffReview(_, let view):

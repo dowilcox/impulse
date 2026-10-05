@@ -70,6 +70,17 @@ let package = Package(
                 .swiftLanguageMode(.v5),
             ]
         ),
+        // The app <-> `impulse` CLI protocol (Foundation only, no other deps).
+        .target(
+            name: "ImpulseProtocol",
+            path: "Sources/ImpulseProtocol"
+        ),
+        // The `impulse` command-line tool bundled with the app.
+        .executableTarget(
+            name: "impulse",
+            dependencies: ["ImpulseProtocol"],
+            path: "Sources/ImpulseCLI"
+        ),
         .executableTarget(
             name: "ImpulseApp",
             dependencies: [
@@ -77,6 +88,7 @@ let package = Package(
                 "ImpulseKit",
                 "ImpulseGit",
                 "ImpulseLSP",
+                "ImpulseProtocol",
             ],
             path: "Sources/ImpulseApp",
             resources: [
@@ -129,6 +141,7 @@ let package = Package(
             name: "ImpulseKitTests",
             dependencies: [
                 "ImpulseKit",
+                "ImpulseProtocol",
             ],
             path: "Tests/ImpulseKitTests",
             resources: [
