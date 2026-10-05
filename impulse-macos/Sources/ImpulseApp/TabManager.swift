@@ -277,6 +277,8 @@ final class TabManager: NSObject {
 
   /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
   private(set) var closedTabs: [ClosedTabInfo] = []
+  /// A tab (or, when the flag is set, a pane) was closed and can come back.
+  var onClosedTabRecorded: ((_ title: String, _ isPane: Bool) -> Void)?
 
   /// Maximum number of closed tabs to remember.
   private let maxClosedTabs = 20
@@ -717,6 +719,9 @@ final class TabManager: NSObject {
     if closedTabs.count > maxClosedTabs {
       closedTabs.removeFirst()
     }
+    let first = tab.panes.first
+    let title = first?.title ?? first?.path.map { ($0 as NSString).lastPathComponent } ?? "terminal"
+    onClosedTabRecorded?(title, fromTabUID != nil)
   }
 
   /// Closes the tab at the given index. If it is the active tab, the tab that

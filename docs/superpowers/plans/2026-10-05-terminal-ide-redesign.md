@@ -279,7 +279,7 @@ foundations ├──────────── Track B: git ─────
 - [ ] **Editor panes:**
   - stack multiple editor surfaces with a mini tab header (preview-mode italic tab for single-click opens, Nova/VS Code style);
   - opening a file targets the focused tab's editor pane, or creates one to the right (setting: right split / new tab).
-- [ ] **⌘Z restores** a closed pane or tab within 10 s (keep surface state alive; PTYs are not kept alive). After that, "Reopen closed tab" stays (existing `closedTabs` stack).
+- [x] **⌘Z restores** a closed pane or tab within 10 s (keep surface state alive; PTYs are not kept alive). After that, "Reopen closed tab" stays (existing `closedTabs` stack).
 - [x] **`TerminalSessionHub`** from Spike D wired for all terminals. Hidden tabs keep delivering events (§6.1).
 
 ### 2.3 Session restore v2

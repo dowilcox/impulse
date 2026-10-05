@@ -190,12 +190,15 @@ enum MenuBuilder {
         let item = NSMenuItem()
         item.submenu = menu
 
+        // `undo:` / `redo:` reach the first responder's undo stack (NSWindow
+        // answers them with its undo manager); `UndoManager.undo` has no
+        // colon and nothing in the responder chain implements it.
         menu.addItem(withTitle: "Undo",
-                     action: #selector(UndoManager.undo),
+                     action: Selector(("undo:")),
                      keyEquivalent: "z")
 
         let redoItem = NSMenuItem(title: "Redo",
-                                  action: #selector(UndoManager.redo),
+                                  action: Selector(("redo:")),
                                   keyEquivalent: "Z")
         redoItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(redoItem)

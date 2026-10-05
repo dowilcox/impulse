@@ -282,6 +282,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     tabManager.tabCloseHandler = { [weak self] index in
       self?.requestCloseTab(index: index)
     }
+    tabManager.onClosedTabRecorded = { [weak self] title, isPane in
+      self?.offerUndoClose(title: title, isPane: isPane)
+    }
 
     // Open a default terminal tab (skipped when launching with file arguments).
     if !skipInitialTerminal {
@@ -1131,6 +1134,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         requestCloseFocusedPane()
       } else if action == "reopen" {
         tabManager.reopenLastClosedTab()
+      } else if action == "undo" {
+        // What Edit ▸ Undo ends up sending (snapshot windows are never key,
+        // so straight to the window).
+        _ = window?.perform(Selector(("undo:")), with: nil)
       } else if action == "newtab" {
         tabManager.addTerminalTab()
       } else if action.hasPrefix("pane=") {
@@ -3153,6 +3160,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   @objc private func previewButtonClicked(_ sender: Any?) {
     togglePreview()
+  }
+
+  /// For ten seconds after a tab or pane closes, ⌘Z (or the toast) brings it
+  /// back: its scrollback, folder and agent session, in a new shell.
+  func offerUndoClose(title: String, isPane: Bool) {
+    guard let undoManager = window?.undoManager else { return }
+    let token = NSObject()
+    var used = false
+    let reopen: () -> Void = { [weak self, weak undoManager] in
+      guard !used else { return }
+      used = true
+      undoManager?.removeAllActions(withTarget: token)
+      self?.tabManager.reopenLastClosedTab()
+    }
+    undoManager.registerUndo(withTarget: token) { _ in reopen() }
+    undoManager.setActionName(isPane ? "Close Pane" : "Close Tab")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak undoManager] in
+      used = true
+      undoManager?.removeAllActions(withTarget: token)
+    }
+    toasts.show(
+      Toast(
+        kind: .info, message: "Closed \(title)", actionTitle: "Undo ⌘Z", action: reopen, lifetime: 10))
   }
 
   /// The file against its staged version in Monaco's diff editor; the
