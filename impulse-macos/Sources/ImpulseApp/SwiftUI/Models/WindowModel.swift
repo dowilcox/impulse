@@ -311,6 +311,8 @@ final class WindowModel {
   var onOpenFile: ((String, Int?) -> Void)?
   /// Open a file in a new pane to the right of the focused one.
   var onOpenFileBeside: ((String) -> Void)?
+  /// Send "@path" to the most relevant running agent.
+  var onMentionInAgent: ((String) -> Void)?
   var onNewFile: ((String) -> Void)?
   var onNewFolder: ((String) -> Void)?
   /// Sidebar action-bar buttons (act on the selected tree dir, or the root):

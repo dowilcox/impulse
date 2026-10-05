@@ -207,6 +207,11 @@ class TerminalTab: NSView {
     renderer.onRerunBlock = { [weak self] id in
       self?.rerunBlock(id: id)
     }
+    renderer.onSendBlockToAgent = { [weak self] id in
+      guard let self, let text = self.agentDescription(ofBlock: id) else { return }
+      NotificationCenter.default.post(
+        name: .impulseSendToAgent, object: self, userInfo: ["text": text])
+    }
     renderer.onShowCommandHistory = { [weak self] in
       self?.showCommandHistory()
     }
@@ -725,6 +730,26 @@ class TerminalTab: NSView {
     guard !parts.isEmpty else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(parts.joined(separator: "\n\n"), forType: .string)
+  }
+
+  /// A block as a message for an agent: the command, how it ended, and the
+  /// tail of its output.
+  func agentDescription(ofBlock id: UInt64) -> String? {
+    guard let block = block(withId: id) else { return nil }
+    let command = block.command?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    var lines = block.output.trimmingCharacters(in: .newlines).components(separatedBy: "\n")
+    var note = ""
+    if lines.count > 200 {
+      note = "(last 200 of \(lines.count) lines)\n"
+      lines = Array(lines.suffix(200))
+    }
+    var text = "I ran `\(command.isEmpty ? "a command" : command)`"
+    if let cwd = block.cwd ?? (currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory) {
+      text += " in \(cwd)"
+    }
+    if let code = block.exitCode { text += code == 0 ? " (it succeeded)" : " (exit status \(code))" }
+    text += ". Output:\n\(note)```\n\(lines.joined(separator: "\n"))\n```\n"
+    return text
   }
 
   /// Re-run a specific block's command in the terminal.

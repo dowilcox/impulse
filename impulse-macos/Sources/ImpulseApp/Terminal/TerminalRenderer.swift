@@ -91,6 +91,8 @@ class TerminalRenderer: NSView {
     var onCopyBlockCommand: ((UInt64) -> Void)?
     var onCopyBlockOutput: ((UInt64) -> Void)?
     var onCopyBlockCommandAndOutput: ((UInt64) -> Void)?
+    /// Hand a command block (command, exit status, output) to an agent.
+    var onSendBlockToAgent: ((UInt64) -> Void)?
     var onRerunBlock: ((UInt64) -> Void)?
     private var contextBlockId: UInt64?
 
@@ -1694,6 +1696,19 @@ class TerminalRenderer: NSView {
         rerun.target = self
         rerun.isEnabled = hasCommand && !block.isRunning
         menu.addItem(rerun)
+
+        if onSendBlockToAgent != nil {
+            let send = NSMenuItem(
+                title: "Send to Agent", action: #selector(contextSendBlockToAgent(_:)),
+                keyEquivalent: "")
+            send.target = self
+            send.isEnabled = !block.isRunning
+            menu.addItem(send)
+        }
+    }
+
+    @objc private func contextSendBlockToAgent(_ sender: Any?) {
+        if let contextBlockId { onSendBlockToAgent?(contextBlockId) }
     }
 
     /// Append block-to-block navigation items (previous / next / last failed).

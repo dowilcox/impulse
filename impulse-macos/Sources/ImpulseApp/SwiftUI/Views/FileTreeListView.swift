@@ -242,6 +242,9 @@ private struct FlatFileRowView: View {
       Button("Open to the Side") {
         model.onOpenFileBeside?(node.path)
       }
+      Button("Mention in Agent") {
+        model.onMentionInAgent?(node.path)
+      }
       Divider()
     }
 

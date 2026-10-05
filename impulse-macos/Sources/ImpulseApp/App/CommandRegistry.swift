@@ -76,6 +76,10 @@ enum CommandRegistry {
         keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff
       ) { [weak controller] in controller?.reviewLastAgentTurn() },
       AppCommand(
+        id: "send_selection_to_agent", title: "Send Selection to Agent", category: "Agents",
+        keywords: ["claude", "codex", "code", "ask"], icon: .messageSquarePlus
+      ) { [weak controller] in controller?.sendEditorSelectionToAgent() },
+      AppCommand(
         id: "agent_composer", title: "Compose Message to Agent", category: "Agents",
         keywords: ["prompt", "claude", "codex", "write"], icon: .messageSquare,
         keybindingId: "agent_composer"

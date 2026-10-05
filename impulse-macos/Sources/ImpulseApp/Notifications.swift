@@ -155,6 +155,9 @@ extension Notification.Name {
     static let impulseNextAgent = Notification.Name("impulseNextAgent")
     /// Toggle ⌘I's prompt editor over the focused terminal's program.
     static let impulseAgentComposer = Notification.Name("impulseAgentComposer")
+    /// Hand text to the most relevant running agent (userInfo "text"; the
+    /// object, when a terminal, is never the target).
+    static let impulseSendToAgent = Notification.Name("impulseSendToAgent")
     /// An editor tab closed (userInfo "path"); `impulse edit` waits for it.
     static let impulseEditorClosed = Notification.Name("impulseEditorClosed")
     /// Shows the git Changes panel in the frontmost window.

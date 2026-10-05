@@ -359,6 +359,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         userInfo: ["path": path, "line": line as Any]
       )
     }
+    windowModel.onMentionInAgent = { [weak self] path in
+      guard let self else { return }
+      self.sendToBestAgent("@" + self.relativeToWorkspace(path) + " ")
+    }
     windowModel.onOpenFileBeside = { path in
       NotificationCenter.default.post(
         name: .impulseOpenFile, object: nil, userInfo: ["path": path, "beside": true])
@@ -637,6 +641,60 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.async { self?.tabManager.setPorts(ports) }
       }
     }
+  }
+
+  /// Send text to the agent most likely meant: one waiting on the user in
+  /// the active workspace first, then any other agent. Queued while busy.
+  func sendToBestAgent(_ text: String, excluding source: TerminalTab? = nil) {
+    let workspaceName = tabManager.activeWorkspace.name
+    let candidates = windowModel.agents.filter { $0.id != source?.id && $0.state != .exited }
+    let target =
+      candidates.first { $0.workspaceName == workspaceName && $0.state.wantsUser }
+      ?? candidates.first { $0.workspaceName == workspaceName }
+      ?? candidates.first
+    guard let target else {
+      toasts.show(Toast(kind: .info, message: "No agent is running in this window."))
+      return
+    }
+    sendToAgent(text, terminalID: target.id)
+  }
+
+  /// The editor's selection, with where it came from, to an agent.
+  func sendEditorSelectionToAgent() {
+    guard let editor = tabManager.selectedEditor, let webView = editor.webView else {
+      toasts.show(Toast(kind: .info, message: "Select some code in an editor first."))
+      return
+    }
+    let script = """
+      (function(){const s=editor.getSelection();const m=editor.getModel();
+      return JSON.stringify({text:m.getValueInRange(s),start:s.startLineNumber,end:s.endLineNumber,
+      language:m.getLanguageId()});})()
+      """
+    webView.evaluateJavaScript(script) { [weak self] result, _ in
+      guard let self, let json = result as? String,
+        let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+        let text = object["text"] as? String, !text.isEmpty
+      else {
+        self?.toasts.show(Toast(kind: .info, message: "Select some code in the editor first."))
+        return
+      }
+      let start = object["start"] as? Int ?? 1
+      let end = object["end"] as? Int ?? start
+      let language = object["language"] as? String ?? ""
+      let path = editor.filePath.map { self.relativeToWorkspace($0) } ?? "an unsaved file"
+      let lines = start == end ? "line \(start)" : "lines \(start)–\(end)"
+      self.sendToBestAgent("In @\(path), \(lines):\n```\(language)\n\(text)\n```\n")
+    }
+  }
+
+  /// "@path" relative to the active workspace (or repository) root.
+  func relativeToWorkspace(_ path: String) -> String {
+    let roots = [tabManager.activeWorkspace.kind == .folder ? tabManager.activeWorkspace.root : nil,
+      windowModel.repository?.root, fileTreeRootPath].compactMap { $0 }
+    for root in roots where path.hasPrefix(root + "/") {
+      return String(path.dropFirst(root.count + 1))
+    }
+    return path
   }
 
   /// ⌘I: a prompt editor over the program in the focused terminal (an
@@ -2021,6 +2079,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .agentCheckpointsChanged, object: nil, queue: .main) { [weak self] _ in
         self?.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseSendToAgent, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let text = notification.userInfo?["text"] as? String else { return }
+        if let terminal = notification.object as? TerminalTab {
+          guard self.tabManager.ownsTerminal(terminal) else { return }
+          self.sendToBestAgent(text, excluding: terminal)
+        } else if self.window?.isKeyWindow == true {
+          self.sendToBestAgent(text)
+        }
       }
     )
     notificationObservers.append(
