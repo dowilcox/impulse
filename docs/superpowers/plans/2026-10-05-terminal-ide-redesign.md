@@ -451,7 +451,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 5.1 Input editor v2 (§6.2)
 
-- [ ] **`CommandEditorView`:** a TextKit 2 `NSTextView` subclass.
+- [x] **`CommandEditorView`:** a TextKit 2 `NSTextView` subclass.
   - Multi-line (⇧⏎); paste preserves newlines.
   - Ghost text via a temporary attribute or overlay.
   - IME and dictation; Emacs bindings; undo.
@@ -543,7 +543,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - uninstall.
   - Record agent session ids for **Resume** on restore.
 - [x] **Opt-in `$VISUAL` / `$EDITOR`** = `impulse edit --wait` inside Impulse terminals. The tab closes, then the CLI returns.
-- [ ] **Composer overlay (⌘I):**
+- [ ] **Composer overlay (⌘I):** (done: editor above the TUI, @file mentions, bracketed-paste send; left: image paste, history, auto-show)
   - `CommandEditorView` above the TUI;
   - @file mentions from the workspace index; image paste; history;
   - send via bracketed paste (Enter optional);
@@ -581,29 +581,29 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ## M7: History, conflicts, branches, PRs
 
-- [ ] **History surface:**
+- [ ] **History surface:** (done: lane graph, ref chips, incoming/outgoing markers, text filter, paging; left: fork-point dimming, author/path/date filters)
   - lane graph (`ImpulseKit/Git/GraphLayout.swift`, tested against `git log --graph` shapes);
   - ref chips; incoming/outgoing markers; fork-point dimming;
   - search and filters (message, author, SHA, path, date); paging.
-- [ ] **Commit details:** metadata plus a read-only multi-file diff (review renderer).
-- [ ] **Actions:** checkout, branch here, cherry-pick, revert, reset soft/mixed/hard (with oplog), copy SHA, compare with the working tree, compare two commits.
-- [ ] **File history** from the tree or editor (path-filtered History). Blame click-through.
-- [ ] **Conflicts:**
+- [x] **Commit details:** metadata plus a read-only multi-file diff (review renderer).
+- [x] **Actions:** checkout, branch here, cherry-pick, revert, reset soft/mixed/hard (with oplog), copy SHA, compare with the working tree, compare two commits.
+- [x] **File history** from the tree or editor (path-filtered History). Blame click-through.
+- [x] **Conflicts:**
   - operation banner (merge/rebase/cherry-pick/revert with step) with Continue/Skip/Abort;
   - conflict list;
   - inline Accept current / incoming / both in Monaco; counter with next/previous;
   - Mark resolved (stage).
   - "Ask agent to resolve" sends the conflict hunks to an agent pane.
-- [ ] **Stash management:** view as multi-diff, apply/pop/drop (undoable), partial stash from selection (later).
-- [ ] **Branch management:** rename, delete with merged/stale badges, upstream, publish.
-- [ ] **`gh` integration (optional, detected):**
+- [x] **Stash management:** view as multi-diff, apply/pop/drop (undoable), partial stash from selection (later).
+- [x] **Branch management:** rename, delete with merged/stale badges, upstream, publish.
+- [x] **`gh` integration (optional, detected):**
   - PR chip: state, draft, review decision, checks;
   - checks polling with backoff;
   - Create PR (draft, title and body from commits);
   - open in browser;
   - notification when checks finish;
   - `gh pr checkout` into a new worktree.
-- [ ] **Import PR review threads** (`gh api graphql` `reviewThreads`) into the Review surface as comments with "View on GitHub" and "Send to agent".
+- [x] **Import PR review threads** (`gh api graphql` `reviewThreads`) into the Review surface as comments with "View on GitHub" and "Send to agent".
 - [ ] **Later (separate plan):** interactive rebase editor, 3-way merge editor with "apply non-conflicting", operation history timeline UI.
 
 ---
