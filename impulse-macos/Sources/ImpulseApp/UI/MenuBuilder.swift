@@ -306,6 +306,13 @@ enum MenuBuilder {
         applyKeybinding("switch_branch", overrides: overrides, to: branchItem)
         menu.addItem(branchItem)
 
+        let manageBranchesItem = NSMenuItem(title: "Manage Branches…",
+                                            action: #selector(MenuActions.menuManageBranches(_:)),
+                                            keyEquivalent: "")
+        manageBranchesItem.target = MenuActions.shared
+        applyKeybinding("manage_branches", overrides: overrides, to: manageBranchesItem)
+        menu.addItem(manageBranchesItem)
+
         let changesItem = NSMenuItem(title: "Show Changes",
                                      action: #selector(MenuActions.menuShowChanges(_:)),
                                      keyEquivalent: "g")
@@ -553,6 +560,10 @@ final class MenuActions: NSObject {
 
     @objc func menuSwitchBranch(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseSwitchBranch, object: nil)
+    }
+
+    @objc func menuManageBranches(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseManageBranches, object: nil)
     }
 
     @objc func menuShowChanges(_ sender: Any?) {

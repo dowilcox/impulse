@@ -838,6 +838,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     case "quickopen": showPalette(prefix: "")
     case "quickopen-query": showPalette(prefix: "wbv")
     case "branches": showPalette(prefix: "b:")
+    case "manage-branches": presentBranchManager()
     case "review": openDiffReview()
     case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
     case "changes": showChangesPanel()
@@ -1832,6 +1833,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseSwitchBranch, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showBranchSwitcher()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseManageBranches, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.presentBranchManager()
       }
     )
     notificationObservers.append(

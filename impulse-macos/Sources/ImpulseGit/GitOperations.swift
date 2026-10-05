@@ -231,6 +231,53 @@ public enum GitOperations {
     void(git(["branch", force ? "-D" : "-d", name], in: root))
   }
 
+  public struct BranchInfo: Equatable, Sendable {
+    public let name: String
+    public let upstream: String?
+    public let ahead: Int
+    public let behind: Int
+    /// The upstream branch was deleted on the remote.
+    public let upstreamGone: Bool
+    public let lastCommit: Date
+    public let subject: String
+    public let isCurrent: Bool
+    /// Fully merged into the base branch (safe to delete).
+    public let isMerged: Bool
+  }
+
+  /// Local branches with their tracking state, most recently committed
+  /// first. `base` decides "merged" (the default branch).
+  public static func branchDetails(root: String, base: String?) -> [BranchInfo] {
+    guard
+      case .success(let result) = git(
+        [
+          "for-each-ref", "--sort=-committerdate",
+          "--format=%(refname:short)%1f%(upstream:short)%1f%(upstream:track)%1f%(committerdate:unix)%1f%(subject)%1f%(HEAD)",
+          "refs/heads",
+        ], in: root)
+    else { return [] }
+    var merged = Set<String>()
+    if let base,
+      case .success(let list) = git(["branch", "--merged", base, "--format=%(refname:short)"], in: root)
+    {
+      merged = Set(list.stdout.split(separator: "\n").map(String.init))
+    }
+    return result.stdout.split(separator: "\n").compactMap { line in
+      let fields = line.components(separatedBy: "\u{1f}")
+      guard fields.count >= 6 else { return nil }
+      let track = fields[2]
+      func count(_ label: String) -> Int {
+        guard let range = track.range(of: label + " ") else { return 0 }
+        return Int(track[range.upperBound...].prefix { $0.isNumber }) ?? 0
+      }
+      return BranchInfo(
+        name: fields[0], upstream: fields[1].isEmpty ? nil : fields[1],
+        ahead: count("ahead"), behind: count("behind"), upstreamGone: track.contains("gone"),
+        lastCommit: Date(timeIntervalSince1970: Double(fields[3]) ?? 0), subject: fields[4],
+        isCurrent: fields[5] == "*", isMerged: merged.contains(fields[0]) && fields[0] != base)
+    }
+  }
+
   /// Local and remote-tracking branch names (`refs/heads`, `refs/remotes`),
   /// most recently committed first.
   public static func branches(root: String) -> (local: [String], remote: [String]) {

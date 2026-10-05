@@ -293,6 +293,14 @@ enum Keybindings {
             modifierFlags: [.control, .command]
         ),
         BuiltinKeybinding(
+            id: "manage_branches",
+            description: "Manage Branches",
+            category: "Git",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
             id: "show_changes",
             description: "Show Changes (Git)",
             category: "Navigation",

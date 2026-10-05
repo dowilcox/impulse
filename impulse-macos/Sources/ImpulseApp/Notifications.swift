@@ -164,6 +164,7 @@ extension Notification.Name {
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.
     static let impulseSwitchBranch = Notification.Name("impulseSwitchBranch")
+    static let impulseManageBranches = Notification.Name("impulseManageBranches")
     /// Requests project-wide find.
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
     /// Requests toggling markdown preview in the active editor tab.

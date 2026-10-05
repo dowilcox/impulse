@@ -522,4 +522,30 @@
       #expect(all.count == 1, "the snapshot commit isn't history")
     }
   }
+
+  struct BranchDetailsTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func reportsMergedAndCurrentBranches() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "first")
+      try repo.git("branch", "merged-topic")
+      try repo.git("checkout", "-q", "-b", "open-topic")
+      try repo.commit(["b.txt": "work\n"], message: "topic work")
+      try repo.git("checkout", "-q", "main")
+
+      let branches = GitOperations.branchDetails(root: repo.root, base: "main")
+      let byName = Dictionary(uniqueKeysWithValues: branches.map { ($0.name, $0) })
+      #expect(Set(byName.keys) == ["main", "merged-topic", "open-topic"])
+      #expect(byName["main"]?.isCurrent == true)
+      #expect(byName["main"]?.isMerged == false, "the base itself isn't 'merged'")
+      #expect(byName["merged-topic"]?.isMerged == true)
+      #expect(byName["open-topic"]?.isMerged == false)
+      #expect(byName["open-topic"]?.subject == "topic work")
+      #expect(byName["open-topic"]?.upstream == nil)
+    }
+  }
 #endif
