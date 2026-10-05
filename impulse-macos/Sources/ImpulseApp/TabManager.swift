@@ -1636,6 +1636,7 @@ final class TabManager: NSObject {
       let directory = tabDirectory(for: surface)
       var isDirectInteractionActive = false
       var progress: TerminalProgress? = nil
+      var sessionStatus: TerminalSessionStatus? = nil
       let isDirty = tab.surfaces.contains {
         if case .editor(let editor) = $0 { return editor.isModified }
         return false
@@ -1645,6 +1646,9 @@ final class TabManager: NSObject {
         isDirectInteractionActive = container.activeTerminal?.isDirectInteraction ?? false
         if let report = container.activeTerminal?.progress, report.state != .hidden {
           progress = report
+        }
+        if let status = container.activeTerminal?.sessionStatus, !status.isEmpty {
+          sessionStatus = status
         }
       default:
         break
@@ -1676,6 +1680,7 @@ final class TabManager: NSObject {
         directory: directory.map(Self.abbreviateHomePath),
         isDirectInteractionActive: isDirectInteractionActive,
         progress: progress,
+        sessionStatus: sessionStatus,
         isDirty: isDirty,
         paneCount: paneCount,
         isZoomed: isZoomed,

@@ -970,6 +970,10 @@ impl TerminalBackend {
                                             let _ = event_tx
                                                 .send(TerminalEvent::Progress { state, percent });
                                         }
+                                        crate::osc_scanner::OscEvent::SessionStatus(fields) => {
+                                            let _ =
+                                                event_tx.send(TerminalEvent::SessionStatus(fields));
+                                        }
                                     }
 
                                     output_cursor = output_cursor.max(osc_event.end_offset.min(n));

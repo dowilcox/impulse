@@ -51,6 +51,8 @@ class TerminalTab: NSView {
   /// Latest OSC 9;4 progress report from the foreground program. Reset to
   /// hidden when the command ends so a crashed program can't leave it stuck.
   private(set) var progress: TerminalProgress = .hidden
+  /// The foreground program's status line (OSC 21337), cleared with it.
+  private(set) var sessionStatus = TerminalSessionStatus()
 
   /// The renderer view that draws the terminal grid.
   let renderer: TerminalRenderer
@@ -356,6 +358,11 @@ class TerminalTab: NSView {
       )
     case .commandBlockEnded(let block):
       isCommandRunning = false
+      if !sessionStatus.isEmpty {
+        // The program that set it is gone.
+        sessionStatus = TerminalSessionStatus()
+        NotificationCenter.default.post(name: .terminalProgressChanged, object: self)
+      }
       stopAgentProbe()
       endAgent()
       setProgress(.hidden)
@@ -387,6 +394,12 @@ class TerminalTab: NSView {
       setPasswordInput(active)
     case .progress(let report):
       setProgress(report)
+    case .sessionStatus(let fields):
+      var status = sessionStatus
+      status.apply(fields)
+      guard status != sessionStatus else { return }
+      sessionStatus = status
+      NotificationCenter.default.post(name: .terminalProgressChanged, object: self)
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):

@@ -119,6 +119,9 @@ struct TitlebarTabStrip: View {
     } else if let progress = tab.progress {
       ProgressRing(
         progress: progress.fraction, color: progressColor(progress), size: 12, lineWidth: 1.6)
+    } else if let indicator = tab.sessionStatus?.indicator {
+      StatusDot(color: Color(nsColor: NSColor(hex: indicator)), size: 8)
+        .frame(width: 13, height: 13)
     } else if tab.isTerminal {
       Icon(tab.isDirectInteractionActive ? .squareTerminal : .terminal, size: 13)
         .foregroundStyle(selected ? chrome.text : chrome.textTertiary)
@@ -165,6 +168,9 @@ struct TitlebarTabStrip: View {
 
   private func tabHelp(_ tab: TabDisplayInfo) -> String {
     var parts = [tab.title]
+    if let status = tab.sessionStatus, !status.status.isEmpty {
+      parts.append(status.detail.isEmpty ? status.status : "\(status.status): \(status.detail)")
+    }
     if let dir = tab.directory { parts.append(dir) }
     if let branch = tab.gitBranch { parts.append("⎇ \(branch)") }
     return parts.joined(separator: " — ")
@@ -173,6 +179,7 @@ struct TitlebarTabStrip: View {
   private func accessibilityLabel(_ tab: TabDisplayInfo) -> String {
     var label = "\(tab.isTerminal ? "Terminal" : "Editor"): \(tab.title)"
     if tab.needsAttention { label += ", needs attention" }
+    if let status = tab.sessionStatus?.status, !status.isEmpty { label += ", \(status)" }
     if let progress = tab.progress, let fraction = progress.fraction {
       label += ", \(Int(fraction * 100)) percent"
     }

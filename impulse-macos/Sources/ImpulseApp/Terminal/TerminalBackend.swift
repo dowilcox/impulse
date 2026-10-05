@@ -88,6 +88,39 @@ enum TerminalBackendEvent {
     case notification(title: String, body: String)
     case progress(TerminalProgress)
     case passwordInputChanged(Bool)
+    /// iTerm2 OSC 21337 keys that were set (empty value = cleared).
+    case sessionStatus([String: String])
+}
+
+/// A program's own status line for its session (iTerm2 OSC 21337).
+struct TerminalSessionStatus: Equatable {
+    var status = ""
+    /// Hex color of the indicator dot (`#RRGGBB`), when set.
+    var indicator: String?
+    var statusColor: String?
+    var detail = ""
+
+    var isEmpty: Bool { status.isEmpty && indicator == nil && detail.isEmpty }
+
+    /// Apply an update: keys present replace (empty clears), others stay.
+    mutating func apply(_ fields: [String: String]) {
+        if let value = fields["status"] { status = value }
+        if let value = fields["detail"] { detail = value }
+        if let value = fields["indicator"] { indicator = Self.hex(value) }
+        if let value = fields["status-color"] { statusColor = Self.hex(value) }
+    }
+
+    /// `#RRGGBB` or xterm `rgb:RR/GG/BB` as `#RRGGBB`; nil when empty or odd.
+    static func hex(_ value: String) -> String? {
+        if value.hasPrefix("#"), value.count == 7 { return value }
+        if value.hasPrefix("rgb:") {
+            let parts = value.dropFirst(4).split(separator: "/").map { String($0.prefix(2)) }
+            if parts.count == 3, parts.allSatisfy({ $0.count == 2 && UInt8($0, radix: 16) != nil }) {
+                return "#" + parts.joined()
+            }
+        }
+        return nil
+    }
 }
 
 /// Progress reported by the foreground program via OSC 9;4.
@@ -567,6 +600,8 @@ final class TerminalBackend {
                     events.append(.progress(TerminalProgress(state: state, percent: percent)))
                 } else if let active = dict["PasswordInputChanged"] as? Bool {
                     events.append(.passwordInputChanged(active))
+                } else if let fields = dict["SessionStatus"] as? [String: String] {
+                    events.append(.sessionStatus(fields))
                 }
             }
         }

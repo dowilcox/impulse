@@ -42,6 +42,9 @@ pub enum OscEvent {
         state: ProgressState,
         percent: Option<u8>,
     },
+    /// iTerm2 OSC 21337 session status: the keys it set (`status`,
+    /// `indicator`, `status-color`, `detail`); an empty value clears one.
+    SessionStatus(std::collections::BTreeMap<String, String>),
 }
 
 /// OSC event with byte offsets in the most recently scanned chunk.
@@ -216,6 +219,10 @@ impl OscScanner {
             return Self::parse_impulse_command(&self.buf[13..]).map(OscEvent::CommandText);
         }
 
+        if self.buf.starts_with(b"21337;") {
+            return Self::parse_session_status(&self.buf[6..]);
+        }
+
         if self.buf.starts_with(b"1337;") {
             return Self::parse_iterm2_attention(&self.buf[5..]).map(OscEvent::AttentionRequest);
         }
@@ -251,6 +258,24 @@ impl OscScanner {
             "yes" | "once" | "no" => Some(value.to_string()),
             _ => None,
         }
+    }
+
+    /// Parse an iTerm2 session status payload after "21337;":
+    /// `key=value` pairs separated by ';'. Unknown keys are ignored; values
+    /// are capped at 200 characters.
+    fn parse_session_status(payload: &[u8]) -> Option<OscEvent> {
+        let s = std::str::from_utf8(payload).ok()?;
+        let mut fields = std::collections::BTreeMap::new();
+        for pair in s.split(';') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            if matches!(key, "status" | "indicator" | "status-color" | "detail") {
+                let value: String = Self::sanitize_text(value).chars().take(200).collect();
+                fields.insert(key.to_string(), value);
+            }
+        }
+        (!fields.is_empty()).then_some(OscEvent::SessionStatus(fields))
     }
 
     /// Parse an OSC 9;4 payload after "9;4": `;state[;percent]` or empty.
@@ -421,6 +446,35 @@ impl Default for OscScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_iterm2_session_status() {
+        let mut scanner = OscScanner::new();
+        scanner
+            .scan(b"\x1b]21337;status=Working;indicator=#ffa500;bogus=1;detail=Editing files\x07");
+        let events = scanner.drain_events();
+        let mut expected = std::collections::BTreeMap::new();
+        expected.insert("status".to_string(), "Working".to_string());
+        expected.insert("indicator".to_string(), "#ffa500".to_string());
+        expected.insert("detail".to_string(), "Editing files".to_string());
+        assert_eq!(events, vec![OscEvent::SessionStatus(expected)]);
+
+        scanner.scan(b"\x1b]21337;status=;indicator=\x1b\\");
+        let cleared = scanner.drain_events();
+        let mut empty = std::collections::BTreeMap::new();
+        empty.insert("indicator".to_string(), String::new());
+        empty.insert("status".to_string(), String::new());
+        assert_eq!(cleared, vec![OscEvent::SessionStatus(empty)]);
+
+        scanner.scan(b"\x1b]21337;nothing=here\x07");
+        assert!(scanner.drain_events().is_empty());
+        // OSC 1337 still means attention.
+        scanner.scan(b"\x1b]1337;RequestAttention=yes\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::AttentionRequest("yes".to_string())]
+        );
+    }
 
     #[test]
     fn test_osc7_cwd() {

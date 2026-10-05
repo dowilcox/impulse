@@ -31,6 +31,8 @@ struct TabDisplayInfo: Identifiable {
   var isDirectInteractionActive: Bool = false
   /// OSC 9;4 progress reported by the terminal's foreground program.
   var progress: TerminalProgress? = nil
+  /// The program's own status (OSC 21337), when it set one.
+  var sessionStatus: TerminalSessionStatus? = nil
   /// Editor tab with unsaved changes.
   var isDirty: Bool = false
   /// Panes in the tab (1 unless it's split), and whether one is zoomed.
