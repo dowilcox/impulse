@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# swiftw — run `swift build|test|run` for this package with the flags the
+# active toolchain needs.
+#
+# On machines where the active developer dir is the Command Line Tools (not
+# Xcode), the CLT Swift toolchain ships neither the SwiftUI macro plugin
+# (needed for @State on the macOS 26+ SDK) nor Swift Testing on the default
+# search paths. When Xcode.app is installed we borrow its macOS macro plugins
+# (same Swift version) and point the build at the CLT's Testing.framework, so
+# neither `sudo xcodebuild -license` nor DEVELOPER_DIR switching is required.
+#
+# Usage (from anywhere):
+#   impulse-macos/swiftw build [-c release]
+#   impulse-macos/swiftw test [--filter Foo]
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: swiftw <build|test|run> [swift args...]" >&2
+    exit 2
+fi
+
+subcommand="$1"
+shift
+
+flags=()
+
+# The libgit2 include path in Package.swift is relative to the package dir,
+# which the legacy build system resolves correctly.
+if swift build --help 2>/dev/null | grep -q -- "--build-system"; then
+    flags+=(--build-system native)
+fi
+
+developer_dir="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}"
+if [[ "${developer_dir}" == *CommandLineTools* ]]; then
+    xcode_plugins="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins"
+    if [[ -f "${xcode_plugins}/libSwiftUIMacros.dylib" ]]; then
+        flags+=(-Xswiftc -plugin-path -Xswiftc "${xcode_plugins}")
+    fi
+    clt_frameworks="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
+    if [[ "${subcommand}" == "test" && -d "${clt_frameworks}/Testing.framework" ]]; then
+        flags+=(-Xswiftc -F -Xswiftc "${clt_frameworks}"
+                -Xlinker -F -Xlinker "${clt_frameworks}"
+                -Xlinker -rpath -Xlinker "${clt_frameworks}")
+    fi
+fi
+
+# The legacy build system prints a deprecation warning on every invocation;
+# filter just that line so real warnings stay visible.
+set +e
+swift "${subcommand}" "${flags[@]}" "$@" 2> >(grep -v "'--build-system native' has been deprecated" >&2)
+status=$?
+set -e
+wait
+exit ${status}

@@ -51,11 +51,14 @@ The Swift ports were verified against fixtures generated from the original Rust 
 ./impulse-macos/build.sh --dmg       # + disk image
 ./impulse-macos/build.sh --sign --notarize --dmg   # full release build
 
-# Swift package directly (from impulse-macos/)
-swift build
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
-#   ^ plain CommandLineTools lacks the Testing module; tests are guarded with
-#     #if canImport(Testing) and silently no-op without full Xcode.
+# Swift package directly — use the wrapper, which adds the flags the active
+# toolchain needs (CLT Swift 6.4 lacks the SwiftUI macro plugin and puts
+# Testing.framework off the default search path; swiftw borrows Xcode's macOS
+# macro plugins and points tests at the CLT framework).
+impulse-macos/swiftw build [-c release]
+impulse-macos/swiftw test [--filter Name]
+#   Tests are guarded with #if canImport(Testing); a run that prints no
+#   "Test run with N tests" line means the Testing module wasn't found.
 
 # Rust terminal core
 cargo build -p impulse-ffi           # staticlib the Swift app links

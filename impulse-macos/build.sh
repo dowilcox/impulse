@@ -237,7 +237,7 @@ fi
 
 echo "==> Building ImpulseApp (Swift)..."
 cd impulse-macos
-swift build -c release
+./swiftw build -c release
 cd "${WORKSPACE_ROOT}"
 
 SWIFT_BIN="impulse-macos/.build/release/ImpulseApp"
