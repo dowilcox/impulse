@@ -229,13 +229,13 @@ foundations ├──────────── Track B: git ─────
 
 ### 1.4 Settings and keybindings surfaces
 
-- [ ] **Settings as a tab surface** (SwiftUI, themed):
+- [x] **Settings as a tab surface** (SwiftUI, themed): (palette deep link is the `set:` mode)
   - search, categories, modified markers, reset-to-default per key;
   - deep links from the palette (`settings: <query>`).
   - Retire `SettingsWindow.swift` (1863 lines) and `SettingsFormSheet.swift`.
-- [ ] **JSON Schema for `settings.json`**, generated from `Settings` metadata. "Open settings.json" opens in Monaco with schema validation.
-- [ ] **Keybindings surface:** search by command or key, record shortcut, conflict warnings, `when` context column, custom command bindings (today's `custom_keybindings`).
-- [ ] Expose the settings that exist without UI (§10.3).
+- [x] **JSON Schema for `settings.json`**, generated from `Settings` metadata. "Open settings.json" opens in Monaco with schema validation.
+- [x] **Keybindings surface:** search by command or key, record shortcut, conflict warnings, `when` context column, custom command bindings (today's `custom_keybindings`). (no `when` column: shortcuts aren't context-scoped yet)
+- [x] Expose the settings that exist without UI (§10.3).
 
 **M1 definition of done:**
 
