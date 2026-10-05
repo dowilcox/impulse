@@ -531,6 +531,14 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    static func terminalTranscript(handle: OpaquePointer, maxRows: Int) -> String? {
+        guard
+            let ptr = impulse_terminal_transcript(
+                UnsafeMutableRawPointer(handle), UInt32(clamping: maxRows), true)
+        else { return nil }
+        return consumeCString(ptr)
+    }
+
     /// Scrolls the terminal viewport by `delta` lines (negative = up).
     static func terminalScroll(handle: OpaquePointer, delta: Int32) {
         impulse_terminal_scroll(UnsafeMutableRawPointer(handle), delta)

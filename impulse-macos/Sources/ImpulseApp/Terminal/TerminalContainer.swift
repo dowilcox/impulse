@@ -65,7 +65,8 @@ class TerminalContainer: NSView {
     frame frameRect: NSRect,
     settings: TerminalSettings,
     theme: TerminalTheme,
-    sessionTab: SessionTabState
+    sessionTab: SessionTabState,
+    restoredTranscript: String? = nil
   ) {
     self.currentSettings = settings
     self.currentTheme = theme
@@ -80,7 +81,7 @@ class TerminalContainer: NSView {
     // stored multiple split panes; only the active one is restored now).
     let cwd = restoredCwd(for: sessionTab)
     DispatchQueue.main.async {
-      terminal.spawnShell(initialDirectory: cwd)
+      terminal.spawnShell(initialDirectory: cwd, restoredTranscript: restoredTranscript)
       terminal.focus()
     }
   }

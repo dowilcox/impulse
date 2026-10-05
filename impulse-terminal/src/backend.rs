@@ -550,7 +550,12 @@ impl TerminalBackend {
             columns: cols as usize,
             screen_lines: rows as usize,
         };
-        let term = Term::new(alac_config, &size, proxy);
+        let mut term = Term::new(alac_config, &size, proxy);
+        if let Some(text) = config.restored_transcript.as_deref() {
+            // Previous output first, so the new shell's prompt follows it.
+            let mut processor: Processor = Processor::new();
+            processor.advance(&mut term, text.as_bytes());
+        }
         let term = Arc::new(FairMutex::new(term));
 
         let window_size = WindowSize {
@@ -1465,6 +1470,28 @@ impl TerminalBackend {
     }
 
     /// Get the selected text.
+    /// Recent output as text (see `crate::transcript`), for saving the
+    /// session.
+    /// At an idle prompt it ends with the last command's output, leaving out
+    /// the prompt (the input bar stands in for it).
+    pub fn transcript(&self, max_rows: usize, with_sgr: bool) -> String {
+        let term = self.term.lock();
+        let mut last_line = None;
+        if !term.mode().contains(TermMode::ALT_SCREEN) {
+            if let Ok(blocks) = self.blocks.lock() {
+                let idle = blocks.pending_prompt_row().is_some();
+                let last_end = blocks.iter_blocks().last().and_then(|block| block.end_row);
+                if let (true, Some(end_abs)) = (idle, last_end) {
+                    // Absolute row → grid line; the 133;D mark sits on the
+                    // line after the output.
+                    let line = end_abs - blocks.row_base() - term.grid().history_size() as i64 - 1;
+                    last_line = Some(line.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+                }
+            }
+        }
+        crate::transcript::transcript_until(&term, last_line, max_rows, with_sgr)
+    }
+
     pub fn selected_text(&self) -> Option<String> {
         self.term.lock().selection_to_string()
     }

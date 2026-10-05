@@ -2950,11 +2950,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     if let width = state.sidebarWidth, width > 120 { windowModel.sidebarWidth = CGFloat(width) }
 
     let paths = savedWorkspaces.flatMap { $0.tabs.flatMap { $0.panes.compactMap(\.path) } }
+    let withScrollback = settings.restoreScrollback
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let contents = TabManager.preloadFileContents(paths)
+      var workspaces = savedWorkspaces
+      if withScrollback { SessionScrollback.load(into: &workspaces) }
       DispatchQueue.main.async { [weak self] in
         self?.insertRestoredWorkspaces(
-          savedWorkspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
+          workspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
       }
     }
     return true

@@ -228,6 +228,10 @@ class TerminalRenderer: NSView {
     /// live prompt region is not rendered at all and the last output line is
     /// anchored directly above the bar. Driven by the context-bar setting;
     /// ignored on the alternate screen (TUIs own the full grid).
+    /// Set when the shell started under a replayed transcript (see
+    /// `TerminalTab.spawnShell`).
+    var hasRestoredOutput = false
+
     var suppressLivePrompt: Bool = true {
         didSet { if suppressLivePrompt != oldValue { needsDisplay = true } }
     }
@@ -590,6 +594,23 @@ class TerminalRenderer: NSView {
     }
 
     /// True when viewport `row` has no visible glyph (only spaces/nulls).
+    /// The row holding the "restored from the previous session" rule, looking
+    /// a few rows up from `above` (the shell prints its prompt's first lines
+    /// before the prompt mark).
+    static func restoredRuleRow(grid: GridBufferReader, above: Int, cols: Int) -> Int? {
+        var row = min(above, grid.lines) - 1
+        while row >= 0 && row >= above - 8 {
+            var text = String.UnicodeScalarView()
+            for col in 0..<cols {
+                let value = grid.cell(row: row, col: col).character
+                if value.value != 0 { text.append(value) }
+            }
+            if String(text).contains(TerminalTab.restoredRuleText) { return row }
+            row -= 1
+        }
+        return nil
+    }
+
     static func isBlankRow(grid: GridBufferReader, row: Int, cols: Int) -> Bool {
         guard row >= 0, row < grid.lines else { return true }
         for col in 0..<cols {
@@ -730,6 +751,12 @@ class TerminalRenderer: NSView {
                     lastContentRow = Int(lastBlock.endRow)
                 } else if overlay.hasBlocks {
                     lastContentRow = overlay.promptRow.map { Int($0) - 1 } ?? (lines - 1)
+                } else if hasRestoredOutput, let promptRow = overlay.promptRow {
+                    // Before the first command, a restored session's output
+                    // (ending at its "restored" rule) is the content.
+                    lastContentRow =
+                        Self.restoredRuleRow(grid: grid, above: Int(promptRow), cols: cols)
+                        ?? (Int(promptRow) - 1)
                 } else {
                     lastContentRow = -1
                 }

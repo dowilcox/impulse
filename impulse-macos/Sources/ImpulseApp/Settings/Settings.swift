@@ -102,6 +102,8 @@ struct Settings: Codable {
     var sidebarWidth: Int
     var confirmCloseWarnings: Bool
     var restoreSession: Bool
+    /// Bring back each terminal's recent output when restoring a session.
+    var restoreScrollback: Bool = true
     var lastDirectory: String
     var openFiles: [String]
 
@@ -196,6 +198,7 @@ struct Settings: Codable {
         case sidebarWidth = "sidebar_width"
         case confirmCloseWarnings = "confirm_close_warnings"
         case restoreSession = "restore_session"
+        case restoreScrollback = "restore_scrollback"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -333,6 +336,7 @@ struct Settings: Codable {
         sidebarWidth = (try? c.decode(Int.self, forKey: .sidebarWidth)) ?? d.sidebarWidth
         confirmCloseWarnings = (try? c.decode(Bool.self, forKey: .confirmCloseWarnings)) ?? d.confirmCloseWarnings
         restoreSession = (try? c.decode(Bool.self, forKey: .restoreSession)) ?? d.restoreSession
+        restoreScrollback = (try? c.decode(Bool.self, forKey: .restoreScrollback)) ?? d.restoreScrollback
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

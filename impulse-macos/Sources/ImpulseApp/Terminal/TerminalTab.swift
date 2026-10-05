@@ -976,7 +976,20 @@ class TerminalTab: NSView {
   /// Spawn the user's login shell inside this terminal.
   /// If `initialCommand` is provided, it is sent to the PTY immediately after
   /// the process starts.
-  func spawnShell(initialDirectory: String? = nil, initialCommand: String? = nil) {
+  /// The rule under replayed output from a previous session.
+  static let restoredRuleText = "restored from the previous session"
+
+  /// Recent output to save with the session (nil before the shell starts).
+  func transcript(maxRows: Int = 2000) -> String? {
+    backend?.transcript(maxRows: maxRows)
+  }
+
+  /// Start the shell. `restoredTranscript` (a previous session's output) is
+  /// shown first, under a dim "restored" rule.
+  func spawnShell(
+    initialDirectory: String? = nil, initialCommand: String? = nil,
+    restoredTranscript: String? = nil
+  ) {
     let shellPath = LoginShell.defaultShellPath()
     let shellName = (shellPath as NSString).lastPathComponent
 
@@ -1083,7 +1096,7 @@ class TerminalTab: NSView {
     let settings = currentSettings ?? TerminalSettings()
     let theme = currentTheme ?? TerminalTheme()
 
-    let config = TerminalBackendConfig.from(
+    var config = TerminalBackendConfig.from(
       settings: settings,
       theme: theme,
       shellPath: shellPath,
@@ -1091,6 +1104,11 @@ class TerminalTab: NSView {
       environment: envDict,
       workingDirectory: workingDir
     )
+    if let restoredTranscript, !restoredTranscript.isEmpty {
+      config.restoredTranscript =
+        restoredTranscript + "\u{1b}[0;2m── \(Self.restoredRuleText) ──\u{1b}[0m\r\n"
+      renderer.hasRestoredOutput = true
+    }
 
     // Calculate grid dimensions from renderer bounds.
     let metrics = renderer.fontMetrics

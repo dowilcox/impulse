@@ -225,9 +225,20 @@ struct SessionSurface: Codable {
   /// Editor cursor, 1-based.
   var line: Int?
   var column: Int?
+  /// Terminal: file name of its saved output under `SessionScrollback`.
+  var scrollback: String?
+  /// Terminal output carried in memory (closed tabs, or loaded from
+  /// `scrollback` on restore). Not written to the session file.
+  var transcript: String?
 
-  static func terminal(cwd: String, title: String?, shell: String?) -> SessionSurface {
-    SessionSurface(kind: "terminal", cwd: cwd, title: title, shell: shell)
+  enum CodingKeys: String, CodingKey {
+    case kind, path, cwd, title, shell, line, column, scrollback
+  }
+
+  static func terminal(cwd: String, title: String?, shell: String?, transcript: String? = nil)
+    -> SessionSurface
+  {
+    SessionSurface(kind: "terminal", cwd: cwd, title: title, shell: shell, transcript: transcript)
   }
 
   static func file(path: String, line: Int? = nil, column: Int? = nil) -> SessionSurface {
@@ -379,5 +390,65 @@ struct SessionLayoutState: Codable {
       tabIndices: tabIndices,
       activeTabIndex: activeTabIndex
     )
+  }
+}
+
+/// Terminal output saved beside the session file, one file per terminal, so
+/// the session JSON stays small. Files no session refers to are removed on
+/// each save.
+enum SessionScrollback {
+  static var directory: URL {
+    SessionState.filePath().deletingLastPathComponent().appendingPathComponent("scrollback")
+  }
+
+  /// Write every in-memory transcript to a file and point the surface at it.
+  static func store(_ state: inout SessionState) {
+    let fm = FileManager.default
+    try? fm.createDirectory(
+      at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    var kept = Set<String>()
+    for w in state.windows.indices {
+      guard var workspaces = state.windows[w].workspaces else { continue }
+      for ws in workspaces.indices {
+        for t in workspaces[ws].tabs.indices {
+          for p in workspaces[ws].tabs[t].panes.indices {
+            var surface = workspaces[ws].tabs[t].panes[p]
+            guard let text = surface.transcript, !text.isEmpty else { continue }
+            let name = UUID().uuidString + ".ansi"
+            let url = directory.appendingPathComponent(name)
+            do {
+              try Data(text.utf8).write(to: url, options: .atomic)
+              try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+              surface.scrollback = name
+              kept.insert(name)
+            } catch {
+              continue
+            }
+            workspaces[ws].tabs[t].panes[p] = surface
+          }
+        }
+      }
+      state.windows[w].workspaces = workspaces
+    }
+    // Forget output from earlier saves.
+    for name in (try? fm.contentsOfDirectory(atPath: directory.path)) ?? [] where !kept.contains(name) {
+      try? fm.removeItem(at: directory.appendingPathComponent(name))
+    }
+  }
+
+  /// Read saved output for a session's terminals (off the main thread).
+  static func load(into workspaces: inout [SessionWorkspaceState]) {
+    for ws in workspaces.indices {
+      for t in workspaces[ws].tabs.indices {
+        for p in workspaces[ws].tabs[t].panes.indices {
+          guard let name = workspaces[ws].tabs[t].panes[p].scrollback,
+            !name.contains("/"),
+            let data = FileManager.default.contents(
+              atPath: directory.appendingPathComponent(name).path)
+          else { continue }
+          workspaces[ws].tabs[t].panes[p].transcript = String(decoding: data, as: UTF8.self)
+        }
+      }
+    }
   }
 }

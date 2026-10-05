@@ -15,6 +15,8 @@ struct TerminalBackendConfig: Codable {
     var colors: TerminalBackendColors = TerminalBackendColors()
     /// Minimum WCAG contrast ratio enforced between cell fg/bg (1.0 = off).
     var minimumContrast: Double = 1.0
+    /// Output from a previous session, replayed before the shell starts.
+    var restoredTranscript: String?
 
     enum CodingKeys: String, CodingKey {
         case scrollbackLines = "scrollback_lines"
@@ -26,6 +28,7 @@ struct TerminalBackendConfig: Codable {
         case envVars = "env_vars"
         case colors
         case minimumContrast = "minimum_contrast"
+        case restoredTranscript = "restored_transcript"
     }
 }
 
@@ -642,6 +645,13 @@ final class TerminalBackend {
     func selectedText() -> String? {
         guard let handle, !isShutdown else { return nil }
         return ImpulseCore.terminalSelectedText(handle: handle)
+    }
+
+    /// About the last `maxRows` rows of output, with SGR colors, for
+    /// restoring scrollback later.
+    func transcript(maxRows: Int) -> String? {
+        guard let handle, !isShutdown else { return nil }
+        return ImpulseCore.terminalTranscript(handle: handle, maxRows: maxRows)
     }
 
     // MARK: - Scroll

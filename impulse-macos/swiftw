@@ -46,6 +46,19 @@ if [[ "${developer_dir}" == *CommandLineTools* ]]; then
     fi
 fi
 
+# SwiftPM doesn't track the Rust static library's mtime: after a
+# `cargo build -p impulse-ffi`, drop the stale binaries so they relink.
+ffi_lib="../target/release/libimpulse_ffi.a"
+if [[ -f "${ffi_lib}" ]]; then
+    for binary in .build/debug/ImpulseApp .build/release/ImpulseApp \
+                  .build/debug/ImpulsePackageTests.xctest/Contents/MacOS/ImpulsePackageTests; do
+        if [[ -f "${binary}" && "${ffi_lib}" -nt "${binary}" ]]; then
+            rm -f "${binary}"
+            touch Sources/ImpulseApp/ImpulseApp.swift
+        fi
+    done
+fi
+
 # The legacy build system prints a deprecation warning on every invocation;
 # filter just that line so real warnings stay visible.
 set +e

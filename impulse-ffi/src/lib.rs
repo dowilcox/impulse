@@ -446,6 +446,27 @@ pub extern "C" fn impulse_terminal_clear_selection(handle: *mut TerminalHandle) 
     )
 }
 
+/// About the last `max_rows` rows of output as text (with SGR colors when
+/// `with_sgr`), for restoring scrollback in a later session. Free with
+/// `impulse_free_string`.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_transcript(
+    handle: *mut TerminalHandle,
+    max_rows: u32,
+    with_sgr: bool,
+) -> *mut c_char {
+    ffi_catch(
+        std::ptr::null_mut(),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return std::ptr::null_mut();
+            }
+            let h = unsafe { &*handle };
+            to_c_string(&h.backend.transcript(max_rows as usize, with_sgr))
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_selected_text(handle: *mut TerminalHandle) -> *mut c_char {
     ffi_catch(

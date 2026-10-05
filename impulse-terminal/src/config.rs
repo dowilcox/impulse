@@ -30,6 +30,10 @@ pub struct TerminalConfig {
     /// on a dark selection bar) that no theme palette can prevent.
     #[serde(default = "default_minimum_contrast")]
     pub minimum_contrast: f32,
+    /// Output from a previous session (see `transcript`), replayed into the
+    /// grid before the shell starts so its scrollback comes back.
+    #[serde(default)]
+    pub restored_transcript: Option<String>,
 }
 
 fn default_minimum_contrast() -> f32 {
@@ -48,6 +52,7 @@ impl Default for TerminalConfig {
             env_vars: HashMap::new(),
             colors: TerminalColors::default(),
             minimum_contrast: 1.0,
+            restored_transcript: None,
         }
     }
 }

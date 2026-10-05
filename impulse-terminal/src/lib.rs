@@ -12,6 +12,7 @@ mod grid;
 mod history;
 pub mod osc_scanner;
 mod search;
+mod transcript;
 
 pub use backend::{
     BlockOverlay, BlockOverlayRegion, CommandBlockFlags, SelectionKind, TerminalBackend,
@@ -29,3 +30,4 @@ pub use history::{
     CommandHistorySearchResult, CommandHistoryStore,
 };
 pub use search::SearchResult;
+pub use transcript::{transcript, transcript_until};

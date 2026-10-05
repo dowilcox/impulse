@@ -1055,7 +1055,8 @@ final class TabManager: NSObject {
         frame: NSRect(x: 0, y: 0, width: 800, height: 600),
         settings: settings.terminalSettings(directory: cwd),
         theme: terminalTheme,
-        sessionTab: .terminal(cwd: cwd, title: surface.title, shell: surface.shell, pinned: false)
+        sessionTab: .terminal(cwd: cwd, title: surface.title, shell: surface.shell, pinned: false),
+        restoredTranscript: settings.restoreScrollback ? surface.transcript : nil
       )
       container.applyTheme(theme: terminalTheme, dividerColor: theme.bgHighlightColor)
       container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
@@ -1136,7 +1137,7 @@ final class TabManager: NSObject {
 
   /// A saveable description of a tab's surfaces and layout, or nil when
   /// nothing in it can be restored (review tabs, unsaved files).
-  func sessionTab(for entry: TabEntry, pinned: Bool) -> SessionTab? {
+  func sessionTab(for entry: TabEntry, pinned: Bool, withScrollback: Bool = true) -> SessionTab? {
     let shellName = LoginShell.defaultShellName()
     func surfaceState(_ entry: TabEntry) -> SessionSurface? {
       switch entry {
@@ -1145,7 +1146,7 @@ final class TabManager: NSObject {
         let cwd = terminal.currentWorkingDirectory
         return .terminal(
           cwd: cwd.isEmpty ? NSHomeDirectory() : cwd, title: nonEmpty(terminal.tabTitle),
-          shell: nonEmpty(shellName))
+          shell: nonEmpty(shellName), transcript: withScrollback ? terminal.transcript() : nil)
       case .editor(let editor):
         guard let path = editor.filePath, FileManager.default.fileExists(atPath: path) else {
           return nil
@@ -1189,7 +1190,10 @@ final class TabManager: NSObject {
       var activeTab: Int?
       for index in tabIndices(inWorkspace: workspace.id) {
         let record = records[index]
-        guard let tab = sessionTab(for: record.entry, pinned: record.pinned) else { continue }
+        guard
+          let tab = sessionTab(
+            for: record.entry, pinned: record.pinned, withScrollback: settings.restoreScrollback)
+        else { continue }
         if index == selectedIndex || (activeTab == nil && record.uid == workspace.lastSelectedUID) {
           activeTab = tabs.count
         }

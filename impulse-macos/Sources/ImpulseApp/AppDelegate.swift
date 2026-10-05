@@ -415,10 +415,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let activeWindowIndex =
       windowControllers.firstIndex { $0.window?.isKeyWindow == true }
       ?? (windows.isEmpty ? nil : 0)
-    SessionState.snapshot(
-      windows: windows,
-      activeWindowIndex: activeWindowIndex
-    ).save()
+    var state = SessionState.snapshot(windows: windows, activeWindowIndex: activeWindowIndex)
+    SessionScrollback.store(&state)
+    state.save()
   }
 
   /// Changes the active theme across all windows and persists the choice.
