@@ -510,6 +510,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onShowAgentHooks = { [weak self] in
       self?.presentAgentHooksSheet()
     }
+    windowModel.onComposerSend = { [weak self] text, submit in
+      guard let terminal = self?.tabManager.selectedTerminal?.activeTerminal else { return }
+      terminal.paste(text, submit: submit)
+      if submit {
+        self?.windowModel.composerVisible = false
+        terminal.focus()
+      }
+    }
+    windowModel.onCloseComposer = { [weak self] in
+      self?.windowModel.composerVisible = false
+      self?.tabManager.selectedTerminal?.activeTerminal?.focus()
+    }
     startPortScanning()
     windowModel.onArchiveTask = { [weak self] id in
       self?.archiveTask(id)
@@ -624,6 +636,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         DispatchQueue.main.async { self?.tabManager.setPorts(ports) }
       }
+    }
+  }
+
+  /// ⌘I: a prompt editor over the program in the focused terminal (an
+  /// agent's TUI). Closes again when already open.
+  func toggleAgentComposer() {
+    guard let terminal = tabManager.selectedTerminal?.activeTerminal else {
+      toasts.show(Toast(kind: .info, message: "The composer writes to the program in a terminal."))
+      return
+    }
+    guard terminal.isDirectInteraction else {
+      // The input bar is already the place to type.
+      windowModel.inputBarFocusToken += 1
+      return
+    }
+    windowModel.composerTarget = terminal.agent?.displayName ?? ""
+    windowModel.composerVisible.toggle()
+    if windowModel.composerVisible {
+      windowModel.composerFocusToken += 1
+    } else {
+      terminal.focus()
     }
   }
 
@@ -752,6 +785,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("composer=") {
+        windowModel.composerDraft = String(action.dropFirst(9))
+        toggleAgentComposer()
       } else if action.hasPrefix("draft=") {
         windowModel.inputDraft = String(action.dropFirst(6)).replacingOccurrences(of: "\\n", with: "\n")
         windowModel.inputDraftRestoreToken += 1
@@ -1985,6 +2021,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .agentCheckpointsChanged, object: nil, queue: .main) { [weak self] _ in
         self?.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseAgentComposer, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.toggleAgentComposer()
       }
     )
     notificationObservers.append(

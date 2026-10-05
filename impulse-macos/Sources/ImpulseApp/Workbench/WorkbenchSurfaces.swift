@@ -333,10 +333,19 @@ struct TerminalInputHost: View {
   var model: WindowModel
 
   var body: some View {
-    if showsInput {
+    if showsComposer {
+      AgentComposerView(model: model)
+        .environment(\.chrome, model.palette)
+    } else if showsInput {
       TerminalContextBarView(model: model)
         .environment(\.chrome, model.palette)
     }
+  }
+
+  /// ⌘I over a program that owns the terminal (where the input bar hides).
+  private var showsComposer: Bool {
+    model.composerVisible && model.terminalDirectInteraction
+      && (model.selectedTabInfo?.isTerminal ?? false)
   }
 
   private var showsInput: Bool {

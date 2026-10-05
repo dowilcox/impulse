@@ -261,6 +261,14 @@ enum Keybindings {
             modifierFlags: [.command, .option]
         ),
         BuiltinKeybinding(
+            id: "agent_composer",
+            description: "Compose a Message to the Agent",
+            category: "Terminal",
+            defaultShortcut: "Cmd+I",
+            keyEquivalent: "i",
+            modifierFlags: [.command]
+        ),
+        BuiltinKeybinding(
             id: "next_agent",
             description: "Next Agent Needing You",
             category: "Navigation",

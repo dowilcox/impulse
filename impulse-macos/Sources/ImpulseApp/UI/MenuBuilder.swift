@@ -128,6 +128,13 @@ enum MenuBuilder {
         openWorkspaceItem.target = MenuActions.shared
         menu.addItem(openWorkspaceItem)
 
+        let composerItem = NSMenuItem(title: "Compose Message to Agent",
+                                      action: #selector(MenuActions.menuAgentComposer(_:)),
+                                      keyEquivalent: "i")
+        composerItem.target = MenuActions.shared
+        applyKeybinding("agent_composer", overrides: overrides, to: composerItem)
+        menu.addItem(composerItem)
+
         let nextAgentItem = NSMenuItem(title: "Next Agent Needing You",
                                        action: #selector(MenuActions.menuNextAgent(_:)),
                                        keyEquivalent: "U")
@@ -490,6 +497,10 @@ final class MenuActions: NSObject {
 
     @objc func menuReopenTab(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseReopenTab, object: nil)
+    }
+
+    @objc func menuAgentComposer(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseAgentComposer, object: nil)
     }
 
     @objc func menuNextAgent(_ sender: Any?) {

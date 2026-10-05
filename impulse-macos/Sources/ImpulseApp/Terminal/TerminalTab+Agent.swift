@@ -47,6 +47,18 @@ extension TerminalTab {
     return true
   }
 
+  /// Paste text into the program now (bracketed when it asks for that),
+  /// optionally pressing Return after it.
+  func paste(_ text: String, submit: Bool) {
+    pasteToAgent(text)
+    guard submit else { return }
+    // Give the program a moment to take the paste before Return.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+      self?.backend?.write("\r")
+      self?.agentEvent(.submit)
+    }
+  }
+
   private func pasteToAgent(_ text: String) {
     guard let backend else { return }
     if backend.mode()?.bracketedPaste == true {

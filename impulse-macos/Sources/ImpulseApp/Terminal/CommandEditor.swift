@@ -12,6 +12,9 @@ enum CommandEditorKey {
   case escape
   case controlC
   case controlR
+  /// ⌥⌘↩ in prompt mode (send without pressing Return). Not ⇧⌘↩: that's
+  /// Zoom Pane.
+  case alternateSubmit
 }
 
 /// The terminal input: a multi-line shell command editor. Return runs the
@@ -25,6 +28,11 @@ struct CommandEditor: NSViewRepresentable {
   var suggestion: String?
   var colors: CommandEditorColors
   var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
+  /// Color the text as a shell command (off for prose, e.g. agent prompts).
+  var shellSyntax = true
+  /// Return submits (commands). Off: Return adds a line and ⌘↩ submits
+  /// (prompts).
+  var returnSubmits = true
   /// Bump to move keyboard focus here.
   var focusToken: Int
   var onSubmit: () -> Void
@@ -77,9 +85,10 @@ struct CommandEditor: NSViewRepresentable {
       textView.placeholder = placeholder
       textView.needsDisplay = true
     }
-    if textView.colors != colors || textView.font != font {
+    if textView.colors != colors || textView.font != font || textView.shellSyntax != shellSyntax {
       textView.colors = colors
       textView.font = font
+      textView.shellSyntax = shellSyntax
       textView.insertionPointColor = colors.caret
       textView.highlight()
     }
@@ -108,9 +117,16 @@ struct CommandEditor: NSViewRepresentable {
       guard let view = textView as? CommandTextView else { return false }
       switch selector {
       case #selector(NSResponder.insertNewline(_:)):
-        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true
-          || NSApp.currentEvent?.modifierFlags.contains(.option) == true
-        {
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        if !parent.returnSubmits {
+          if flags.contains(.command) {
+            if flags.contains(.option) { _ = parent.onKey(.alternateSubmit) } else { parent.onSubmit() }
+          } else {
+            textView.insertText("\n", replacementRange: textView.selectedRange())
+          }
+          return true
+        }
+        if flags.contains(.shift) || flags.contains(.option) {
           textView.insertText("\n", replacementRange: textView.selectedRange())
           return true
         }
@@ -191,6 +207,7 @@ final class CommandTextView: NSTextView {
   var ghost: String?
   var placeholder = ""
   var colors = CommandEditorColors(theme: ThemeManager.theme(forName: "nord"))
+  var shellSyntax = true
   /// Lines shown before scrolling.
   static let maxVisibleLines: CGFloat = 8
 
@@ -270,6 +287,11 @@ final class CommandTextView: NSTextView {
 
   override func keyDown(with event: NSEvent) {
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    // ⌘↩ doesn't arrive as insertNewline; route it the same way.
+    if flags.contains(.command), event.keyCode == 36 || event.keyCode == 76 {
+      _ = coordinator?.textView(self, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+      return
+    }
     if flags == .control, let characters = event.charactersIgnoringModifiers?.lowercased() {
       if characters == "c", coordinator?.parent.onKey(.controlC) == true { return }
       if characters == "r", coordinator?.parent.onKey(.controlR) == true { return }
@@ -293,7 +315,7 @@ final class CommandTextView: NSTextView {
     storage.setAttributes(
       [.font: font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), .foregroundColor: colors.text],
       range: whole)
-    if !text.isEmpty {
+    if shellSyntax, !text.isEmpty {
       let parsed = parseShellInput(text, cursor: text.utf8.count)
       let offsets = Self.utf16Offsets(text)
       func range(_ span: TextSpan) -> NSRange? {

@@ -233,6 +233,18 @@ final class WindowModel {
   @ObservationIgnored var inputDraft: String = ""
   var inputDraftRestoreToken: Int = 0
 
+  // MARK: Agent composer
+
+  /// ⌘I's prompt editor over a terminal program.
+  var composerVisible = false
+  var composerFocusToken = 0
+  /// Who it talks to ("Claude Code"), for its header.
+  var composerTarget = ""
+  @ObservationIgnored var composerDraft = ""
+  /// Deliver the composed text (and press Return when true).
+  @ObservationIgnored var onComposerSend: ((String, Bool) -> Void)?
+  @ObservationIgnored var onCloseComposer: (() -> Void)?
+
   // MARK: Status bar — right group
 
   var cursorLine: Int? = nil

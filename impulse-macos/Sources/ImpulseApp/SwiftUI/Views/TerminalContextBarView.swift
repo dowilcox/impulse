@@ -594,6 +594,8 @@ struct TerminalContextBarView: View {
       // Reverse history search, like the shell's own Ctrl-R.
       model.onShowCommandHistory?()
       return true
+    case .alternateSubmit:
+      return false
     }
   }
 
