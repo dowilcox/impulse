@@ -135,7 +135,7 @@ struct TerminalContextBarView: View {
       }
       statusChip
       Spacer(minLength: 8)
-      actionButton(symbol: "clock.arrow.circlepath", help: "Command History (⌘R)") {
+      actionButton(symbol: "clock.arrow.circlepath", help: "Command History (⌃R)") {
         model.onShowCommandHistory?()
       }
     }
@@ -311,11 +311,18 @@ struct TerminalContextBarView: View {
               return .handled
             }
             .onKeyPress(phases: .down) { press in
-              guard press.modifiers.contains(.control),
-                press.key == KeyEquivalent("c")
-              else { return .ignored }
-              model.onSendInterrupt?()
-              return .handled
+              guard press.modifiers.contains(.control) else { return .ignored }
+              switch press.key {
+              case KeyEquivalent("c"):
+                model.onSendInterrupt?()
+                return .handled
+              case KeyEquivalent("r"):
+                // Reverse history search, like the shell's own Ctrl-R.
+                model.onShowCommandHistory?()
+                return .handled
+              default:
+                return .ignored
+              }
             }
             .accessibilityLabel("Command input")
         }
