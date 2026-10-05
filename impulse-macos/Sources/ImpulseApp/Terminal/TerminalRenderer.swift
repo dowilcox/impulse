@@ -210,7 +210,9 @@ class TerminalRenderer: NSView {
     /// TUI is active (alternate screen, or a running command that turned on
     /// bracketed-paste/mouse reporting) — otherwise all typing flows through the
     /// pinned input bar, so the scrollback reads as immutable command blocks.
-    var keyboardInteractive: Bool { lastInteractive }
+    /// With the input bar disabled (classic mode, `suppressLivePrompt` false)
+    /// the shell's own prompt is live and the grid always takes the keyboard.
+    var keyboardInteractive: Bool { lastInteractive || !suppressLivePrompt }
 
     /// Asked to move keyboard focus to the input bar (e.g. the user clicked
     /// the read-only grid at a prompt).

@@ -705,6 +705,12 @@ class TerminalTab: NSView {
     return isCommandRunning && rawMode
   }
 
+  /// Whether keystrokes go to the grid rather than the input bar: a TUI owns
+  /// the screen, or the input bar is disabled (classic shell prompt mode).
+  var wantsGridFocus: Bool {
+    isDirectInteraction || !(currentSettings?.terminalContextBar ?? true)
+  }
+
   /// Ask the shell to clear the screen (context-bar Clear button).
   func clearScreen() {
     backend?.write(bytes: [0x0C])

@@ -1538,9 +1538,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // Re-sync tab subtitles so the working folder appears alongside the
         // branch while a program/TUI owns the grid.
         self.tabManager.syncToWindowModel()
-        // Leaving a TUI: the input bar reappears and should reclaim focus.
+        // Leaving a TUI: the input bar reappears and should reclaim focus
+        // (unless it's disabled, in which case the grid keeps the keyboard).
         if !interactive {
-          self.windowModel.inputBarFocusToken += 1
+          if tab.wantsGridFocus {
+            tab.focus()
+          } else {
+            self.windowModel.inputBarFocusToken += 1
+          }
         }
       })
     notificationObservers.append(

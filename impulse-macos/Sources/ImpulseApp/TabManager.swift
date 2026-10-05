@@ -757,7 +757,7 @@ final class TabManager: NSObject {
     // terminal's own focus attempt during spawn.
     if case .terminal(let container) = entry {
       let model = windowModel
-      if container.activeTerminal?.isDirectInteraction == true {
+      if container.activeTerminal?.wantsGridFocus == true {
         DispatchQueue.main.async { container.activeTerminal?.focus() }
       } else {
         DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
