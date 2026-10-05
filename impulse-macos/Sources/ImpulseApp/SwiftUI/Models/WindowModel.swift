@@ -86,6 +86,8 @@ struct WorkspaceInfo: Identifiable {
   let progress: TerminalProgress?
   /// The folder's repository (folder workspaces in a git repo).
   let repository: GitRepositoryState?
+  /// A task worktree (can be archived).
+  var isTask: Bool = false
   /// Agents waiting on the user, and agents working.
   var agentsWaiting: Int = 0
   var agentsWorking: Int = 0
@@ -326,6 +328,8 @@ final class WindowModel {
   var onRevealTerminal: ((UUID) -> Void)?
   /// Review a terminal's agent's last turn.
   var onReviewAgentTurn: ((UUID) -> Void)?
+  var onNewTask: (() -> Void)?
+  var onArchiveTask: ((UUID) -> Void)?
 
   // MARK: Methods
 

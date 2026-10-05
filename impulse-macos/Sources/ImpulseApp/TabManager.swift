@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import ImpulseGit
 import ImpulseKit
 
 private func nonEmpty(_ value: String?) -> String? {
@@ -908,8 +909,8 @@ final class TabManager: NSObject {
   }
 
   /// Show a workspace: its last selected tab, or a new terminal in its
-  /// folder when it has none.
-  func activateWorkspace(_ id: UUID) {
+  /// folder when it has none (running `initialCommand`, if given).
+  func activateWorkspace(_ id: UUID, initialCommand: String? = nil) {
     guard id != activeWorkspaceID, let workspace = workspace(id) else { return }
     let indices = tabIndices(inWorkspace: id)
     let remembered = workspace.lastSelectedUID.flatMap { uid in
@@ -925,12 +926,13 @@ final class TabManager: NSObject {
     selectedIndex = -1
     noteWorkspaceActivated(id)
     NotificationCenter.default.post(name: .impulseActiveWorkspaceDidChange, object: self)
-    addTerminalTab()
+    addTerminalTab(initialCommand: initialCommand)
   }
 
-  /// Open a folder as a workspace (or show it if it's already open).
+  /// Open a folder as a workspace (or show it if it's already open). A new
+  /// workspace's first terminal runs `initialCommand`, if given.
   @discardableResult
-  func openWorkspace(folder: String) -> Workspace {
+  func openWorkspace(folder: String, initialCommand: String? = nil) -> Workspace {
     let root = Workspace.normalize(folder)
     if let existing = workspaces.first(where: { $0.kind == .folder && $0.root == root }) {
       activateWorkspace(existing.id)
@@ -939,7 +941,7 @@ final class TabManager: NSObject {
     let workspace = Workspace(kind: .folder, root: root)
     addWorkspace(workspace)
     RecentWorkspaces.note(root)
-    activateWorkspace(workspace.id)
+    activateWorkspace(workspace.id, initialCommand: initialCommand)
     return workspace
   }
 
@@ -1030,11 +1032,30 @@ final class TabManager: NSObject {
 
   private func resolveRepository(for workspace: Workspace) {
     guard workspace.kind == .folder else { return }
-    GitRepositoryStore.shared.resolve(directory: workspace.root) { [weak self, weak workspace] state in
+    let root = workspace.root
+    GitRepositoryStore.shared.resolve(directory: root) { [weak self, weak workspace] state in
       guard let workspace, let state else { return }
       workspace.repository = state
       self?.syncToWindowModel()
     }
+    DispatchQueue.global(qos: .utility).async { [weak self, weak workspace] in
+      let isTask =
+        GitClient.gitDirectory(forPath: root).map { $0 != GitClient.commonGitDirectory(forPath: root) }
+        ?? false
+      DispatchQueue.main.async {
+        guard isTask, let workspace else { return }
+        workspace.isTask = true
+        self?.syncToWindowModel()
+      }
+    }
+  }
+
+  /// Make sure a scratch workspace exists (so closing the last folder
+  /// workspace leaves somewhere to land).
+  func ensureScratchWorkspace() {
+    guard scratchWorkspace == nil else { return }
+    workspaces.append(Workspace(kind: .scratch, root: NSHomeDirectory()))
+    syncToWindowModel()
   }
 
   // MARK: - Session
@@ -1595,6 +1616,7 @@ final class TabManager: NSObject {
         attentionCount: tabs.filter(\.needsAttention).count,
         progress: tabs.compactMap(\.progress).first,
         repository: workspace.repository,
+        isTask: workspace.isTask,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count
       )

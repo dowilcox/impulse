@@ -20,10 +20,13 @@ struct WorkspacesSection: View {
         title: "Workspaces", count: model.workspaces.count > 1 ? model.workspaces.count : nil,
         isExpanded: $isExpanded
       ) {
-        ChromeIconButton(
-          icon: .plus, help: "Open Folder as Workspace…", size: 20, iconSize: 12
-        ) {
-          model.onOpenWorkspace?()
+        ChromeMenuButton(help: "New workspace") {
+          [
+            ChromeMenuItem("Open Folder as Workspace…") { model.onOpenWorkspace?() },
+            ChromeMenuItem("New Task…", isEnabled: model.repository != nil) { model.onNewTask?() },
+          ]
+        } label: {
+          Icon(.plus, size: 12).foregroundStyle(chrome.textSecondary).frame(width: 20, height: 20)
         }
       }
       if isExpanded {
@@ -137,7 +140,9 @@ private struct WorkspaceRow: View {
         .foregroundStyle(workspace.isActive ? chrome.text : chrome.textSecondary)
         .lineLimit(1)
         .truncationMode(.middle)
-      if let branch = snapshot?.branch ?? snapshot?.headOid.map({ String($0.prefix(7)) }) {
+      if let branch = snapshot?.branch ?? snapshot?.headOid.map({ String($0.prefix(7)) }),
+        branch != workspace.name
+      {
         Text(branch)
           .font(ChromeFont.mono(10.5))
           .foregroundStyle(chrome.textTertiary)
@@ -232,6 +237,9 @@ private struct WorkspaceRow: View {
       model.onSetWorkspaceExpanded?(workspace.id, !workspace.isExpanded)
     }
     Divider()
+    if workspace.isTask {
+      Button("Archive Task…") { model.onArchiveTask?(workspace.id) }
+    }
     Button("Close Workspace") { model.onCloseWorkspace?(workspace.id) }
   }
 

@@ -502,6 +502,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onReviewAgentTurn = { [weak self] id in
       self?.reviewLastAgentTurn(terminalID: id)
     }
+    windowModel.onNewTask = { [weak self] in
+      self?.presentNewTaskSheet()
+    }
+    windowModel.onArchiveTask = { [weak self] id in
+      self?.archiveTask(id)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
@@ -727,6 +733,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showPalette(prefix: String(action.dropFirst(8)))
       } else if action.hasPrefix("run=") {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
+      } else if action.hasPrefix("task=") {
+        debugCreateTask(title: String(action.dropFirst(5)), command: "echo task ready")
       } else if action == "agent-submit" {
         tabManager.selectedTerminal?.activeTerminal?.agentEvent(.submit)
       } else if action == "review-agent" {
@@ -2871,12 +2879,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Close a workspace after confirming its unsaved files and running
   /// processes.
-  func requestCloseWorkspace(_ id: UUID) {
+  func requestCloseWorkspace(_ id: UUID, then closed: (() -> Void)? = nil) {
     let surfaces = tabManager.tabIndices(inWorkspace: id).flatMap { tabManager.tabs[$0].surfaces }
     confirmClosing(surfaces) { [weak self] in
       guard let self else { return }
       for surface in surfaces { self.willCloseSurface(surface) }
       self.tabManager.closeWorkspace(id)
+      closed?()
     }
   }
 

@@ -53,6 +53,17 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "new_task", title: "New Task…", category: "Workspaces",
+        keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus
+      ) { [weak controller] in controller?.presentNewTaskSheet() },
+      AppCommand(
+        id: "archive_task", title: "Archive This Task…", category: "Workspaces",
+        keywords: ["worktree", "remove", "done"], icon: .archive
+      ) { [weak controller] in
+        guard let controller else { return }
+        controller.archiveTask(controller.tabManager.activeWorkspaceID)
+      },
+      AppCommand(
         id: "review_agent_turn", title: "Review Last Agent Turn", category: "Agents",
         keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff
       ) { [weak controller] in controller?.reviewLastAgentTurn() },

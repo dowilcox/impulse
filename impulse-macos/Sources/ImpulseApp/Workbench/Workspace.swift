@@ -22,6 +22,8 @@ final class Workspace {
   var isExpanded = false
   /// The repository at `root`, once resolved (folder workspaces only).
   var repository: GitRepositoryState?
+  /// A linked worktree made by "New Task" (or by hand), not a main checkout.
+  var isTask = false
 
   init(id: UUID = UUID(), kind: Kind, root: String, customName: String? = nil) {
     self.id = id
