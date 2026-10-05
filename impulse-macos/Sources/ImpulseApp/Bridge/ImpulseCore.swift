@@ -302,6 +302,12 @@ final class ImpulseCore {
     func initializeLsp(rootUri: String) {
         shutdownLsp()
         lspRegistry = LSPRegistry(rootUri: rootUri)
+        lspRegistry?.onEventsAvailable = lspEventsAvailable
+    }
+
+    /// Called from a language server's reader thread when events are queued.
+    var lspEventsAvailable: (() -> Void)? {
+        didSet { lspRegistry?.onEventsAvailable = lspEventsAvailable }
     }
 
     /// Ensures LSP servers are running for the given language and file
@@ -425,6 +431,16 @@ final class ImpulseCore {
     /// Destroys a terminal backend handle.
     static func terminalDestroy(handle: OpaquePointer) {
         impulse_terminal_destroy(UnsafeMutableRawPointer(handle))
+    }
+
+    /// Register (or clear, with nil) the callback the PTY reader thread calls
+    /// when events are waiting.
+    static func terminalSetWakeupCallback(
+        handle: OpaquePointer,
+        callback: (@convention(c) (UnsafeMutableRawPointer?) -> Void)?,
+        context: UnsafeMutableRawPointer?
+    ) {
+        impulse_terminal_set_wakeup_callback(UnsafeMutableRawPointer(handle), callback, context)
     }
 
     /// Writes raw data to the terminal's PTY input.

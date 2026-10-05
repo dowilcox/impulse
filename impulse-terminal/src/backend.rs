@@ -43,9 +43,57 @@ static CHILD_ENV_LOCK: Mutex<()> = Mutex::new(());
 // Event proxy — bridges alacritty events to our channel
 // ---------------------------------------------------------------------------
 
+/// Wakes the frontend when events are waiting, at most once per poll: the
+/// frontend's `poll_events` re-arms it before draining, so an event that
+/// arrives mid-drain still triggers one more (possibly empty) poll.
+pub(crate) struct WakeNotifier {
+    armed: AtomicBool,
+    #[allow(clippy::type_complexity)]
+    callback: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+}
+
+impl WakeNotifier {
+    fn new() -> Self {
+        Self {
+            armed: AtomicBool::new(true),
+            callback: Mutex::new(None),
+        }
+    }
+
+    fn notify(&self) {
+        if self.armed.swap(false, Ordering::AcqRel) {
+            if let Ok(callback) = self.callback.lock() {
+                if let Some(callback) = callback.as_ref() {
+                    callback();
+                }
+            }
+        }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+}
+
+/// The frontend's event channel: sending also wakes the frontend.
+#[derive(Clone)]
+struct EventSink {
+    tx: Sender<TerminalEvent>,
+    notifier: Arc<WakeNotifier>,
+}
+
+impl EventSink {
+    /// Queue an event and wake the frontend. False if the frontend is gone.
+    fn send(&self, event: TerminalEvent) -> bool {
+        let sent = self.tx.send(event).is_ok();
+        self.notifier.notify();
+        sent
+    }
+}
+
 #[derive(Clone)]
 struct EventProxy {
-    event_tx: Sender<TerminalEvent>,
+    event_tx: EventSink,
     wakeup_pending: Arc<AtomicBool>,
     /// Snapshot of the configured palette for answering OSC 4/10/11/12 color
     /// queries (TUI apps use these to detect light vs dark backgrounds).
@@ -109,11 +157,11 @@ impl EventListener for EventProxy {
     }
 }
 
-fn send_wakeup(event_tx: &Sender<TerminalEvent>, wakeup_pending: &AtomicBool) {
+fn send_wakeup(event_tx: &EventSink, wakeup_pending: &AtomicBool) {
     if wakeup_pending
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_ok()
-        && event_tx.send(TerminalEvent::Wakeup).is_err()
+        && !event_tx.send(TerminalEvent::Wakeup)
     {
         wakeup_pending.store(false, Ordering::Release);
     }
@@ -519,6 +567,8 @@ pub struct TerminalBackend {
     /// changes alacritty's damage tracker does not cover (selection, search
     /// highlights, colors, focus). Starts true so the first frame paints fully.
     force_full_damage: AtomicBool,
+    /// Wakes the frontend when events arrive (see `set_wakeup_callback`).
+    notifier: Arc<WakeNotifier>,
 }
 
 impl TerminalBackend {
@@ -530,7 +580,12 @@ impl TerminalBackend {
         cell_width: u16,
         cell_height: u16,
     ) -> Result<Self, String> {
-        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let (raw_event_tx, event_rx) = crossbeam_channel::unbounded();
+        let notifier = Arc::new(WakeNotifier::new());
+        let event_tx = EventSink {
+            tx: raw_event_tx,
+            notifier: Arc::clone(&notifier),
+        };
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<BackendMsg>();
         let wakeup_pending = Arc::new(AtomicBool::new(false));
         let password_input = Arc::new(AtomicBool::new(false));
@@ -623,6 +678,7 @@ impl TerminalBackend {
             wakeup_pending,
             password_input,
             force_full_damage: AtomicBool::new(true),
+            notifier,
         })
     }
 
@@ -635,7 +691,7 @@ impl TerminalBackend {
     fn read_loop(
         mut pty: tty::Pty,
         term: Arc<FairMutex<Term<EventProxy>>>,
-        event_tx: Sender<TerminalEvent>,
+        event_tx: EventSink,
         cmd_rx: Receiver<BackendMsg>,
         poller: Arc<Poller>,
         blocks: Arc<Mutex<CommandBlockTracker>>,
@@ -1001,7 +1057,19 @@ impl TerminalBackend {
     }
 
     /// Poll for terminal events (non-blocking).
+    /// Call `callback` (from the PTY reader thread) when events are waiting
+    /// to be polled — at most once between polls. Lets the frontend sleep
+    /// instead of polling on a timer. `None` removes it; once this returns,
+    /// the previous callback is no longer running.
+    pub fn set_wakeup_callback(&self, callback: Option<Box<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.notifier.callback.lock() {
+            *slot = callback;
+        }
+    }
+
     pub fn poll_events(&self) -> Vec<TerminalEvent> {
+        // Re-arm before draining (see `WakeNotifier`).
+        self.notifier.arm();
         let mut events = Vec::new();
         let mut emitted_wakeup = false;
         while let Ok(ev) = self.event_rx.try_recv() {
@@ -1805,7 +1873,7 @@ fn convert_flags(flags: AlacFlags) -> CellFlags {
 mod tests {
     use super::{
         apply_minimum_contrast, collect_term_damage, contrast_ratio, flush_pending_input,
-        send_wakeup, ConfiguredColors, EventProxy, TermSize,
+        send_wakeup, ConfiguredColors, EventProxy, EventSink, TermSize, WakeNotifier,
     };
     use crate::config::{TerminalColors, TerminalConfig};
     use crate::event::TerminalEvent;
@@ -1889,9 +1957,43 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
     }
 
+    fn test_sink() -> (EventSink, crossbeam_channel::Receiver<TerminalEvent>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sink = EventSink {
+            tx,
+            notifier: Arc::new(WakeNotifier::new()),
+        };
+        (sink, rx)
+    }
+
+    #[test]
+    fn wake_notifier_fires_once_per_arm() {
+        use std::sync::atomic::AtomicUsize;
+        let (sink, _rx) = test_sink();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        *sink.notifier.callback.lock().unwrap() = Some(Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        sink.send(TerminalEvent::Bell);
+        sink.send(TerminalEvent::Bell);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "coalesced until re-armed");
+
+        sink.notifier.arm();
+        sink.send(TerminalEvent::Bell);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        // Removing the callback stops further calls.
+        *sink.notifier.callback.lock().unwrap() = None;
+        sink.notifier.arm();
+        sink.send(TerminalEvent::Bell);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn send_wakeup_coalesces_until_pending_flag_is_cleared() {
-        let (tx, rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = test_sink();
         let pending = AtomicBool::new(false);
 
         send_wakeup(&tx, &pending);
@@ -1941,7 +2043,7 @@ mod tests {
     fn color_request_replies_with_configured_palette() {
         let config = TerminalConfig::default();
         let colors = ConfiguredColors::from_config(&config);
-        let (tx, rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = test_sink();
         let proxy = EventProxy {
             event_tx: tx,
             wakeup_pending: Arc::new(AtomicBool::new(false)),

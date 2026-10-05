@@ -27,6 +27,22 @@ public final class LSPRegistry {
   private var eventQueue: [LSPEvent] = []
   private var eventQueueHead = 0
 
+  /// Called (on a server's reader thread) when an event lands in an empty
+  /// queue, so a client can poll on demand instead of on a timer.
+  public var onEventsAvailable: (() -> Void)? {
+    get {
+      eventLock.lock()
+      defer { eventLock.unlock() }
+      return eventsAvailableHandler
+    }
+    set {
+      eventLock.lock()
+      eventsAvailableHandler = newValue
+      eventLock.unlock()
+    }
+  }
+  private var eventsAvailableHandler: (() -> Void)?
+
   private let documentsLock = NSLock()
   private var documents: [String: String] = [:]
 
@@ -154,12 +170,16 @@ public final class LSPRegistry {
 
   private func enqueue(_ event: LSPEvent) {
     eventLock.lock()
-    defer { eventLock.unlock() }
     if eventQueue.count - eventQueueHead >= Self.eventQueueCapacity {
+      eventLock.unlock()
       lspLog("LSP event channel full (\(Self.eventQueueCapacity) capacity), dropping event")
       return
     }
+    let wasEmpty = eventQueue.count == eventQueueHead
     eventQueue.append(event)
+    let handler = wasEmpty ? eventsAvailableHandler : nil
+    eventLock.unlock()
+    handler?()
   }
 
   // MARK: Document cache

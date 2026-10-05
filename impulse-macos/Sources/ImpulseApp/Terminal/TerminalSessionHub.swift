@@ -3,15 +3,17 @@ import Foundation
 /// Polls terminals whose views are off screen — background tabs, other
 /// workspaces, restored tabs not yet shown — so their events (titles, cwd,
 /// finished commands, bells, progress, exits) keep arriving while hidden.
-/// On-screen terminals poll themselves at display rate; these share one
-/// low-rate timer that speeds up while any of them is busy.
+/// On-screen terminals poll themselves; these share one timer that runs
+/// when a backend reports events (see `TerminalRenderer.wake`), stays fast
+/// while any of them is busy, and otherwise only ticks as a safety net.
 final class TerminalSessionHub {
   static let shared = TerminalSessionHub()
 
   private let renderers = NSHashTable<TerminalRenderer>.weakObjects()
   private var timer: DispatchSourceTimer?
+  private var nextFire = Date.distantFuture
   private let busyInterval: TimeInterval = 0.1
-  private let idleInterval: TimeInterval = 0.25
+  private let idleInterval: TimeInterval = 2
 
   func add(_ renderer: TerminalRenderer) {
     renderers.add(renderer)
@@ -24,10 +26,22 @@ final class TerminalSessionHub {
 
   var count: Int { renderers.allObjects.count }
 
+  /// A background terminal has events: poll soon (coalescing bursts).
+  func wake() {
+    if let timer {
+      // Already polling soon enough (busy background output).
+      if nextFire.timeIntervalSinceNow <= busyInterval { return }
+      timer.cancel()
+      self.timer = nil
+    }
+    scheduleIfNeeded(after: 0.02)
+  }
+
   private func scheduleIfNeeded(after interval: TimeInterval) {
     guard timer == nil, renderers.allObjects.isEmpty == false else { return }
     let timer = DispatchSource.makeTimerSource(queue: .main)
     timer.schedule(deadline: .now() + interval)
+    nextFire = Date().addingTimeInterval(interval)
     timer.setEventHandler { [weak self] in
       guard let self else { return }
       self.timer = nil

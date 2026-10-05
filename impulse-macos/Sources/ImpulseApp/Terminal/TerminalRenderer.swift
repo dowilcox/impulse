@@ -60,6 +60,9 @@ class TerminalRenderer: NSView {
 
     var backend: TerminalBackend? {
         didSet {
+            // Sleep between bursts of output: the backend says when there's
+            // something to poll.
+            backend?.setWakeupHandler { [weak self] in self?.wake() }
             // A shell started before its tab was ever shown (restored or
             // background tabs) is polled by the hub until it is.
             if backend != nil, window == nil { TerminalSessionHub.shared.add(self) }
@@ -125,14 +128,7 @@ class TerminalRenderer: NSView {
 
     /// Whether cursor blinking is enabled (from user settings).
     var cursorBlinkEnabled: Bool = true {
-        didSet {
-            if cursorBlinkEnabled {
-                startBlinkTimer()
-            } else {
-                stopBlinkTimer()
-                cursorBlinkOn = true
-            }
-        }
+        didSet { updateBlinkTimer() }
     }
 
     /// Cursor color from the active theme.
@@ -373,7 +369,12 @@ class TerminalRenderer: NSView {
     private var colorCache: [UInt32: CGColor] = [:]
     private var textLineCache: [UInt64: CTLine] = [:]
     private let activeRefreshInterval: TimeInterval = 1.0 / 60.0
-    private let idleRefreshInterval: TimeInterval = 1.0 / 30.0
+    /// After this long without output, stop polling at display rate and wait
+    /// for the backend's wakeup.
+    private let activeLinger: TimeInterval = 0.25
+    /// Safety-net poll while asleep, should a wakeup ever be missed.
+    private let idleRefreshInterval: TimeInterval = 1.0
+    private var lastActivity = Date.distantPast
 
     // IME composition state. When non-empty, an IME is composing text that
     // has not yet been committed to the PTY.
@@ -431,6 +432,7 @@ class TerminalRenderer: NSView {
     deinit {
         stopRefreshLoop()
         stopBlinkTimer()
+        windowKeyObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     // MARK: View Properties
@@ -441,17 +443,21 @@ class TerminalRenderer: NSView {
     override func becomeFirstResponder() -> Bool {
         backend?.setFocus(true)
         onFocusChanged?(true)
+        DispatchQueue.main.async { [weak self] in self?.updateBlinkTimer() }
         return true
     }
 
     override func resignFirstResponder() -> Bool {
         backend?.setFocus(false)
         onFocusChanged?(false)
+        DispatchQueue.main.async { [weak self] in self?.updateBlinkTimer() }
         return true
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        observeWindowKeyState()
+        updateBlinkTimer()
         if window != nil {
             TerminalSessionHub.shared.remove(self)
             startRefreshLoop()
@@ -472,6 +478,18 @@ class TerminalRenderer: NSView {
 
     // MARK: Adaptive Refresh Loop
 
+    /// The backend has events waiting: poll now if on screen, else let the
+    /// hub pick them up.
+    func wake() {
+        guard window != nil else {
+            TerminalSessionHub.shared.wake()
+            return
+        }
+        refreshTimer?.cancel()
+        refreshTimer = nil
+        scheduleRefresh(after: 0)
+    }
+
     func startRefreshLoop() {
         guard refreshTimer == nil else { return }
         scheduleRefresh(after: 0)
@@ -490,14 +508,49 @@ class TerminalRenderer: NSView {
             guard let self else { return }
             self.refreshTimer = nil
             guard self.window != nil else { return }
-            let hadActivity = self.tick()
-            self.scheduleRefresh(after: hadActivity ? self.activeRefreshInterval : self.idleRefreshInterval)
+            let now = Date()
+            if self.tick() { self.lastActivity = now }
+            let active = now.timeIntervalSince(self.lastActivity) < self.activeLinger
+            self.scheduleRefresh(after: active ? self.activeRefreshInterval : self.idleRefreshInterval)
         }
         refreshTimer = timer
         timer.resume()
     }
 
     // MARK: Cursor Blink Timer
+
+    /// The cursor blinks only where typing goes: this grid, focused, in the
+    /// key window. Everywhere else it stays solid and costs no redraws.
+    private var shouldBlink: Bool {
+        guard cursorBlinkEnabled, let window, window.isKeyWindow else { return false }
+        return window.firstResponder === self
+    }
+
+    private func updateBlinkTimer() {
+        if shouldBlink {
+            if blinkTimer == nil { startBlinkTimer() }
+        } else {
+            stopBlinkTimer()
+            if !cursorBlinkOn {
+                cursorBlinkOn = true
+                if lastCursorRow >= 0 { setNeedsDisplay(rectForRow(lastCursorRow)) }
+            }
+        }
+    }
+
+    private var windowKeyObservers: [NSObjectProtocol] = []
+
+    private func observeWindowKeyState() {
+        windowKeyObservers.forEach(NotificationCenter.default.removeObserver)
+        windowKeyObservers = []
+        guard let window else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            windowKeyObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+                    [weak self] _ in self?.updateBlinkTimer()
+                })
+        }
+    }
 
     private func startBlinkTimer() {
         stopBlinkTimer()
@@ -506,12 +559,14 @@ class TerminalRenderer: NSView {
         timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            self.cursorBlinkOn.toggle()
-            if self.lastCursorRow >= 0 {
-                self.setNeedsDisplay(self.rectForRow(self.lastCursorRow))
-            } else {
-                self.needsDisplay = true
+            // No cursor on screen (e.g. the prompt is hidden behind the input
+            // bar): nothing to blink, nothing to redraw.
+            guard self.lastCursorRow >= 0 else {
+                self.cursorBlinkOn = true
+                return
             }
+            self.cursorBlinkOn.toggle()
+            self.setNeedsDisplay(self.rectForRow(self.lastCursorRow))
         }
         blinkTimer = timer
         timer.resume()
@@ -525,7 +580,7 @@ class TerminalRenderer: NSView {
     /// Reset blink phase to visible. Call on keyboard input so the cursor
     /// stays solid while the user is typing.
     func resetBlink() {
-        guard cursorBlinkEnabled else { return }
+        guard shouldBlink else { return }
         cursorBlinkOn = true
         startBlinkTimer()
     }

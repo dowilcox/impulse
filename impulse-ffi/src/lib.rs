@@ -13,6 +13,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(private_interfaces)]
 
+use std::ffi::c_void;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -442,6 +443,36 @@ pub extern "C" fn impulse_terminal_clear_selection(handle: *mut TerminalHandle) 
             }
             let h = unsafe { &*handle };
             h.backend.clear_selection();
+        }),
+    )
+}
+
+/// Called from the PTY reader thread when the terminal has events to poll.
+pub type ImpulseWakeupFn = extern "C" fn(context: *mut c_void);
+
+/// Register (or, with a null `callback`, remove) the wakeup callback. It runs
+/// on a background thread, at most once between `impulse_terminal_poll_events`
+/// calls; `context` is passed back unchanged. After this returns, the previous
+/// callback is not running and won't be called again.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_set_wakeup_callback(
+    handle: *mut TerminalHandle,
+    callback: Option<ImpulseWakeupFn>,
+    context: *mut c_void,
+) {
+    ffi_catch(
+        (),
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return;
+            }
+            let h = unsafe { &*handle };
+            let context = context as usize;
+            h.backend.set_wakeup_callback(callback.map(
+                |callback| -> Box<dyn Fn() + Send + Sync> {
+                    Box::new(move || callback(context as *mut c_void))
+                },
+            ));
         }),
     )
 }

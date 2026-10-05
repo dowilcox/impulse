@@ -378,6 +378,35 @@ final class TerminalBackend {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    /// Holds the wakeup handler for the C callback's context pointer.
+    private final class WakeBox {
+        let handler: () -> Void
+        init(_ handler: @escaping () -> Void) { self.handler = handler }
+    }
+    private var wakeBox: Unmanaged<WakeBox>?
+
+    /// Called on the main queue when the terminal has events to poll (at
+    /// most once between `pollEvents` calls), so the UI can sleep between
+    /// bursts of output instead of polling on a timer.
+    func setWakeupHandler(_ handler: (() -> Void)?) {
+        guard let handle, !isShutdown else { return }
+        // Clear first: once this returns the old callback can't be running.
+        ImpulseCore.terminalSetWakeupCallback(handle: handle, callback: nil, context: nil)
+        wakeBox?.release()
+        wakeBox = nil
+        guard let handler else { return }
+        let box = Unmanaged.passRetained(WakeBox(handler))
+        wakeBox = box
+        ImpulseCore.terminalSetWakeupCallback(
+            handle: handle,
+            callback: { context in
+                guard let context else { return }
+                let box = Unmanaged<WakeBox>.fromOpaque(context).takeUnretainedValue()
+                DispatchQueue.main.async { box.handler() }
+            },
+            context: box.toOpaque())
+    }
+
     init(config: TerminalBackendConfig, cols: UInt16, rows: UInt16, cellWidth: UInt16, cellHeight: UInt16) throws {
         let configData = try encoder.encode(config)
         guard let configJson = String(data: configData, encoding: .utf8) else {
@@ -758,6 +787,9 @@ final class TerminalBackend {
 
     func shutdown() {
         guard let handle, !isShutdown else { return }
+        ImpulseCore.terminalSetWakeupCallback(handle: handle, callback: nil, context: nil)
+        wakeBox?.release()
+        wakeBox = nil
         isShutdown = true
         ImpulseCore.terminalDestroy(handle: handle)
         self.handle = nil

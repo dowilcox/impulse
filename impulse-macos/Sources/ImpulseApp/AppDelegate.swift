@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// window that still owns the target document.
   private var lspPollTimer: Timer?
   private var isPollingLspEvents = false
+  private var lspPollAgain = false
   private var settingsObserver: NSObjectProtocol?
 
   /// File paths to open once the first window is ready (from Finder or CLI).
@@ -351,9 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return true
   }
 
-  /// Pause the LSP event poll timer while the app is in the background —
-  /// no typing can happen, so there is nothing latency-sensitive to drain
-  /// and the 25 ms timer would just burn CPU/battery.
+  /// Pause the LSP safety-net timer while the app is in the background
+  /// (servers still wake the poll when they send something).
   func applicationDidResignActive(_ notification: Notification) {
     stopLspPolling()
   }
@@ -456,11 +456,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     openNewWindow()
   }
 
+  /// Language servers say when events are waiting (see
+  /// `LSPRegistry.onEventsAvailable`); this timer is only a slow safety net.
   private func startLspPolling() {
     guard lspPollTimer == nil else { return }
-    // 25 ms floor: fast enough that typing -> diagnostics/completions feels
-    // instant, but still much cheaper than the editor repaint budget.
-    lspPollTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { [weak self] _ in
+    core.lspEventsAvailable = { [weak self] in
+      DispatchQueue.main.async { self?.pollLspEventsInBackground() }
+    }
+    lspPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
       self?.pollLspEventsInBackground()
     }
   }
@@ -471,8 +474,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func pollLspEventsInBackground() {
-    guard !isPollingLspEvents else { return }
+    guard !isPollingLspEvents else {
+      // Events arrived mid-poll: go again once this one finishes.
+      lspPollAgain = true
+      return
+    }
     isPollingLspEvents = true
+    lspPollAgain = false
 
     lspQueue.async { [weak self] in
       guard let self else { return }
@@ -502,6 +510,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.isPollingLspEvents = false
+        // A full batch may have left more behind.
+        if count == maxEventsPerTick || self.lspPollAgain { self.pollLspEventsInBackground() }
         guard !events.isEmpty else { return }
 
         for event in events {
