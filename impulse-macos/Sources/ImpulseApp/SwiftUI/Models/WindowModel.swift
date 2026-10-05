@@ -245,6 +245,8 @@ final class WindowModel {
   /// Who it talks to ("Claude Code"), for its header.
   var composerTarget = ""
   @ObservationIgnored var composerDraft = ""
+  /// Messages sent from the composer, oldest first (↑/↓ recall them).
+  @ObservationIgnored var composerHistory: [String] = []
   /// Deliver the composed text (and press Return when true).
   @ObservationIgnored var onComposerSend: ((String, Bool) -> Void)?
   @ObservationIgnored var onCloseComposer: (() -> Void)?

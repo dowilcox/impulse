@@ -306,9 +306,38 @@ final class CommandTextView: NSTextView {
     super.keyDown(with: event)
   }
 
-  // Plain text only, newlines kept.
+  // Copied files paste as their paths and an image as the path of a PNG
+  // saved for it (agents read both); anything else as plain text, newlines
+  // kept.
   override func paste(_ sender: Any?) {
+    let pasteboard = NSPasteboard.general
+    let shell = coordinator?.parent.shellSyntax == true
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+      as? [URL], !urls.isEmpty
+    {
+      insertText(urls.map { shell ? $0.path.shellEscaped : $0.path }.joined(separator: " "), replacementRange: selectedRange())
+      return
+    }
+    if pasteboard.string(forType: .string) == nil, let path = Self.savePastedImage(from: pasteboard) {
+      insertText(shell ? path.shellEscaped : path, replacementRange: selectedRange())
+      return
+    }
     pasteAsPlainText(sender)
+  }
+
+  /// Write a pasted image to a PNG in the caches folder; its path.
+  static func savePastedImage(from pasteboard: NSPasteboard) -> String? {
+    guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
+      let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+    else { return nil }
+    let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+      ?? FileManager.default.temporaryDirectory
+    let folder = caches.appendingPathComponent("Impulse/Pasted Images", isDirectory: true)
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+    let url = folder.appendingPathComponent("Pasted image \(formatter.string(from: Date())).png")
+    return (try? png.write(to: url)) != nil ? url.path : nil
   }
 
   // MARK: Highlighting

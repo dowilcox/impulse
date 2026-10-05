@@ -226,6 +226,9 @@ enum SettingsCatalog {
     toggle(
       "terminal_editor_integration", "Use Impulse as $EDITOR", \.terminalEditorIntegration, .terminal,
       "Blocks & input", detail: "git commit and friends open files in an Impulse tab."),
+    toggle(
+      "agent_composer_auto_show", "Open the composer when an agent needs input", \.agentComposerAutoShow,
+      .terminal, "Agents", detail: "In the focused terminal, so you can answer without clicking into the agent."),
     toggle("terminal_copy_on_select", "Copy on select", \.terminalCopyOnSelect, .terminal, "Behavior"),
     toggle("terminal_scroll_on_output", "Scroll to bottom on output", \.terminalScrollOnOutput, .terminal, "Behavior"),
     toggle("terminal_allow_hyperlink", "Clickable links", \.terminalAllowHyperlink, .terminal, "Behavior"),

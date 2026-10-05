@@ -15,6 +15,8 @@ struct AgentComposerView: View {
   @State private var mentions: [String] = []
   @State private var selectedMention = 0
   @State private var fileIndex: (root: String, files: [String])?
+  /// Position while browsing sent messages with ↑/↓.
+  @State private var historyIndex: Int?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -104,6 +106,24 @@ struct AgentComposerView: View {
     case .down where !mentions.isEmpty:
       selectedMention = (selectedMention + 1) % mentions.count
       return true
+    case .up:
+      // Recall earlier messages from an empty composer (or keep going back).
+      let history = model.composerHistory
+      guard !history.isEmpty, text.isEmpty || historyIndex != nil else { return false }
+      let index = max(0, (historyIndex ?? history.count) - 1)
+      historyIndex = index
+      text = history[index]
+      return true
+    case .down:
+      guard let index = historyIndex else { return false }
+      if index + 1 < model.composerHistory.count {
+        historyIndex = index + 1
+        text = model.composerHistory[index + 1]
+      } else {
+        historyIndex = nil
+        text = ""
+      }
+      return true
     case .tab:
       if mentions.indices.contains(selectedMention) { acceptMention(mentions[selectedMention]) }
       return true
@@ -119,6 +139,11 @@ struct AgentComposerView: View {
     let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !message.isEmpty else { return }
     model.onComposerSend?(message, submit)
+    if model.composerHistory.last != message {
+      model.composerHistory.append(message)
+      if model.composerHistory.count > 50 { model.composerHistory.removeFirst() }
+    }
+    historyIndex = nil
     text = ""
     model.composerDraft = ""
   }

@@ -108,6 +108,8 @@ struct Settings: Codable {
     var terminalPersistentHistory: Bool = true
     /// New terminals set $EDITOR / $VISUAL to `impulse edit`.
     var terminalEditorIntegration: Bool = false
+    /// Open the composer when the focused terminal's agent asks for input.
+    var agentComposerAutoShow: Bool = false
     var lastDirectory: String
     var openFiles: [String]
 
@@ -205,6 +207,7 @@ struct Settings: Codable {
         case restoreScrollback = "restore_scrollback"
         case terminalPersistentHistory = "terminal_persistent_history"
         case terminalEditorIntegration = "terminal_editor_integration"
+        case agentComposerAutoShow = "agent_composer_auto_show"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -347,6 +350,8 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .terminalPersistentHistory)) ?? d.terminalPersistentHistory
         terminalEditorIntegration =
             (try? c.decode(Bool.self, forKey: .terminalEditorIntegration)) ?? d.terminalEditorIntegration
+        agentComposerAutoShow =
+            (try? c.decode(Bool.self, forKey: .agentComposerAutoShow)) ?? d.agentComposerAutoShow
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

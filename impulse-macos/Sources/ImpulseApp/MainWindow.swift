@@ -2331,6 +2331,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           self.tabManager.ownsTerminal(terminal)
         else { return }
         self.tabManager.refreshSegmentLabels()
+        // Opt-in: the focused agent asks for input → open the composer.
+        if self.settings.agentComposerAutoShow, terminal.agentState == .needsInput,
+          terminal === self.tabManager.selectedTerminal?.activeTerminal, terminal.isDirectInteraction,
+          !self.windowModel.composerVisible, self.window?.isKeyWindow == true
+        {
+          self.toggleAgentComposer()
+        }
       }
     )
     notificationObservers.append(
