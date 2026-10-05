@@ -209,17 +209,14 @@ enum TabEntry {
 
 // MARK: - Closed Tab Info
 
-/// Information about a closed tab, used for the "reopen closed tab" feature.
-/// Only editor and image preview tabs are recorded (terminals cannot be reopened).
-enum ClosedTabInfo {
-  case editor(path: String)
-  case imagePreview(path: String)
-
-  var path: String {
-    switch self {
-    case .editor(let p), .imagePreview(let p): return p
-    }
-  }
+/// A closed tab or pane that "Reopen Closed Tab" can bring back: files
+/// reopen where they were, terminals get a new shell in the same folder,
+/// split tabs come back with their layout.
+struct ClosedTabInfo {
+  let tab: SessionTab
+  let workspaceID: UUID
+  /// When a single pane closed: the tab it was in, so it can rejoin it.
+  let fromTabUID: Int?
 }
 
 // MARK: - Tab Manager
@@ -647,25 +644,14 @@ final class TabManager: NSObject {
     }
   }
 
-  /// Records a tab entry in the closed tabs stack for later reopening.
-  private func recordClosedTab(_ entry: TabEntry) {
-    switch entry {
-    case .editor(let e):
-      if let p = e.filePath {
-        closedTabs.append(.editor(path: p))
-        if closedTabs.count > maxClosedTabs {
-          closedTabs.removeFirst()
-        }
-      }
-    case .imagePreview(let p, _):
-      closedTabs.append(.imagePreview(path: p))
-      if closedTabs.count > maxClosedTabs {
-        closedTabs.removeFirst()
-      }
-    case .split(let split):
-      for (_, pane) in split.orderedPanes { recordClosedTab(pane) }
-    case .terminal, .diffReview:
-      break  // Terminals and review tabs cannot be reopened
+  /// Records a closing tab (or pane) for "Reopen Closed Tab".
+  private func recordClosedTab(
+    _ entry: TabEntry, pinned: Bool = false, workspaceID: UUID, fromTabUID: Int? = nil
+  ) {
+    guard let tab = sessionTab(for: entry, pinned: pinned) else { return }
+    closedTabs.append(ClosedTabInfo(tab: tab, workspaceID: workspaceID, fromTabUID: fromTabUID))
+    if closedTabs.count > maxClosedTabs {
+      closedTabs.removeFirst()
     }
   }
 
@@ -678,7 +664,7 @@ final class TabManager: NSObject {
 
     let record = records[index]
     let closingSelectedTab = index == selectedIndex
-    recordClosedTab(record.entry)
+    recordClosedTab(record.entry, pinned: record.pinned, workspaceID: record.workspaceID)
     cleanupTab(record.entry)
     untrack(record.entry)
 
@@ -749,18 +735,64 @@ final class TabManager: NSObject {
 
   // MARK: - Reopening Closed Tabs
 
-  /// Reopens the most recently closed editor or image preview tab.
-  /// Returns the file path that was reopened, or `nil` if the stack was empty
-  /// or the file no longer exists on disk.
-  @discardableResult
-  func reopenLastClosedTab() -> String? {
-    guard let info = closedTabs.popLast() else { return nil }
-    let path = info.path
-    guard FileManager.default.fileExists(atPath: path) else { return nil }
-    // Use the existing addEditorTab method, which handles deduplication
-    // and image detection internally.
-    addEditorTab(path: path)
-    return path
+  /// Reopens the most recently closed tab or pane. A pane rejoins its old
+  /// tab when that tab is still open.
+  func reopenLastClosedTab() {
+    guard let info = closedTabs.popLast() else { return }
+    let paths = info.tab.panes.compactMap(\.path)
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let contents = Self.preloadFileContents(paths)
+      DispatchQueue.main.async { self?.insertReopened(info, contents: contents) }
+    }
+  }
+
+  private func insertReopened(
+    _ info: ClosedTabInfo, contents: [String: (text: String, large: Bool)]
+  ) {
+    let target = workspace(info.workspaceID) ?? activeWorkspace
+    if target.id != activeWorkspaceID { activateWorkspace(target.id) }
+    var panes: [Int: TabEntry] = [:]
+    for (id, surface) in info.tab.panes.enumerated() {
+      if let entry = makeRestoredSurface(
+        surface, contents: contents,
+        projectDirectory: target.kind == .folder ? target.root : nil)
+      {
+        panes[id] = entry
+      }
+    }
+    guard !panes.isEmpty else {
+      // A file that's open again: show it instead.
+      if let path = info.tab.panes.first?.path { addEditorTab(path: path) }
+      return
+    }
+    if panes.count == 1, let pane = panes.values.first, let uid = info.fromTabUID,
+      let index = records.firstIndex(where: { $0.uid == uid && $0.workspaceID == target.id })
+    {
+      selectTab(index: index)
+      splitSelectedTab(with: pane, axis: .horizontal)
+      return
+    }
+    if let index = appendRestoredTab(
+      panes: panes, layout: info.tab.layout, focusedPane: info.tab.focusedPane,
+      pinned: info.tab.pinned, workspaceID: target.id)
+    {
+      selectTab(index: index)
+    }
+  }
+
+  /// Read files for restored editors (off the main thread): text and
+  /// whether it's large enough to open read-only. Skips images and binaries.
+  static func preloadFileContents(_ paths: [String]) -> [String: (text: String, large: Bool)] {
+    var contents: [String: (text: String, large: Bool)] = [:]
+    for path in paths where !isImageFile(path) {
+      guard FileManager.default.fileExists(atPath: path), !isBinaryFile(path) else { continue }
+      let size =
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap { $0 }
+        ?? 0
+      let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+      contents[path] = (text, size > 5 * 1024 * 1024)
+    }
+    return contents
   }
 
   // MARK: - Reordering
@@ -924,7 +956,7 @@ final class TabManager: NSObject {
     guard workspace(id) != nil else { return }
     for index in tabIndices(inWorkspace: id).reversed() {
       let record = records[index]
-      recordClosedTab(record.entry)
+      recordClosedTab(record.entry, pinned: record.pinned, workspaceID: record.workspaceID)
       cleanupTab(record.entry)
       untrack(record.entry)
       if index == selectedIndex {
@@ -1102,8 +1134,9 @@ final class TabManager: NSObject {
     }
   }
 
-  /// The window's workspaces and tabs for the session file.
-  func sessionWorkspaces() -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
+  /// A saveable description of a tab's surfaces and layout, or nil when
+  /// nothing in it can be restored (review tabs, unsaved files).
+  func sessionTab(for entry: TabEntry, pinned: Bool) -> SessionTab? {
     let shellName = LoginShell.defaultShellName()
     func surfaceState(_ entry: TabEntry) -> SessionSurface? {
       switch entry {
@@ -1127,35 +1160,36 @@ final class TabManager: NSObject {
       }
     }
 
+    guard case .split(let split) = entry else {
+      return surfaceState(entry).map { SessionTab(pinned: pinned, panes: [$0]) }
+    }
+    // Pane ids become indexes into `panes`; unsaveable panes drop out.
+    var panes: [SessionSurface] = []
+    var idMap: [Int: Int] = [:]
+    for (id, pane) in split.orderedPanes {
+      if let state = surfaceState(pane) {
+        idMap[id] = panes.count
+        panes.append(state)
+      }
+    }
+    var layout: LayoutTree<Int>? = split.layout
+    for id in split.layout.leaves where idMap[id] == nil { layout = layout?.removing(id) }
+    guard let layout, !panes.isEmpty else { return nil }
+    return SessionTab(
+      pinned: pinned, panes: panes,
+      layout: panes.count > 1 ? layout.mapPanes { idMap[$0] ?? $0 } : nil,
+      focusedPane: idMap[split.focusedPane])
+  }
+
+  /// The window's workspaces and tabs for the session file.
+  func sessionWorkspaces() -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
     var result: [SessionWorkspaceState] = []
     for workspace in workspaces {
       var tabs: [SessionTab] = []
       var activeTab: Int?
       for index in tabIndices(inWorkspace: workspace.id) {
         let record = records[index]
-        var tab: SessionTab?
-        if case .split(let split) = record.entry {
-          // Pane ids become indexes into `panes`; unsaveable panes drop out.
-          var panes: [SessionSurface] = []
-          var idMap: [Int: Int] = [:]
-          for (id, entry) in split.orderedPanes {
-            if let state = surfaceState(entry) {
-              idMap[id] = panes.count
-              panes.append(state)
-            }
-          }
-          var layout: LayoutTree<Int>? = split.layout
-          for id in split.layout.leaves where idMap[id] == nil { layout = layout?.removing(id) }
-          if let layout, !panes.isEmpty {
-            let remapped = layout.mapPanes { idMap[$0] ?? $0 }
-            tab = SessionTab(
-              pinned: record.pinned, panes: panes, layout: panes.count > 1 ? remapped : nil,
-              focusedPane: idMap[split.focusedPane])
-          }
-        } else if let state = surfaceState(record.entry) {
-          tab = SessionTab(pinned: record.pinned, panes: [state])
-        }
-        guard let tab else { continue }
+        guard let tab = sessionTab(for: record.entry, pinned: record.pinned) else { continue }
         if index == selectedIndex || (activeTab == nil && record.uid == workspace.lastSelectedUID) {
           activeTab = tabs.count
         }
@@ -1266,7 +1300,8 @@ final class TabManager: NSObject {
       return
     }
     guard let removed = split.remove(id) else { return }
-    recordClosedTab(removed)
+    recordClosedTab(
+      removed, workspaceID: records[index].workspaceID, fromTabUID: records[index].uid)
     cleanupTab(removed)
     untrack(removed)
     removed.view.removeFromSuperview()

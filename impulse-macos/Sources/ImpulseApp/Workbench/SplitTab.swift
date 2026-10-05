@@ -88,14 +88,23 @@ final class SplitTab {
   /// focused pane goes. Returns nil for unknown ids or the last pane.
   func remove(_ id: Int) -> TabEntry? {
     guard let entry = panes[id], let remaining = layout.removing(id) else { return nil }
-    let heir = [PaneDirection.left, .up, .right, .down].lazy
-      .compactMap { self.layout.neighbor(of: id, toward: $0) }.first
+    let heir = spaceHeir(of: id)
     panes[id] = nil
     layout = remaining
     if focusedPane == id { focusedPane = heir ?? remaining.leaves[0] }
     if view.zoomedPane == id { view.zoomedPane = nil }
     sync()
     return entry
+  }
+
+  /// The pane that takes over a removed pane's space (its previous sibling,
+  /// else its next), so focus lands where the eye already is.
+  private func spaceHeir(of id: Int) -> Int? {
+    guard let path = layout.path(to: id), let index = path.last,
+      case .split(_, let siblings, _)? = layout.node(at: Array(path.dropLast()))
+    else { return nil }
+    if index > 0 { return siblings[index - 1].leaves.last }
+    return siblings.count > 1 ? siblings[1].leaves.first : nil
   }
 
   func focus(_ id: Int) {

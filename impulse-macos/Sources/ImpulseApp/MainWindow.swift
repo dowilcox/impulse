@@ -656,6 +656,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       } else if action.hasPrefix("run=") {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
+      } else if action == "close-pane" {
+        requestCloseFocusedPane()
+      } else if action == "reopen" {
+        tabManager.reopenLastClosedTab()
       } else if action == "newtab" {
         tabManager.addTerminalTab()
       } else if action.hasPrefix("pane=") {
@@ -2947,17 +2951,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     let paths = savedWorkspaces.flatMap { $0.tabs.flatMap { $0.panes.compactMap(\.path) } }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      var contents: [String: (text: String, large: Bool)] = [:]
-      for path in paths where !TabManager.isImageFile(path) {
-        guard FileManager.default.fileExists(atPath: path), !TabManager.isBinaryFile(path) else {
-          continue
-        }
-        let size =
-          (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap { $0 }
-          ?? 0
-        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        contents[path] = (text, size > 5 * 1024 * 1024)
-      }
+      let contents = TabManager.preloadFileContents(paths)
       DispatchQueue.main.async { [weak self] in
         self?.insertRestoredWorkspaces(
           savedWorkspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
