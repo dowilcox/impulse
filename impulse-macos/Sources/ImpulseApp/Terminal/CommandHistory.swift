@@ -77,7 +77,7 @@ final class CommandHistory {
   /// Import zsh, bash and fish history files found in the home folder.
   /// Reports how many commands were added.
   func importShellHistory(completion: @escaping (Int) -> Void) {
-    queue.async { [database] in
+    queue.async { [weak self, database] in
       let home = URL(fileURLWithPath: NSHomeDirectory())
       var entries: [HistoryEntry] = []
       if let data = try? Data(contentsOf: home.appendingPathComponent(".zsh_history")) {
@@ -92,7 +92,7 @@ final class CommandHistory {
       }
       database?.insert(entries)
       let recent = database?.recent(limit: Self.cacheSize).map(\.entry.command) ?? []
-      DispatchQueue.main.async { [weak self] in
+      DispatchQueue.main.async {
         self?.recentCommands = []
         self?.mergeIntoCache(recent, atFront: false)
         completion(entries.count)

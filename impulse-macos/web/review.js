@@ -674,7 +674,7 @@ function renderBody(rec) {
   if (outdated.length) {
     const box = el("div", "outdated-box");
     box.appendChild(
-      el("div", "title", "Outdated comments — the lines they were on changed"),
+      el("div", "title", "Outdated comments — their lines changed or aren't in this diff"),
     );
     outdated.forEach((c) => box.appendChild(commentEl(rec, c)));
     body.appendChild(box);
@@ -1122,17 +1122,30 @@ function commentEl(rec, c) {
         (c.endLine > c.line ? c.line + "–" + c.endLine : c.line),
     ),
   );
+  if (c.author) {
+    // Imported from a pull request review thread.
+    meta.insertBefore(el("span", "author", "@" + c.author), meta.firstChild);
+  }
   meta.appendChild(el("span", "spacer"));
-  const edit = el("button", "act", "Edit");
-  edit.addEventListener("click", () => editCommentInline(box, c));
-  const del = el("button", "act danger", "Delete");
+  if (c.url) {
+    const view = el("button", "act", "View on GitHub");
+    view.addEventListener("click", () => post({ type: "OpenURL", url: c.url }));
+    meta.appendChild(view);
+  } else {
+    const edit = el("button", "act", "Edit");
+    edit.addEventListener("click", () => editCommentInline(box, c));
+    meta.appendChild(edit);
+  }
+  const del = el("button", "act danger", c.url ? "Dismiss" : "Delete");
   del.addEventListener("click", () =>
     post({ type: "DeleteComment", id: c.id }),
   );
-  meta.appendChild(edit);
   meta.appendChild(del);
   box.appendChild(meta);
-  box.appendChild(el("div", "body", c.text));
+  // The thread's author is in the header already.
+  const lead = c.author ? "@" + c.author + ": " : null;
+  const text = lead && c.text.startsWith(lead) ? c.text.slice(lead.length) : c.text;
+  box.appendChild(el("div", "body", text));
   return box;
 }
 

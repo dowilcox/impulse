@@ -866,6 +866,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       } else if action == "history" {
         showHistory()
+      } else if action.hasPrefix("pr-threads=") {
+        // A saved `gh api graphql` reviewThreads answer, applied to the open review.
+        let data = FileManager.default.contents(atPath: String(action.dropFirst(11))) ?? Data()
+        for case .diffReview(_, let review) in tabManager.allSurfaces {
+          review.applyImportedThreads(PullRequestThreads.parse(data), number: 7)
+        }
       } else if action.hasPrefix("composer=") {
         windowModel.composerDraft = String(action.dropFirst(9))
         toggleAgentComposer()

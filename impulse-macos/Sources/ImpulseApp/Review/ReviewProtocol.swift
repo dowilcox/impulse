@@ -49,6 +49,9 @@ struct ReviewCommentItem: Encodable {
   let endLine: Int
   let text: String
   let outdated: Bool
+  /// Imported from a pull request: who started the thread and its web link.
+  var author: String? = nil
+  var url: String? = nil
 }
 
 struct ReviewFileDiff: Encodable {
@@ -153,9 +156,10 @@ enum ReviewEvent: Decodable {
   case editComment(id: String, text: String)
   case deleteComment(id: String)
   case copyPath(path: String)
+  case openURL(url: String)
 
   private enum Keys: String, CodingKey {
-    case type, path, action, hunkIndex, hunkId, lines, viewed, line, side, endLine, text, snippet, id
+    case type, path, action, hunkIndex, hunkId, lines, viewed, line, side, endLine, text, snippet, id, url
   }
 
   init(from decoder: Decoder) throws {
@@ -199,6 +203,8 @@ enum ReviewEvent: Decodable {
       self = .deleteComment(id: try c.decode(String.self, forKey: .id))
     case "CopyPath":
       self = .copyPath(path: try c.decode(String.self, forKey: .path))
+    case "OpenURL":
+      self = .openURL(url: try c.decode(String.self, forKey: .url))
     default:
       throw DecodingError.dataCorruptedError(
         forKey: .type, in: c, debugDescription: "Unknown review event")

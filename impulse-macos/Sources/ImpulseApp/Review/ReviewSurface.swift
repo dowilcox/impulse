@@ -25,6 +25,9 @@ final class ReviewSurfaceModel {
   /// every file viewed): "Since my last review" diffs from there.
   var lastReview: SafetySnapshot?
   var palette: ChromePalette
+  /// The repository (for its pull request, read live by the header).
+  @ObservationIgnored weak var repository: GitRepositoryState?
+  var isImportingThreads = false
 
   @ObservationIgnored var onSelectScope: ((DiffScope) -> Void)?
   @ObservationIgnored var onSetLayout: ((String) -> Void)?
@@ -33,6 +36,7 @@ final class ReviewSurfaceModel {
   @ObservationIgnored var onListAgents: (() -> [AgentSummary])?
   @ObservationIgnored var onSendToAgent: ((UUID) -> Void)?
   @ObservationIgnored var onClearComments: (() -> Void)?
+  @ObservationIgnored var onImportThreads: (() -> Void)?
   @ObservationIgnored var onRefresh: (() -> Void)?
   @ObservationIgnored var onShowChanges: (() -> Void)?
 
@@ -179,6 +183,8 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     model.onListAgents = { [weak self] in self?.host?.agentTargets ?? [] }
     model.onSendToAgent = { [weak self] id in self?.sendCommentsToAgent(id) }
     model.onClearComments = { [weak self] in self?.clearComments() }
+    model.onImportThreads = { [weak self] in self?.importPullRequestThreads() }
+    model.repository = repository
     model.onRefresh = { [weak self] in self?.refresh() }
     model.onShowChanges = { [weak self] in
       (self?.host as? MainWindowController)?.showChangesPanel()
@@ -380,6 +386,8 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     case .copyPath(let path):
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(path, forType: .string)
+    case .openURL(let url):
+      if let link = URL(string: url), link.scheme == "https" { NSWorkspace.shared.open(link) }
     }
   }
 
@@ -539,7 +547,8 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         id: comment.id, side: comment.side.rawValue, line: comment.line, endLine: comment.endLine,
         text: comment.text,
         outdated: ReviewCommentAnchoring.isOutdated(
-          comment, lines: comment.side == .old ? oldLines : newLines))
+          comment, lines: comment.side == .old ? oldLines : newLines),
+        author: comment.remote?.author, url: comment.remote?.url)
     }
     send(.setFileDiff(ReviewFileDiff(diff, diffHash: diff.contentHash, comments: items)))
   }
@@ -581,6 +590,38 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       else { return }
       SafetySnapshots.prune(root: root, prefix: SafetySnapshots.reviewPrefix, keep: 20)
       DispatchQueue.main.async { self?.model.lastReview = snapshot }
+    }
+  }
+
+  /// Bring the PR's unresolved review threads in as comments (replacing an
+  /// earlier import) and show the branch's diff, where they're anchored.
+  private func importPullRequestThreads() {
+    guard let pullRequest = repository.pullRequest, !model.isImportingThreads else { return }
+    model.isImportingThreads = true
+    PullRequestMonitor.shared.reviewThreads(root: repoRoot, pullRequest: pullRequest) {
+      [weak self] imported in
+      self?.model.isImportingThreads = false
+      self?.applyImportedThreads(imported, number: pullRequest.number)
+    }
+  }
+
+  func applyImportedThreads(_ imported: [ReviewComment]?, number: Int) {
+    guard let imported else {
+      host?.toasts.show(
+        Toast(kind: .warning, message: "Couldn't load review threads for #\(number) from GitHub."))
+      return
+    }
+    let paths = comments.replaceImported(with: imported)
+    for path in paths { resendDiff(path: path) }
+    updateCounts()
+    host?.toasts.show(
+      Toast(
+        kind: .success,
+        message: imported.isEmpty
+          ? "#\(number) has no open review threads"
+          : "Imported \(imported.count) open thread\(imported.count == 1 ? "" : "s") from #\(number)"))
+    if !imported.isEmpty, let base = model.baseBranch, model.scope != .branch(base: base) {
+      setScope(.branch(base: base))
     }
   }
 
@@ -741,6 +782,13 @@ struct ReviewHeaderBar: View {
             })
         }
         if !agents.isEmpty { items.append(.separator) }
+        if let pullRequest = model.repository?.pullRequest, PullRequestMonitor.shared.isAvailable {
+          items.append(
+            ChromeMenuItem(
+              "Import Review Threads from #\(pullRequest.number)", isEnabled: !model.isImportingThreads
+            ) { model.onImportThreads?() })
+          items.append(.separator)
+        }
         return items + [
           ChromeMenuItem("Copy Comments as Prompt", isEnabled: model.commentCount > 0) {
             model.onCopyPrompt?()

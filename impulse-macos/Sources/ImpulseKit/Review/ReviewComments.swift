@@ -14,10 +14,28 @@ public struct ReviewComment: Codable, Equatable, Identifiable, Sendable {
   public var snippet: String
   public var text: String
   public var createdAt: Date
+  /// Set when the comment came from a pull request review thread.
+  public var remote: RemoteThread?
+
+  /// A review thread imported from the code host.
+  public struct RemoteThread: Codable, Equatable, Sendable {
+    /// Who started the thread.
+    public var author: String
+    /// The thread's first comment on the web.
+    public var url: String
+    /// The host says the thread's lines have since changed.
+    public var isOutdated: Bool
+
+    public init(author: String, url: String, isOutdated: Bool) {
+      self.author = author
+      self.url = url
+      self.isOutdated = isOutdated
+    }
+  }
 
   public init(
     id: String = UUID().uuidString, path: String, side: Side, line: Int, endLine: Int,
-    snippet: String, text: String, createdAt: Date = Date()
+    snippet: String, text: String, createdAt: Date = Date(), remote: RemoteThread? = nil
   ) {
     self.id = id
     self.path = path
@@ -27,6 +45,7 @@ public struct ReviewComment: Codable, Equatable, Identifiable, Sendable {
     self.snippet = snippet
     self.text = text
     self.createdAt = createdAt
+    self.remote = remote
   }
 
   /// "path:12" or "path:12-14".
@@ -41,6 +60,9 @@ public enum ReviewCommentAnchoring {
   /// comment's side in the current diff; lines not present in the diff (the
   /// hunk was staged, reverted or reshaped) also make it outdated.
   public static func isOutdated(_ comment: ReviewComment, lines: [Int: String]) -> Bool {
+    // Imported threads carry no snippet: trust the host, and float ones
+    // whose line isn't part of this diff.
+    if let remote = comment.remote { return remote.isOutdated || lines[comment.endLine] == nil }
     guard !comment.snippet.isEmpty else { return false }
     let expected = comment.snippet.components(separatedBy: "\n")
     for (offset, text) in expected.enumerated() {

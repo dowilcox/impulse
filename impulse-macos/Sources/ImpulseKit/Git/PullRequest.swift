@@ -59,3 +59,74 @@ public struct PullRequestInfo: Equatable, Sendable {
     return pending ? .pending : .passed
   }
 }
+
+/// Review threads on a pull request (GitHub GraphQL `reviewThreads`),
+/// turned into review comments anchored on the PR's diff.
+public enum PullRequestThreads {
+  public static let query = """
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              id isResolved isOutdated path diffSide
+              line startLine originalLine originalStartLine
+              comments(first: 50) { nodes { author { login } body url createdAt } }
+            }
+          }
+        }
+      }
+    }
+    """
+
+  /// Owner, repository name and number from a PR's web URL
+  /// ("https://github.com/owner/name/pull/12").
+  public static func coordinates(fromURL url: String) -> (owner: String, name: String, number: Int)? {
+    guard let components = URL(string: url)?.pathComponents.filter({ $0 != "/" }),
+      components.count >= 4, components[2] == "pull", let number = Int(components[3])
+    else { return nil }
+    return (components[0], components[1], number)
+  }
+
+  /// One comment per thread (replies folded into its text). Resolved
+  /// threads are skipped unless asked for. Ids are stable per thread so a
+  /// re-import replaces rather than duplicates.
+  public static func parse(_ json: Data, includeResolved: Bool = false) -> [ReviewComment]? {
+    guard let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+      let data = root["data"] as? [String: Any],
+      let repository = data["repository"] as? [String: Any],
+      let pullRequest = repository["pullRequest"] as? [String: Any],
+      let threads = (pullRequest["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]
+    else { return nil }
+    let dates = ISO8601DateFormatter()
+    return threads.compactMap { thread in
+      guard let id = thread["id"] as? String, let path = thread["path"] as? String,
+        includeResolved || (thread["isResolved"] as? Bool) != true
+      else { return nil }
+      let notes = ((thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
+      guard let first = notes.first else { return nil }
+      // A thread whose code moved on has no current line: fall back to the
+      // line it was written on and call it outdated.
+      var outdated = thread["isOutdated"] as? Bool ?? false
+      var end = thread["line"] as? Int
+      var start = thread["startLine"] as? Int
+      if end == nil {
+        outdated = true
+        end = thread["originalLine"] as? Int
+        start = thread["originalStartLine"] as? Int
+      }
+      guard let end else { return nil }
+      let text = notes.map { note -> String in
+        let login = ((note["author"] as? [String: Any])?["login"] as? String) ?? "ghost"
+        let body = (note["body"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return "@\(login): \(body)"
+      }.joined(separator: "\n\n")
+      let author = ((first["author"] as? [String: Any])?["login"] as? String) ?? "ghost"
+      return ReviewComment(
+        id: "gh:\(id)", path: path, side: thread["diffSide"] as? String == "LEFT" ? .old : .new,
+        line: min(start ?? end, end), endLine: end, snippet: "", text: text,
+        createdAt: (first["createdAt"] as? String).flatMap(dates.date(from:)) ?? Date(),
+        remote: .init(author: author, url: first["url"] as? String ?? "", isOutdated: outdated))
+    }
+  }
+}

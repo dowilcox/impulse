@@ -42,10 +42,35 @@ final class PullRequestMonitor {
   }
 
   private func fetch(root: String) -> PullRequestInfo? {
+    run(["pr", "view", "--json", PullRequestInfo.ghFields], root: root).flatMap(PullRequestInfo.parse)
+  }
+
+  /// Unresolved review threads on `pullRequest`, as review comments (nil
+  /// when gh failed: signed out, offline, not GitHub).
+  func reviewThreads(
+    root: String, pullRequest: PullRequestInfo, completion: @escaping ([ReviewComment]?) -> Void
+  ) {
+    guard let coordinates = PullRequestThreads.coordinates(fromURL: pullRequest.url) else {
+      return completion(nil)
+    }
+    queue.async { [weak self] in
+      let data = self?.run(
+        [
+          "api", "graphql", "-f", "query=\(PullRequestThreads.query)",
+          "-F", "owner=\(coordinates.owner)", "-F", "name=\(coordinates.name)",
+          "-F", "number=\(coordinates.number)",
+        ], root: root)
+      let comments = data.flatMap { PullRequestThreads.parse($0) }
+      DispatchQueue.main.async { completion(comments) }
+    }
+  }
+
+  /// Run gh in `root` and return its stdout when it succeeds.
+  private func run(_ arguments: [String], root: String) -> Data? {
     guard let gh = ghPath else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: gh)
-    process.arguments = ["pr", "view", "--json", PullRequestInfo.ghFields]
+    process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: root)
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = LoginShell.loginPath()
@@ -63,8 +88,7 @@ final class PullRequestMonitor {
       process.terminate()
       return nil
     }
-    guard process.terminationStatus == 0 else { return nil }
-    return PullRequestInfo.parse(data)
+    return process.terminationStatus == 0 ? data : nil
   }
 
   /// `gh pr create --web` (fills in the branch; opens the browser).
