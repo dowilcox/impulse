@@ -96,4 +96,38 @@
       #expect(values("cd ", context(dir.path)) == ["docs/"], "cd only offers folders")
     }
   }
+
+  struct ShellCompletionsTests {
+    @Test func parsesFishOutput() {
+      let out = ShellCompletions.parseFish(
+        "checkout\tCheckout and switch to a branch\ncherry-pick\tReapply a commit\nsrc/\nsrc/lib.rs\t\ncheckout\tdup\n")
+      #expect(out.map(\.value) == ["checkout", "cherry-pick", "src/", "src/lib.rs"])
+      #expect(out[0].detail == "Checkout and switch to a branch")
+      #expect(out[0].kind == "shell")
+      #expect(out[2].isDir && out[2].kind == "path" && out[2].display == "src/")
+      #expect(out[3].display == "lib.rs" && out[3].detail == nil)
+    }
+
+    @Test func mergesAfterTheBuiltInOnes() {
+      let context = CompletionContext(cwd: nil) { [] } gitRemotes: { [] } gitTags: { [] } shellCompletions: { _ in
+        ShellCompletions.parseFish("commit\tRecord changes\ncherry\tFind commits\n")
+      }
+      let result = CompletionEngine.candidates(input: "git c", context: context)
+      let values = result.candidates.map(\.value)
+      #expect(values.contains("commit") && values.contains("cherry"))
+      #expect(values.filter { $0 == "commit" }.count == 1, "no duplicates")
+      #expect(values.firstIndex(of: "cherry")! > values.firstIndex(of: "commit")!, "built-in first")
+    }
+
+    @Test func fishCompletesForReal() {
+      // Only where fish is installed.
+      guard
+        let fish = ["/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"]
+          .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+      else { return }
+      let out = ShellCompletions.fish(line: "set --erase\"; echo; ", cwd: "/", fishPath: fish)
+      #expect(out.allSatisfy { !$0.value.contains("\n") }, "the line is data, not code")
+      #expect(ShellCompletions.fish(line: "cd /us", cwd: "/", fishPath: fish).contains { $0.value == "/usr/" })
+    }
+  }
 #endif

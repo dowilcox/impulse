@@ -238,6 +238,10 @@ enum SettingsCatalog {
       "terminal_persistent_history", "Keep command history", \.terminalPersistentHistory, .terminal,
       "Blocks & input", detail: "Remember commands across sessions and terminals (stored locally)."),
     toggle(
+      "terminal_shell_completions", "Ask the shell for completions", \.terminalShellCompletions, .terminal,
+      "Blocks & input",
+      detail: "Add fish's own completions (its completion scripts and descriptions) to the Tab menu."),
+    toggle(
       "terminal_editor_integration", "Use Impulse as $EDITOR", \.terminalEditorIntegration, .terminal,
       "Blocks & input", detail: "git commit and friends open files in an Impulse tab."),
     toggle(

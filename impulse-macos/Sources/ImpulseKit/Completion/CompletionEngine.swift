@@ -12,16 +12,21 @@ public struct CompletionContext {
   public var gitBranches: () -> [String]
   public var gitRemotes: () -> [String]
   public var gitTags: () -> [String]
+  /// The shell's own completions for the line (opt-in), merged after the
+  /// built-in ones.
+  public var shellCompletions: ((String) -> [CompletionCandidate])?
 
   public init(
     cwd: String?, home: String = NSHomeDirectory(), gitBranches: @escaping () -> [String] = { [] },
-    gitRemotes: @escaping () -> [String] = { [] }, gitTags: @escaping () -> [String] = { [] }
+    gitRemotes: @escaping () -> [String] = { [] }, gitTags: @escaping () -> [String] = { [] },
+    shellCompletions: ((String) -> [CompletionCandidate])? = nil
   ) {
     self.cwd = cwd
     self.home = home
     self.gitBranches = gitBranches
     self.gitRemotes = gitRemotes
     self.gitTags = gitTags
+    self.shellCompletions = shellCompletions
   }
 }
 
@@ -31,6 +36,15 @@ public enum CompletionEngine {
   /// `"option"` or the generator's kind (`"branch"`, `"script"`, …), with a
   /// description in `detail`.
   public static func candidates(input: String, context: CompletionContext, limit: Int = 50) -> CompletionResult {
+    let builtIn = builtInCandidates(input: input, context: context, limit: limit)
+    guard let shell = context.shellCompletions,
+      !parseShellInput(input, cursor: input.utf8.count).incomplete
+    else { return builtIn }
+    return CompletionResult(
+      span: builtIn.span, candidates: ShellCompletions.merge(builtIn.candidates, shell(input), limit: limit))
+  }
+
+  static func builtInCandidates(input: String, context: CompletionContext, limit: Int) -> CompletionResult {
     let parsed = parseShellInput(input, cursor: input.utf8.count)
     let completion = parsed.completion
     let span = completion.span

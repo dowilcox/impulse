@@ -858,12 +858,36 @@ class TerminalTab: NSView {
   func completionCandidates(for text: String) -> CompletionResult? {
     guard !text.isEmpty, backend != nil else { return nil }
     let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
+    var shellCompletions: ((String) -> [CompletionCandidate])?
+    let shellPath = LoginShell.defaultShellPath()
+    if SettingsStore.shared.settings.terminalShellCompletions, ShellCompletions.supports(shellPath: shellPath) {
+      shellCompletions = { [weak self] line in self?.cachedShellCompletions(line, cwd: cwd, shellPath: shellPath) ?? [] }
+    }
     let context = CompletionContext(
       cwd: cwd,
       gitBranches: { cwd.map { root in GitOperations.branches(root: root).local } ?? [] },
       gitRemotes: { cwd.map { GitOperations.remotes(root: $0) } ?? [] },
-      gitTags: { cwd.map { GitOperations.tags(root: $0) } ?? [] })
+      gitTags: { cwd.map { GitOperations.tags(root: $0) } ?? [] },
+      shellCompletions: shellCompletions)
     return CompletionEngine.candidates(input: text, context: context)
+  }
+
+  /// Recent answers from the shell, reused for a few seconds (typing narrows
+  /// the menu by asking again for the same lines).
+  private let shellCompletionCache: NSCache<NSString, ShellCompletionBox> = {
+    let cache = NSCache<NSString, ShellCompletionBox>()
+    cache.countLimit = 64
+    return cache
+  }()
+
+  private func cachedShellCompletions(_ line: String, cwd: String?, shellPath: String) -> [CompletionCandidate] {
+    let key = "\(cwd ?? "")\u{0}\(line)" as NSString
+    if let hit = shellCompletionCache.object(forKey: key), Date().timeIntervalSince(hit.date) < 5 {
+      return hit.candidates
+    }
+    let candidates = ShellCompletions.fish(line: line, cwd: cwd, fishPath: shellPath)
+    shellCompletionCache.setObject(ShellCompletionBox(candidates), forKey: key)
+    return candidates
   }
 
   /// Most recent commands, newest first (input-bar ↑/↓ cycling).
@@ -1636,4 +1660,11 @@ struct TerminalTheme {
     "#727169", "#E82424", "#98BB6C", "#E6C384",
     "#7FB4CA", "#938AA9", "#7AA89F", "#DCD7BA",
   ]
+}
+
+/// NSCache needs a class.
+final class ShellCompletionBox {
+  let candidates: [CompletionCandidate]
+  let date = Date()
+  init(_ candidates: [CompletionCandidate]) { self.candidates = candidates }
 }

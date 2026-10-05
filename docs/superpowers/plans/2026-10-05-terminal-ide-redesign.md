@@ -465,7 +465,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - The fuzzy menu runs on `OverlayHost` with descriptions.
   - Keep `InputCompletionTests`; add spec tests.
   - Move `onInputSuggestion` off the main thread, where today it pulls 500 history entries per keystroke.
-- [ ] **Native shell completion bridge** (opt-in): fish `complete -C`, bash `compgen` (with bash-completion if present), zsh zpty capture (research). Results merge with spec results.
+- [x] **Native shell completion bridge** (opt-in): fish `complete -C`, bash `compgen` (with bash-completion if present), zsh zpty capture (research). Results merge with spec results. *(fish only, behind "Ask the shell for completions": bash's compgen adds nothing over the built-in specs outside an interactive shell, and zsh capture needs a pty session; left for later)*
 - [x] **Persistent history** (SQLite via the system `libsqlite3`):
   - shared across tabs;
   - metadata: cwd, exit, duration, branch (populate `git_branch`, always nil today at `backend.rs:568`), timestamp;

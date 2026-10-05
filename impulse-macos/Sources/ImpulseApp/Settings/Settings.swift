@@ -115,6 +115,8 @@ struct Settings: Codable {
     var quickTerminalShortcut: String = "Ctrl+`"
     /// Language-server inlay hints: on, off, offUnlessPressed, onUnlessPressed.
     var editorInlayHints: String = "on"
+    /// Merge the shell's own completions (fish) into the input bar's menu.
+    var terminalShellCompletions: Bool = false
     var lastDirectory: String
     var openFiles: [String]
 
@@ -216,6 +218,7 @@ struct Settings: Codable {
         case quickTerminalEnabled = "quick_terminal_enabled"
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
+        case terminalShellCompletions = "terminal_shell_completions"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -365,6 +368,8 @@ struct Settings: Codable {
         quickTerminalShortcut =
             (try? c.decode(String.self, forKey: .quickTerminalShortcut)) ?? d.quickTerminalShortcut
         editorInlayHints = (try? c.decode(String.self, forKey: .editorInlayHints)) ?? d.editorInlayHints
+        terminalShellCompletions =
+            (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave
