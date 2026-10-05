@@ -214,7 +214,7 @@ foundations ├──────────── Track B: git ─────
 - [x] **Left dock tool panel** with `SegmentedTabs`: Files (current tree), Search (current `SearchPanelView`), Changes (placeholder until M4).
 - [x] **Status bar** (always visible, §5.1): branch, problems placeholder, agent summary placeholder, ports placeholder, LSP dot, editor info. The `TerminalContextBarView` / `StatusBarView` swap in `MainContentView.swift:58-67` goes away. The terminal input stays at the bottom of the terminal tab until M2 moves it into panes.
 - [x] **`window.allowsAutomaticWindowTabbing = false`.** Delete the window background workaround "so the titlebar blends" (`MainWindow.swift:1070`), because the chrome is now drawn.
-- [ ] **Replace the `runModal` NSAlerts with themed `ConfirmInline` or sheets:** Go to Line, Rename, Discard, Trash, binary file, LSP install result.
+- [x] **Replace the `runModal` NSAlerts with themed `ConfirmInline` or sheets:** Go to Line, Rename, Discard, Trash, binary file, LSP install result. (quitting with unsaved work stays app-modal)
 
 ### 1.3 Command palette v2
 
