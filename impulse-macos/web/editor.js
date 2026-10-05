@@ -1320,6 +1320,17 @@ function installGitPeekHandler() {
     showLineCommit(e.target.position && e.target.position.lineNumber);
   });
   editor.addAction({
+    id: "impulse.nextConflict",
+    label: "Go to Next Merge Conflict",
+    precondition: null,
+    run: function () { goToConflict(1); },
+  });
+  editor.addAction({
+    id: "impulse.previousConflict",
+    label: "Go to Previous Merge Conflict",
+    run: function () { goToConflict(-1); },
+  });
+  editor.addAction({
     id: "impulse.showLineCommit",
     label: "Show Commit for This Line",
     contextMenuGroupId: "9_git",
@@ -1452,7 +1463,7 @@ function updateConflictLenses() {
   conflictDecorations = editor.deltaDecorations(conflictDecorations, decorations);
   editor.changeViewZones(function (accessor) {
     conflictZones.forEach(function (id) { accessor.removeZone(id); });
-    conflictZones = blocks.map(function (b) {
+    conflictZones = blocks.map(function (b, index) {
       var bar = document.createElement("div");
       bar.className = "conflict-bar";
       bar.appendChild(peekButton("Accept Current", "Keep " + b.currentLabel, function () { resolveConflict(b, "current"); }));
@@ -1462,6 +1473,14 @@ function updateConflictLenses() {
       note.className = "git-peek-title";
       note.textContent = b.currentLabel + " ⟷ " + b.incomingLabel;
       bar.appendChild(note);
+      if (blocks.length > 1) {
+        var count = document.createElement("span");
+        count.className = "git-peek-title conflict-count";
+        count.textContent = index + 1 + " of " + blocks.length;
+        bar.appendChild(count);
+        bar.appendChild(peekButton("↑", "Previous conflict", function () { goToConflict(-1, b.start); }));
+        bar.appendChild(peekButton("↓", "Next conflict", function () { goToConflict(1, b.start); }));
+      }
       return accessor.addZone({ afterLineNumber: b.start - 1, heightInPx: 24, domNode: bar, suppressMouseDown: true });
     });
   });
@@ -1471,6 +1490,21 @@ function updateConflictLenses() {
   }
 }
 var lastConflictCount = 0;
+
+/** Move to the next (+1) or previous (-1) conflict after/before `fromLine`
+ *  (the cursor when omitted), wrapping around. */
+function goToConflict(direction, fromLine) {
+  if (!editor || !currentModel) return;
+  var blocks = findConflicts(currentModel);
+  if (!blocks.length) return;
+  var line = fromLine || (editor.getPosition() || { lineNumber: 1 }).lineNumber;
+  var target = direction > 0
+    ? blocks.find(function (b) { return b.start > line; }) || blocks[0]
+    : blocks.slice().reverse().find(function (b) { return b.start < line; }) || blocks[blocks.length - 1];
+  editor.setPosition({ lineNumber: target.start + 1, column: 1 });
+  editor.revealLineInCenter(target.start);
+  editor.focus();
+}
 
 function resolveConflict(b, choice) {
   var model = currentModel;
