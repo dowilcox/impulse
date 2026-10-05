@@ -925,6 +925,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         openSettings()
       } else if action.hasPrefix("settings=") {
         openSettings(query: String(action.dropFirst(9)))
+      } else if action.hasPrefix("settings-category="),
+        let category = SettingItem.Category(rawValue: String(action.dropFirst(18)))
+      {
+        openSettings()
+        if case .tool(let view) = tabManager.selectedTab?.focused, let settings = view as? SettingsSurface {
+          settings.model.category = category
+        }
       } else if action.hasPrefix("find=") {
         if !termSearchBarVisible { toggleTerminalSearch() }
         termFind.query.text = String(action.dropFirst(5))
@@ -980,9 +987,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     guard let surface = tool as? SettingsSurface else { return }
     surface.model.onOpenSettingsFile = { [weak self] in self?.openSettingsFile() }
     surface.model.onOpenKeybindings = { [weak self] in self?.openKeybindings() }
-    surface.model.onOpenClassicPane = { pane in
-      (NSApp.delegate as? AppDelegate)?.showClassicSettings(pane: pane)
-    }
     if let query { surface.reveal(query: query) } else { surface.focusTool() }
   }
 

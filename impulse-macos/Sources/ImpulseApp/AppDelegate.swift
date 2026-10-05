@@ -491,12 +491,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     controller.openSettings()
   }
 
-  /// The classic settings window, for the panes not yet in the Settings tab.
-  func showClassicSettings(pane: String) {
-    UserDefaults.standard.set(pane, forKey: "settingsSelectedPane")
-    SettingsWindowController.show(settings: settings)
-  }
-
   @objc func newWindow(_ sender: Any?) {
     openNewWindow()
   }

@@ -38,5 +38,14 @@
       #expect(item.matches("font_size"))
       #expect(!item.matches("scrollback"))
     }
+
+    @Test func commandLinesSplitAndJoinWithQuotes() {
+      #expect(splitCommandLine("swiftformat --config \"my config.yml\" .") == ["swiftformat", "--config", "my config.yml", "."])
+      #expect(splitCommandLine("  ruff   format ") == ["ruff", "format"])
+      #expect(splitCommandLine("echo ''") == ["echo", ""])
+      #expect(splitCommandLine("") == [])
+      #expect(joinCommandLine(["swiftformat", "--config", "my config.yml"]) == "swiftformat --config \"my config.yml\"")
+      #expect(splitCommandLine(joinCommandLine(["a b", "", "c"])) == ["a b", "", "c"])
+    }
   }
 #endif

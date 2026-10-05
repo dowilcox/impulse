@@ -16,7 +16,6 @@ final class SettingsSurfaceModel {
 
   @ObservationIgnored var onOpenSettingsFile: (() -> Void)?
   @ObservationIgnored var onOpenKeybindings: (() -> Void)?
-  @ObservationIgnored var onOpenClassicPane: ((String) -> Void)?
 
   init(palette: ChromePalette) {
     self.palette = palette
@@ -121,11 +120,8 @@ struct SettingsView: View {
       .padding(.bottom, 8)
 
       ForEach(SettingItem.Category.allCases) { category in
-        if category != .advanced {
-          categoryRow(category)
-        }
+        categoryRow(category)
       }
-      categoryRow(.advanced)
       Spacer()
       Toggle(isOn: Binding(get: { model.onlyModified }, set: { model.onlyModified = $0 })) {
         Text("Only changed settings").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
@@ -150,7 +146,7 @@ struct SettingsView: View {
   private func categoryRow(_ category: SettingItem.Category) -> some View {
     let chrome = model.palette
     let selected = !model.isSearching && model.category == category
-    let modified = category == .advanced ? 0 : model.modifiedCount(in: category)
+    let modified = model.modifiedCount(in: category)
     return Button {
       model.query = ""
       model.onlyModified = false
@@ -179,6 +175,10 @@ struct SettingsView: View {
     let chrome = model.palette
     if !model.isSearching && model.category == .advanced {
       AdvancedSettingsView(model: model)
+    } else if !model.isSearching && model.category == .automation {
+      AutomationSettingsView()
+    } else if !model.isSearching && model.category == .languageServers {
+      LanguageServersView()
     } else {
       let items = model.visibleItems
       ScrollView {
@@ -409,8 +409,7 @@ private struct FontPicker: View {
   }
 }
 
-/// Settings edited elsewhere: settings.json, keybindings, and the panes not
-/// yet moved into this tab.
+/// Settings edited elsewhere: keyboard shortcuts and settings.json.
 private struct AdvancedSettingsView: View {
   @Environment(\.chrome) private var chrome
   var model: SettingsSurfaceModel
@@ -423,13 +422,6 @@ private struct AdvancedSettingsView: View {
         "Keyboard shortcuts", "Rebind any command, and add shortcuts that run shell commands.",
         icon: .keyboard
       ) { model.onOpenKeybindings?() }
-      link(
-        "Commands on save and file type overrides",
-        "Run formatters or scripts after saving, and set indentation per file pattern.", icon: .zap
-      ) { model.onOpenClassicPane?("automation") }
-      link(
-        "Language servers", "See which servers are installed and install the managed ones.", icon: .plug
-      ) { model.onOpenClassicPane?("languageServers") }
       link(
         "settings.json", "Every setting as JSON, with completion and validation in the editor.",
         icon: .fileCode

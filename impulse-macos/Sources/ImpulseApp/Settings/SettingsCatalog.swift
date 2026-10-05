@@ -12,6 +12,8 @@ struct SettingItem: Identifiable {
     case editor = "Editor"
     case terminal = "Terminal"
     case appearance = "Appearance"
+    case automation = "Automation"
+    case languageServers = "Language Servers"
     case advanced = "Advanced"
 
     var id: String { rawValue }
@@ -21,6 +23,8 @@ struct SettingItem: Identifiable {
       case .editor: return .fileCode
       case .terminal: return .squareTerminal
       case .appearance: return .eye
+      case .automation: return .zap
+      case .languageServers: return .plug
       case .advanced: return .slidersHorizontal
       }
     }
