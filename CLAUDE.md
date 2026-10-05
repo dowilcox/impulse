@@ -14,10 +14,20 @@ impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
                           Monaco WebViews, LSP/git/search wiring
   Sources/ImpulseKit      pure logic (Foundation-only): themes, previews,
                           palette, completion + shell parser, file tree,
-                          search results, close risk, glob, update checker
-  Sources/ImpulseGit      libgit2-backed git layer + gitignore-aware search
+                          search results, close risk, glob, update checker,
+                          pane LayoutTree, agents (known agents, state
+                          machine, hook installer), command history DB,
+                          worktree tasks, commit graph, PR/gh parsing,
+                          terminal paths/hints/find queries
+  Sources/ImpulseGit      git layer: libgit2 for reads (status, diff, blame,
+                          log) + the git CLI for writes; safety snapshots;
+                          gitignore-aware search
   Sources/ImpulseLSP      LSP client: server processes, JSON-RPC framing,
                           registry, document cache, managed npm installs
+  Sources/ImpulseProtocol control-socket messages shared by app and CLI
+  Sources/ImpulseCLI      the `impulse` command-line tool (bundled in
+                          Contents/Resources/bin): open, edit --wait, split,
+                          notify, status, checkpoint, review, task, send, hook
   Clibgit2/               module map for the vendored static libgit2
   CImpulseFFI/            C header for the Rust terminal FFI
   web/                    editor.html/js + review.html/js (Monaco glue)
@@ -28,12 +38,12 @@ vendor/                   Monaco editor, fonts, highlight.js (committed)
 scripts/                  build-libgit2.sh, vendor-monaco.sh, release.sh
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit. The Rust workspace is `impulse-terminal` + `impulse-ffi` only, and the FFI surface is terminal-only (~33 functions; JSON strings for complex data, a binary buffer for grid snapshots, `impulse_free_string` for cleanup).
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` only, and the FFI surface is terminal-only (~37 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
 - **ImpulseKit** is Foundation-only so its logic is headless-testable. No AppKit/WebKit imports there.
-- **ImpulseGit** wraps a vendored static libgit2 1.9.1 built WITHOUT network transports (local operations only — status, diff/hunks with word-level spans, blame, commit, discard, branches, ignore checks). No OpenSSL anywhere.
+- **ImpulseGit** wraps a vendored static libgit2 1.9.1 built WITHOUT network transports for reads (status, diff/hunks with word-level spans, blame, log, ignore checks). Writes (stage, commit, push/pull, stash, branches, worktrees, conflict resolution) run the `git` CLI, and destructive ones take a safety snapshot under `refs/impulse/` first so they can be undone. No OpenSSL anywhere. New git APIs use the real `git` CLI as the test oracle.
 - **ImpulseLSP** owns language-server processes with hand-rolled Content-Length framing and a poll-shaped facade (`pollEvent()` returns the same JSON envelopes the app has always decoded).
 - **impulse-terminal (Rust)** stays because alacritty_terminal is a complete, battle-tested VT emulator. It owns the PTY, grid/scrollback, damage tracking, selection, scrollback search, and OSC 133/7/6973 command-block tracking. Swift owns all rendering (CoreText in `TerminalRenderer.swift`) and input encoding.
 - `Bridge/ImpulseCore.swift` is the single seam: terminal calls go through the C FFI; everything else delegates to the Swift libraries. Keep new backend logic OUT of the bridge — put it in the right library target.
@@ -75,7 +85,9 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 ## Key patterns
 
 - **SwiftUI/AppKit bridge:** `@Observable WindowModel` is the single source of truth for UI state. AppKit (MainWindowController, TabManager) mutates it; SwiftUI observes it. SwiftUI→AppKit communication uses callback closures on WindowModel. NSToolbar items must be native `NSToolbarItem` (SwiftUI `.toolbar {}` does not work inside `NSHostingView`).
-- **Terminal:** poll-based. `TerminalRenderer` runs an adaptive DispatchSource timer: `pollEvents()` → `takeDamage()` → invalidate rows → `draw` pulls a binary grid snapshot (16-byte header + 12-byte cells) parsed zero-copy by `GridBufferReader`. Command-block decorations come from `impulse_terminal_block_overlay`. Input completion is Swift (`ImpulseKit.InputCompletion`) fed by `impulse_terminal_recent_commands`.
+- **Workbench:** a window has workspaces (folder or scratch; task worktrees live beside the repo at `<repo>.worktrees/<branch>`), each with tabs; a tab is one surface or a split (`ImpulseKit.LayoutTree` of panes, laid out by `PaneLayoutView`). `TabManager` owns them; session restore v2 (`SessionState.swift`) saves workspaces, layouts and terminal scrollback.
+- **Agents:** `TerminalTab+Agent` detects CLI agents (Claude Code, Codex, …) from the foreground process and hook events; `AgentStateMachine` drives the inbox, tab dots and notifications. Each window listens on a control socket (`ControlServer`; every terminal gets `IMPULSE_SOCKET` / `IMPULSE_PANE_TOKEN`) for the `impulse` CLI. Agent turns are checkpointed under `refs/impulse/checkpoints/` for "review last turn". Impulse never calls an AI model itself.
+- **Terminal:** event-driven. The Rust core calls a wake callback when output arrives; `TerminalRenderer` then runs `pollEvents()` → `takeDamage()` → invalidate rows → `draw` pulls a binary grid snapshot (16-byte header + 12-byte cells) parsed zero-copy by `GridBufferReader`. Command-block decorations come from `impulse_terminal_block_overlay`, cached by `impulse_terminal_block_overlay_key`. Input is the `CommandEditor` (an NSTextView with shell highlighting); completion is Swift (`ImpulseKit.InputCompletion`) fed by persistent history (`CommandHistoryDatabase`) and `impulse_terminal_recent_commands`.
 - **Editor:** Monaco in WKWebView, loaded from the app bundle (`EditorAssets.monacoDirectory`; build.sh copies vendor/ + impulse-macos/web/ into `Sources/ImpulseApp/Resources/monaco`). `EditorWebViewPool` pre-warms one WebView. Markdown preview renders with cmark-gfm in safe mode (raw HTML is elided by design — do not re-enable `CMARK_OPT_UNSAFE`).
 - **Themes:** TOML files in `Sources/ImpulseKit/Resources/Themes/` (user themes in `~/Library/Application Support/impulse/themes`). `ThemeStore` resolves them; `themeToMonaco` / `themeToMarkdownColors` derive editor/preview themes. New built-in themes: add the TOML resource and its name to `ThemeStore.builtinThemeNames()`.
 - **File tree:** `FileTreeDataController` (headless) owns watchers and data; patches computed by `ImpulseKit.FileTreePatcher` with git-status enrichment composed from `ImpulseGit.GitClient`; rendered by `FileTreeListView` (ScrollView + LazyVStack, NOT List/DisclosureGroup).
