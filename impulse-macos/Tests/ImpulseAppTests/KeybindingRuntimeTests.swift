@@ -94,6 +94,17 @@
       let custom = Keybindings.conflicts(overrides: [:], extra: [("custom:Deploy", "Cmd+T")])
       #expect(Set(custom["⌘T"] ?? []) == ["new_tab", "custom:Deploy"])
     }
+
+    @Test func quickTerminalShortcutsMapToCarbonKeys() {
+      let grave = QuickTerminal.carbonKey(for: "Ctrl+`")
+      #expect(grave?.0 == 50)  // kVK_ANSI_Grave
+      #expect(grave?.1 == 4096)  // controlKey
+      let space = QuickTerminal.carbonKey(for: "Alt+Space")
+      #expect(space?.0 == 49)
+      #expect(space?.1 == 2048)  // optionKey
+      #expect(QuickTerminal.carbonKey(for: "Shift+K") == nil, "needs ⌘, ⌃ or ⌥ to be global")
+      #expect(QuickTerminal.carbonKey(for: "Ctrl+F13") == nil, "unknown keys are refused")
+    }
   }
 #elseif canImport(XCTest)
   import AppKit

@@ -136,6 +136,15 @@ enum SettingsCatalog {
 
   private static let general: [SettingItem] = [
     toggle(
+      "quick_terminal_enabled", "Quick terminal", \.quickTerminalEnabled, .general, "Quick terminal",
+      detail: "A terminal that drops down from the top of the screen, over any app, on a global shortcut."),
+    SettingItem(
+      key: "quick_terminal_shortcut", title: "Quick terminal shortcut", detail: "For example Ctrl+` or Alt+Space.",
+      category: .general, section: "Quick terminal", control: .text(\.quickTerminalShortcut, placeholder: "Ctrl+`"),
+      isModified: { $0.quickTerminalShortcut != defaults.quickTerminalShortcut },
+      reset: { $0.quickTerminalShortcut = defaults.quickTerminalShortcut },
+      schema: ["type": "string", "default": defaults.quickTerminalShortcut]),
+    toggle(
       "restore_session", "Restore previous session", \.restoreSession, .general, "Startup",
       detail: "Reopen workspaces, tabs, splits and terminal folders on launch."),
     toggle(

@@ -145,6 +145,10 @@ enum CommandRegistry {
         keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert
       ) { [weak controller] in controller?.showProblems() },
       AppCommand(
+        id: "quick_terminal", title: "Toggle Quick Terminal", category: "Terminal",
+        keywords: ["dropdown", "hotkey", "quake", "global"], icon: .squareTerminal
+      ) { QuickTerminal.shared.toggle() },
+      AppCommand(
         id: "open_keybindings", title: "Keyboard Shortcuts", category: "Impulse",
         keywords: ["keybindings", "shortcuts", "keys", "hotkeys"], icon: .keyboard
       ) { [weak controller] in controller?.openKeybindings() },

@@ -49,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     SettingsStore.shared.load()
     NSApp.servicesProvider = serviceProvider
     NSApp.registerServicesMenuSendTypes([.string], returnTypes: [])
+    QuickTerminal.shared.configure(
+      enabled: SettingsStore.shared.settings.quickTerminalEnabled,
+      shortcut: SettingsStore.shared.settings.quickTerminalShortcut)
     EditorTab.jsonSchemaProvider = { path in
       guard path == Settings.filePath.path,
         let data = try? JSONSerialization.data(
@@ -481,6 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     for controller in windowControllers {
       controller.handleThemeChange(theme)
     }
+    QuickTerminal.shared.applyTheme(theme)
   }
 
   // MARK: Menu Actions
@@ -585,6 +589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) { [weak self] notification in
       guard let self else { return }
       self.rebuildMainMenu()
+      QuickTerminal.shared.configure(
+        enabled: self.settings.quickTerminalEnabled, shortcut: self.settings.quickTerminalShortcut)
     }
   }
 

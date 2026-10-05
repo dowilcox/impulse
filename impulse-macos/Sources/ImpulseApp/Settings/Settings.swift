@@ -110,6 +110,9 @@ struct Settings: Codable {
     var terminalEditorIntegration: Bool = false
     /// Open the composer when the focused terminal's agent asks for input.
     var agentComposerAutoShow: Bool = false
+    /// The drop-down quick terminal and its global shortcut.
+    var quickTerminalEnabled: Bool = false
+    var quickTerminalShortcut: String = "Ctrl+`"
     var lastDirectory: String
     var openFiles: [String]
 
@@ -208,6 +211,8 @@ struct Settings: Codable {
         case terminalPersistentHistory = "terminal_persistent_history"
         case terminalEditorIntegration = "terminal_editor_integration"
         case agentComposerAutoShow = "agent_composer_auto_show"
+        case quickTerminalEnabled = "quick_terminal_enabled"
+        case quickTerminalShortcut = "quick_terminal_shortcut"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -352,6 +357,10 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .terminalEditorIntegration)) ?? d.terminalEditorIntegration
         agentComposerAutoShow =
             (try? c.decode(Bool.self, forKey: .agentComposerAutoShow)) ?? d.agentComposerAutoShow
+        quickTerminalEnabled =
+            (try? c.decode(Bool.self, forKey: .quickTerminalEnabled)) ?? d.quickTerminalEnabled
+        quickTerminalShortcut =
+            (try? c.decode(String.self, forKey: .quickTerminalShortcut)) ?? d.quickTerminalShortcut
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

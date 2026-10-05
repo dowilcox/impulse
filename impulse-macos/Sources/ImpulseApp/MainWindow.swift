@@ -1026,6 +1026,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         windowModel.searchReplacement = String(action[action.index(after: colon)...])
         windowModel.searchReplaceVisible = true
         windowModel.runSearchNow()
+      } else if action == "quick-terminal" {
+        QuickTerminal.shared.toggle()
       } else if action == "preview-beside" {
         togglePreviewBeside()
       } else if action == "outline" {
