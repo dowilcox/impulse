@@ -1,31 +1,29 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+`CLAUDE.md` is the detailed guide to this repository; this file is the short version for any coding agent.
 
-Impulse is a Rust-first workspace with platform frontends. Shared backend code lives in `impulse-core/src`, editor protocol and bundled web assets live in `impulse-editor/`, terminal emulation code lives in `impulse-terminal/`, and the C FFI layer for macOS lives in `impulse-ffi/src`. The Linux app is a GTK4/libadwaita frontend in `impulse-linux/src`, including VTE terminal, WebKitGTK editor, sidebar, settings, and window modules. The macOS app is a separate Swift package under `impulse-macos/Sources`. Static assets, screenshots, and icons are under `assets/`; release and maintenance scripts are under `scripts/`.
+## Project Structure
 
-## Build, Test, and Development Commands
+Impulse is a Mac-first terminal IDE written in Swift (AppKit + SwiftUI), with the terminal emulation core in Rust.
 
-Use the existing scripts and Cargo targets instead of ad hoc build steps.
+- `impulse-macos/` — the Swift package. `Sources/ImpulseApp` is the app; `Sources/ImpulseKit` holds Foundation-only logic (headless-testable); `Sources/ImpulseGit` wraps a vendored libgit2 (reads) plus the `git` CLI (writes); `Sources/ImpulseLSP` is the language-server client. `web/` holds the Monaco editor and review glue.
+- `impulse-terminal/` — Rust terminal emulation on `alacritty_terminal` (PTY, grid, OSC 133/7/9/6973 scanning, command blocks, history).
+- `impulse-ffi/` — the C FFI over `impulse-terminal`, linked into the app as a static library.
+- `vendor/` — Monaco, fonts and highlight.js (refresh with `scripts/vendor-monaco.sh`; never hand-edit).
+- `docs/superpowers/` — design specs and implementation plans. The current redesign is `specs/2026-10-05-terminal-ide-redesign-design.md` and `plans/2026-10-05-terminal-ide-redesign.md`.
 
-- `cargo build` — build the Rust workspace on Linux.
-- `cargo run -p impulse-linux -- --dev` — run the Linux app in dev mode.
-- `cargo check` — fast type-check before a full build.
-- `cargo test` or `cargo test -p impulse-core` — run workspace or crate-specific tests.
-- `cargo fmt` and `cargo clippy` — required formatting and lint passes.
-- `./impulse-macos/build.sh --dev` — build the macOS app bundle.
-- `./scripts/install-lsp-servers.sh` — install managed LSP servers.
-- `./scripts/release.sh <version>` — the only supported release path.
-- When asked to tag/build a new release version, run `./scripts/release.sh <version> --push` so the release commit, tag, and GitHub release assets are published as part of the same workflow.
+## Build and Test
 
-## Coding Style & Naming Conventions
+Use the scripts; don't replicate their steps by hand.
 
-Follow `cargo fmt` defaults for Rust and keep modules focused by feature (`git.rs`, `search.rs`, `theme.rs`). Use `snake_case` for Rust files, functions, and modules; `CamelCase` for Swift types. Prefer putting cross-platform behavior in `impulse-core` or `impulse-editor`; keep frontend-specific UI wiring in `impulse-linux` or `impulse-macos`. Do not hand-edit vendored Monaco assets in `impulse-editor/vendor`; use `scripts/vendor-monaco.sh` when updating them.
+- `./impulse-macos/build.sh --dev` — build `dist/Impulse Dev.app` (runs alongside the release app).
+- `impulse-macos/swiftw build` / `impulse-macos/swiftw test` — build or test the Swift package with the flags the local toolchain needs.
+- `cargo test -p impulse-terminal`, `cargo fmt`, `cargo clippy` — Rust core.
+- `./scripts/release.sh <version> [--push]` — the only release path.
 
-## Testing Guidelines
+## Conventions
 
-Most tests are inline `#[cfg(test)]` module tests within the Rust crates rather than a top-level `tests/` tree. Add tests next to the code you change, especially in `impulse-core`, `impulse-editor`, and `impulse-terminal`. Before opening a PR, run `cargo test`, then run the most relevant app build for the platform you touched.
-
-## Commit & Pull Request Guidelines
-
-Recent history uses short, imperative, sentence-case commits such as `Add OSC 8 hyperlink support`; release commits use `Release vX.Y.Z`. Keep commits narrowly scoped. PRs should explain the user-visible change, list the commands you ran, link related issues, and include screenshots for Linux GTK or macOS UI changes. If a feature touches both frontends, update both, or document the gap explicitly.
+- Swift types are `CamelCase`; keep new backend logic out of `Bridge/ImpulseCore.swift` and in the right library target.
+- Golden fixtures under `impulse-macos/Tests/*/Fixtures` are the spec. Never regenerate them from Swift output; if behavior changes on purpose, edit the fixture in the same commit and say why. New git APIs use the real `git` CLI as the test oracle.
+- Wrap new test files in `#if canImport(Testing)`.
+- Commits are short, imperative, sentence case (`Add OSC 8 hyperlink support`); release commits are `Release vX.Y.Z`.

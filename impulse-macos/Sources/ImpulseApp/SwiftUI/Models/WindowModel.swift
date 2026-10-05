@@ -141,7 +141,7 @@ final class WindowModel {
 
   // MARK: Overlays
 
-  var commandPaletteVisible: Bool = false
+
   var settingsLoadWarning: SettingsLoadWarning? = nil
 
   // MARK: Theme

@@ -394,7 +394,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     for controller in windowControllers {
       controller.handleThemeChange(theme)
     }
-    NotificationCenter.default.post(name: .impulseThemeDidChange, object: theme)
   }
 
   // MARK: Menu Actions

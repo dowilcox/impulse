@@ -5,9 +5,6 @@ import Foundation
 extension Notification.Name {
 
     // MARK: App Lifecycle & Settings
-
-    /// Posted when the application-wide color theme changes.
-    static let impulseThemeDidChange = Notification.Name("impulseThemeDidChange")
     /// Posted when settings are changed (e.g. from the settings window).
     static let impulseSettingsDidChange = Notification.Name("impulseSettingsDidChange")
 

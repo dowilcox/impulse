@@ -1466,7 +1466,6 @@ final class SettingsWindowController: NSWindowController {
     if let delegate = NSApp.delegate as? AppDelegate {
       delegate.applyTheme(named: name)
     }
-    NotificationCenter.default.post(name: .impulseThemeDidChange, object: theme)
   }
 
   private func findView(withIdentifier id: String, in view: NSView?) -> NSView? {
