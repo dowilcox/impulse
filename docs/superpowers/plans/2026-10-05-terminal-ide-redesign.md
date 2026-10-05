@@ -621,7 +621,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - Move LSP off the single global serial `lspQueue` (`AppDelegate.swift:24`) to per-server queues.
 - [x] **Project-wide find & replace** with preview.
 - [ ] **Optional vim mode** (monaco-vim, vendored).
-- [ ] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
+- [x] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
 - [ ] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace.
 - [ ] **Accessibility pass:** (partly: terminal text area and agent announcements done; VoiceOver walkthrough and Full Keyboard Access need a person at the Mac)
   - VoiceOver walkthrough of every surface;
