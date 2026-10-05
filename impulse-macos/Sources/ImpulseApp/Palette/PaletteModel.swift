@@ -25,6 +25,10 @@ protocol PaletteHost: AnyObject {
   var paletteHistoryContext: (cwd: String?, repo: String?) { get }
   /// Put a command from history at the prompt (not run).
   func paletteInsertCommand(_ command: String)
+  /// Open pull requests in the repository (nil: gh missing or failed).
+  func palettePullRequests(_ completion: @escaping ([PullRequestSummary]?) -> Void)
+  /// Check a pull request out into a new task worktree.
+  func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary)
 }
 
 /// One result row.
@@ -52,7 +56,7 @@ struct PaletteRow: Identifiable {
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, history, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, help
 
     var placeholder: String {
       switch self {
@@ -64,6 +68,7 @@ final class PaletteModel {
       case .tabs: return "Switch to tab…"
       case .workspaces: return "Switch to workspace or open a folder…"
       case .history: return "Search history…  @here @repo @failed @today"
+      case .pullRequests: return "Check out a pull request into a new task…"
       case .help: return "Palette modes"
       }
     }
@@ -78,6 +83,7 @@ final class PaletteModel {
       case .tabs: return .layers
       case .workspaces: return .folderGit2
       case .history: return .history
+      case .pullRequests: return .gitPullRequest
       case .help: return .info
       }
     }
@@ -103,6 +109,7 @@ final class PaletteModel {
   @ObservationIgnored private var fileIndexRoot: String = ""
   @ObservationIgnored private var fileIndexDate: Date = .distantPast
   @ObservationIgnored private var branches: [String]?
+  @ObservationIgnored private var pullRequests: [PullRequestSummary]?
   @ObservationIgnored private var generation = 0
   @ObservationIgnored private var textSearchWork: DispatchWorkItem?
 
@@ -113,6 +120,7 @@ final class PaletteModel {
   /// stale, forget cached branches, and set the initial query.
   func prepare(prefix: String) {
     branches = nil
+    pullRequests = nil
     let root = host?.paletteRoot ?? ""
     if root != fileIndexRoot || Date().timeIntervalSince(fileIndexDate) > 20 {
       fileIndexRoot = root
@@ -157,6 +165,7 @@ final class PaletteModel {
     if query.hasPrefix("t:") { return (.tabs, String(query.dropFirst(2))) }
     if query.hasPrefix("w:") { return (.workspaces, String(query.dropFirst(2))) }
     if query.hasPrefix("h:") { return (.history, String(query.dropFirst(2))) }
+    if query.hasPrefix("pr:") { return (.pullRequests, String(query.dropFirst(3))) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -177,6 +186,7 @@ final class PaletteModel {
     case .tabs: refreshTabs(trimmed)
     case .workspaces: refreshWorkspaces(trimmed)
     case .history: refreshHistory(trimmed)
+    case .pullRequests: refreshPullRequests(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -533,6 +543,45 @@ final class PaletteModel {
     emptyMessage = text.isEmpty && filter == HistoryFilter() ? "No history yet" : "No matching commands"
   }
 
+  // MARK: Pull requests
+
+  private func refreshPullRequests(_ term: String) {
+    func build(_ list: [PullRequestSummary]) {
+      let ranked = FuzzyMatcher.rank(list, query: term) { "#\($0.number) \($0.title) \($0.headBranch)" }
+      rows = ranked.map { entry in
+        let pr = entry.item
+        return PaletteRow(
+          id: "pr:\(pr.number)", glyph: .lucide(.gitPullRequest), title: "#\(pr.number) \(pr.title)",
+          subtitle: [pr.headBranch, pr.author].filter { !$0.isEmpty }.joined(separator: " · "),
+          trailing: pr.isDraft ? "draft" : nil
+        ) { [weak self] in
+          self?.host?.paletteCheckOutPullRequest(pr)
+        }
+      }
+      emptyMessage = list.isEmpty ? "No open pull requests" : "No matching pull requests"
+    }
+    if let pullRequests {
+      build(pullRequests)
+      return
+    }
+    isBusy = true
+    rows = []
+    emptyMessage = "Asking GitHub…"
+    let generation = self.generation
+    host?.palettePullRequests { [weak self] list in
+      guard let self else { return }
+      self.isBusy = false
+      guard let list else {
+        self.emptyMessage = "Couldn't list pull requests (is gh installed and signed in?)"
+        return
+      }
+      self.pullRequests = list
+      if self.mode == .pullRequests, self.generation == generation { build(list) } else if self.mode == .pullRequests {
+        self.refresh()
+      }
+    }
+  }
+
   // MARK: Workspaces
 
   private func refreshWorkspaces(_ term: String) {
@@ -595,6 +644,7 @@ final class PaletteModel {
       ("t:", "Switch tab", .layers),
       ("w:", "Switch workspace", .folderGit2),
       ("h:", "Search command history", .history),
+      ("pr:", "Check out a pull request", .gitPullRequest),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(

@@ -88,4 +88,22 @@
       #expect(PullRequestThreads.coordinates(fromURL: "https://github.com/dowilcox/impulse") == nil)
     }
   }
+
+  struct PullRequestListTests {
+    @Test func parsesTheListAndPicksLocalBranchNames() throws {
+      let json = #"""
+        [{"number": 12, "title": "Faster search", "headRefName": "fast-search", "author": {"login": "ana"}, "isDraft": false},
+         {"number": 9, "title": "Fork fix", "headRefName": "main", "author": {"login": "ben"}, "isDraft": true},
+         {"title": "missing number"}]
+        """#
+      let list = try #require(PullRequestSummary.parseList(Data(json.utf8)))
+      #expect(list.map(\.number) == [12, 9])
+      #expect(list[0].author == "ana" && !list[0].isDraft)
+      #expect(list[1].isDraft)
+      #expect(list[0].localBranch(taken: []) == "fast-search")
+      #expect(list[0].localBranch(taken: ["fast-search"]) == "pr-12-fast-search")
+      #expect(list[1].localBranch(taken: []) == "pr-9-main", "a fork's main doesn't shadow ours")
+      #expect(PullRequestSummary.parseList(Data("{}".utf8)) == nil)
+    }
+  }
 #endif

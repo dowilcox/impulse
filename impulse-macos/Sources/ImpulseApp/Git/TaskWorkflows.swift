@@ -250,6 +250,60 @@ extension MainWindowController {
     }
   }
 
+  /// A pull request as a task: a worktree beside the repository with the
+  /// PR checked out by gh (which also sets up fork remotes), opened as a
+  /// workspace.
+  func checkOutPullRequestAsTask(_ pullRequest: PullRequestSummary) {
+    guard let repository = taskRepository else {
+      toasts.show(Toast(kind: .info, message: "Open a folder in a git repository first."))
+      return
+    }
+    let root = repository.root
+    toasts.show(Toast(kind: .info, message: "Checking out #\(pullRequest.number)…"))
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let taken = Set(GitOperations.branches(root: root).local)
+      let branch = pullRequest.localBranch(taken: taken)
+      let path = WorktreeTasks.worktreePath(repoRoot: root, branch: branch)
+      var failure: String?
+      if FileManager.default.fileExists(atPath: path) {
+        failure = "\(TabManager.abbreviateHomePath(path)) already exists."
+      } else {
+        try? FileManager.default.createDirectory(
+          atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        // Start detached at HEAD; gh then makes the PR's branch.
+        if case .failure(let error) = GitOperations.addWorktree(
+          path: path, branch: "HEAD", newBranch: false, root: root)
+        {
+          failure = error.message
+        }
+      }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        if let failure {
+          self.toasts.show(Toast(kind: .warning, message: failure))
+          return
+        }
+        PullRequestMonitor.shared.checkout(number: pullRequest.number, branch: branch, in: path) {
+          [weak self] result in
+          guard let self else { return }
+          if case .failure(let message) = result {
+            // Leave nothing half-made behind.
+            _ = GitOperations.removeWorktree(path: path, force: true, root: root)
+            self.toasts.show(Toast(kind: .warning, message: "gh: \(message)", lifetime: 12))
+            return
+          }
+          let include = try? String(
+            contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
+          Self.copyFiles(
+            WorktreeTasks.matchingFiles(patterns: WorktreeTasks.includePatterns(fromFile: include), root: root),
+            from: root, to: path)
+          self.tabManager.openWorkspace(folder: path)
+          self.toasts.show(Toast(kind: .success, message: "Checked out #\(pullRequest.number) as \(branch)."))
+        }
+      }
+    }
+  }
+
   private static func copyFiles(_ files: [String], from root: String, to destination: String) {
     let fm = FileManager.default
     for relative in files {

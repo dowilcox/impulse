@@ -130,3 +130,37 @@ public enum PullRequestThreads {
     }
   }
 }
+
+/// One row of `gh pr list --json <PullRequestSummary.ghFields>`.
+public struct PullRequestSummary: Equatable, Sendable {
+  public let number: Int
+  public let title: String
+  /// The PR's branch name in its head repository.
+  public let headBranch: String
+  public let author: String
+  public let isDraft: Bool
+
+  public static let ghFields = "number,title,headRefName,author,isDraft"
+
+  public static func parseList(_ json: Data) -> [PullRequestSummary]? {
+    guard let list = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return nil }
+    return list.compactMap { object in
+      guard let number = object["number"] as? Int, let head = object["headRefName"] as? String else {
+        return nil
+      }
+      return PullRequestSummary(
+        number: number, title: object["title"] as? String ?? "", headBranch: head,
+        author: ((object["author"] as? [String: Any])?["login"] as? String) ?? "",
+        isDraft: object["isDraft"] as? Bool ?? false)
+    }
+  }
+
+  /// Local branch name for checking it out: its own name unless that's
+  /// taken (or is a default branch, as fork PRs often are), then
+  /// `pr-<number>-<name>`.
+  public func localBranch(taken: Set<String>) -> String {
+    let reserved: Set<String> = ["main", "master", "trunk", "develop"]
+    if !taken.contains(headBranch), !reserved.contains(headBranch) { return headBranch }
+    return "pr-\(number)-\(headBranch)"
+  }
+}

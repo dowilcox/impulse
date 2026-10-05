@@ -3688,6 +3688,17 @@ extension MainWindowController: PaletteHost {
 
   /// Into the input bar, or typed at the shell prompt when the grid owns
   /// input (classic mode, a TUI).
+  func palettePullRequests(_ completion: @escaping ([PullRequestSummary]?) -> Void) {
+    guard let repository = tabManager.activeWorkspace.repository ?? windowModel.repository,
+      PullRequestMonitor.shared.isAvailable
+    else { return completion(nil) }
+    PullRequestMonitor.shared.list(root: repository.root, completion: completion)
+  }
+
+  func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary) {
+    checkOutPullRequestAsTask(pullRequest)
+  }
+
   func paletteInsertCommand(_ command: String) {
     guard let terminal = tabManager.selectedTerminal?.activeTerminal else {
       NSPasteboard.general.clearContents()

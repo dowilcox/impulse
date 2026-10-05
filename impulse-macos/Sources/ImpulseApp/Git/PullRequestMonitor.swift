@@ -154,6 +154,31 @@ final class PullRequestMonitor {
     }
   }
 
+  /// Open pull requests in the repository, newest first.
+  func list(root: String, completion: @escaping ([PullRequestSummary]?) -> Void) {
+    queue.async { [weak self] in
+      let data = self?.run(
+        ["pr", "list", "--state", "open", "--limit", "100", "--json", PullRequestSummary.ghFields], root: root)
+      let list = data.flatMap(PullRequestSummary.parseList)
+      DispatchQueue.main.async { completion(list) }
+    }
+  }
+
+  /// `gh pr checkout <number> --branch <branch>` in `directory`.
+  func checkout(number: Int, branch: String, in directory: String, completion: @escaping (Result<Void, String>) -> Void) {
+    queue.async { [weak self] in
+      let result = self?.runCapturingErrors(
+        ["pr", "checkout", "\(number)", "--branch", branch], root: directory)
+      DispatchQueue.main.async {
+        switch result {
+        case .success?: completion(.success(()))
+        case .failure(let message)?: completion(.failure(message))
+        case nil: completion(.failure("gh didn't run."))
+        }
+      }
+    }
+  }
+
   /// Run gh and return stdout, or stderr's last line as the failure.
   private func runCapturingErrors(_ arguments: [String], root: String) -> Result<String, String> {
     guard let gh = ghPath else { return .failure("The GitHub CLI (gh) isn't installed.") }
