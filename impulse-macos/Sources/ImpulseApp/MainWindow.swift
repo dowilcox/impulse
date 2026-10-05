@@ -26,13 +26,12 @@ private final class ImpulseWindow: NSWindow {
 
 // MARK: - Main Window Controller
 
-/// The primary window controller for Impulse. Each window contains:
-///   - An NSSplitView with a sidebar (file tree + search) on the left and a
-///     content area on the right.
-///   - SwiftUI chrome for the tab bar, sidebar, and status bar around a
-///     TabManager-driven AppKit content region.
+/// The primary window controller for Impulse. Each window is a
+/// `WorkbenchView`: SwiftUI chrome (titlebar tabs, workspaces sidebar with
+/// files/changes/search, right outline panel, status bar) around the
+/// TabManager-driven AppKit content region of tabs and split panes.
 ///
-/// Multiple windows can coexist; each owns its own TabManager and sidebar state.
+/// Multiple windows can coexist; each owns its own TabManager and workspaces.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: - State
@@ -2327,7 +2326,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     )
 
-    // Terminal title changed — update tab segment labels
+    // Terminal title changed — update tab titles
     notificationObservers.append(
       nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) {
         [weak self] notification in

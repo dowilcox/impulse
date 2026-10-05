@@ -328,7 +328,7 @@ final class TabManager: NSObject {
     workspaces = [scratch]
     activeWorkspaceID = scratch.id
 
-    iconCache = IconCache(theme: theme)
+    iconCache = IconCache()
 
     contentView = NSView()
     contentView.wantsLayer = true
@@ -1600,10 +1600,8 @@ final class TabManager: NSObject {
   func applyTheme(_ theme: Theme) {
     self.theme = theme
     contentView.layer?.backgroundColor = theme.bgColor.cgColor
-    if let cache = iconCache {
-      cache.rebuild(theme: theme)
-    } else {
-      iconCache = IconCache(theme: theme)
+    if iconCache == nil {
+      iconCache = IconCache()
     }
     rebuildSegments()
     for tab in tabs {
@@ -1804,7 +1802,7 @@ final class TabManager: NSObject {
   private func tabIcon(for tab: TabEntry) -> NSImage? {
     switch tab {
     case .terminal:
-      return iconCache?.toolbarIcon(name: "console")
+      return iconCache?.materialIcon(name: "console")
         ?? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
     case .editor(let editor):
       if let path = editor.filePath {
@@ -1814,7 +1812,7 @@ final class TabManager: NSObject {
       }
       return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
     case .imagePreview:
-      return iconCache?.toolbarIcon(name: "image")
+      return iconCache?.materialIcon(name: "image")
         ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
     case .diffReview:
       return NSImage(

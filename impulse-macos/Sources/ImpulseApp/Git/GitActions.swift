@@ -71,9 +71,13 @@ struct GitActions {
     } completion: { result, snapshot in
       switch result {
       case .success:
-        if target == .discard, let snapshot {
-          offerUndo("Reverted changes in \((change.path as NSString).lastPathComponent)",
-            snapshot: snapshot, paths: [change.path])
+        if target == .discard {
+          // Open editors show the reverted file, not the stale one.
+          reloadEditors(paths: [change.path])
+          if let snapshot {
+            offerUndo("Reverted changes in \((change.path as NSString).lastPathComponent)",
+              snapshot: snapshot, paths: [change.path])
+          }
         }
         completion?(true)
       case .failure(let error):

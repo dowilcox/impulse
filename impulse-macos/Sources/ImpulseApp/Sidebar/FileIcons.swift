@@ -1,46 +1,4 @@
 import AppKit
-import os.log
-
-// MARK: - Icon Color Field (toolbar icons only)
-
-/// Which theme color an icon uses — only for toolbar icons that are recolored.
-enum IconColorField {
-    case orange, blue, yellow, green, cyan, magenta, red, comment, fg
-
-    func resolve(_ theme: Theme) -> String {
-        switch self {
-        case .orange:  return theme.orange
-        case .blue:    return theme.blue
-        case .yellow:  return theme.yellow
-        case .green:   return theme.green
-        case .cyan:    return theme.cyan
-        case .magenta: return theme.magenta
-        case .red:     return theme.red
-        case .comment: return theme.fgComment
-        case .fg:      return theme.fg
-        }
-    }
-}
-
-// MARK: - Toolbar Icon Definition
-
-private struct ToolbarIconDef {
-    let name: String
-    let color: IconColorField
-}
-
-/// Toolbar icons that use monochrome SVGs recolored with theme colors.
-private let toolbarIcons: [ToolbarIconDef] = [
-    ToolbarIconDef(name: "toolbar-sidebar", color: .fg),
-    ToolbarIconDef(name: "toolbar-plus", color: .fg),
-    ToolbarIconDef(name: "toolbar-eye-open", color: .fg),
-    ToolbarIconDef(name: "toolbar-eye-closed", color: .fg),
-    ToolbarIconDef(name: "toolbar-collapse", color: .fg),
-    ToolbarIconDef(name: "toolbar-refresh", color: .fg),
-    ToolbarIconDef(name: "toolbar-new-file", color: .fg),
-    ToolbarIconDef(name: "toolbar-new-folder", color: .fg),
-    ToolbarIconDef(name: "pin", color: .comment),
-]
 
 // MARK: - Material Icon Mapping (JSON-driven)
 
@@ -66,37 +24,10 @@ private struct MaterialIconMapping: Decodable {
     }
 }
 
-// MARK: - SVG Recoloring (toolbar icons only)
-
-/// Pre-compiled regex for recoloring SVG fill/stroke attributes.
-private let fillRegex: NSRegularExpression? = {
-    guard let regex = try? NSRegularExpression(pattern: ##"(fill|stroke)="#[0-9A-Fa-f]{3,8}""##) else {
-        os_log(.error, "Failed to compile SVG color regex")
-        return nil
-    }
-    return regex
-}()
-
-/// Replaces hex fill/stroke attribute values in an SVG string with a theme color.
-private func recolorSVG(_ svg: String, color: String) -> String {
-    guard let regex = fillRegex else { return svg }
-    let colorValue = color.hasPrefix("#") ? color : "#\(color)"
-    return regex.stringByReplacingMatches(
-        in: svg,
-        range: NSRange(svg.startIndex..., in: svg),
-        withTemplate: "$1=\"\(colorValue)\""
-    )
-}
-
 // MARK: - Icon Cache
 
-/// Loads material file/folder icons (pre-colored) and toolbar icons (theme-recolored).
-/// Material icons are loaded lazily on first access. Toolbar icons rebuild on theme change.
+/// Loads material file/folder icons (pre-colored SVGs), lazily on first access.
 final class IconCache {
-
-    // Toolbar icons: monochrome SVGs recolored with theme colors.
-    private var toolbarImages: [String: NSImage] = [:]
-    private var toolbarSVGs: [String: String] = [:]
 
     // Material icons: pre-colored SVGs loaded lazily.
     private var materialImages: [String: NSImage] = [:]
@@ -105,10 +36,8 @@ final class IconCache {
     // Mapping data parsed from JSON.
     private var mapping: MaterialIconMapping?
 
-    init(theme: Theme) {
+    init() {
         loadMapping()
-        loadToolbarSVGs()
-        buildToolbarIcons(theme: theme)
     }
 
     // MARK: - Setup
@@ -133,33 +62,6 @@ final class IconCache {
         }
     }
 
-    private func loadToolbarSVGs() {
-        guard let iconsURL = Bundle.appResources.url(forResource: "icons", withExtension: nil) else { return }
-        for def in toolbarIcons {
-            let svgURL = iconsURL.appendingPathComponent("\(def.name).svg")
-            if let svgString = try? String(contentsOf: svgURL, encoding: .utf8) {
-                toolbarSVGs[def.name] = svgString
-            }
-        }
-    }
-
-    private func buildToolbarIcons(theme: Theme) {
-        toolbarImages.removeAll()
-        for def in toolbarIcons {
-            guard let svg = toolbarSVGs[def.name] else { continue }
-            let color = def.color.resolve(theme)
-            let recolored = recolorSVG(svg, color: color)
-            if let image = renderSVG(recolored, size: 16) {
-                toolbarImages[def.name] = image
-            }
-        }
-    }
-
-    /// Rebuilds toolbar icons for a new theme. Material icons are unaffected.
-    func rebuild(theme: Theme) {
-        buildToolbarIcons(theme: theme)
-    }
-
     // MARK: - Material Icon Loading (lazy)
 
     /// Loads a material SVG by filename, caching the result.
@@ -177,18 +79,10 @@ final class IconCache {
     }
 
     /// Resolves an icon name to an NSImage via the file_icons mapping.
-    private func materialIcon(name: String) -> NSImage? {
+    /// A material icon by name ("console", "image", …).
+    func materialIcon(name: String) -> NSImage? {
         guard let svgFilename = mapping?.fileIcons[name] else { return nil }
         return materialImage(svgFilename: svgFilename)
-    }
-
-    // MARK: - Rendering
-
-    private func renderSVG(_ svg: String, size: CGFloat) -> NSImage? {
-        guard let data = svg.data(using: .utf8) else { return nil }
-        guard let image = NSImage(data: data) else { return nil }
-        image.size = NSSize(width: size, height: size)
-        return image
     }
 
     // MARK: - Public API
@@ -201,12 +95,6 @@ final class IconCache {
             return directoryIcon(name: filename, expanded: expanded, mapping: mapping)
         }
         return fileIcon(filename: filename, mapping: mapping)
-    }
-
-    /// Returns a toolbar icon by name. Falls back to material icons for
-    /// non-toolbar names like "console" and "image" (used by TabManager).
-    func toolbarIcon(name: String) -> NSImage? {
-        return toolbarImages[name] ?? materialIcon(name: name)
     }
 
     // MARK: - File Icon Resolution
