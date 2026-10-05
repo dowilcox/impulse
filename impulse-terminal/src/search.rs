@@ -27,11 +27,26 @@ impl SearchResult {
     }
 }
 
+/// How many matches a search has across the scrollback and which one is
+/// current.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchStats {
+    /// 1-based index of the current match among all matches (0: none yet).
+    pub current: usize,
+    pub total: usize,
+    /// Counting stopped at the limit; there may be more.
+    pub capped: bool,
+    /// The pattern didn't compile.
+    pub invalid: bool,
+}
+
 /// Wraps alacritty_terminal's RegexSearch to maintain search state across calls.
 pub(crate) struct TerminalSearch {
     regex: Option<RegexSearch>,
     /// Last match position, used as the origin for next/prev navigation.
     last_match: Option<Point>,
+    /// The pattern last given didn't compile.
+    invalid: bool,
     /// The last search pattern, so we can avoid recompiling when the same
     /// pattern is provided again.
     last_pattern: String,
@@ -42,6 +57,7 @@ impl TerminalSearch {
         Self {
             regex: None,
             last_match: None,
+            invalid: false,
             last_pattern: String::new(),
         }
     }
@@ -61,9 +77,11 @@ impl TerminalSearch {
                     self.regex = Some(regex);
                     self.last_pattern = pattern.to_string();
                     self.last_match = None;
+                    self.invalid = false;
                 }
                 Err(_) => {
                     self.clear();
+                    self.invalid = true;
                     return SearchResult::no_match();
                 }
             }
@@ -134,10 +152,54 @@ impl TerminalSearch {
         }
     }
 
+    /// Start of the current match, if any.
+    pub fn current_match(&self) -> Option<Point> {
+        self.last_match
+    }
+
+    /// Count matches across the whole scrollback (up to `limit`) and find
+    /// the current one's position among them.
+    pub fn stats<T>(&mut self, term: &Term<T>, limit: usize) -> SearchStats {
+        let mut stats = SearchStats {
+            invalid: self.invalid,
+            ..Default::default()
+        };
+        let last_match = self.last_match;
+        let Some(regex) = self.regex.as_mut() else {
+            return stats;
+        };
+        let top = Point::new(Line(-(term.grid().history_size() as i32)), Column(0));
+        let end = Point::new(
+            Line(term.screen_lines() as i32 - 1),
+            Column(term.columns().saturating_sub(1)),
+        );
+        let mut cursor = top;
+        while let Some(m) = term.regex_search_right(regex, cursor, end) {
+            stats.total += 1;
+            if Some(*m.start()) == last_match {
+                stats.current = stats.total;
+            }
+            if stats.total >= limit {
+                stats.capped = true;
+                break;
+            }
+            let next = m
+                .end()
+                .add(term, alacritty_terminal::index::Boundary::Grid, 1);
+            // Stop at the end of the grid (add wraps around) or past it.
+            if next <= *m.start() || next > end {
+                break;
+            }
+            cursor = next;
+        }
+        stats
+    }
+
     /// Clear all search state.
     pub fn clear(&mut self) {
         self.regex = None;
         self.last_match = None;
+        self.invalid = false;
         self.last_pattern.clear();
     }
 
@@ -249,12 +311,80 @@ impl TerminalSearch {
         )
     }
 
-    fn result_from_match<T>(term: &Term<T>, start: Point, end: Point) -> SearchResult {
+    pub(crate) fn result_from_match<T>(term: &Term<T>, start: Point, end: Point) -> SearchResult {
         let display_offset = term.grid().display_offset() as i32;
         SearchResult {
             match_row: start.line.0 + display_offset,
             match_start_col: start.column.0 as i32,
             match_end_col: end.column.0 as i32,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::test::TermSize;
+    use alacritty_terminal::term::Config;
+    use alacritty_terminal::vte::ansi::Processor;
+
+    fn term_with(columns: usize, lines: usize, output: &[u8]) -> Term<VoidListener> {
+        let size = TermSize::new(columns, lines);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let mut processor: Processor = Processor::new();
+        processor.advance(&mut term, output);
+        term
+    }
+
+    #[test]
+    fn counts_matches_across_scrollback_and_tracks_the_current_one() {
+        // Five lines on a three-line screen: two scroll into history.
+        let term = term_with(20, 3, b"foo 1\r\nbar\r\nfoo 2\r\nfoo 3\r\nend");
+        let mut search = TerminalSearch::new();
+        search.search(&term, "foo");
+        let stats = search.stats(&term, 100);
+        assert_eq!(stats.total, 3);
+        assert_eq!(
+            stats.current, 2,
+            "the first match from the viewport's top is foo 2"
+        );
+        search.search_prev(&term);
+        assert_eq!(search.stats(&term, 100).current, 1);
+
+        let capped = search.stats(&term, 2);
+        assert!(capped.capped);
+        assert_eq!(capped.total, 2);
+    }
+
+    /// The find bar's patterns (see ImpulseKit's TerminalFindQuery): explicit
+    /// case flags and ASCII word boundaries.
+    #[test]
+    fn find_bar_patterns_compile_and_match() {
+        let term = term_with(30, 3, b"Error error\r\nid idx kid\r\n");
+        let mut search = TerminalSearch::new();
+        let count = |search: &mut TerminalSearch, pattern: &str| {
+            search.search(&term, pattern);
+            let stats = search.stats(&term, 100);
+            assert!(!stats.invalid, "{pattern} should compile");
+            stats.total
+        };
+        assert_eq!(count(&mut search, "(?-i)Error"), 1);
+        assert_eq!(count(&mut search, "(?i)Error"), 2);
+        assert_eq!(count(&mut search, "(?i)(?-u:\\b)(?:id)(?-u:\\b)"), 1);
+        assert_eq!(count(&mut search, "(?i)id"), 3);
+    }
+
+    #[test]
+    fn invalid_patterns_are_reported() {
+        let term = term_with(20, 3, b"text");
+        let mut search = TerminalSearch::new();
+        search.search(&term, "(unclosed");
+        let stats = search.stats(&term, 100);
+        assert!(stats.invalid);
+        assert_eq!(stats.total, 0);
+        search.search(&term, "text");
+        assert!(!search.stats(&term, 100).invalid);
+        assert_eq!(search.stats(&term, 100).total, 1);
     }
 }

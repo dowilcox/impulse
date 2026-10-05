@@ -69,7 +69,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Terminal search bar (hidden by default, toggled with Cmd+F on terminal tabs).
   private let termSearchBar = NSView()
-  private let termSearchField = NSSearchField()
+  private lazy var termFind = TerminalFindModel(palette: windowModel.palette)
   private var termSearchBarVisible = false
   /// The window's terminal input bar (see `attachInputBar`).
   private var inputBarHost: NSView?
@@ -871,6 +871,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action.hasPrefix("find=") {
+        if !termSearchBarVisible { toggleTerminalSearch() }
+        termFind.query.text = String(action.dropFirst(5))
+      } else if action == "find-word" {
+        termFind.query.wholeWord = true
       } else if action.hasPrefix("block="), let terminal = tabManager.selectedTerminal?.activeTerminal {
         terminal.performBlockCommand(String(action.dropFirst(6)))
       } else if action.hasPrefix("select-blocks="), let terminal = tabManager.selectedTerminal?.activeTerminal {
@@ -1063,64 +1068,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let host = tabManager.contentView
 
     termSearchBar.translatesAutoresizingMaskIntoConstraints = false
+    // Clip contents so the bar wipes into view as it grows instead of
+    // overflowing fully formed while the height animates.
     termSearchBar.wantsLayer = true
-    termSearchBar.layer?.backgroundColor = theme.bgSurfaceColor.cgColor
-    // Clip contents to the bar's bounds so the field/buttons are wiped into
-    // view as it grows, instead of overflowing fully-formed while the height
-    // animates (which read as a "pop"). The field + focus ring fit within the
-    // 32pt open height, so this never clips them at rest.
     termSearchBar.layer?.masksToBounds = true
     termSearchBar.isHidden = true
 
-    let separator = NSBox()
-    separator.boxType = .custom
-    separator.borderWidth = 0
-    separator.fillColor = theme.borderColor
-    separator.translatesAutoresizingMaskIntoConstraints = false
-
-    termSearchField.translatesAutoresizingMaskIntoConstraints = false
-    termSearchField.placeholderString = "Find in terminal"
-    termSearchField.sendsSearchStringImmediately = true
-    termSearchField.sendsWholeSearchString = false
-    termSearchField.controlSize = .regular
-    termSearchField.delegate = self
-    termSearchField.font = NSFont.appFont(ofSize: 13)
-
-    let prevButton = NSButton()
-    prevButton.translatesAutoresizingMaskIntoConstraints = false
-    prevButton.image = NSImage(
-      systemSymbolName: "chevron.up", accessibilityDescription: "Previous Match")
-    prevButton.bezelStyle = .rounded
-    prevButton.isBordered = true
-    prevButton.toolTip = "Previous Match"
-    prevButton.target = self
-    prevButton.action = #selector(termSearchPrev(_:))
-    prevButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-    let nextButton = NSButton()
-    nextButton.translatesAutoresizingMaskIntoConstraints = false
-    nextButton.image = NSImage(
-      systemSymbolName: "chevron.down", accessibilityDescription: "Next Match")
-    nextButton.bezelStyle = .rounded
-    nextButton.isBordered = true
-    nextButton.toolTip = "Next Match"
-    nextButton.target = self
-    nextButton.action = #selector(termSearchNext(_:))
-    nextButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-    let doneButton = NSButton(title: "Done", target: self, action: #selector(termSearchClose(_:)))
-    doneButton.translatesAutoresizingMaskIntoConstraints = false
-    doneButton.bezelStyle = .rounded
-    doneButton.keyEquivalent = "\u{1b}"
-    doneButton.toolTip = "Close Find Bar"
-    doneButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-    termSearchBar.addSubview(separator)
-    termSearchBar.addSubview(termSearchField)
-    termSearchBar.addSubview(prevButton)
-    termSearchBar.addSubview(nextButton)
-    termSearchBar.addSubview(doneButton)
-
+    termFind.onChange = { [weak self] query in self?.runTerminalFind(query) }
+    termFind.onNext = { [weak self] in self?.stepTerminalFind(forward: true) }
+    termFind.onPrevious = { [weak self] in self?.stepTerminalFind(forward: false) }
+    termFind.onClose = { [weak self] in self?.hideTerminalSearch() }
+    let bar = WorkbenchHosting.make(TerminalFindBar(model: termFind))
+    bar.translatesAutoresizingMaskIntoConstraints = false
+    termSearchBar.addSubview(bar)
     host.addSubview(termSearchBar)
 
     let heightConstraint = termSearchBar.heightAnchor.constraint(equalToConstant: 0)
@@ -1131,29 +1091,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       termSearchBar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       termSearchBar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
       heightConstraint,
-
-      separator.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor),
-      separator.trailingAnchor.constraint(equalTo: termSearchBar.trailingAnchor),
-      separator.bottomAnchor.constraint(equalTo: termSearchBar.bottomAnchor),
-      separator.heightAnchor.constraint(equalToConstant: 1),
-
-      termSearchField.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor, constant: 10),
-      termSearchField.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
-      termSearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
-
-      prevButton.leadingAnchor.constraint(equalTo: termSearchField.trailingAnchor, constant: 8),
-      prevButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
-      prevButton.widthAnchor.constraint(equalToConstant: 28),
-
-      nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 4),
-      nextButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
-      nextButton.widthAnchor.constraint(equalToConstant: 28),
-
-      doneButton.leadingAnchor.constraint(
-        greaterThanOrEqualTo: nextButton.trailingAnchor, constant: 12),
-      doneButton.trailingAnchor.constraint(equalTo: termSearchBar.trailingAnchor, constant: -10),
-      doneButton.centerYAnchor.constraint(equalTo: termSearchBar.centerYAnchor),
+      bar.topAnchor.constraint(equalTo: termSearchBar.topAnchor),
+      bar.leadingAnchor.constraint(equalTo: termSearchBar.leadingAnchor),
+      bar.trailingAnchor.constraint(equalTo: termSearchBar.trailingAnchor),
+      bar.heightAnchor.constraint(equalToConstant: 32),
     ])
+  }
+
+  private func runTerminalFind(_ query: TerminalFindQuery) {
+    guard let terminal = tabManager.selectedTerminal?.activeTerminal else { return }
+    if let pattern = query.pattern {
+      terminal.search(pattern)
+    } else {
+      terminal.searchClear()
+    }
+    termFind.update(terminal.searchStats())
+  }
+
+  private func stepTerminalFind(forward: Bool) {
+    guard let terminal = tabManager.selectedTerminal?.activeTerminal, termFind.query.pattern != nil else { return }
+    if forward { terminal.searchNext() } else { terminal.searchPrev() }
+    termFind.update(terminal.searchStats())
   }
 
   /// Toggles the terminal search bar visibility.
@@ -1190,17 +1148,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabManager.contentView.layoutSubtreeIfNeeded()
       },
       completionHandler: { [weak self] in
-        guard let self else { return }
-        self.window?.makeFirstResponder(self.termSearchField)
-        let editor = self.termSearchField.currentEditor() as? NSTextView
-        editor?.selectAll(nil)
+        self?.termFind.focusToken += 1
       })
 
-    let query = termSearchField.stringValue
-    if !query.isEmpty,
-      let terminal = tabManager.selectedTerminal?.activeTerminal
-    {
-      terminal.search(query)
+    // Seed from a one-line selection in the grid, else search again for
+    // what was there.
+    termFind.palette = windowModel.palette
+    if let selection = tabManager.selectedTerminal?.activeTerminal?.singleLineSelection {
+      termFind.query.text = selection
+    } else {
+      runTerminalFind(termFind.query)
     }
   }
 
@@ -1229,18 +1186,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           terminal.focus()
         }
       })
-  }
-
-  @objc private func termSearchNext(_ sender: Any?) {
-    tabManager.selectedTerminal?.activeTerminal?.searchNext()
-  }
-
-  @objc private func termSearchPrev(_ sender: Any?) {
-    tabManager.selectedTerminal?.activeTerminal?.searchPrev()
-  }
-
-  @objc private func termSearchClose(_ sender: Any?) {
-    hideTerminalSearch()
   }
 
   /// Updates the status bar with information from the currently active tab.
@@ -3649,41 +3594,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     (NSApp.delegate as? AppDelegate)?.windowControllerDidClose(self)
   }
 }
-
-// MARK: - Terminal Search Field Delegate
-
-extension MainWindowController: NSSearchFieldDelegate {
-  func controlTextDidChange(_ obj: Notification) {
-    guard let field = obj.object as? NSSearchField, field === termSearchField else { return }
-    let query = field.stringValue
-    guard let terminal = tabManager.selectedTerminal?.activeTerminal else { return }
-    if query.isEmpty {
-      terminal.searchClear()
-    } else {
-      terminal.search(query)
-    }
-  }
-
-  func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector)
-    -> Bool
-  {
-    guard control === termSearchField else { return false }
-    switch commandSelector {
-    case #selector(NSResponder.cancelOperation(_:)):
-      hideTerminalSearch()
-      return true
-    case #selector(NSResponder.insertNewline(_:)):
-      tabManager.selectedTerminal?.activeTerminal?.searchNext()
-      return true
-    case #selector(NSResponder.insertBacktab(_:)):
-      tabManager.selectedTerminal?.activeTerminal?.searchPrev()
-      return true
-    default:
-      return false
-    }
-  }
-}
-
 
 // MARK: - Palette host
 

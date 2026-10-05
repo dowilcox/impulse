@@ -29,5 +29,5 @@ pub use history::{
     CommandHistoryContext, CommandHistoryMatchKind, CommandHistoryQuery, CommandHistoryRecord,
     CommandHistorySearchResult, CommandHistoryStore,
 };
-pub use search::SearchResult;
+pub use search::{SearchResult, SearchStats};
 pub use transcript::{transcript, transcript_until};

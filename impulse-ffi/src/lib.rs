@@ -764,6 +764,32 @@ pub extern "C" fn impulse_terminal_search_prev(handle: *mut TerminalHandle) -> *
     )
 }
 
+/// Match count for the current search: writes the 1-based current match
+/// (0: none) and the total, and returns flags (bit 0: the count stopped at
+/// its limit, bit 1: the pattern is invalid).
+#[no_mangle]
+pub extern "C" fn impulse_terminal_search_stats(
+    handle: *mut TerminalHandle,
+    current: *mut u32,
+    total: *mut u32,
+) -> u32 {
+    ffi_catch(
+        0,
+        AssertUnwindSafe(|| {
+            if handle.is_null() || current.is_null() || total.is_null() {
+                return 0;
+            }
+            let h = unsafe { &*handle };
+            let stats = h.backend.search_stats();
+            unsafe {
+                *current = stats.current.min(u32::MAX as usize) as u32;
+                *total = stats.total.min(u32::MAX as usize) as u32;
+            }
+            u32::from(stats.capped) | (u32::from(stats.invalid) << 1)
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_search_clear(handle: *mut TerminalHandle) {
     ffi_catch(

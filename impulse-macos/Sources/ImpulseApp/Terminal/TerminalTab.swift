@@ -1495,6 +1495,16 @@ class TerminalTab: NSView {
     backend?.searchClear()
     renderer.needsDisplay = true
   }
+  func searchStats() -> TerminalBackend.SearchStats? {
+    backend?.searchStats()
+  }
+  /// Selected grid text, when it's a single line (to seed Find).
+  var singleLineSelection: String? {
+    guard let text = backend?.selectedText()?.trimmingCharacters(in: .whitespaces), !text.isEmpty,
+      !text.contains("\n")
+    else { return nil }
+    return text
+  }
 
   // MARK: CWD Polling
 

@@ -42,6 +42,7 @@ char *impulse_terminal_search(void *handle, const char *pattern);
 char *impulse_terminal_search_next(void *handle);
 char *impulse_terminal_search_prev(void *handle);
 void impulse_terminal_search_clear(void *handle);
+uint32_t impulse_terminal_search_stats(void *handle, uint32_t *current, uint32_t *total);
 void impulse_terminal_set_colors(void *handle, const char *config_json);
 char *impulse_terminal_hyperlink_at(void *handle, unsigned int col, unsigned int row);
 

@@ -625,6 +625,15 @@ final class ImpulseCore {
         impulse_terminal_search_clear(UnsafeMutableRawPointer(handle))
     }
 
+    /// Current match (1-based, 0 none), total, and flags (bit 0 capped,
+    /// bit 1 invalid pattern).
+    static func terminalSearchStats(handle: OpaquePointer) -> (current: UInt32, total: UInt32, flags: UInt32) {
+        var current: UInt32 = 0
+        var total: UInt32 = 0
+        let flags = impulse_terminal_search_stats(UnsafeMutableRawPointer(handle), &current, &total)
+        return (current, total, flags)
+    }
+
     /// Updates the terminal's color palette at runtime.
     static func terminalSetColors(handle: OpaquePointer, configJson: String) {
         configJson.withCString { ptr in

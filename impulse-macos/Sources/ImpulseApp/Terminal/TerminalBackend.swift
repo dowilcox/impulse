@@ -804,6 +804,23 @@ final class TerminalBackend {
         ImpulseCore.terminalSearchClear(handle: handle)
     }
 
+    struct SearchStats: Equatable {
+        /// 1-based index of the current match (0: none yet).
+        let current: Int
+        let total: Int
+        let capped: Bool
+        let invalid: Bool
+    }
+
+    /// How many matches the current search has across the scrollback.
+    func searchStats() -> SearchStats? {
+        guard let handle, !isShutdown else { return nil }
+        let raw = ImpulseCore.terminalSearchStats(handle: handle)
+        return SearchStats(
+            current: Int(raw.current), total: Int(raw.total),
+            capped: raw.flags & 1 != 0, invalid: raw.flags & 2 != 0)
+    }
+
     // MARK: - Colors
 
     func setColors(config: TerminalBackendConfig) {

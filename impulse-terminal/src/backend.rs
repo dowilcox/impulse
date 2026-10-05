@@ -35,7 +35,7 @@ use crate::history::{
     command_history_rerun_input, CommandHistoryContext, CommandHistoryQuery, CommandHistoryRecord,
     CommandHistorySearchResult, CommandHistoryStore,
 };
-use crate::search::{SearchResult, TerminalSearch};
+use crate::search::{SearchResult, SearchStats, TerminalSearch};
 
 const FILTERED_CHILD_ENV_VARS: &[&str] = &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
 
@@ -1798,31 +1798,65 @@ impl TerminalBackend {
     /// Search for a regex pattern in the terminal. Returns the first match.
     pub fn search(&self, pattern: &str) -> SearchResult {
         self.mark_force_full_damage();
-        let term = self.term.lock();
+        let mut term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
         };
-        search.search(&term, pattern)
+        let result = search.search(&term, pattern);
+        Self::reveal_match(&mut term, &search, result)
     }
 
     /// Find the next search match after the current one.
     pub fn search_next(&self) -> SearchResult {
         self.mark_force_full_damage();
-        let term = self.term.lock();
+        let mut term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
         };
-        search.search_next(&term)
+        let result = search.search_next(&term);
+        Self::reveal_match(&mut term, &search, result)
     }
 
     /// Find the previous search match before the current one.
     pub fn search_prev(&self) -> SearchResult {
         self.mark_force_full_damage();
-        let term = self.term.lock();
+        let mut term = self.term.lock();
         let Ok(mut search) = self.search.lock() else {
             return SearchResult::no_match();
         };
-        search.search_prev(&term)
+        let result = search.search_prev(&term);
+        Self::reveal_match(&mut term, &search, result)
+    }
+
+    /// Scroll a match found in the scrollback into view; the result's row is
+    /// then relative to the new viewport.
+    fn reveal_match(
+        term: &mut Term<EventProxy>,
+        search: &TerminalSearch,
+        result: SearchResult,
+    ) -> SearchResult {
+        let Some(start) = search.current_match() else {
+            return result;
+        };
+        let before = term.grid().display_offset() as i32;
+        term.scroll_to_point(start);
+        let shift = term.grid().display_offset() as i32 - before;
+        if shift == 0 || result.match_row < 0 && result.match_start_col < 0 {
+            return result;
+        }
+        SearchResult {
+            match_row: result.match_row + shift,
+            ..result
+        }
+    }
+
+    /// Match count and position for the current search.
+    pub fn search_stats(&self) -> SearchStats {
+        let term = self.term.lock();
+        self.search
+            .lock()
+            .map(|mut search| search.stats(&term, 9_999))
+            .unwrap_or_default()
     }
 
     /// Clear the current search state.
