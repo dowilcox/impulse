@@ -158,7 +158,8 @@ struct LeftDockView: View {
   var body: some View {
     VStack(spacing: 0) {
       header
-      if model.sidebarPanel == .search {
+      switch model.sidebarPanel {
+      case .search:
         SidebarSearchBar(model: model)
         Hairline()
         if model.searchQuery.isEmpty {
@@ -166,7 +167,10 @@ struct LeftDockView: View {
         } else {
           SearchResultsList(model: model)
         }
-      } else {
+      case .changes:
+        Hairline()
+        ChangesPanelView(model: model)
+      case .files:
         FileTreeListView(model: model)
       }
     }
@@ -178,15 +182,30 @@ struct LeftDockView: View {
     HStack(spacing: 2) {
       DockSegmentedTabs(
         selection: Binding(
-          get: { model.sidebarPanel == .search ? 1 : 0 },
+          get: {
+            switch model.sidebarPanel {
+            case .files: return 0
+            case .changes: return 1
+            case .search: return 2
+            }
+          },
           set: { index in
-            if index == 1 {
-              model.beginSearch()
-            } else {
+            switch index {
+            case 1:
               model.resetSearch()
+              model.sidebarPanel = .changes
+            case 2:
+              model.beginSearch()
+            default:
+              model.resetSearch()
+              model.sidebarPanel = .files
             }
           }),
-        items: [("Files", LucideIcon.folderTree), ("Search", LucideIcon.search)]
+        items: [
+          ("Files", LucideIcon.folderTree),
+          (changesLabel, LucideIcon.gitBranch),
+          ("Search", LucideIcon.search),
+        ]
       )
       Spacer(minLength: 4)
       if model.sidebarPanel == .files {
@@ -215,6 +234,14 @@ struct LeftDockView: View {
     }
     .padding(.horizontal, 8)
     .frame(height: 34)
+  }
+}
+
+extension LeftDockView {
+  /// "Changes" plus the changed-file count when there are changes.
+  fileprivate var changesLabel: String {
+    let count = model.reviewChangedFileCount
+    return count > 0 ? "Changes \(count)" : "Changes"
   }
 }
 

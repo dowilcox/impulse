@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import ImpulseKit
 
 private func nonEmpty(_ value: String?) -> String? {
   guard let value else { return nil }
@@ -455,7 +456,7 @@ final class TabManager: NSObject {
   /// one already exists for this exact `repoRoot` it is selected, focused, and
   /// reloaded; otherwise a new tab is created. A different repo gets its own tab
   /// so the user never reviews/commits/discards against a stale repository.
-  func addDiffReviewTab(repoRoot: String) {
+  func addDiffReviewTab(repoRoot: String, scope: DiffScope = .uncommitted, focusPath: String? = nil) {
     if let existingIndex = tabs.firstIndex(where: {
       if case .diffReview(let r, _) = $0 { return r == repoRoot }
       return false

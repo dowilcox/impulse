@@ -5,6 +5,7 @@ import Observation
 
 enum SidebarPanel {
   case files
+  case changes
   case search
 }
 
@@ -62,6 +63,10 @@ final class WindowModel {
   /// The repository of the active tab's working directory (nil outside a
   /// repository). Shared with other windows via GitRepositoryStore.
   var repository: GitRepositoryState?
+  /// The window, for git UI actions (open, confirm, report).
+  @ObservationIgnored weak var gitHost: GitPanelHost?
+  /// Toasts shown bottom-center in this window.
+  @ObservationIgnored let toasts = ToastCenter()
 
   // MARK: Workbench docks
   //

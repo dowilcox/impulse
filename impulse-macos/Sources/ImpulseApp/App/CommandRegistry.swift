@@ -43,6 +43,11 @@ enum CommandRegistry {
         keybindingId: "toggle_right_dock"
       ) { [weak controller] in controller?.toggleRightDock() },
       AppCommand(
+        id: "show_changes", title: "Show Changes", category: "Git",
+        keywords: ["git", "stage", "commit", "status"], icon: .gitBranch,
+        keybindingId: "show_changes"
+      ) { [weak controller] in controller?.showChangesPanel() },
+      AppCommand(
         id: "switch_branch", title: "Switch Branch…", category: "Git",
         keywords: ["checkout", "git"], icon: .gitBranch
       ) { [weak controller] in controller?.showPalette(prefix: "b:") },

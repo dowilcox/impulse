@@ -1,5 +1,6 @@
 import AppKit
 import ImpulseGit
+import ImpulseKit
 import SwiftUI
 import os.log
 
@@ -448,6 +449,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onCreateFolder = { [weak self] in self?.newFolderAction(nil) }
     windowModel.onOpenDiffReview = { [weak self] in self?.openDiffReview() }
 
+    windowModel.gitHost = self
+    if let window {
+      let model = windowModel
+      windowModel.toasts.attach(to: window) { model.palette }
+    }
     windowModel.onShowCommandPalette = { [weak self] in
       self?.showCommandPalette()
     }
@@ -537,6 +543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     case "branches": showPalette(prefix: "b:")
     case "review": openDiffReview()
     case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
+    case "changes": showChangesPanel()
     default: NSLog("DebugSnapshot: unknown action '\(action)'")
     }
   }
@@ -1379,6 +1386,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.toggleRightDock()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulseShowChanges, object: nil, queue: .main) { [weak self] _ in
+        guard let self, self.window?.isKeyWindow == true else { return }
+        self.showChangesPanel()
       }
     )
     notificationObservers.append(
@@ -2904,5 +2917,49 @@ extension MainWindowController: PaletteHost {
 
   func paletteSelectTab(_ index: Int) {
     tabManager.selectTab(index: index)
+  }
+}
+
+
+// MARK: - Git panel host
+
+extension MainWindowController: GitPanelHost {
+  var toasts: ToastCenter { windowModel.toasts }
+
+  func gitOpenFile(_ absolutePath: String) {
+    openCommandPaletteSearchResult(path: absolutePath, line: nil)
+  }
+
+  func gitOpenReview(scope: DiffScope, focusPath: String?) {
+    guard let repository = windowModel.repository else { return }
+    tabManager.addDiffReviewTab(repoRoot: repository.root, scope: scope, focusPath: focusPath)
+  }
+
+  func gitPresentError(_ error: GitOperationError, title: String) {
+    presentGitError(error, title: title)
+  }
+
+  func gitConfirm(
+    title: String, message: String, confirmTitle: String, destructive: Bool,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard let window else { return completion(false) }
+    let alert = NSAlert()
+    alert.alertStyle = destructive ? .warning : .informational
+    alert.messageText = title
+    alert.informativeText = message
+    alert.addButton(withTitle: confirmTitle)
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.hasDestructiveAction = destructive
+    alert.beginSheetModal(for: window) { response in
+      completion(response == .alertFirstButtonReturn)
+    }
+  }
+
+  /// Show the Changes panel in the left dock (⌃⇧G).
+  func showChangesPanel() {
+    windowModel.resetSearch()
+    windowModel.sidebarPanel = .changes
+    windowModel.sidebarVisible = true
   }
 }

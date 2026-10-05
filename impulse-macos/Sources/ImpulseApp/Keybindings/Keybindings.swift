@@ -140,6 +140,14 @@ enum Keybindings {
             modifierFlags: [.command, .option]
         ),
         BuiltinKeybinding(
+            id: "show_changes",
+            description: "Show Changes (Git)",
+            category: "Navigation",
+            defaultShortcut: "Ctrl+Shift+G",
+            keyEquivalent: "g",
+            modifierFlags: [.control, .shift]
+        ),
+        BuiltinKeybinding(
             id: "quick_open",
             description: "Go to File",
             category: "Navigation",

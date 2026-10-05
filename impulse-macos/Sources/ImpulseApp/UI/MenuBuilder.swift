@@ -272,6 +272,13 @@ enum MenuBuilder {
         applyKeybinding("review_changes", overrides: overrides, to: reviewChangesItem)
         menu.addItem(reviewChangesItem)
 
+        let changesItem = NSMenuItem(title: "Show Changes",
+                                     action: #selector(MenuActions.menuShowChanges(_:)),
+                                     keyEquivalent: "g")
+        changesItem.target = MenuActions.shared
+        applyKeybinding("show_changes", overrides: overrides, to: changesItem)
+        menu.addItem(changesItem)
+
         let markdownPreviewItem = NSMenuItem(title: "Toggle Markdown Preview",
                                              action: #selector(MenuActions.menuToggleMarkdownPreview(_:)),
                                              keyEquivalent: "M")
@@ -452,6 +459,10 @@ final class MenuActions: NSObject {
 
     @objc func menuQuickOpen(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseQuickOpen, object: nil)
+    }
+
+    @objc func menuShowChanges(_ sender: Any?) {
+        NotificationCenter.default.post(name: .impulseShowChanges, object: nil)
     }
 
     @objc func menuToggleRightDock(_ sender: Any?) {
