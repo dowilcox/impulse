@@ -85,7 +85,25 @@ enum TerminalBackendEvent {
     case commandBlockEnded(TerminalCommandBlock)
     case attentionRequest(String)
     case notification(title: String, body: String)
+    case progress(TerminalProgress)
     case passwordInputChanged(Bool)
+}
+
+/// Progress reported by the foreground program via OSC 9;4.
+struct TerminalProgress: Equatable {
+    enum State: String {
+        case hidden = "Hidden"
+        case normal = "Normal"
+        case error = "Error"
+        case indeterminate = "Indeterminate"
+        case paused = "Paused"
+    }
+
+    let state: State
+    /// 0...100 when the program reported one; nil for indeterminate.
+    let percent: Int?
+
+    static let hidden = TerminalProgress(state: .hidden, percent: nil)
 }
 
 /// Command block metadata emitted by the Rust terminal backend.
@@ -495,6 +513,11 @@ final class TerminalBackend {
                     let title = payload["title"] as? String ?? "Terminal"
                     let body = payload["body"] as? String ?? ""
                     events.append(.notification(title: title, body: body))
+                } else if let payload = dict["Progress"] as? [String: Any],
+                          let rawState = payload["state"] as? String,
+                          let state = TerminalProgress.State(rawValue: rawState) {
+                    let percent = (payload["percent"] as? Int).map { min(max($0, 0), 100) }
+                    events.append(.progress(TerminalProgress(state: state, percent: percent)))
                 } else if let active = dict["PasswordInputChanged"] as? Bool {
                     events.append(.passwordInputChanged(active))
                 }

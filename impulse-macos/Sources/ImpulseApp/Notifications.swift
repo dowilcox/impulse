@@ -107,6 +107,8 @@ extension Notification.Name {
     static let terminalProcessTerminated = Notification.Name("impulse.terminalProcessTerminated")
     /// Posted when a terminal tab's attention state changes.
     static let terminalAttentionChanged = Notification.Name("impulse.terminalAttentionChanged")
+    /// Posted by a TerminalTab when its OSC 9;4 progress report changes.
+    static let terminalProgressChanged = Notification.Name("impulse.terminalProgressChanged")
     /// Posted when a command block starts or ends in a terminal
     /// (userInfo["block"]: TerminalCommandBlock).
     static let terminalCommandBlockChanged = Notification.Name("impulse.terminalCommandBlockChanged")

@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::blocks::TerminalCommandBlock;
+use crate::osc_scanner::ProgressState;
 
 /// Events emitted by the terminal backend.
 /// Frontends poll these via `TerminalBackend::poll_events()`.
@@ -42,6 +43,11 @@ pub enum TerminalEvent {
     AttentionRequest(String),
     /// Terminal requested a user notification (OSC 9 or OSC 777 notify).
     Notification { title: String, body: String },
+    /// Progress report (OSC 9;4). `Hidden` clears the indicator.
+    Progress {
+        state: ProgressState,
+        percent: Option<u8>,
+    },
     /// The foreground program toggled password-style input on the PTY
     /// (termios ECHO off with ICANON on — sudo, ssh, `read -s`). Frontends
     /// should mask the input bar while true so the password isn't shown.

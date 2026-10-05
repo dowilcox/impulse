@@ -880,6 +880,13 @@ impl TerminalBackend {
                                             let _ = event_tx
                                                 .send(TerminalEvent::Notification { title, body });
                                         }
+                                        crate::osc_scanner::OscEvent::Progress {
+                                            state,
+                                            percent,
+                                        } => {
+                                            let _ = event_tx
+                                                .send(TerminalEvent::Progress { state, percent });
+                                        }
                                     }
 
                                     output_cursor = output_cursor.max(osc_event.end_offset.min(n));

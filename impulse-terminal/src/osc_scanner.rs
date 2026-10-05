@@ -4,6 +4,22 @@
 //! Does NOT modify or buffer the byte stream — all bytes pass through
 //! unchanged. alacritty_terminal ignores unsupported OSCs harmlessly.
 
+/// Progress state reported via ConEmu-style OSC 9;4 (also used by Ghostty,
+/// kitty, Windows Terminal and agent CLIs such as Claude Code).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum ProgressState {
+    /// `9;4;0` — clear any progress indicator.
+    Hidden,
+    /// `9;4;1;pct` — normal progress.
+    Normal,
+    /// `9;4;2[;pct]` — error state.
+    Error,
+    /// `9;4;3` — indeterminate (busy, no percentage).
+    Indeterminate,
+    /// `9;4;4[;pct]` — paused / warning state.
+    Paused,
+}
+
 /// Events emitted by the OSC scanner.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OscEvent {
@@ -21,6 +37,11 @@ pub enum OscEvent {
     AttentionRequest(String),
     /// OSC 9 / OSC 777 notification request.
     Notification { title: String, body: String },
+    /// OSC 9;4 progress report. `percent` is clamped to 0...100.
+    Progress {
+        state: ProgressState,
+        percent: Option<u8>,
+    },
 }
 
 /// OSC event with byte offsets in the most recently scanned chunk.
@@ -183,6 +204,12 @@ impl OscScanner {
             return Self::parse_iterm2_attention(&self.buf[5..]).map(OscEvent::AttentionRequest);
         }
 
+        // OSC 9;4 is the ConEmu progress protocol, not a notification. It must
+        // be matched before the generic OSC 9 notification below.
+        if self.buf == b"9;4" || self.buf.starts_with(b"9;4;") {
+            return Self::parse_progress(&self.buf[3..]);
+        }
+
         if self.buf.starts_with(b"9;") {
             if let Ok(body) = std::str::from_utf8(&self.buf[2..]) {
                 return Some(OscEvent::Notification {
@@ -208,6 +235,29 @@ impl OscScanner {
             "yes" | "once" | "no" => Some(value.to_string()),
             _ => None,
         }
+    }
+
+    /// Parse an OSC 9;4 payload after "9;4": `;state[;percent]` or empty.
+    fn parse_progress(payload: &[u8]) -> Option<OscEvent> {
+        let s = std::str::from_utf8(payload).ok()?;
+        let mut parts = s.trim_start_matches(';').split(';');
+        let state = match parts.next().unwrap_or("0") {
+            "" | "0" => ProgressState::Hidden,
+            "1" => ProgressState::Normal,
+            "2" => ProgressState::Error,
+            "3" => ProgressState::Indeterminate,
+            "4" => ProgressState::Paused,
+            _ => return None,
+        };
+        let percent = parts
+            .next()
+            .and_then(|p| p.trim().parse::<u32>().ok())
+            .map(|p| p.min(100) as u8);
+        let percent = match state {
+            ProgressState::Hidden | ProgressState::Indeterminate => None,
+            _ => percent,
+        };
+        Some(OscEvent::Progress { state, percent })
     }
 
     /// Parse rxvt/WezTerm notification payload after "777;".
@@ -492,6 +542,62 @@ mod tests {
             vec![OscEvent::Notification {
                 title: "Terminal".to_string(),
                 body: "hello there".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_osc9_4_progress_is_not_a_notification() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]9;4;1;50\x07");
+        scanner.scan(b"\x1b]9;4;3\x1b\\");
+        scanner.scan(b"\x1b]9;4;0\x07");
+        scanner.scan(b"\x1b]9;4;2;250\x07");
+        scanner.scan(b"\x1b]9;4;4\x07");
+        scanner.scan(b"\x1b]9;4\x07");
+        let events = scanner.drain_events();
+        assert_eq!(
+            events,
+            vec![
+                OscEvent::Progress {
+                    state: ProgressState::Normal,
+                    percent: Some(50)
+                },
+                OscEvent::Progress {
+                    state: ProgressState::Indeterminate,
+                    percent: None
+                },
+                OscEvent::Progress {
+                    state: ProgressState::Hidden,
+                    percent: None
+                },
+                OscEvent::Progress {
+                    state: ProgressState::Error,
+                    percent: Some(100)
+                },
+                OscEvent::Progress {
+                    state: ProgressState::Paused,
+                    percent: None
+                },
+                OscEvent::Progress {
+                    state: ProgressState::Hidden,
+                    percent: None
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_osc9_4_unknown_state_is_ignored_and_9_40_is_text() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]9;4;9;10\x07");
+        scanner.scan(b"\x1b]9;40 tests passed\x07");
+        let events = scanner.drain_events();
+        assert_eq!(
+            events,
+            vec![OscEvent::Notification {
+                title: "Terminal".to_string(),
+                body: "40 tests passed".to_string()
             }]
         );
     }

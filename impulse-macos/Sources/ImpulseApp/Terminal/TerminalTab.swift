@@ -19,6 +19,10 @@ class TerminalTab: NSView {
   /// Whether this terminal has produced output that needs user attention.
   private(set) var needsAttention: Bool = false
 
+  /// Latest OSC 9;4 progress report from the foreground program. Reset to
+  /// hidden when the command ends so a crashed program can't leave it stuck.
+  private(set) var progress: TerminalProgress = .hidden
+
   /// The renderer view that draws the terminal grid.
   let renderer: TerminalRenderer
 
@@ -266,6 +270,7 @@ class TerminalTab: NSView {
       )
     case .commandBlockEnded(let block):
       isCommandRunning = false
+      setProgress(.hidden)
       renderer.commandRunning = false
       setPasswordInput(false)
       lastCommandExitCode = block.exitCode
@@ -285,6 +290,8 @@ class TerminalTab: NSView {
       )
     case .passwordInputChanged(let active):
       setPasswordInput(active)
+    case .progress(let report):
+      setProgress(report)
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
@@ -295,6 +302,12 @@ class TerminalTab: NSView {
         }
       }
     }
+  }
+
+  private func setProgress(_ report: TerminalProgress) {
+    guard progress != report else { return }
+    progress = report
+    NotificationCenter.default.post(name: .terminalProgressChanged, object: self)
   }
 
   private func setPasswordInput(_ active: Bool) {
