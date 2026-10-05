@@ -1,0 +1,311 @@
+#if canImport(Testing)
+  import Foundation
+  import ImpulseKit
+  import Testing
+
+  @testable import ImpulseGit
+
+  /// Repo snapshot, scoped diffs, hunk/line staging and write operations,
+  /// checked against the git CLI as the oracle.
+  @Suite(.serialized)
+  struct GitCoreTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    // MARK: Snapshot
+
+    @Test func snapshotSeparatesStagedUnstagedAndUntracked() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\ntwo\nthree\n", "b.txt": "b\n"])
+      try repo.write("a.txt", "one\nTWO\nthree\n")
+      try repo.git("add", "a.txt")
+      try repo.write("a.txt", "one\nTWO\nthree\nfour\n")
+      try repo.write("new.txt", "fresh\n")
+      try repo.git("rm", "-q", "b.txt")
+
+      let snap = try #require(GitClient.snapshot(forPath: repo.root))
+      #expect(snap.branch == "main")
+      #expect(!snap.isDetached)
+      #expect(snap.staged.map(\.path).sorted() == ["a.txt", "b.txt"])
+      #expect(snap.staged.first { $0.path == "b.txt" }?.status == .deleted)
+      let stagedA = try #require(snap.staged.first { $0.path == "a.txt" })
+      #expect(stagedA.added == 1 && stagedA.removed == 1)
+      #expect(snap.unstaged.map(\.path) == ["a.txt"])
+      #expect(snap.unstaged.first?.added == 1 && snap.unstaged.first?.removed == 0)
+      #expect(snap.untracked.map(\.path) == ["new.txt"])
+      #expect(snap.untracked.first?.added == 1)
+      #expect(snap.operation == nil)
+    }
+
+    @Test func snapshotReportsAheadBehindAndUnborn() throws {
+      let origin = try TempRepo.create()
+      defer { origin.destroy() }
+      try origin.commit(["a.txt": "1\n"])
+      let clone = try TempRepo.create()
+      defer { clone.destroy() }
+      try clone.git("remote", "add", "origin", origin.root)
+      try clone.git("fetch", "-q", "origin")
+      try clone.git("reset", "-q", "--hard", "origin/main")
+      try clone.git("branch", "-q", "--set-upstream-to=origin/main", "main")
+      try clone.commit(["b.txt": "2\n"], message: "local")
+      try origin.commit(["c.txt": "3\n"], message: "remote")
+      try clone.git("fetch", "-q", "origin")
+
+      let snap = try #require(GitClient.snapshot(forPath: clone.root))
+      #expect(snap.upstream == "origin/main")
+      #expect(snap.ahead == 1)
+      #expect(snap.behind == 1)
+
+      let fresh = try TempRepo.create(initialBranch: "trunk")
+      defer { fresh.destroy() }
+      let unborn = try #require(GitClient.snapshot(forPath: fresh.root))
+      #expect(unborn.isUnborn)
+      #expect(unborn.branch == "trunk")
+      #expect(unborn.headOid == nil)
+    }
+
+    @Test func snapshotDetectsMergeConflictState() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "base\n"])
+      try repo.git("switch", "-q", "-c", "other")
+      try repo.commit(["a.txt": "other\n"])
+      try repo.git("switch", "-q", "main")
+      try repo.commit(["a.txt": "main\n"])
+      _ = try? repo.git("merge", "-q", "other")
+
+      let snap = try #require(GitClient.snapshot(forPath: repo.root))
+      #expect(snap.operation == .merge)
+      #expect(snap.conflicted.map(\.path) == ["a.txt"])
+    }
+
+    // MARK: Scoped diffs
+
+    @Test func scopedDiffsMatchGit() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n2\n3\n"])
+      try repo.write("a.txt", "1\nTWO\n3\n")
+      try repo.git("add", "a.txt")
+      try repo.write("a.txt", "1\nTWO\n3\n4\n")
+
+      let staged = try GitClient.fileDiff(repoPath: repo.root, path: "a.txt", scope: .staged)
+      #expect(staged.added == 1 && staged.removed == 1)
+      let unstaged = try GitClient.fileDiff(repoPath: repo.root, path: "a.txt", scope: .unstaged)
+      #expect(unstaged.added == 1 && unstaged.removed == 0)
+      let all = try GitClient.fileDiff(repoPath: repo.root, path: "a.txt", scope: .uncommitted)
+      #expect(all.added == 2 && all.removed == 1)
+      #expect(all.hunkIds.count == all.hunks.count)
+
+      let files = try GitClient.changedFiles(repoPath: repo.root, scope: .uncommitted)
+      #expect(files == [FileChange(path: "a.txt", status: .modified, added: 2, removed: 1)])
+    }
+
+    @Test func branchScopeComparesAgainstMergeBase() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "base\n"])
+      try repo.git("switch", "-q", "-c", "feature")
+      try repo.commit(["f.txt": "feature\n"], message: "feature work")
+      try repo.git("switch", "-q", "main")
+      try repo.commit(["m.txt": "main only\n"], message: "main moves on")
+      try repo.git("switch", "-q", "feature")
+      try repo.write("wip.txt", "uncommitted\n")
+
+      let files = try GitClient.changedFiles(repoPath: repo.root, scope: .branch(base: "main"))
+      // main's later commit is not part of this branch's diff.
+      #expect(files.map(\.path).sorted() == ["f.txt", "wip.txt"])
+      #expect(GitClient.defaultBaseBranch(repoPath: repo.root) == "main")
+    }
+
+    @Test func commitAndStashScopes() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      try repo.commit(["a.txt": "1\n2\n", "b.txt": "b\n"], message: "second")
+      let head = try repo.git("rev-parse", "HEAD")
+      let commitFiles = try GitClient.changedFiles(repoPath: repo.root, scope: .commit(sha: head))
+      #expect(commitFiles.map(\.path).sorted() == ["a.txt", "b.txt"])
+
+      try repo.write("a.txt", "1\n2\n3\n")
+      try repo.git("stash", "-q")
+      let stashFiles = try GitClient.changedFiles(repoPath: repo.root, scope: .stash(index: 0))
+      #expect(stashFiles.map(\.path) == ["a.txt"])
+      #expect(GitOperations.stashList(root: repo.root).count == 1)
+    }
+
+    // MARK: Patch building + staging
+
+    private func twoHunkRepo() throws -> TempRepo {
+      let repo = try TempRepo.create()
+      let lines = (1...30).map { "line \($0)" }
+      try repo.commit(["f.txt": lines.joined(separator: "\n") + "\n"])
+      var edited = lines
+      edited[1] = "line 2 changed"
+      edited[24] = "line 25 changed"
+      edited.insert("inserted after 25", at: 25)
+      try repo.write("f.txt", edited.joined(separator: "\n") + "\n")
+      return repo
+    }
+
+    @Test func stagingOneHunkStagesOnlyThatHunk() throws {
+      let repo = try twoHunkRepo()
+      defer { repo.destroy() }
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "f.txt", scope: .unstaged)
+      #expect(diff.hunks.count == 2)
+
+      let result = GitOperations.apply(
+        .stage, selection: .wholeHunks([0]), path: "f.txt",
+        expectedHunkIds: [0: diff.hunkIds[0]], root: repo.root)
+      #expect(throws: Never.self) { try result.get() }
+      let cached = try repo.git("diff", "--cached")
+      #expect(cached.contains("+line 2 changed"))
+      #expect(!cached.contains("line 25 changed"))
+      let remaining = try repo.git("diff")
+      #expect(remaining.contains("+line 25 changed"))
+      #expect(!remaining.contains("line 2 changed"))
+    }
+
+    @Test func stagingSelectedLinesInsideAHunk() throws {
+      let repo = try twoHunkRepo()
+      defer { repo.destroy() }
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "f.txt", scope: .unstaged)
+      let hunk = diff.hunks[1]
+      // Pick only the inserted line, not the "line 25" modification.
+      let inserted = try #require(
+        hunk.lines.firstIndex { $0.kind == .added && $0.content == "inserted after 25" })
+
+      let result = GitOperations.apply(
+        .stage, selection: .lines([inserted], inHunk: 1), path: "f.txt", root: repo.root)
+      #expect(throws: Never.self) { try result.get() }
+      let cached = try repo.git("diff", "--cached")
+      #expect(cached.contains("+inserted after 25"))
+      #expect(!cached.contains("line 25 changed"))
+      #expect(!cached.contains("line 2 changed"))
+    }
+
+    @Test func unstagingAndDiscardingHunks() throws {
+      let repo = try twoHunkRepo()
+      defer { repo.destroy() }
+      try repo.git("add", "f.txt")
+      let staged = try GitClient.fileDiff(repoPath: repo.root, path: "f.txt", scope: .staged)
+      let unstage = GitOperations.apply(
+        .unstage, selection: .wholeHunks([1]), path: "f.txt",
+        expectedHunkIds: [1: staged.hunkIds[1]], root: repo.root)
+      #expect(throws: Never.self) { try unstage.get() }
+      #expect(try repo.git("diff", "--cached").contains("line 2 changed"))
+      #expect(!(try repo.git("diff", "--cached")).contains("line 25 changed"))
+      #expect(try repo.git("diff").contains("line 25 changed"))
+
+      // Discard the remaining unstaged hunk from the working tree.
+      let discard = GitOperations.apply(
+        .discard, selection: .wholeHunks([0]), path: "f.txt", root: repo.root)
+      #expect(throws: Never.self) { try discard.get() }
+      #expect(try repo.git("diff") == "")
+      #expect(!(try repo.read("f.txt")).contains("line 25 changed"))
+      #expect(try repo.read("f.txt").contains("line 2 changed"))
+    }
+
+    @Test func staleHunkIdIsRejected() throws {
+      let repo = try twoHunkRepo()
+      defer { repo.destroy() }
+      let result = GitOperations.apply(
+        .stage, selection: .wholeHunks([0]), path: "f.txt",
+        expectedHunkIds: [0: "deadbeefdeadbeef"], root: repo.root)
+      guard case .failure(.stale) = result else {
+        Issue.record("expected a stale failure, got \(result)")
+        return
+      }
+    }
+
+    @Test func stagingAtEndOfFileWithoutNewline() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["n.txt": "a\nb"])
+      try repo.write("n.txt", "a\nb\nc")
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "n.txt", scope: .unstaged)
+      #expect(diff.oldMissingNewlineAtEnd)
+      #expect(diff.newMissingNewlineAtEnd)
+      let result = GitOperations.apply(
+        .stage, selection: .wholeHunks([0]), path: "n.txt", root: repo.root)
+      #expect(throws: Never.self) { try result.get() }
+      #expect(try repo.git("diff") == "")
+    }
+
+    @Test func partialSelectionOfNewFileIsRefused() throws {
+      let patch = """
+        diff --git a/n.txt b/n.txt
+        new file mode 100644
+        index 0000000..1111111
+        --- /dev/null
+        +++ b/n.txt
+        @@ -0,0 +1,2 @@
+        +one
+        +two
+
+        """
+      #expect(throws: PatchBuilder.BuildError.partialAddOrDelete) {
+        try PatchBuilder.build(patch: patch, selection: .lines([0], inHunk: 0), reverse: false)
+      }
+      let whole = try PatchBuilder.build(patch: patch, selection: .wholeHunks([0]), reverse: false)
+      #expect(whole.contains("+two"))
+    }
+
+    // MARK: Commit + branches + worktrees
+
+    @Test func commitRunsThroughGitAndCanAmendAndUncommit() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      try repo.write("a.txt", "2\n")
+      _ = try GitOperations.stage(paths: ["a.txt"], root: repo.root).get()
+      let sha = try GitOperations.commit(message: "Change a\n\nWith a body.", root: repo.root).get()
+      #expect(sha == (try repo.git("rev-parse", "HEAD")))
+      #expect(try repo.git("log", "-1", "--format=%B") == "Change a\n\nWith a body.")
+
+      let amended = try GitOperations.commit(
+        message: "Change a (amended)", options: .init(amend: true), root: repo.root
+      ).get()
+      #expect(amended != sha)
+      #expect(try repo.git("rev-list", "--count", "HEAD") == "2")
+
+      _ = try GitOperations.uncommit(root: repo.root).get()
+      #expect(try repo.git("rev-list", "--count", "HEAD") == "1")
+      #expect(try repo.git("diff", "--cached", "--name-only") == "a.txt")
+    }
+
+    @Test func emptyMessageIsRejected() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let result = GitOperations.commit(message: "  \n", root: repo.root)
+      guard case .failure(.invalid) = result else {
+        Issue.record("expected invalid")
+        return
+      }
+    }
+
+    @Test func branchAndWorktreeOperations() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      _ = try GitOperations.createBranch("topic", checkout: false, root: repo.root).get()
+      #expect(GitOperations.branches(root: repo.root).local.sorted() == ["main", "topic"])
+      _ = try GitOperations.renameBranch("topic", to: "topic-2", root: repo.root).get()
+      _ = try GitOperations.deleteBranch("topic-2", root: repo.root).get()
+      #expect(GitOperations.branches(root: repo.root).local == ["main"])
+
+      let path = repo.root + "-wt-feature"
+      defer { try? FileManager.default.removeItem(atPath: path) }
+      _ = try GitOperations.addWorktree(
+        path: path, branch: "feature", newBranch: true, root: repo.root
+      ).get()
+      let trees = GitOperations.worktrees(root: repo.root)
+      #expect(trees.count == 2)
+      #expect(trees.contains { $0.branch == "feature" })
+      _ = try GitOperations.removeWorktree(path: path, root: repo.root).get()
+      #expect(GitOperations.worktrees(root: repo.root).count == 1)
+    }
+  }
+#endif
