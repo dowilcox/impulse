@@ -2701,32 +2701,67 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       switchFileTreeRoot(projectRoot)
     }
 
-    var restoredAny = false
-    for tab in state.tabs {
+    // Editor files are read off the main thread first; then every tab is
+    // inserted on main in saved order (inserting editors asynchronously as
+    // they finished loading used to reorder tabs and lose pinned state).
+    let restorable = state.tabs.filter { tab in
       switch tab.kind {
+      case "terminal": return true
       case "editor":
-        if let path = tab.path, FileManager.default.fileExists(atPath: path) {
-          tabManager.addEditorTab(path: path, projectDirectory: state.projectRoot)
-          restoredAny = true
-        }
-      case "terminal":
-        tabManager.addRestoredTerminalTab(tab)
-        restoredAny = true
-      default:
-        continue
+        guard let path = tab.path else { return false }
+        return FileManager.default.fileExists(atPath: path)
+      default: return false
       }
     }
+    guard !restorable.isEmpty else { return false }
 
-    if restoredAny, let activeTabIndex = state.activeTabIndex {
+    let projectRoot = state.projectRoot
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      var contents: [String: (String, Bool)] = [:]
+      for tab in restorable where tab.kind == "editor" {
+        guard let path = tab.path, !TabManager.isBinaryFile(path) else { continue }
+        let size =
+          (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap { $0 }
+          ?? 0
+        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        contents[path] = (text, size > 5 * 1024 * 1024)
+      }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        if self.tabManager.tabs.indices.contains(activeTabIndex) {
+        var pinnedIndices: [Int] = []
+        for tab in restorable {
+          let countBefore = self.tabManager.tabs.count
+          switch tab.kind {
+          case "terminal":
+            self.tabManager.addRestoredTerminalTab(tab)
+          case "editor":
+            guard let path = tab.path else { continue }
+            if TabManager.isImageFile(path) {
+              self.tabManager.addEditorTab(path: path, projectDirectory: projectRoot)
+            } else if let (text, large) = contents[path] {
+              self.tabManager.insertLoadedEditorTab(
+                path: path, content: text, largeFile: large, projectDirectory: projectRoot)
+            }
+          default:
+            continue
+          }
+          if tab.pinned, self.tabManager.tabs.count > countBefore {
+            pinnedIndices.append(self.tabManager.tabs.count - 1)
+          }
+        }
+        for index in pinnedIndices {
+          self.tabManager.setPinned(true, index: index)
+        }
+        if self.tabManager.tabs.isEmpty {
+          self.tabManager.addTerminalTab()
+        } else if let activeTabIndex = state.activeTabIndex,
+          self.tabManager.tabs.indices.contains(activeTabIndex)
+        {
           self.tabManager.selectTab(index: activeTabIndex)
         }
       }
     }
-
-    return restoredAny
+    return true
   }
 
   func restorableOpenFiles() -> [String] {

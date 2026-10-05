@@ -371,10 +371,6 @@ final class TabManager: NSObject {
     }
 
     // Read file content off the main thread, then create the editor tab on main.
-    let editorOptions = editorOptionsFromSettings()
-    let themeDef = ThemeManager.monacoTheme(forName: theme.id)
-    let language = languageIdForPath(path)
-
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
       let largeFile =
@@ -386,32 +382,47 @@ final class TabManager: NSObject {
 
         // Re-check deduplication in case a tab was opened while reading.
         if self.openFilePaths.contains(path) { return }
-
-        let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        editorTab.projectDirectory =
-          projectDirectory
-          ?? (path as NSString).deletingLastPathComponent
-        editorTab.openFile(path: path, content: fileContent, language: language)
-        editorTab.loadEditor()
-
-        // Apply editor settings (font, tab size, etc.) from the current settings.
-        editorTab.applySettings(editorOptions)
-        editorTab.applyTheme(themeDef)
-
-        // Open large files in read-only mode to avoid WebView freezes.
-        if largeFile {
-          editorTab.setReadOnly(true)
-        }
-
-        // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
-        if let line = goToLine, let column = goToColumn {
-          editorTab.goToPosition(line: line, column: column)
-        }
-
-        let entry = TabEntry.editor(editorTab)
-        self.insertTab(entry)
+        self.insertLoadedEditorTab(
+          path: path, content: fileContent, largeFile: largeFile,
+          projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn)
       }
     }
+  }
+
+  /// Creates and inserts an editor tab for a file whose content was already
+  /// read (off the main thread). Used by `addEditorTab` and by session restore,
+  /// which preloads every file first so tabs can be inserted in saved order.
+  func insertLoadedEditorTab(
+    path: String, content fileContent: String, largeFile: Bool,
+    projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil
+  ) {
+    guard !openFilePaths.contains(path) else { return }
+    let editorOptions = editorOptionsFromSettings()
+    let themeDef = ThemeManager.monacoTheme(forName: theme.id)
+    let language = languageIdForPath(path)
+
+    let editorTab = EditorTab(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    editorTab.projectDirectory =
+      projectDirectory
+      ?? (path as NSString).deletingLastPathComponent
+    editorTab.openFile(path: path, content: fileContent, language: language)
+    editorTab.loadEditor()
+
+    // Apply editor settings (font, tab size, etc.) from the current settings.
+    editorTab.applySettings(editorOptions)
+    editorTab.applyTheme(themeDef)
+
+    // Open large files in read-only mode to avoid WebView freezes.
+    if largeFile {
+      editorTab.setReadOnly(true)
+    }
+
+    // Queue go-to-position; pendingCommands will flush after Monaco fires Ready.
+    if let line = goToLine, let column = goToColumn {
+      editorTab.goToPosition(line: line, column: column)
+    }
+
+    insertTab(TabEntry.editor(editorTab))
   }
 
   /// Creates a new untitled editor tab with no file on disk.
@@ -661,6 +672,13 @@ final class TabManager: NSObject {
   func togglePin(index: Int) {
     guard index >= 0, index < tabs.count else { return }
     pinnedTabs[index].toggle()
+    refreshSegmentLabels()
+  }
+
+  /// Sets the pinned state of the tab at the given index (session restore).
+  func setPinned(_ pinned: Bool, index: Int) {
+    guard index >= 0, index < tabs.count, pinnedTabs[index] != pinned else { return }
+    pinnedTabs[index] = pinned
     refreshSegmentLabels()
   }
 
