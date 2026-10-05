@@ -24,6 +24,8 @@ public struct SafetySnapshot: Equatable, Sendable {
 public enum SafetySnapshots {
   public static let oplogPrefix = "refs/impulse/oplog/"
   public static let checkpointPrefix = "refs/impulse/checkpoints/"
+  /// "Reviewed up to here" marks (see the review's "Since my last review").
+  public static let reviewPrefix = "refs/impulse/reviews/"
 
   /// Record the working tree + index under `prefix` (oplog by default).
   public static func create(

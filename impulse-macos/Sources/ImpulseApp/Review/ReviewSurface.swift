@@ -21,6 +21,9 @@ final class ReviewSurfaceModel {
   var baseBranch: String?
   /// The most recent agent turn in this repository, if any.
   var agentTurn: (name: String, scope: DiffScope)?
+  /// The last time the user finished reviewing (sent comments, or marked
+  /// every file viewed): "Since my last review" diffs from there.
+  var lastReview: SafetySnapshot?
   var palette: ChromePalette
 
   @ObservationIgnored var onSelectScope: ((DiffScope) -> Void)?
@@ -93,6 +96,10 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       DispatchQueue.main.async { self?.model.baseBranch = base }
     }
     updateAgentTurn()
+    queue.async { [weak self] in
+      let last = SafetySnapshots.list(root: root, prefix: SafetySnapshots.reviewPrefix).first
+      DispatchQueue.main.async { self?.model.lastReview = last }
+    }
     checkpointObserver = NotificationCenter.default.addObserver(
       forName: .agentCheckpointsChanged, object: nil, queue: .main
     ) { [weak self] _ in
@@ -338,7 +345,11 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     case let .toggleViewed(path, viewed):
       let hash = viewed ? (diffs[path]?.contentHash ?? "unknown") : nil
       ReviewViewedStore.set(path: path, hash: hash, root: repoRoot, scope: scopeKey)
+      let wasComplete = model.fileCount > 0 && model.viewedCount == model.fileCount
       updateCounts()
+      if viewed, !wasComplete, model.fileCount > 0, model.viewedCount == model.fileCount {
+        markReviewed()
+      }
 
     case let .openFile(path, line):
       let absolute = (repoRoot as NSString).appendingPathComponent(path)
@@ -556,6 +567,21 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       return
     }
     host?.sendToAgent(prompt, terminalID: terminalID)
+    markReviewed()
+  }
+
+  /// Remember "reviewed up to here" (at most once every 10 s).
+  private func markReviewed() {
+    if let last = model.lastReview, Date().timeIntervalSince(last.date) < 10 { return }
+    let root = repoRoot
+    queue.async { [weak self] in
+      guard
+        case .success(let snapshot) = SafetySnapshots.create(
+          reason: "reviewed", root: root, prefix: SafetySnapshots.reviewPrefix)
+      else { return }
+      SafetySnapshots.prune(root: root, prefix: SafetySnapshots.reviewPrefix, keep: 20)
+      DispatchQueue.main.async { self?.model.lastReview = snapshot }
+    }
   }
 
   private func clearComments() {
@@ -653,6 +679,10 @@ struct ReviewHeaderBar: View {
         items.append(ChromeMenuItem("Last commit") { model.onSelectScope?(.commit(sha: "HEAD")) })
         if let turn = model.agentTurn {
           items.append(ChromeMenuItem("Last agent turn (\(turn.name))") { model.onSelectScope?(turn.scope) })
+        }
+        if let review = model.lastReview {
+          let scope = DiffScope.snapshot(from: review.ref, to: nil)
+          items.append(ChromeMenuItem(scope.title) { model.onSelectScope?(scope) })
         }
         return items
       } label: {

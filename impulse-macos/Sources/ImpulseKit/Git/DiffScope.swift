@@ -53,6 +53,10 @@ public enum DiffScope: Codable, Hashable, Sendable {
     case .range(let from, let to): return "\(from.prefix(10))…\(to.prefix(10))"
     case .stash(let index): return "stash@{\(index)}"
     case .snapshot(let from, let to):
+      if let reviewed = Self.checkpointDate(from, folder: "reviews") {
+        let time = DateFormatter.localizedString(from: reviewed, dateStyle: .none, timeStyle: .short)
+        return "Since your review at \(time)"
+      }
       if let started = Self.checkpointDate(from) {
         let time = DateFormatter.localizedString(from: started, dateStyle: .none, timeStyle: .short)
         return to == nil ? "Agent turn since \(time)" : "Agent turn at \(time)"
@@ -63,8 +67,8 @@ public enum DiffScope: Codable, Hashable, Sendable {
 
   /// When an agent-turn checkpoint ref (…/checkpoints/<id>/<millis>-…) was
   /// taken.
-  static func checkpointDate(_ ref: String) -> Date? {
-    guard ref.contains("/impulse/checkpoints/"),
+  static func checkpointDate(_ ref: String, folder: String = "checkpoints") -> Date? {
+    guard ref.contains("/impulse/\(folder)/"),
       let millis = ref.split(separator: "/").last?.split(separator: "-").first.flatMap({ Double($0) })
     else { return nil }
     return Date(timeIntervalSince1970: millis / 1000)
