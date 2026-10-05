@@ -36,10 +36,13 @@ private let allPanes: [PaneInfo] = [
 /// Appearance, Automation, and Keybindings. Changes save immediately.
 final class SettingsWindowController: NSWindowController {
 
-  private var settings: Settings
+  /// Backed by `SettingsStore.shared`; edits write through immediately.
+  private var settings: Settings {
+    get { SettingsStore.shared.settings }
+    set { SettingsStore.shared.settings = newValue }
+  }
   private var paneCache: [String: NSView] = [:]
   private var currentPaneId: String = "general"
-  private var saveTimer: Timer?
   private var managedLspStatuses: [[String: Any]] = []
 
   /// The singleton preferences window. Only one is shown at a time.
@@ -47,7 +50,6 @@ final class SettingsWindowController: NSWindowController {
 
   static func show(settings: Settings) {
     if let existing = shared {
-      existing.settings = settings
       existing.paneCache.removeAll()
       existing.switchToPane(existing.currentPaneId, animated: false)
       existing.window?.makeKeyAndOrderFront(nil)
@@ -59,7 +61,6 @@ final class SettingsWindowController: NSWindowController {
   }
 
   init(settings: Settings) {
-    self.settings = settings
 
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
@@ -94,11 +95,7 @@ final class SettingsWindowController: NSWindowController {
 
   override func close() {
     // Flush any pending debounced save before closing.
-    if saveTimer?.isValid == true {
-      saveTimer?.invalidate()
-      saveTimer = nil
-      settings.save()
-    }
+    SettingsStore.shared.saveNow()
     super.close()
     SettingsWindowController.shared = nil
   }
@@ -1199,18 +1196,9 @@ final class SettingsWindowController: NSWindowController {
   }
 
   private func persistSettings() {
-    // Propagate in-memory changes immediately so the UI stays responsive.
-    if let delegate = NSApp.delegate as? AppDelegate {
-      delegate.settings = settings
-    }
-    NotificationCenter.default.post(name: .impulseSettingsDidChange, object: settings)
-
-    // Debounce the disk write: coalesce rapid changes (e.g. stepper clicks)
-    // into a single save 0.3 s after the last change.
-    saveTimer?.invalidate()
-    saveTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-      self?.settings.save()
-    }
+    // Edits already wrote through to the store; broadcast them so every window
+    // re-applies, and let the store debounce the disk write.
+    SettingsStore.shared.commit()
   }
 
   // MARK: - Editor Actions

@@ -36,7 +36,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
   // MARK: - State
 
-  private var settings: Settings
+  /// Backed by `SettingsStore.shared` (no private copy to keep in sync).
+  private var settings: Settings {
+    get { SettingsStore.shared.settings }
+    set { SettingsStore.shared.settings = newValue }
+  }
 
   /// The shared Rust backend (impulse-ffi) instance.
   ///
@@ -184,12 +188,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     lspQueue: DispatchQueue,
     skipInitialTerminal: Bool = false
   ) {
-    self.settings = settings
     self.theme = theme
     self.core = core
     self.lspQueue = lspQueue
     self.sidebarTargetWidth = CGFloat(settings.sidebarWidth)
-    self.tabManager = TabManager(settings: settings, theme: theme, core: core)
+    self.tabManager = TabManager(theme: theme, core: core)
     self.tabManager.windowModel = windowModel
     self.windowModel.theme = theme
     self.windowModel.iconCache = tabManager.iconCache
@@ -400,9 +403,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
       let showHidden = self.windowModel.showHiddenFiles
       let root = self.fileTreeRootPath
       self.settings.sidebarShowHidden = showHidden
-      if let delegate = NSApp.delegate as? AppDelegate {
-        delegate.settings.sidebarShowHidden = showHidden
-      }
       guard !root.isEmpty else { return }
       DispatchQueue.global(qos: .userInitiated).async {
         let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
@@ -1584,10 +1584,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         else { return }
         if let dir = notification.userInfo?["directory"] as? String {
           self.settings.lastDirectory = dir
-          self.tabManager.settings.lastDirectory = dir
-          if let delegate = NSApp.delegate as? AppDelegate {
-            delegate.settings.lastDirectory = dir
-          }
           if dir == self.fileTreeRootPath {
             // Same directory — just refresh git status (a command
             // may have changed git state without changing CWD).
@@ -1923,9 +1919,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     notificationObservers.append(
       nc.addObserver(forName: .impulseSettingsDidChange, object: nil, queue: .main) {
         [weak self] notification in
-        guard let self, let newSettings = notification.object as? Settings else { return }
-        self.settings = newSettings
-        self.tabManager.settings = newSettings
+        guard let self else { return }
+        let newSettings = self.settings
         self.applyAllSettings()
         // Rebuild custom keybinding monitor so new/changed bindings take effect.
         self.setupCustomKeybindingMonitor()
@@ -2438,7 +2433,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     settings.fontSize = newEditorSize
     settings.terminalFontSize = newTerminalSize
-    syncSettingsToAppDelegate()
     applyFontSizeToAllTabs()
   }
 
@@ -2446,17 +2440,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   private func resetFontSize() {
     settings.fontSize = 14
     settings.terminalFontSize = 14
-    syncSettingsToAppDelegate()
     applyFontSizeToAllTabs()
-  }
-
-  /// Copies the current window's settings back to the AppDelegate so they
-  /// persist across quit/relaunch.
-  private func syncSettingsToAppDelegate() {
-    if let delegate = NSApp.delegate as? AppDelegate {
-      delegate.settings.fontSize = settings.fontSize
-      delegate.settings.terminalFontSize = settings.terminalFontSize
-    }
   }
 
   /// Applies the current font size settings to all open tabs.

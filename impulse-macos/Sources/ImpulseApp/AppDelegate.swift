@@ -9,9 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let diagnostics: [[String: Any]]
   }
 
-  /// The current application settings. Mutated at runtime by the settings
-  /// window and saved on quit.
-  var settings: Settings = .default
+  /// The current application settings (backed by `SettingsStore.shared`).
+  var settings: Settings {
+    get { SettingsStore.shared.settings }
+    set { SettingsStore.shared.settings = newValue }
+  }
 
   /// The current color theme, derived from `settings.colorScheme`.
   var theme: Theme = ThemeManager.theme(forName: "nord")
@@ -42,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var windowControllers: [MainWindowController] = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    settings = Settings.load()
+    SettingsStore.shared.load()
     theme = ThemeManager.theme(forName: settings.colorScheme)
     rebuildMainMenu()
     observeSettingsChanges()
@@ -312,7 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.windowHeight = Int(frame.height)
       }
     }
-    settings.save()
+    SettingsStore.shared.saveNow()
     if let settingsObserver {
       NotificationCenter.default.removeObserver(settingsObserver)
       self.settingsObserver = nil
@@ -472,8 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       object: nil,
       queue: .main
     ) { [weak self] notification in
-      guard let self, let settings = notification.object as? Settings else { return }
-      self.settings = settings
+      guard let self else { return }
       self.rebuildMainMenu()
     }
   }

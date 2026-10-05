@@ -235,7 +235,11 @@ final class TabManager: NSObject {
   /// The container view that hosts the active tab's view.
   let contentView: NSView
 
-  var settings: Settings
+  /// Backed by `SettingsStore.shared` (no private copy to keep in sync).
+  var settings: Settings {
+    get { SettingsStore.shared.settings }
+    set { SettingsStore.shared.settings = newValue }
+  }
   private var theme: Theme
   private let core: ImpulseCore
 
@@ -254,8 +258,7 @@ final class TabManager: NSObject {
     return tabs[selectedIndex].info
   }
 
-  init(settings: Settings, theme: Theme, core: ImpulseCore) {
-    self.settings = settings
+  init(theme: Theme, core: ImpulseCore) {
     self.theme = theme
     self.core = core
 
