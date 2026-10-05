@@ -432,6 +432,12 @@ public enum GitOperations {
     return void(git(args, in: root, timeout: 600, onOutputLine: onProgress))
   }
 
+  /// Tag names, newest first.
+  public static func tags(root: String) -> [String] {
+    guard case .success(let result) = git(["tag", "--sort=-creatordate"], in: root) else { return [] }
+    return result.stdout.split(separator: "\n").map(String.init)
+  }
+
   public static func remotes(root: String) -> [String] {
     guard case .success(let result) = git(["remote"], in: root) else { return [] }
     return result.stdout.split(separator: "\n").map(String.init)

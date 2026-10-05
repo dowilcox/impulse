@@ -281,6 +281,7 @@ struct TerminalContextBarView: View {
             onKey: handleEditorKey,
             onFocusChange: { editorFocused = $0 }
           )
+          .onChange(of: model.completionRequestToken) { _, _ in _ = openCompletionsFromTab() }
           .onChange(of: text) { _, newValue in
             model.inputDraft = newValue
             if historyIndex == nil || newValue != currentHistoryEntry() {
@@ -409,8 +410,16 @@ struct TerminalContextBarView: View {
 
     // Invalidate any pending async fetch — this synchronous result wins.
     completionGeneration &+= 1
-    guard let result = resolve(text), result.candidates.count >= 2 else {
-      return false
+    guard let result = resolve(text), !result.candidates.isEmpty else { return false }
+    if result.candidates.count == 1 {
+      // A visible history suggestion keeps Tab (the caller accepts it).
+      if let suggestion, suggestion.hasPrefix(text), suggestion != text { return false }
+      // Otherwise one way to go: insert it, like a shell's Tab.
+      completions = result.candidates
+      completionSpan = result.span
+      selectedIndex = 0
+      acceptCompletion()
+      return true
     }
     completions = result.candidates
     completionSpan = result.span

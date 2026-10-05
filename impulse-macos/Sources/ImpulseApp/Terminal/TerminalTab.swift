@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseGit
 import ImpulseKit
 import ImpulseProtocol
 import os.log
@@ -831,13 +832,19 @@ class TerminalTab: NSView {
       text, cwd: cwd, globalHistory: CommandHistory.shared.recentCommands)
   }
 
-  /// Path-completion candidates for the active argument token of `text`
-  /// (input-bar dropdown). Resolves against the tab's current working
-  /// directory. Returns `nil` when the active token is not a path argument.
+  /// Completion-menu candidates for the token at the end of `text`:
+  /// commands, subcommands, options and spec'd values (branches, scripts,
+  /// targets, hosts), else paths. Runs git for branch values — call off the
+  /// main thread.
   func completionCandidates(for text: String) -> CompletionResult? {
-    guard !text.isEmpty, let backend else { return nil }
+    guard !text.isEmpty, backend != nil else { return nil }
     let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
-    return backend.completionCandidates(input: text, cwd: cwd)
+    let context = CompletionContext(
+      cwd: cwd,
+      gitBranches: { cwd.map { root in GitOperations.branches(root: root).local } ?? [] },
+      gitRemotes: { cwd.map { GitOperations.remotes(root: $0) } ?? [] },
+      gitTags: { cwd.map { GitOperations.tags(root: $0) } ?? [] })
+    return CompletionEngine.candidates(input: text, context: context)
   }
 
   /// Most recent commands, newest first (input-bar ↑/↓ cycling).

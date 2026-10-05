@@ -29,7 +29,7 @@ struct CompletionPopupView: View {
 
   /// Fixed list width — shared with `CompletionPanel` so the hosting panel and
   /// the SwiftUI view agree on size.
-  static let listWidth: CGFloat = 340
+  static let listWidth: CGFloat = 420
 
   /// Total list height for `count` candidates, capped at `maxVisibleRows`.
   /// Exposed so `CompletionPanel` can size its window to match.
@@ -80,8 +80,10 @@ struct CompletionPopupView: View {
           .truncationMode(.middle)
         Spacer(minLength: 6)
         Text(trailingLabel(for: candidate))
-          .font(.system(size: 10.5, design: .monospaced))
+          .font(.system(size: 10.5, design: candidate.kind == "path" ? .monospaced : .default))
           .foregroundStyle(trailingColor(for: candidate))
+          .lineLimit(1)
+          .truncationMode(.tail)
       }
       .padding(.horizontal, 8)
       .frame(height: Self.rowHeight)
@@ -100,7 +102,11 @@ struct CompletionPopupView: View {
   /// `FileTreeListView.fileIcon`).
   @ViewBuilder
   private func icon(for candidate: CompletionCandidate) -> some View {
-    if let nsImage = iconCache?.icon(
+    if candidate.kind != "path" {
+      Image(systemName: Self.symbol(forKind: candidate.kind))
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(candidate.kind == "option" ? theme.colorFgMuted : theme.colorAccent)
+    } else if let nsImage = iconCache?.icon(
       filename: candidate.display, isDirectory: candidate.isDir, expanded: false)
     {
       Image(nsImage: nsImage)
@@ -130,12 +136,31 @@ struct CompletionPopupView: View {
       + Text(rest).foregroundColor(theme.colorFg)
   }
 
-  /// Trailing muted label: the git status code when present, else "dir"/"file".
+  /// Trailing muted label: a spec candidate's description, else the git
+  /// status code when present, else "dir"/"file".
   private func trailingLabel(for candidate: CompletionCandidate) -> String {
+    if candidate.kind != "path" {
+      return candidate.detail ?? candidate.kind
+    }
     if let status = candidate.gitStatus, !status.isEmpty {
       return status
     }
     return candidate.isDir ? "dir" : "file"
+  }
+
+  static func symbol(forKind kind: String) -> String {
+    switch kind {
+    case "command": return "terminal"
+    case "subcommand": return "chevron.right"
+    case "option": return "flag"
+    case "branch": return "arrow.triangle.branch"
+    case "tag": return "tag"
+    case "remote": return "network"
+    case "script": return "play"
+    case "target", "recipe": return "hammer"
+    case "host": return "server.rack"
+    default: return "text.cursor"
+    }
   }
 
   private func trailingColor(for candidate: CompletionCandidate) -> Color {

@@ -1007,6 +1007,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       } else if action.hasPrefix("composer=") {
         windowModel.composerDraft = String(action.dropFirst(9))
         toggleAgentComposer()
+      } else if action == "complete" {
+        windowModel.completionRequestToken += 1
       } else if action.hasPrefix("draft=") {
         windowModel.inputDraft = String(action.dropFirst(6)).replacingOccurrences(of: "\\n", with: "\n")
         windowModel.inputDraftRestoreToken += 1

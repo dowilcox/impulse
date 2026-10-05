@@ -180,7 +180,7 @@ public enum InputCompletion {
   /// autocomplete until restart, which is an acceptable trade for not
   /// rescanning PATH on every keystroke. `static let` gives the same
   /// thread-safe once-only initialization as the Rust `OnceLock`.
-  private static let pathExecutables: [String] = scanPathExecutables()
+  static let pathExecutables: [String] = scanPathExecutables()
 
   private static func scanPathExecutables() -> [String] {
     var names = Set<String>()
@@ -335,7 +335,7 @@ public enum InputCompletion {
     return dirPart.isEmpty ? cwd : cwd + "/" + dirPart
   }
 
-  private static func commandBasename(_ command: String) -> String {
+  static func commandBasename(_ command: String) -> String {
     command.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init)
       ?? command
   }
@@ -368,7 +368,7 @@ public enum InputCompletion {
 
   /// Common commands, ordered by rough frequency so the first prefix match
   /// is usually the intended one.
-  private static let commonCommands: [String] = [
+  static let commonCommands: [String] = [
     "git", "cd", "ls", "cargo", "npm", "npx", "node", "pnpm", "yarn", "python", "python3", "pip",
     "pip3", "docker", "kubectl", "make", "cmake", "go", "rustc", "rustup", "ssh", "scp", "curl",
     "wget", "grep", "rg", "fd", "find", "cat", "bat", "less", "tail", "head", "echo", "touch",
