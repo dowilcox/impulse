@@ -100,6 +100,17 @@ struct WorkbenchStatusBar: View {
       }
       StatusItem(help: "Encoding", label: { Text(model.currentEncoding) })
     }
+    if let progress = model.lspProgress {
+      StatusItem(help: "\(progress.server): \([progress.title, progress.message].compactMap { $0 }.joined(separator: " — "))") {
+        HStack(spacing: 5) {
+          ProgressRing(progress: progress.fraction, color: model.palette.textSecondary, size: 10, lineWidth: 1.4)
+          Text(progress.title).lineLimit(1)
+          if let fraction = progress.fraction {
+            Text(verbatim: "\(Int(fraction * 100))%").monospacedDigit()
+          }
+        }
+      }
+    }
     if let lang = model.currentLanguage {
       StatusItem(icon: .code, help: "Language", label: { Text(lang) })
     }

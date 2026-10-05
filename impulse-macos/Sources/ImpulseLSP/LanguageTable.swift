@@ -197,6 +197,8 @@ public struct LSPConfig {
       command: "docker-langserver", args: ["--stdio"])
     servers["bash-language-server"] = LSPServerConfig(
       command: "bash-language-server", args: ["start"])
+    // Ships with Xcode and the Command Line Tools.
+    servers["sourcekit-lsp"] = LSPServerConfig(command: "sourcekit-lsp")
 
     let webStack = [
       "typescript-language-server",
@@ -241,6 +243,7 @@ public struct LSPConfig {
     languageServers["graphql"] = ["graphql-lsp"]
     languageServers["dockerfile"] = ["docker-langserver"]
     languageServers["shellscript"] = ["bash-language-server"]
+    languageServers["swift"] = ["sourcekit-lsp"]
 
     let rootMarkers = [
       "Cargo.toml",
@@ -260,6 +263,7 @@ public struct LSPConfig {
       "Gemfile",
       "deno.json",
       "deno.jsonc",
+      "Package.swift",
     ]
 
     return LSPConfig(

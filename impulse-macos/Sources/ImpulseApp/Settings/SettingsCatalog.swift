@@ -205,6 +205,11 @@ enum SettingsCatalog {
       "editor_occurrences_highlight", "Highlight occurrences of the symbol", \.editorOccurrencesHighlight,
       .editor, "Behavior"),
     choice(
+      "editor_inlay_hints", "Inlay hints", \.editorInlayHints, .editor, "Behavior",
+      [("on", "On"), ("off", "Off"), ("offUnlessPressed", "While holding ⌃⌥"),
+       ("onUnlessPressed", "Hidden while holding ⌃⌥")],
+      detail: "Types and parameter names from the language server, shown inline."),
+    choice(
       "editor_word_based_suggestions", "Word-based suggestions", \.editorWordBasedSuggestions, .editor,
       "Behavior",
       [("off", "Off"), ("currentDocument", "Current file"), ("matchingDocuments", "Files of the same language"),

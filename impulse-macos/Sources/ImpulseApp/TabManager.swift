@@ -1859,7 +1859,8 @@ final class TabManager: NSObject {
       cursorSurroundingLines: UInt32(settings.editorCursorSurroundingLines),
       selectionHighlight: settings.editorSelectionHighlight,
       occurrencesHighlight: settings.editorOccurrencesHighlight,
-      wordBasedSuggestions: settings.editorWordBasedSuggestions
+      wordBasedSuggestions: settings.editorWordBasedSuggestions,
+      inlayHints: settings.editorInlayHints
     )
   }
 

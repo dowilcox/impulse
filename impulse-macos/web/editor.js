@@ -506,6 +506,86 @@ require(["vs/editor/editor.main"], function () {
     },
   });
 
+  // --- Requests Swift forwards as is (LSP in, LSP out) ---
+  monaco.languages.registerDocumentHighlightProvider("*", {
+    provideDocumentHighlights: function (model, position) {
+      if (model !== currentModel) return null;
+      return lspRequest("textDocument/documentHighlight", { position: lspPosition(position) }).then(
+        function (result) {
+          // No language server: highlight the word's other occurrences, as
+          // Monaco does on its own.
+          if (!Array.isArray(result)) return textualHighlights(model, position);
+          return result.map(function (h) {
+            return { range: lspRange(h.range), kind: typeof h.kind === "number" ? h.kind - 1 : 0 };
+          });
+        }
+      );
+    },
+  });
+
+  monaco.languages.registerInlayHintsProvider("*", {
+    provideInlayHints: function (model, range) {
+      var empty = { hints: [], dispose: function () {} };
+      if (model !== currentModel) return empty;
+      return lspRequest("textDocument/inlayHint", {
+        range: {
+          start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+          end: { line: range.endLineNumber - 1, character: range.endColumn - 1 },
+        },
+      }).then(function (result) {
+        if (!Array.isArray(result)) return empty;
+        return {
+          hints: result.map(function (h) {
+            var label =
+              typeof h.label === "string"
+                ? h.label
+                : (h.label || []).map(function (part) { return part.value; }).join("");
+            var tooltip = typeof h.tooltip === "string" ? h.tooltip : h.tooltip && h.tooltip.value;
+            return {
+              position: { lineNumber: h.position.line + 1, column: h.position.character + 1 },
+              label: label,
+              kind: h.kind,
+              paddingLeft: !!h.paddingLeft,
+              paddingRight: !!h.paddingRight,
+              tooltip: tooltip || undefined,
+            };
+          }),
+          dispose: function () {},
+        };
+      });
+    },
+  });
+
+  monaco.languages.registerTypeDefinitionProvider("*", {
+    provideTypeDefinition: function (model, position) {
+      if (model !== currentModel) return [];
+      return lspRequest("textDocument/typeDefinition", { position: lspPosition(position) }, 15000).then(
+        lspLocations
+      );
+    },
+  });
+  monaco.languages.registerImplementationProvider("*", {
+    provideImplementation: function (model, position) {
+      if (model !== currentModel) return [];
+      return lspRequest("textDocument/implementation", { position: lspPosition(position) }, 15000).then(
+        lspLocations
+      );
+    },
+  });
+  monaco.languages.registerDeclarationProvider("*", {
+    provideDeclaration: function (model, position) {
+      if (model !== currentModel) return [];
+      return lspRequest("textDocument/declaration", { position: lspPosition(position) }, 15000).then(
+        lspLocations
+      );
+    },
+  });
+
+  // Code actions Swift carries out (commands, edits to other files).
+  monaco.editor.registerCommand("impulse.lsp.codeAction", function (accessor, token) {
+    sendToHost({ type: "CodeActionChosen", token: token });
+  });
+
   // --- Cross-file go-to-definition ---
   // Monaco calls this when Cmd+click resolves to a definition in a different
   // file URI. We forward the request to the host to open the target file.
@@ -587,6 +667,15 @@ function handleCommand(cmd) {
         break;
       case "SetJsonSchema":
         handleSetJsonSchema(cmd);
+        break;
+      case "ApplyEdits":
+        handleApplyEdits(cmd);
+        break;
+      case "UndoEdits":
+        handleUndoEdits(cmd);
+        break;
+      case "ResolveLspRequest":
+        handleResolveLspRequest(cmd);
         break;
       case "SetDiffView":
         if (cmd.enabled) openDiffView(cmd.inline === true);
@@ -769,6 +858,7 @@ function handleUpdateSettings(cmd) {
     update.occurrencesHighlight = opts.occurrences_highlight;
   if (opts.word_based_suggestions != null)
     update.wordBasedSuggestions = opts.word_based_suggestions;
+  if (opts.inlay_hints != null) update.inlayHints = { enabled: opts.inlay_hints };
   editor.updateOptions(update);
   Object.assign(diffEditorOptions, update);
   if (diffEditor) diffEditor.updateOptions(update);
@@ -1020,6 +1110,14 @@ function handleResolveCodeActions(cmd) {
         },
       };
     });
+    if (action.command_token) {
+      return {
+        title: action.title,
+        kind: action.kind || undefined,
+        isPreferred: action.is_preferred,
+        command: { id: "impulse.lsp.codeAction", title: action.title, arguments: [action.command_token] },
+      };
+    }
     return {
       title: action.title,
       kind: action.kind || undefined,
@@ -1858,4 +1956,107 @@ function updateDiffBar() {
       changes.length + (changes.length === 1 ? " change" : " changes") + "  +" + added + " −" + removed;
   }
   if (diffLayoutButton) diffLayoutButton.textContent = diffInline ? "Side by Side" : "Inline";
+}
+
+
+// ===========================================================================
+// Language-server requests Swift forwards as is, and workspace edits it
+// applies to this file (one undo step each, undoable from Swift while they're
+// still the last change).
+// ===========================================================================
+const pendingLsp = new Map();
+const appliedEditVersions = new Map();
+
+function lspRequest(method, params, timeout) {
+  var id = ++requestSeq;
+  sendToHost({ type: "LspRequested", request_id: id, method: method, params: JSON.stringify(params) });
+  return new Promise(function (resolve) {
+    pendingLsp.set(id, resolve);
+    setTimeout(function () {
+      if (pendingLsp.has(id)) {
+        pendingLsp.delete(id);
+        resolve(null);
+      }
+    }, timeout || 5000);
+  });
+}
+
+function handleResolveLspRequest(cmd) {
+  var resolve = pendingLsp.get(cmd.request_id);
+  if (!resolve) return;
+  pendingLsp.delete(cmd.request_id);
+  var result = null;
+  try {
+    result = JSON.parse(cmd.result);
+  } catch (e) {
+    result = null;
+  }
+  resolve(result);
+}
+
+function lspPosition(position) {
+  return { line: position.lineNumber - 1, character: position.column - 1 };
+}
+
+function lspRange(r) {
+  return {
+    startLineNumber: r.start.line + 1,
+    startColumn: r.start.character + 1,
+    endLineNumber: r.end.line + 1,
+    endColumn: r.end.character + 1,
+  };
+}
+
+/// Location | Location[] | LocationLink[] → Monaco locations.
+function lspLocations(result) {
+  if (!result) return [];
+  var list = Array.isArray(result) ? result : [result];
+  return list
+    .map(function (l) {
+      if (l.targetUri) {
+        return { uri: monaco.Uri.parse(l.targetUri), range: lspRange(l.targetSelectionRange || l.targetRange) };
+      }
+      if (l.uri && l.range) return { uri: monaco.Uri.parse(l.uri), range: lspRange(l.range) };
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function textualHighlights(model, position) {
+  var word = model.getWordAtPosition(position);
+  if (!word) return [];
+  return model
+    .findMatches(word.word, false, false, true, "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?", false)
+    .slice(0, 500)
+    .map(function (m) {
+      return { range: m.range, kind: monaco.languages.DocumentHighlightKind.Text };
+    });
+}
+
+function handleApplyEdits(cmd) {
+  if (!currentModel) return;
+  var ops = (cmd.edits || []).map(function (e) {
+    return {
+      range: new monaco.Range(
+        e.range.start_line + 1,
+        e.range.start_column + 1,
+        e.range.end_line + 1,
+        e.range.end_column + 1
+      ),
+      text: e.text,
+      forceMoveMarkers: true,
+    };
+  });
+  currentModel.pushStackElement();
+  currentModel.pushEditOperations([], ops, function () {
+    return null;
+  });
+  currentModel.pushStackElement();
+  appliedEditVersions.set(cmd.token, currentModel.getAlternativeVersionId());
+}
+
+function handleUndoEdits(cmd) {
+  if (!currentModel || appliedEditVersions.get(cmd.token) !== currentModel.getAlternativeVersionId()) return;
+  appliedEditVersions.delete(cmd.token);
+  currentModel.undo();
 }

@@ -208,6 +208,58 @@
       #expect(events.waitFor(type: "serverError", timeout: 1) == nil)
     }
 
+    @Test func serverMessagesProgressAndApplyEdit() throws {
+      let body = #"""
+        read_msg
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        read_msg
+        read_msg
+        send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":1,"message":"index failed"}}'
+        send '{"jsonrpc":"2.0","method":"$/progress","params":{"token":7,"value":{"kind":"begin","title":"Indexing","percentage":40}}}'
+        send '{"jsonrpc":"2.0","id":"edit-1","method":"workspace/applyEdit","params":{"label":"Fix","edit":{"changes":{}}}}'
+        len=0
+        while IFS= read -r line; do
+          line=$(printf '%s' "$line" | tr -d '\r')
+          case "$line" in
+            "Content-Length: "*) len=${line#Content-Length: } ;;
+            "") break ;;
+          esac
+        done
+        reply=$(dd bs=1 count="$len" 2>/dev/null)
+        case "$reply" in
+          *'"id":"edit-1"'*'"applied":true'*) send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":3,"message":"answered"}}' ;;
+          *) send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":3,"message":"bad answer"}}' ;;
+        esac
+        sleep 1
+        exit 0
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      let events = EventCollector(registry)
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+      let clientKey = "mock@\(workspace.rootUri)"
+
+      let message = try #require(events.waitFor(type: "showMessage"))
+      #expect(message.object["messageType"] as? Int == 1)
+      #expect(message.object["message"] as? String == "index failed")
+
+      let progress = try #require(events.waitFor(type: "progress"))
+      #expect(progress.object["token"] as? String == "7")
+      #expect(progress.object["kind"] as? String == "begin")
+      #expect(progress.object["title"] as? String == "Indexing")
+      #expect(progress.object["percentage"] as? Int == 40)
+
+      let apply = try #require(events.waitFor(type: "applyEdit"))
+      #expect(apply.object["id"] as? String == "edit-1")
+      #expect(apply.object["label"] as? String == "Fix")
+      #expect(apply.object["clientKey"] as? String == clientKey)
+      registry.respond(clientKey: clientKey, id: apply.object["id"] ?? NSNull(), resultJSON: "{\"applied\":true}")
+
+      let answered = try #require(events.waitFor(type: "showMessage"))
+      #expect(answered.object["message"] as? String == "answered")
+    }
+
     @Test func unknownLanguageHasNoClients() throws {
       let workspace = try makeWorkspace(scriptBody: "exit 0\n")
       defer { workspace.cleanup() }

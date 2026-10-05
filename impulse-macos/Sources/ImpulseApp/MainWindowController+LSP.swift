@@ -61,7 +61,7 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     let language = editor.lspLanguage
     let params = encodeLspJSON(["textDocument": ["uri": uri]])
-    lspQueue.async { [weak self] in
+    enqueueLspRequest(DispatchWorkItem { [weak self] in
       let response = self?.core.lspRequest(
         languageId: language, fileUri: uri, method: "textDocument/documentSymbol", paramsJson: params)
       // An {"error": …} envelope means no server (or it failed): nil.
@@ -69,7 +69,7 @@ extension MainWindowController {
       let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
       let symbols = failed ? nil : data.map(DocumentSymbols.parse)
       DispatchQueue.main.async { completion(symbols) }
-    }
+    })
   }
 
   /// Project-wide symbols matching `query`, from the language server of
@@ -82,14 +82,14 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     let language = editor.lspLanguage
     let params = encodeLspJSON(["query": query])
-    lspQueue.async { [weak self] in
+    enqueueLspRequest(DispatchWorkItem { [weak self] in
       let response = self?.core.lspRequest(
         languageId: language, fileUri: uri, method: "workspace/symbol", paramsJson: params)
       let data = response.flatMap { $0.data(using: .utf8) }
       let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
       let results = failed ? nil : data.map(DocumentSymbols.parseWorkspace)
       DispatchQueue.main.async { completion(results) }
-    }
+    })
   }
 
   /// Keep every file's diagnostics for the Problems panel, open or not
@@ -283,7 +283,7 @@ extension MainWindowController {
       }
     }
     completionWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a hover request from the editor by forwarding it to the LSP.
@@ -315,7 +315,7 @@ extension MainWindowController {
       }
     }
     hoverWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a go-to-definition request from the editor.
@@ -335,7 +335,7 @@ extension MainWindowController {
     let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
-    lspQueue.async { [weak self] in
+    enqueueLspRequest(DispatchWorkItem { [weak self] in
       guard let self else { return }
       guard
         let response = self.core.lspRequest(
@@ -364,7 +364,7 @@ extension MainWindowController {
         editor.resolveDefinition(
           requestId: requestId, uri: def.uri, line: def.line, column: def.character)
       }
-    }
+    })
   }
 
   /// Handles a formatting request from the editor by forwarding it to the LSP.
@@ -400,7 +400,7 @@ extension MainWindowController {
       }
     }
     formattingWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a signature help request from the editor by forwarding it to the LSP.
@@ -433,7 +433,7 @@ extension MainWindowController {
       }
     }
     signatureHelpWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a references request from the editor by forwarding it to the LSP.
@@ -470,7 +470,7 @@ extension MainWindowController {
       }
     }
     referencesWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a code action request from the editor by forwarding it to the LSP.
@@ -538,15 +538,17 @@ extension MainWindowController {
         )
       else { return }
 
-      let actions = self.parseCodeActionResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.latestCodeActionReq[uri] == requestId else { return }
+        let (actions, carried) = self.monacoCodeActions(response, language: language, uri: uri)
+        // Only the latest menu's actions can be picked.
+        self.lspCodeActions = self.lspCodeActions.filter { $0.value.uri != uri }.merging(carried) { $1 }
         editor.resolveCodeActions(requestId: requestId, actions: actions)
       }
     }
     codeActionWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a rename request from the editor by forwarding it to the LSP.
@@ -575,15 +577,24 @@ extension MainWindowController {
         )
       else { return }
 
+      let workspaceEdit = response.data(using: .utf8)
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) }
+        .flatMap(WorkspaceEdit.parse)
       let edits = self.parseRenameResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.latestRenameReq[uri] == requestId else { return }
-        editor.resolveRename(requestId: requestId, edits: edits)
+        // Monaco can only edit its own file: anything wider is applied here.
+        if let workspaceEdit, !self.isLocalEdit(workspaceEdit, uri: uri) {
+          editor.resolveRename(requestId: requestId, edits: [])
+          self.reportWorkspaceEdit(self.applyWorkspaceEdit(workspaceEdit), verb: "Renamed")
+        } else {
+          editor.resolveRename(requestId: requestId, edits: edits)
+        }
       }
     }
     renameWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles a prepare rename request from the editor by forwarding it to the LSP.
@@ -619,7 +630,7 @@ extension MainWindowController {
       }
     }
     prepareRenameWorkItems[uri] = workItem
-    lspQueue.async(execute: workItem)
+    enqueueLspRequest(workItem)
   }
 
   /// Handles Monaco's request to open a different file (cross-file go-to-definition).
@@ -640,6 +651,16 @@ extension MainWindowController {
     if let targetEditor = findEditorTab(forPath: targetPath) {
       trackEditorTab(targetEditor, forPath: targetPath)
       lspDidOpenIfNeeded(path: targetPath)
+    }
+  }
+
+  /// Run a request once everything already queued (didOpen, didChange) has
+  /// been sent, then wait for its answer off the LSP queue, so a slow
+  /// server or request doesn't hold up the others.
+  func enqueueLspRequest(_ item: DispatchWorkItem) {
+    lspQueue.async {
+      guard !item.isCancelled else { return }
+      DispatchQueue.global(qos: .userInitiated).async(execute: item)
     }
   }
 
@@ -826,84 +847,6 @@ extension MainWindowController {
           endColumn: endChar
         )
       )
-    }
-  }
-
-  private func parseCodeActionResponse(_ json: String) -> [MonacoCodeAction] {
-    guard let data = json.data(using: .utf8),
-      let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-    else { return [] }
-
-    return array.compactMap { item in
-      // Only handle CodeAction objects (with a title), not Command objects.
-      guard let title = item["title"] as? String else { return nil }
-      let kind = item["kind"] as? String
-      let isPreferred = (item["isPreferred"] as? NSNumber)?.boolValue ?? false
-
-      var edits: [MonacoWorkspaceTextEdit] = []
-      if let edit = item["edit"] as? [String: Any],
-        let changes = edit["changes"] as? [String: [[String: Any]]]
-      {
-        for (changeUri, textEdits) in changes {
-          for te in textEdits {
-            guard let range = te["range"] as? [String: Any],
-              let start = range["start"] as? [String: Any],
-              let end = range["end"] as? [String: Any],
-              let startLine = (start["line"] as? NSNumber)?.uint32Value,
-              let startChar = (start["character"] as? NSNumber)?.uint32Value,
-              let endLine = (end["line"] as? NSNumber)?.uint32Value,
-              let endChar = (end["character"] as? NSNumber)?.uint32Value,
-              let newText = te["newText"] as? String
-            else { continue }
-            edits.append(
-              MonacoWorkspaceTextEdit(
-                uri: changeUri,
-                range: MonacoRange(
-                  startLine: startLine,
-                  startColumn: startChar,
-                  endLine: endLine,
-                  endColumn: endChar
-                ),
-                text: newText
-              ))
-          }
-        }
-      }
-      // Also handle documentChanges format.
-      if edits.isEmpty,
-        let docChanges = (item["edit"] as? [String: Any])?["documentChanges"] as? [[String: Any]]
-      {
-        for change in docChanges {
-          guard let textDoc = change["textDocument"] as? [String: Any],
-            let changeUri = textDoc["uri"] as? String,
-            let textEdits = change["edits"] as? [[String: Any]]
-          else { continue }
-          for te in textEdits {
-            guard let range = te["range"] as? [String: Any],
-              let start = range["start"] as? [String: Any],
-              let end = range["end"] as? [String: Any],
-              let startLine = (start["line"] as? NSNumber)?.uint32Value,
-              let startChar = (start["character"] as? NSNumber)?.uint32Value,
-              let endLine = (end["line"] as? NSNumber)?.uint32Value,
-              let endChar = (end["character"] as? NSNumber)?.uint32Value,
-              let newText = te["newText"] as? String
-            else { continue }
-            edits.append(
-              MonacoWorkspaceTextEdit(
-                uri: changeUri,
-                range: MonacoRange(
-                  startLine: startLine,
-                  startColumn: startChar,
-                  endLine: endLine,
-                  endColumn: endChar
-                ),
-                text: newText
-              ))
-          }
-        }
-      }
-
-      return MonacoCodeAction(title: title, kind: kind, edits: edits, isPreferred: isPreferred)
     }
   }
 

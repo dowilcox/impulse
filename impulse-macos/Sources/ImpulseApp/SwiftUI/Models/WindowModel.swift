@@ -105,6 +105,15 @@ struct WorkspaceInfo: Identifiable {
   var agentsWorking: Int = 0
 }
 
+/// Language-server work in progress, for the status bar.
+struct LspProgressStatus: Equatable {
+  var server: String
+  var title: String
+  var message: String?
+  /// 0...1, or nil when the server doesn't say.
+  var fraction: Double?
+}
+
 // MARK: - Window Model
 
 /// Per-window observable state shared between AppKit (MainWindowController)
@@ -141,6 +150,8 @@ final class WindowModel {
   @ObservationIgnored var onOpenComposer: (() -> Void)?
   /// Ports the active workspace's processes listen on.
   var ports: [ListeningPort] = []
+  /// A language server's work in progress ("Indexing", 40%), if any.
+  var lspProgress: LspProgressStatus?
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
   var tabBarPosition: String = "sidebar"
 

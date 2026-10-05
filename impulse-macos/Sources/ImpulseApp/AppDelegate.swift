@@ -10,6 +10,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let diagnostics: [[String: Any]]
   }
 
+  /// Events other than diagnostics, handled on the main thread in order.
+  private enum LspEvent {
+    case message(server: String, type: Int, text: String)
+    case progress(key: String, server: String, kind: String, title: String?, message: String?, percentage: Int?)
+    case applyEdit(clientKey: String, id: Any, label: String?, edit: Any)
+  }
+
+  /// Work in progress per server and token ("clientKey|token").
+  private var lspProgress: [String: LspProgressStatus] = [:]
+  private var lspProgressOrder: [String] = []
+
   /// The current application settings (backed by `SettingsStore.shared`).
   var settings: Settings {
     get { SettingsStore.shared.settings }
@@ -541,6 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       guard let self else { return }
 
       var events: [LspDiagnosticsEvent] = []
+      var others: [LspEvent] = []
       var count = 0
       let maxEventsPerTick = 50
 
@@ -557,6 +569,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let diagnostics = event["diagnostics"] as? [[String: Any]]
           else { continue }
           events.append(LspDiagnosticsEvent(uri: uri, diagnostics: diagnostics))
+        case "showMessage":
+          guard let text = event["message"] as? String else { continue }
+          others.append(
+            .message(
+              server: event["serverId"] as? String ?? "Language server",
+              type: (event["messageType"] as? NSNumber)?.intValue ?? 3, text: text))
+        case "progress":
+          guard let clientKey = event["clientKey"] as? String, let token = event["token"] as? String,
+            let kind = event["kind"] as? String
+          else { continue }
+          others.append(
+            .progress(
+              key: "\(clientKey)|\(token)", server: event["serverId"] as? String ?? "", kind: kind,
+              title: event["title"] as? String, message: event["message"] as? String,
+              percentage: (event["percentage"] as? NSNumber)?.intValue))
+        case "applyEdit":
+          guard let clientKey = event["clientKey"] as? String, let id = event["id"], let edit = event["edit"]
+          else { continue }
+          others.append(.applyEdit(clientKey: clientKey, id: id, label: event["label"] as? String, edit: edit))
         default:
           break
         }
@@ -567,6 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.isPollingLspEvents = false
         // A full batch may have left more behind.
         if count == maxEventsPerTick || self.lspPollAgain { self.pollLspEventsInBackground() }
+        for event in others { self.handleLspEvent(event) }
         guard !events.isEmpty else { return }
 
         for event in events {
@@ -578,6 +610,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           }
         }
       }
+    }
+  }
+
+  private func handleLspEvent(_ event: LspEvent) {
+    let front =
+      windowControllers.first { $0.window?.isKeyWindow == true } ?? windowControllers.first
+    switch event {
+    case .message(let server, let type, let text):
+      // 4 is a log message: not worth interrupting for.
+      guard type <= 3, let front else { return }
+      let kind: Toast.Kind = type == 1 ? .error : type == 2 ? .warning : .info
+      front.toasts.show(Toast(kind: kind, message: "\(server): \(text)", lifetime: type == 1 ? 12 : 6))
+    case .progress(let key, let server, let kind, let title, let message, let percentage):
+      if kind == "end" {
+        lspProgress.removeValue(forKey: key)
+        lspProgressOrder.removeAll { $0 == key }
+      } else {
+        var status =
+          lspProgress[key] ?? LspProgressStatus(server: server, title: title ?? server, message: nil, fraction: nil)
+        if let title { status.title = title }
+        if let message { status.message = message }
+        if let percentage { status.fraction = min(1, max(0, Double(percentage) / 100)) }
+        lspProgress[key] = status
+        if !lspProgressOrder.contains(key) { lspProgressOrder.append(key) }
+      }
+      // The newest piece of work still going.
+      let shown = lspProgressOrder.last.flatMap { lspProgress[$0] }
+      for controller in windowControllers where controller.windowModel.lspProgress != shown {
+        controller.windowModel.lspProgress = shown
+      }
+    case .applyEdit(let clientKey, let id, let label, let edit):
+      guard let front else {
+        core.lspRespond(clientKey: clientKey, id: id, resultJson: "{\"applied\":false}")
+        return
+      }
+      front.handleLspApplyEdit(clientKey: clientKey, id: id, label: label, edit: edit)
     }
   }
 

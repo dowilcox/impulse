@@ -170,6 +170,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// In-flight code action work items per URI, cancelled when a newer request arrives.
   var codeActionWorkItems: [String: DispatchWorkItem] = [:]
+  /// Code actions Swift carries out when picked, by token (see
+  /// `MonacoCodeAction.commandToken`).
+  var lspCodeActions: [String: LspCodeAction] = [:]
 
   /// In-flight rename work items per URI, cancelled when a newer request arrives.
   var renameWorkItems: [String: DispatchWorkItem] = [:]
@@ -1039,6 +1042,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         togglePreviewBeside()
       } else if action == "diff-view" {
         toggleDiffView()
+      } else if action.hasPrefix("workspace-edit="), let editor = tabManager.selectedEditor,
+        let path = editor.filePath
+      {
+        // An edit to the open file plus one on disk.
+        let other = (fileTreeRootPath as NSString).appendingPathComponent(String(action.dropFirst(15)))
+        let edit = WorkspaceEdit(operations: [
+          .edit(
+            uri: URL(fileURLWithPath: path).absoluteString,
+            edits: [LSPTextEdit(startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 0, newText: "// edited\n")]),
+          .edit(
+            uri: URL(fileURLWithPath: other).absoluteString,
+            edits: [LSPTextEdit(startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 0, newText: "edited ")]),
+        ])
+        reportWorkspaceEdit(applyWorkspaceEdit(edit), verb: "Renamed")
       } else if action == "outline" {
         toggleRightDock()
       } else if action == "problems" {
@@ -2466,6 +2483,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           let line = notification.userInfo?["line"] as? Int
         else { return }
         self.handleEditorGitAction(editor: editor, action: action, line: line)
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .editorCodeActionChosen, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, self.ownedEditor(from: notification) != nil,
+          let token = notification.userInfo?["token"] as? String
+        else { return }
+        self.runLspCodeAction(token: token)
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .editorLspRequested, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let editor = self.ownedEditor(from: notification),
+          let requestId = notification.userInfo?["requestId"] as? UInt64,
+          let method = notification.userInfo?["method"] as? String,
+          let params = notification.userInfo?["params"] as? String
+        else { return }
+        self.handleLspPassthrough(editor: editor, requestId: requestId, method: method, params: params)
       }
     )
     notificationObservers.append(

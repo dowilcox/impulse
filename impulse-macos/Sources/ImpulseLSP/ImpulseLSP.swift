@@ -119,6 +119,14 @@ enum LSPEvent {
   case initialized(clientKey: String, serverId: String)
   case serverError(clientKey: String, serverId: String, message: String)
   case serverExited(clientKey: String, serverId: String)
+  /// `window/showMessage` (type 1 error … 4 log).
+  case showMessage(serverId: String, type: Int64, message: String)
+  /// Work-done progress: kind is begin, report or end.
+  case progress(
+    clientKey: String, serverId: String, token: String, kind: String, title: String?, message: String?,
+    percentage: Int64?)
+  /// `workspace/applyEdit`: the app applies `edit` and answers request `id`.
+  case applyEdit(clientKey: String, serverId: String, id: Any, label: String?, edit: Any)
 
   /// Encodes the event as the exact JSON envelope `impulse_lsp_poll_event`
   /// emitted (same key names and casing; severity mapped to 1–4).
@@ -169,6 +177,18 @@ enum LSPEvent {
         "type": "serverExited",
         "clientKey": clientKey,
         "serverId": serverId,
+      ]
+    case .showMessage(let serverId, let type, let message):
+      object = ["type": "showMessage", "serverId": serverId, "messageType": type, "message": message]
+    case .progress(let clientKey, let serverId, let token, let kind, let title, let message, let percentage):
+      object = [
+        "type": "progress", "clientKey": clientKey, "serverId": serverId, "token": token, "kind": kind,
+        "title": title ?? NSNull(), "message": message ?? NSNull(), "percentage": percentage ?? NSNull(),
+      ]
+    case .applyEdit(let clientKey, let serverId, let id, let label, let edit):
+      object = [
+        "type": "applyEdit", "clientKey": clientKey, "serverId": serverId, "id": id,
+        "label": label ?? NSNull(), "edit": edit,
       ]
     }
     return JSONUtil.encode(object)

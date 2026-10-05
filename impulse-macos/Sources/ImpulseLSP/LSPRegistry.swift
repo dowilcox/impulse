@@ -72,17 +72,40 @@ public final class LSPRegistry {
   /// non-main thread.
   public func request(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> String {
     let params = paramsJSON.flatMap { JSONUtil.parse($0) }
-    let clients = getClients(languageId: languageId, fileUri: fileUri)
-    // The first server that can answer: several can serve one language
-    // (typescript + eslint + tailwind), and only some support each request.
-    guard
-      let client = clients.first(where: {
-        ServerProcess.supports(method: method, capabilities: $0.serverCapabilities)
-      }) ?? clients.first
-    else {
+    guard let client = client(for: method, params: params, languageId: languageId, fileUri: fileUri) else {
       return "{\"error\":\"no LSP client available\"}"
     }
-    switch client.request(method: method, params: params) {
+    return Self.encodeResponse(client.request(method: method, params: params))
+  }
+
+  /// Answer a request a server sent (by its client key and request id).
+  public func respond(clientKey: String, id: Any, resultJSON: String) {
+    stateLock.lock()
+    let client = clients[clientKey]
+    stateLock.unlock()
+    client?.respond(id: id, result: JSONUtil.parse(resultJSON) ?? NSNull())
+  }
+
+  /// The first server that can answer: several can serve one language
+  /// (typescript + eslint + tailwind), and only some support each request.
+  /// A command goes to the server that registered it.
+  private func client(for method: String, params: Any?, languageId: String, fileUri: String) -> ServerProcess? {
+    let clients = getClients(languageId: languageId, fileUri: fileUri)
+    if method == "workspace/executeCommand", let command = (params as? [String: Any])?["command"] as? String,
+      let owner = clients.first(where: {
+        let provider = $0.serverCapabilities?["executeCommandProvider"] as? [String: Any]
+        return (provider?["commands"] as? [String])?.contains(command) ?? false
+      })
+    {
+      return owner
+    }
+    return clients.first(where: {
+      ServerProcess.supports(method: method, capabilities: $0.serverCapabilities)
+    }) ?? clients.first
+  }
+
+  private static func encodeResponse(_ result: Result<Any, String>) -> String {
+    switch result {
     case .success(let value):
       if let json = JSONUtil.encode(value) {
         return json
@@ -95,16 +118,19 @@ public final class LSPRegistry {
     }
   }
 
-  /// Port of `impulse_lsp_notify`: sends a notification to the first LSP
-  /// server for the language, updating the document cache on
-  /// didOpen/didClose like the FFI glue. Returns true on success.
+  /// Port of `impulse_lsp_notify`: sends a notification to every LSP server
+  /// for the language (each needs didOpen/didClose to answer about the
+  /// document), updating the document cache on didOpen/didClose like the FFI
+  /// glue. Returns true when at least one send succeeded.
   @discardableResult
   public func notify(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> Bool {
     let params = paramsJSON.flatMap { JSONUtil.parse($0) } ?? NSNull()
     updateDocumentCache(method: method, params: params)
-    let clients = getClients(languageId: languageId, fileUri: fileUri)
-    guard let client = clients.first else { return false }
-    return client.notify(method: method, params: params)
+    var ok = false
+    for client in getClients(languageId: languageId, fileUri: fileUri) {
+      ok = client.notify(method: method, params: params) || ok
+    }
+    return ok
   }
 
   /// Port of `impulse_lsp_did_change`: updates the document cache (full text

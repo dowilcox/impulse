@@ -325,6 +325,11 @@ final class ImpulseCore {
             languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJson)
     }
 
+    /// Answers a request a language server sent (`workspace/applyEdit`).
+    func lspRespond(clientKey: String, id: Any, resultJson: String) {
+        lspRegistry?.respond(clientKey: clientKey, id: id, resultJSON: resultJson)
+    }
+
     /// Sends an LSP notification using the instance registry.
     @discardableResult
     func lspNotify(languageId: String, fileUri: String, method: String, paramsJson: String) -> Int32 {

@@ -313,6 +313,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             isDiffView = active
             isDiffInline = inline
 
+        case let .codeActionChosen(token):
+            NotificationCenter.default.post(
+                name: .editorCodeActionChosen, object: self, userInfo: ["token": token])
+
+        case let .lspRequested(requestId, method, params):
+            NotificationCenter.default.post(
+                name: .editorLspRequested, object: self,
+                userInfo: ["requestId": requestId, "method": method, "params": params])
+
         case .saveRequested:
             // Route through the main save pipeline so format-on-save, LSP
             // notifications, and other post-save actions run correctly.
@@ -719,6 +728,18 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
 
     /// Resolve an in-flight code action request with actions from the LSP server.
+    func applyEdits(token: String, edits: [MonacoTextEdit]) {
+        sendCommand(.applyEdits(token: token, edits: edits))
+    }
+
+    func undoEdits(token: String) {
+        sendCommand(.undoEdits(token: token))
+    }
+
+    func resolveLspRequest(requestId: UInt64, result: String) {
+        sendCommand(.resolveLspRequest(requestId: requestId, result: result))
+    }
+
     func resolveCodeActions(requestId: UInt64, actions: [MonacoCodeAction]) {
         sendCommand(.resolveCodeActions(requestId: requestId, actions: actions))
     }

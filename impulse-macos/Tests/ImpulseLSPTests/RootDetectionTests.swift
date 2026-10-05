@@ -76,7 +76,7 @@
   struct ConfigTests {
     @Test func defaultTablesMatchRust() {
       let cfg = LSPConfig.defaultConfig()
-      #expect(cfg.servers.count == 17)
+      #expect(cfg.servers.count == 18)
       #expect(cfg.servers["rust-analyzer"]?.command == "rust-analyzer")
       #expect(cfg.servers["rust-analyzer"]?.args == [])
       #expect(cfg.servers["pyright"]?.command == "pyright-langserver")
@@ -92,7 +92,11 @@
         ])
       #expect(cfg.languageServers["rust"] == ["rust-analyzer"])
       #expect(cfg.languageServers["shellscript"] == ["bash-language-server"])
-      #expect(cfg.rootMarkers.count == 17)
+      // The Rust table plus sourcekit-lsp for Swift (and its Package.swift
+      // root marker), added after the port.
+      #expect(cfg.servers["sourcekit-lsp"]?.command == "sourcekit-lsp")
+      #expect(cfg.languageServers["swift"] == ["sourcekit-lsp"])
+      #expect(cfg.rootMarkers.count == 18)
       #expect(cfg.rootMarkers.first == "Cargo.toml")
       #expect(cfg.rootMarkers.contains("deno.jsonc"))
     }
@@ -155,14 +159,14 @@
 
       var cfg = LSPConfig.defaultConfig()
       cfg.applyFile(path, trusted: true)
-      #expect(cfg.servers.count == 17)
+      #expect(cfg.servers.count == 18)
 
       // Structurally invalid overrides are rejected wholesale, like serde.
       try "{\"servers\": {\"x\": {\"args\": []}}}".write(
         toFile: path, atomically: true, encoding: .utf8)
       cfg.applyFile(path, trusted: true)
       #expect(cfg.servers["x"] == nil)
-      #expect(cfg.servers.count == 17)
+      #expect(cfg.servers.count == 18)
     }
   }
 

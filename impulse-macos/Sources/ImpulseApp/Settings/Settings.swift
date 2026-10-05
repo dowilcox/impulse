@@ -113,6 +113,8 @@ struct Settings: Codable {
     /// The drop-down quick terminal and its global shortcut.
     var quickTerminalEnabled: Bool = false
     var quickTerminalShortcut: String = "Ctrl+`"
+    /// Language-server inlay hints: on, off, offUnlessPressed, onUnlessPressed.
+    var editorInlayHints: String = "on"
     var lastDirectory: String
     var openFiles: [String]
 
@@ -213,6 +215,7 @@ struct Settings: Codable {
         case agentComposerAutoShow = "agent_composer_auto_show"
         case quickTerminalEnabled = "quick_terminal_enabled"
         case quickTerminalShortcut = "quick_terminal_shortcut"
+        case editorInlayHints = "editor_inlay_hints"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -361,6 +364,7 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .quickTerminalEnabled)) ?? d.quickTerminalEnabled
         quickTerminalShortcut =
             (try? c.decode(String.self, forKey: .quickTerminalShortcut)) ?? d.quickTerminalShortcut
+        editorInlayHints = (try? c.decode(String.self, forKey: .editorInlayHints)) ?? d.editorInlayHints
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

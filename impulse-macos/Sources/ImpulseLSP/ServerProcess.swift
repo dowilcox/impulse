@@ -453,6 +453,24 @@ final class ServerProcess {
       sendResult(id: id, result: [folder])
     case "client/registerCapability", "client/unregisterCapability":
       sendResult(id: id, result: NSNull())
+    case "workspace/applyEdit":
+      // The app applies it and answers with `respond(id:result:)`.
+      let object = params as? [String: Any]
+      guard let edit = object?["edit"] else {
+        sendError(id: id, code: -32602, message: "Missing edit")
+        return
+      }
+      onEvent(
+        .applyEdit(
+          clientKey: clientKey, serverId: serverId, id: id, label: object?["label"] as? String, edit: edit))
+    case "window/showMessageRequest":
+      // No buttons: show it like a message and answer "dismissed".
+      if let object = params as? [String: Any], let text = object["message"] as? String {
+        onEvent(
+          .showMessage(
+            serverId: serverId, type: JSONUtil.asInt64(object["type"]) ?? 3, message: text))
+      }
+      sendResult(id: id, result: NSNull())
     default:
       sendError(id: id, code: -32601, message: "Method not found")
     }
@@ -464,10 +482,18 @@ final class ServerProcess {
       if let event = Self.parseDiagnosticsEvent(params) {
         onEvent(event)
       }
-    case "window/logMessage", "window/showMessage":
+    case "window/showMessage":
+      if let object = params as? [String: Any], let text = object["message"] as? String {
+        onEvent(
+          .showMessage(
+            serverId: serverId, type: JSONUtil.asInt64(object["type"]) ?? 3, message: text))
+      }
+    case "$/progress":
+      if let event = Self.parseProgress(params, clientKey: clientKey, serverId: serverId) {
+        onEvent(event)
+      }
+    case "window/logMessage", "$/logTrace":
       // log::debug! in Rust — intentionally quiet here.
-      break
-    case "$/logTrace", "$/progress":
       break
     default:
       // log::debug!("Unhandled LSP notification: {}", method)
@@ -533,7 +559,32 @@ final class ServerProcess {
     return .diagnostics(uri: uri, version: version, diagnostics: diagnostics)
   }
 
+  /// Work-done progress (`begin` / `report` / `end`) as an event.
+  static func parseProgress(_ params: Any?, clientKey: String, serverId: String) -> LSPEvent? {
+    guard let object = params as? [String: Any],
+      let value = object["value"] as? [String: Any],
+      let kind = value["kind"] as? String, ["begin", "report", "end"].contains(kind)
+    else { return nil }
+    let token: String
+    if let text = object["token"] as? String {
+      token = text
+    } else if let number = JSONUtil.asInt64(object["token"]) {
+      token = String(number)
+    } else {
+      return nil
+    }
+    return .progress(
+      clientKey: clientKey, serverId: serverId, token: token, kind: kind,
+      title: value["title"] as? String, message: value["message"] as? String,
+      percentage: JSONUtil.asInt64(value["percentage"]))
+  }
+
   // MARK: Writing
+
+  /// Answer a request the server sent (`workspace/applyEdit`).
+  func respond(id: Any, result: Any) {
+    sendResult(id: id, result: result)
+  }
 
   private func sendResult(id: Any, result: Any) {
     _ = send(["jsonrpc": "2.0", "id": id, "result": result])
@@ -566,6 +617,15 @@ final class ServerProcess {
   /// Blocking JSON-RPC request with the same per-method timeout table as
   /// lsp.rs. Safe to call from any non-main thread.
   func request(method: String, params: Any?) -> Result<Any, String> {
+    switch begin(method: method, params: params) {
+    case .failure(let error):
+      return .failure(error)
+    case .success(let (id, waiter)):
+      return finish(method: method, id: id, waiter: waiter)
+    }
+  }
+
+  private func begin(method: String, params: Any?) -> Result<(Int64, PendingRequest), String> {
     stateLock.lock()
     let id = nextId
     nextId += 1
@@ -585,7 +645,10 @@ final class ServerProcess {
       stateLock.unlock()
       return .failure("failed to write to LSP server stdin")
     }
+    return .success((id, waiter))
+  }
 
+  private func finish(method: String, id: Int64, waiter: PendingRequest) -> Result<Any, String> {
     let timeout = Self.requestTimeout(for: method)
     if let result = waiter.wait(timeout: timeout) {
       return result
@@ -709,12 +772,19 @@ final class ServerProcess {
       "textDocument/rename": "renameProvider",
       "textDocument/prepareRename": "renameProvider",
       "workspace/symbol": "workspaceSymbolProvider",
+      "textDocument/documentHighlight": "documentHighlightProvider",
+      "textDocument/inlayHint": "inlayHintProvider",
+      "workspace/executeCommand": "executeCommandProvider",
+      "codeAction/resolve": "codeActionProvider",
     ]
     guard let key = keys[method] else { return true }
     guard let value = capabilities?[key] else { return false }
     // prepareRename needs RenameOptions with prepareProvider, not just `true`.
     if method == "textDocument/prepareRename" {
       return (value as? [String: Any])?["prepareProvider"] as? Bool ?? false
+    }
+    if method == "codeAction/resolve" {
+      return (value as? [String: Any])?["resolveProvider"] as? Bool ?? false
     }
     if let flag = value as? Bool { return flag }
     return !(value is NSNull)
@@ -739,6 +809,17 @@ final class ServerProcess {
       "workspace": [
         "configuration": true,
         "workspaceFolders": true,
+        "applyEdit": true,
+        "workspaceEdit": [
+          "documentChanges": true,
+          "resourceOperations": ["create", "rename", "delete"],
+          "failureHandling": "abort",
+        ] as [String: Any],
+        "executeCommand": [String: Any](),
+      ] as [String: Any],
+      "window": [
+        "workDoneProgress": true,
+        "showMessage": [String: Any](),
       ] as [String: Any],
       "textDocument": [
         "synchronization": [
@@ -777,8 +858,13 @@ final class ServerProcess {
             "codeActionKind": [
               "valueSet": ["quickfix", "refactor", "source"]
             ]
-          ]
-        ],
+          ],
+          "isPreferredSupport": true,
+          "dataSupport": true,
+          "resolveSupport": ["properties": ["edit"]],
+        ] as [String: Any],
+        "documentHighlight": [String: Any](),
+        "inlayHint": [String: Any](),
       ] as [String: Any],
     ]
   }()

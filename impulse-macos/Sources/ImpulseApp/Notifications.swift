@@ -111,6 +111,8 @@ extension Notification.Name {
     /// Posted by an EditorTab when the git peek widget asks to stage a hunk or
     /// open the review (userInfo: action, line).
     static let editorGitAction = Notification.Name("impulse.editorGitAction")
+    static let editorCodeActionChosen = Notification.Name("impulse.editorCodeActionChosen")
+    static let editorLspRequested = Notification.Name("impulse.editorLspRequested")
     /// Posted when a command block starts or ends in a terminal
     /// (userInfo["block"]: TerminalCommandBlock).
     static let terminalCommandBlockChanged = Notification.Name("impulse.terminalCommandBlockChanged")
