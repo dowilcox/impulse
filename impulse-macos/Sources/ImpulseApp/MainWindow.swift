@@ -425,6 +425,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     }
     windowModel.onShowProblems = { [weak self] in self?.showProblems() }
+    windowModel.onReplaceAll = { [weak self] in self?.replaceAllInProject() }
     windowModel.onOpenSettingsFile = { [weak self] in
       self?.openSettingsFile()
     }
@@ -920,6 +921,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action.hasPrefix("replace="), let colon = action.firstIndex(of: ":") {
+        windowModel.beginSearch()
+        windowModel.searchQuery = String(action[action.index(action.startIndex, offsetBy: 8)..<colon])
+        windowModel.searchReplacement = String(action[action.index(after: colon)...])
+        windowModel.searchReplaceVisible = true
+        windowModel.runSearchNow()
       } else if action == "problems" {
         windowModel.problemsByPath = [
           (fileTreeRootPath as NSString).appendingPathComponent("search.swift"): [
@@ -1007,6 +1014,72 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     surface.model.onOpenSettingsFile = { [weak self] in self?.openSettingsFile() }
     surface.model.onOpenKeybindings = { [weak self] in self?.openKeybindings() }
     if let query { surface.reveal(query: query) } else { surface.focusTool() }
+  }
+
+  /// Replace the search query with the replacement in every file the
+  /// search found it in. Files with unsaved edits are left alone; the
+  /// originals are kept for Undo.
+  func replaceAllInProject() {
+    let query = windowModel.searchQuery
+    let replacement = windowModel.searchReplacement
+    let caseSensitive = windowModel.searchCaseSensitive
+    var seen = Set<String>()
+    let paths = windowModel.searchResults.compactMap { result -> String? in
+      guard result.matchType == "content", seen.insert(result.path).inserted else { return nil }
+      return result.path
+    }
+    guard !query.isEmpty, !paths.isEmpty else { return }
+    let skipped = paths.filter { findEditorTab(forPath: $0)?.isModified == true }
+    let targets = paths.filter { !skipped.contains($0) }
+    gitConfirm(
+      title: "Replace in \(targets.count) file\(targets.count == 1 ? "" : "s")?",
+      message: "Every “\(query)” becomes “\(replacement)”."
+        + (skipped.isEmpty ? "" : " \(skipped.count) file(s) with unsaved changes are skipped.")
+        + " You can undo this right after.",
+      confirmTitle: "Replace All", destructive: false
+    ) { [weak self] proceed in
+      guard proceed, let self else { return }
+      DispatchQueue.global(qos: .userInitiated).async {
+        var originals: [String: Data] = [:]
+        var total = 0
+        var failed: [String] = []
+        for path in targets {
+          guard let data = FileManager.default.contents(atPath: path),
+            let text = String(data: data, encoding: .utf8)
+          else { continue }
+          let result = ProjectReplace.replace(in: text, query: query, with: replacement, caseSensitive: caseSensitive)
+          guard result.count > 0 else { continue }
+          // In place (not atomic) so permissions and extended attributes stay.
+          do {
+            try Data(result.text.utf8).write(to: URL(fileURLWithPath: path))
+            originals[path] = data
+            total += result.count
+          } catch {
+            failed.append((path as NSString).lastPathComponent)
+          }
+        }
+        DispatchQueue.main.async {
+          self.reloadEditors(Array(originals.keys))
+          self.windowModel.runSearchNow()
+          var message = "Replaced \(total) match\(total == 1 ? "" : "es") in \(originals.count) file\(originals.count == 1 ? "" : "s")"
+          if !failed.isEmpty { message += " (couldn't write \(failed.joined(separator: ", ")))" }
+          self.toasts.show(
+            Toast(
+              kind: failed.isEmpty ? .success : .warning, message: message, actionTitle: "Undo",
+              action: { [weak self] in
+                for (path, data) in originals { try? data.write(to: URL(fileURLWithPath: path)) }
+                self?.reloadEditors(Array(originals.keys))
+                self?.windowModel.runSearchNow()
+              }, lifetime: 20))
+        }
+      }
+    }
+  }
+
+  private func reloadEditors(_ paths: [String]) {
+    for path in paths {
+      NotificationCenter.default.post(name: .impulseReloadEditorFile, object: nil, userInfo: ["path": path])
+    }
   }
 
   /// The window's language-server diagnostics as a tab.

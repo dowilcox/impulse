@@ -182,6 +182,10 @@ final class WindowModel {
   var searchQuery: String = ""
   var searchResults: [SearchResult] = []
   var searchCaseSensitive: Bool = false
+  /// Project replace: the field is shown, and what matches become.
+  var searchReplaceVisible = false
+  var searchReplacement = ""
+  var onReplaceAll: (() -> Void)?
   /// True while a search FFI call is in flight (drives the results spinner).
   var isSearching: Bool = false
   /// Bumped whenever the sidebar search field should grab keyboard focus.

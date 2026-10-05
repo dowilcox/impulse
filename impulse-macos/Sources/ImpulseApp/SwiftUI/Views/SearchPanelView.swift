@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import SwiftUI
 
 // MARK: - Sidebar Search Bar
@@ -17,7 +18,44 @@ struct SidebarSearchBar: View {
   @FocusState private var fieldFocused: Bool
 
   var body: some View {
+    VStack(spacing: 0) {
+      searchRow
+      if model.searchReplaceVisible { replaceRow }
+    }
+  }
+
+  private var replaceRow: some View {
     HStack(spacing: 6) {
+      Image(systemName: "arrow.2.squarepath")
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+      TextField("Replace with…", text: $model.searchReplacement)
+        .textFieldStyle(.plain)
+        .font(.system(size: 12))
+        .onSubmit { model.onReplaceAll?() }
+      Button("Replace All") { model.onReplaceAll?() }
+        .buttonStyle(.plain)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(model.searchResults.contains { $0.matchType == "content" } ? model.theme.colorAccent : .secondary)
+        .disabled(!model.searchResults.contains { $0.matchType == "content" })
+        .help("Replace every match in the files listed (⌘↩ in the field)")
+    }
+    .padding(.horizontal, 10)
+    .padding(.bottom, 6)
+  }
+
+  private var searchRow: some View {
+    HStack(spacing: 6) {
+      Button {
+        model.searchReplaceVisible.toggle()
+      } label: {
+        Image(systemName: model.searchReplaceVisible ? "chevron.down" : "chevron.right")
+          .font(.system(size: 9, weight: .semibold))
+          .foregroundStyle(.secondary)
+          .frame(width: 10)
+      }
+      .buttonStyle(.plain)
+      .help(model.searchReplaceVisible ? "Hide Replace" : "Replace")
       Image(systemName: "magnifyingglass")
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -117,7 +155,10 @@ struct SearchResultsList: View {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(model.searchResults, id: \.stableId) { result in
-              SearchResultRow(result: result)
+              SearchResultRow(
+                result: result,
+                replacement: model.searchReplaceVisible ? model.searchReplacement : nil,
+                query: model.searchQuery, caseSensitive: model.searchCaseSensitive, theme: model.theme)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .contentShape(Rectangle())
@@ -144,6 +185,11 @@ struct SearchResultsList: View {
 
 private struct SearchResultRow: View {
   let result: SearchResult
+  /// When replacing: the line shown with matches struck and replaced.
+  var replacement: String?
+  var query: String = ""
+  var caseSensitive = false
+  var theme: Theme? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
@@ -160,7 +206,12 @@ private struct SearchResultRow: View {
         }
       }
 
-      if let lineContent = result.lineContent {
+      if let lineContent = result.lineContent, let replacement, let theme {
+        previewText(lineContent.trimmingCharacters(in: .whitespaces), replacement: replacement, theme: theme)
+          .font(.system(size: 11, design: .monospaced))
+          .lineLimit(1)
+          .truncationMode(.tail)
+      } else if let lineContent = result.lineContent {
         Text(lineContent.trimmingCharacters(in: .whitespaces))
           .font(.system(size: 11, design: .monospaced))
           .foregroundStyle(.secondary)
@@ -168,5 +219,20 @@ private struct SearchResultRow: View {
           .truncationMode(.tail)
       }
     }
+  }
+
+  /// The line with each match struck through and the replacement after it.
+  private func previewText(_ line: String, replacement: String, theme: Theme) -> Text {
+    ProjectReplace.preview(line: line, query: query, replacement: replacement, caseSensitive: caseSensitive)
+      .reduce(Text("")) { text, segment in
+        switch segment {
+        case .same(let part):
+          return text + Text(part).foregroundColor(.secondary)
+        case .removed(let part):
+          return text + Text(part).strikethrough().foregroundColor(theme.colorRed)
+        case .added(let part):
+          return text + Text(part).foregroundColor(theme.colorGreen)
+        }
+      }
   }
 }
