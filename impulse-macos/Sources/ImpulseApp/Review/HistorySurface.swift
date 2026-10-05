@@ -6,7 +6,7 @@ import SwiftUI
 /// The repository's history: a commit list with its graph on the left, the
 /// selected commit's changes (the review renderer) on the right. Commits can
 /// be checked out, branched from, cherry-picked, reverted, reset to, or
-/// compared with the working tree.
+/// compared with the working tree or with each other.
 @Observable
 final class HistoryModel {
   var scope: GitLog.Scope = .head
@@ -20,6 +20,16 @@ final class HistoryModel {
   var filter = ""
   var selectedSha: String?
   var palette: ChromePalette
+  /// Commits not on the upstream yet, and upstream commits not here yet.
+  private(set) var outgoing: Set<String> = []
+  private(set) var incoming: Set<String> = []
+  /// The commit picked with "Select for Compare".
+  var compareBase: LogEntry?
+  /// A commit to select once paging reaches it.
+  @ObservationIgnored var pendingReveal: String?
+  /// Bumped when the list should scroll to the selection again.
+  private(set) var scrollToken = 0
+  @ObservationIgnored var divergenceLoader: (() -> (outgoing: Set<String>, incoming: Set<String>))?
 
   @ObservationIgnored var onSelect: ((LogEntry) -> Void)?
   @ObservationIgnored var onAction: ((HistoryAction, LogEntry) -> Void)?
@@ -48,6 +58,26 @@ final class HistoryModel {
     rows = []
     reachedEnd = false
     loadMore()
+    guard let divergenceLoader else { return }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let divergence = divergenceLoader()
+      DispatchQueue.main.async {
+        self?.outgoing = divergence.outgoing
+        self?.incoming = divergence.incoming
+      }
+    }
+  }
+
+  /// Select `sha`, paging further into history until it shows up (the
+  /// caller shows the commit itself right away).
+  func reveal(_ sha: String) {
+    selectedSha = sha
+    if entries.contains(where: { $0.sha == sha }) {
+      scrollToken += 1
+    } else {
+      pendingReveal = sha
+      loadMore()
+    }
   }
 
   func loadMore() {
@@ -65,7 +95,16 @@ final class HistoryModel {
           self.reachedEnd = page.count < HistorySurface.pageSize
           self.entries += page
           self.rows = CommitGraph.layout(self.entries.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
-          if self.selectedSha == nil, let first = self.entries.first {
+          if let pending = self.pendingReveal {
+            if self.entries.contains(where: { $0.sha.hasPrefix(pending) || pending.hasPrefix($0.sha) }) {
+              self.pendingReveal = nil
+              self.scrollToken += 1
+            } else if !self.reachedEnd, self.entries.count < 20_000 {
+              self.loadMore()
+            } else {
+              self.pendingReveal = nil
+            }
+          } else if self.selectedSha == nil, let first = self.entries.first {
             self.selectedSha = first.sha
             self.onSelect?(first)
           }
@@ -95,7 +134,7 @@ final class HistoryModel {
 
 enum HistoryAction {
   case checkout, branchHere, cherryPick, revert, resetSoft, resetMixed, resetHard
-  case compareWithWorkingTree, copySha, copySubject
+  case compareWithWorkingTree, selectForCompare, compareWithSelected, copySha, copySubject
 }
 
 final class HistorySurface: NSView {
@@ -124,6 +163,7 @@ final class HistorySurface: NSView {
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
     }
     model.onAction = { [weak self] action, entry in self?.perform(action, on: entry) }
+    model.divergenceLoader = { GitLog.divergence(root: root) }
     setup()
     model.reload()
   }
@@ -182,6 +222,12 @@ final class HistorySurface: NSView {
     window?.makeFirstResponder(listHost)
   }
 
+  /// Select a commit (e.g. from blame) and show its changes.
+  func reveal(sha: String) {
+    model.reveal(sha)
+    review.show(scope: .commit(sha: sha), focusPath: model.path)
+  }
+
   private func perform(_ action: HistoryAction, on entry: LogEntry) {
     let actions = GitActions(repository: repository, host: host)
     switch action {
@@ -193,6 +239,14 @@ final class HistorySurface: NSView {
     case .resetHard: actions.reset(.hard, to: entry.sha)
     case .compareWithWorkingTree:
       host?.gitOpenReview(scope: .snapshot(from: entry.sha, to: nil), focusPath: model.path)
+    case .selectForCompare:
+      model.compareBase = model.compareBase?.sha == entry.sha ? nil : entry
+    case .compareWithSelected:
+      guard let base = model.compareBase, base.sha != entry.sha else { return }
+      // Older → newer, by position in the (newest-first) list.
+      let index = { (sha: String) in self.model.entries.firstIndex { $0.sha == sha } ?? 0 }
+      let (from, to) = index(base.sha) > index(entry.sha) ? (base, entry) : (entry, base)
+      host?.gitOpenReview(scope: .range(from: from.sha, to: to.sha), focusPath: model.path)
     case .copySha, .copySubject:
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(action == .copySha ? entry.sha : entry.subject, forType: .string)
@@ -262,6 +316,9 @@ struct HistoryListView: View {
           }
           .onChange(of: model.selectedSha) { _, sha in
             if let sha { proxy.scrollTo(sha) }
+          }
+          .onChange(of: model.scrollToken) { _, _ in
+            if let sha = model.selectedSha { proxy.scrollTo(sha, anchor: .center) }
           }
         }
       }
@@ -339,6 +396,14 @@ private struct HistoryRowView: View {
         GraphCell(row: row, lanes: lanes, colors: laneColors)
           .frame(width: CGFloat(lanes) * GraphCell.laneWidth + 6, height: 28)
       }
+      if model.outgoing.contains(entry.sha) {
+        Icon(.arrowUp, size: 10).foregroundStyle(chrome.accent).help("Not pushed yet")
+      } else if model.incoming.contains(entry.sha) {
+        Icon(.arrowDown, size: 10).foregroundStyle(chrome.info).help("On the upstream, not pulled yet")
+      }
+      if model.compareBase?.sha == entry.sha {
+        Icon(.gitCompare, size: 11).foregroundStyle(chrome.warning).help("Selected for compare")
+      }
       ForEach(entry.refs, id: \.self) { ref in
         RefChip(ref: ref)
       }
@@ -392,6 +457,12 @@ private struct HistoryRowView: View {
     }
     Divider()
     Button("Compare with Working Tree") { model.onAction?(.compareWithWorkingTree, entry) }
+    if let base = model.compareBase, base.sha != entry.sha {
+      Button("Compare with \(base.shortSha) · \(base.subject)") { model.onAction?(.compareWithSelected, entry) }
+    }
+    Button(model.compareBase?.sha == entry.sha ? "Clear Compare Selection" : "Select for Compare") {
+      model.onAction?(.selectForCompare, entry)
+    }
     Button("Copy SHA") { model.onAction?(.copySha, entry) }
     Button("Copy Subject") { model.onAction?(.copySubject, entry) }
   }

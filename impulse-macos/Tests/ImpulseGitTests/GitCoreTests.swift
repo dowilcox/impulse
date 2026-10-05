@@ -510,6 +510,25 @@
       #expect(file[0].refs.contains("topic"))
     }
 
+    @Test func divergenceSplitsIncomingAndOutgoing() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      #expect(GitLog.divergence(root: repo.root).outgoing.isEmpty, "no upstream yet")
+      try repo.git("branch", "up")
+      try repo.git("branch", "--set-upstream-to=up")
+      try repo.commit(["a.txt": "mine\n"])
+      let mine = try repo.git("rev-parse", "HEAD")
+      try repo.git("checkout", "-q", "up")
+      try repo.commit(["b.txt": "theirs\n"])
+      let theirs = try repo.git("rev-parse", "HEAD")
+      try repo.git("checkout", "-q", "main")
+
+      let divergence = GitLog.divergence(root: repo.root)
+      #expect(divergence.outgoing == [mine])
+      #expect(divergence.incoming == [theirs])
+    }
+
     @Test func allBranchesSkipsPrivateRefs() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

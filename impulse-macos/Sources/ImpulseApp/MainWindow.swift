@@ -866,6 +866,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
       } else if action == "history" {
         showHistory()
+      } else if action.hasPrefix("history="), let repository = windowModel.repository {
+        tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
       } else if action.hasPrefix("pr-threads=") {
         // A saved `gh api graphql` reviewThreads answer, applied to the open review.
         let data = FileManager.default.contents(atPath: String(action.dropFirst(11))) ?? Data()
@@ -3209,6 +3211,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       return
     }
     if action == "conflicts" { return }
+    if action.hasPrefix("commit:") {
+      tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(7)))
+      return
+    }
     if action == "conflicts-resolved" {
       // The last conflict marker in a conflicted file is gone.
       guard let change = repository.snapshot?.conflicted.first(where: { $0.path == relative }) else {

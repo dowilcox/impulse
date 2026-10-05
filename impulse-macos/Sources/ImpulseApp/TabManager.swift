@@ -547,16 +547,23 @@ final class TabManager: NSObject {
   }
 
   /// Open (or show) the history of a repository, or of one path in it.
-  func addHistoryTab(repository: GitRepositoryState, path: String? = nil, host: GitPanelHost?) {
+  /// Open (or bring back) the repository's History, optionally with a
+  /// commit selected.
+  func addHistoryTab(
+    repository: GitRepositoryState, path: String? = nil, host: GitPanelHost?, reveal sha: String? = nil
+  ) {
     if let location = locate(where: {
       if case .history(let root, let view) = $0 { return root == repository.root && view.model.path == path }
       return false
     }) {
       reveal(location)
-      if case .history(_, let view) = tabs[location.tabIndex].focused { view.refresh() }
+      if case .history(_, let view) = tabs[location.tabIndex].focused {
+        if let sha { view.reveal(sha: sha) } else { view.refresh() }
+      }
       return
     }
     let view = HistorySurface(repository: repository, path: path, theme: theme, host: host)
+    if let sha { view.reveal(sha: sha) }
     insertTab(.history(repoRoot: repository.root, view: view))
   }
 

@@ -1312,6 +1312,22 @@ function gitHunkAtLine(line) {
 function installGitPeekHandler() {
   if (!editor || editor.__gitPeekInstalled) return;
   editor.__gitPeekInstalled = true;
+  // Blame: click the ghost text (or use the context menu) to open the
+  // line's commit in History.
+  editor.onMouseDown(function (e) {
+    var injected = e.target && e.target.detail && e.target.detail.injectedText;
+    if (!injected || !injected.options || injected.options.inlineClassName !== "git-blame-ghost") return;
+    showLineCommit(e.target.position && e.target.position.lineNumber);
+  });
+  editor.addAction({
+    id: "impulse.showLineCommit",
+    label: "Show Commit for This Line",
+    contextMenuGroupId: "9_git",
+    run: function (ed) {
+      var position = ed.getPosition();
+      showLineCommit(position && position.lineNumber);
+    },
+  });
   editor.onMouseDown(function (e) {
     if (!e.target || e.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) return;
     var line = e.target.position && e.target.position.lineNumber;
@@ -1320,6 +1336,12 @@ function installGitPeekHandler() {
     if (gitPeek && gitPeek.hunk.newStart === hunk.newStart) closeGitPeek();
     else renderGitPeek(hunk);
   });
+}
+
+function showLineCommit(line) {
+  var info = line && gitBlame.get(line);
+  if (!info || /^0+$/.test(info.sha)) return;
+  sendToHost({ type: "GitAction", action: "commit:" + info.sha, line: line });
 }
 
 function renderGitPeek(hunk) {

@@ -44,6 +44,25 @@ public enum GitLog {
     return GitOperations.git(args, in: root, timeout: 60).map { parse($0.stdout) }
   }
 
+  /// Commits on HEAD that its upstream doesn't have yet (outgoing) and the
+  /// other way round (incoming). Both empty without an upstream.
+  public static func divergence(root: String, limit: Int = 2000) -> (outgoing: Set<String>, incoming: Set<String>) {
+    guard
+      case .success(let result) = GitOperations.git(
+        ["rev-list", "--left-right", "--max-count=\(limit)", "HEAD...@{upstream}"], in: root)
+    else { return ([], []) }
+    var outgoing = Set<String>()
+    var incoming = Set<String>()
+    for line in result.stdout.split(separator: "\n") {
+      if line.hasPrefix("<") {
+        outgoing.insert(String(line.dropFirst()))
+      } else if line.hasPrefix(">") {
+        incoming.insert(String(line.dropFirst()))
+      }
+    }
+    return (outgoing, incoming)
+  }
+
   static func parse(_ output: String) -> [LogEntry] {
     output.split(separator: "\u{1e}").compactMap { record in
       let fields = record.trimmingCharacters(in: .whitespacesAndNewlines)
