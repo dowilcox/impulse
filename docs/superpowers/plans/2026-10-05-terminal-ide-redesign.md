@@ -143,7 +143,7 @@ foundations ├──────────── Track B: git ─────
   - Generate menus from the registry (`UI/MenuBuilder.swift`).
   - Replace the NotificationCenter observers in `MainWindow.swift:1356-2050` with registry dispatch to the key window's controller. Keep the notification names as thin shims until callers are gone.
   - Tests: resolver precedence (user override > when-specific > default), conflict detection, migration of old override ids.
-- [ ] **Split `MainWindow.swift` (2936 lines).**
+- [ ] **Split `MainWindow.swift` (2936 lines).** *(step one done: its sections now live in `MainWindowController+*.swift` extensions (layout, observers, save, find bar, tab close, session, workspaces, palette/git hosts, debug), leaving ~730 lines; extracting real controllers below is still to do)*
   - `WorkbenchWindowController` (window and chrome wiring);
   - `FileTreeCoordinator` (the four duplicated rebuild blocks become one);
   - `SessionController`;
