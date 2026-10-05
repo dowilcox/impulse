@@ -32,7 +32,7 @@ private final class ImpulseWindow: NSWindow {
 ///     TabManager-driven AppKit content region.
 ///
 /// Multiple windows can coexist; each owns its own TabManager and sidebar state.
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: - State
 
@@ -63,6 +63,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   /// Manages the tab bar and tab content lifecycle.
   let tabManager: TabManager
 
+  /// The window's AppKit layout root (docks, chrome, center column).
+  private var workbench: WorkbenchView?
+
   /// Terminal search bar (hidden by default, toggled with Cmd+F on terminal tabs).
   private let termSearchBar = NSView()
   private let termSearchField = NSSearchField()
@@ -81,8 +84,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     return palette
   }
 
-  /// Persisted sidebar width used to restore after collapse/expand.
-  private var sidebarTargetWidth: CGFloat
 
   /// Allows a deferred close after dirty editors have been reviewed without
   /// re-triggering the same review loop.
@@ -191,7 +192,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     self.theme = theme
     self.core = core
     self.lspQueue = lspQueue
-    self.sidebarTargetWidth = CGFloat(settings.sidebarWidth)
     self.tabManager = TabManager(theme: theme, core: core)
     self.tabManager.windowModel = windowModel
     self.windowModel.theme = theme
@@ -222,7 +222,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // frame exists (first launch) or the name is taken by another window.
     window.setFrameAutosaveName("ImpulseMainWindow")
     window.isReleasedWhenClosed = false
-    window.toolbarStyle = .unified
     window.titlebarSeparatorStyle = .none
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
@@ -232,15 +231,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     super.init(window: window)
     window.delegate = self
 
-    // Build an NSToolbar with delegate for titlebar items (like Apple apps).
-    // Must be set AFTER super.init so self is available as delegate.
-    let toolbar = NSToolbar(identifier: "MainToolbar")
-    toolbar.displayMode = .iconOnly
-    toolbar.delegate = self
+    // Impulse owns its tabs; keep macOS window tabbing (and its "Show Tab
+    // Bar" / "Merge All Windows" menu items) out of the way.
+    window.tabbingMode = .disallowed
+
+    // An empty compact toolbar only to size the titlebar band so the traffic
+    // lights sit vertically centered in the chrome bar; the chrome itself is
+    // drawn by WorkbenchView under the transparent titlebar.
+    let toolbar = NSToolbar(identifier: "ImpulseChromeSizing")
+    toolbar.showsBaselineSeparator = false
     window.toolbar = toolbar
+    window.toolbarStyle = .unifiedCompact
 
     setupLayout()
-    updateSidebarToolbarItems()
     setupNotificationObservers()
     setupCustomKeybindingMonitor()
 
@@ -352,9 +355,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     windowModel.onTabPinToggled = { [weak self] index in
       self?.tabManager.togglePin(index: index)
     }
-    windowModel.onSidebarVisibilityChanged = { [weak self] _ in
-      self?.updateSidebarToolbarItems()
-    }
     windowModel.onPreviewToggle = { [weak self] in
       self?.previewButtonClicked(nil)
     }
@@ -462,180 +462,69 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     windowModel.onCreateFolder = { [weak self] in self?.newFolderAction(nil) }
     windowModel.onOpenDiffReview = { [weak self] in self?.openDiffReview() }
 
-    // Single NSHostingView replaces ALL AppKit chrome
-    let rootView = MainContentView(
-      windowModel: windowModel,
-      tabManagerContentView: tabManager.contentView
-    )
-    let hostingView = NSHostingView(rootView: rootView)
-    hostingView.translatesAutoresizingMaskIntoConstraints = false
-    contentView.addSubview(hostingView)
+    windowModel.onShowCommandPalette = { [weak self] in
+      self?.showCommandPalette()
+    }
+    windowModel.onToggleRightDock = { [weak self] in
+      self?.toggleRightDock()
+    }
 
+    // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
+    // chrome inside hosting views. See WorkbenchView.
+    let centerContent = ContentContainer(content: tabManager.contentView)
+    // Hosting views here are sized by AppKit constraints: no SwiftUI-driven
+    // min/max size (which clamps the window) and no safe-area padding (the
+    // titlebar band would otherwise push the chrome down by its height).
+    // The banner and input bar keep their intrinsic height.
+    let inputHost = WorkbenchHosting.make(TerminalInputHost(model: windowModel), intrinsicHeight: true)
+    let workbench = WorkbenchView(
+      model: windowModel,
+      titlebar: WorkbenchHosting.make(ChromeBarView(model: windowModel)),
+      banner: WorkbenchHosting.make(WorkbenchBanner(model: windowModel), intrinsicHeight: true),
+      statusBar: WorkbenchHosting.make(WorkbenchStatusBar(model: windowModel)),
+      leftDockContent: WorkbenchHosting.make(LeftDockView(model: windowModel)),
+      rightDockContent: nil,
+      bottomDockContent: nil
+    )
+    self.workbench = workbench
+    workbench.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(workbench)
     NSLayoutConstraint.activate([
-      hostingView.topAnchor.constraint(equalTo: contentView.topAnchor),
-      hostingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-      hostingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-      hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+      workbench.topAnchor.constraint(equalTo: contentView.topAnchor),
+      workbench.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      workbench.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      workbench.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+    ])
+
+    let center = workbench.centerColumn
+    for view in [centerContent, inputHost] as [NSView] {
+      view.translatesAutoresizingMaskIntoConstraints = false
+      center.addSubview(view)
+    }
+    NSLayoutConstraint.activate([
+      centerContent.topAnchor.constraint(equalTo: center.topAnchor),
+      centerContent.leadingAnchor.constraint(equalTo: center.leadingAnchor),
+      centerContent.trailingAnchor.constraint(equalTo: center.trailingAnchor),
+      inputHost.topAnchor.constraint(equalTo: centerContent.bottomAnchor),
+      inputHost.leadingAnchor.constraint(equalTo: center.leadingAnchor),
+      inputHost.trailingAnchor.constraint(equalTo: center.trailingAnchor),
+      inputHost.bottomAnchor.constraint(equalTo: center.bottomAnchor),
     ])
 
     setupTerminalSearchBar()
   }
 
-  // MARK: - NSToolbarDelegate
+  // MARK: - Workbench actions
 
-  private static let toolbarSidebarToggle = NSToolbarItem.Identifier("sidebarToggle")
-  private static let toolbarNewFile = NSToolbarItem.Identifier("newFile")
-  private static let toolbarNewFolder = NSToolbarItem.Identifier("newFolder")
-  private static let toolbarRefresh = NSToolbarItem.Identifier("refresh")
-  private static let toolbarCollapseAll = NSToolbarItem.Identifier("collapseAll")
-  private static let toolbarToggleHidden = NSToolbarItem.Identifier("toggleHidden")
-  private static let toolbarNewTab = NSToolbarItem.Identifier("newTab")
-
-  /// Card-surface themes (Harbor) use flat stroke icons on the canvas instead
-  /// of the system's bordered glass toolbar buttons.
-  private var flatToolbarItems: Bool {
-    windowModel.theme.surfaceStyle == "card"
+  func showCommandPalette() {
+    guard let window else { return }
+    commandPalette.show(relativeTo: window)
   }
 
-  func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    // File-tree actions and project search live in a SwiftUI bar inside the
-    // sidebar (below the vertical tabs). In the toolbar, the sidebar toggle
-    // sits at the left of the sidebar column and the new-tab "+" is pushed to
-    // its right edge (just before the tracking separator).
-    [
-      Self.toolbarSidebarToggle,
-      .flexibleSpace,
-      Self.toolbarNewTab,
-      .sidebarTrackingSeparator,
-    ]
-  }
-
-  func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    toolbarDefaultItemIdentifiers(toolbar)
-  }
-
-  func toolbar(
-    _ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-    willBeInsertedIntoToolbar flag: Bool
-  ) -> NSToolbarItem? {
-    switch itemIdentifier {
-
-    case Self.toolbarSidebarToggle:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(
-        systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
-      item.label = "Sidebar"
-      item.toolTip = "Toggle Sidebar"
-      item.target = self
-      item.action = #selector(toolbarSidebarToggle(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarNewFile:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")
-      item.label = "New File"
-      item.toolTip = "New File"
-      item.target = self
-      item.action = #selector(newFileAction(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarNewFolder:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(
-        systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")
-      item.label = "New Folder"
-      item.toolTip = "New Folder"
-      item.target = self
-      item.action = #selector(newFolderAction(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarRefresh:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
-      item.label = "Refresh"
-      item.toolTip = "Refresh File Tree"
-      item.target = self
-      item.action = #selector(refreshTreeAction(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarCollapseAll:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(
-        systemSymbolName: "arrow.up.left.and.arrow.down.right",
-        accessibilityDescription: "Collapse All")
-      item.label = "Collapse All"
-      item.toolTip = "Collapse All Folders"
-      item.target = self
-      item.action = #selector(collapseAllAction(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarToggleHidden:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(
-        systemSymbolName: windowModel.showHiddenFiles ? "eye" : "eye.slash",
-        accessibilityDescription: "Toggle Hidden Files")
-      item.label = "Hidden Files"
-      item.toolTip = windowModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
-      item.target = self
-      item.action = #selector(toggleHiddenAction(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    case Self.toolbarNewTab:
-      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
-      item.label = "New Tab"
-      item.toolTip = "New Terminal Tab"
-      item.target = self
-      item.action = #selector(toolbarNewTabClicked(_:))
-      item.isBordered = !flatToolbarItems
-      return item
-
-    default:
-      return nil
-    }
-  }
-
-  @objc private func toolbarSidebarToggle(_ sender: Any?) {
-    toggleSidebar()
-  }
-
-  @objc private func toolbarNewTabClicked(_ sender: Any?) {
-    tabManager.addTerminalTab()
-  }
-
-  // MARK: - Toolbar Validation
-
-  /// Toolbar item identifiers that are only shown when sidebar is visible.
-  /// Now empty — file-tree actions moved into the SwiftUI sidebar bar.
-  private static let sidebarOnlyItems: [NSToolbarItem.Identifier] = []
-
-  /// Inserts or removes file-tree toolbar items based on sidebar visibility.
-  private func updateSidebarToolbarItems() {
-    guard let toolbar = window?.toolbar else { return }
-    if windowModel.sidebarVisible {
-      // Insert after sidebarTrackingSeparator (index 1).
-      // Check if already present to avoid duplicates.
-      let existing = Set(toolbar.items.map(\.itemIdentifier))
-      for (offset, id) in Self.sidebarOnlyItems.enumerated() {
-        if !existing.contains(id) {
-          toolbar.insertItem(withItemIdentifier: id, at: 2 + offset)
-        }
-      }
-    } else {
-      // Remove in reverse order to keep indices stable.
-      let toRemove = Set(Self.sidebarOnlyItems)
-      for i in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
-        if toRemove.contains(toolbar.items[i].itemIdentifier) {
-          toolbar.removeItem(at: i)
-        }
-      }
-    }
+  /// Show or hide the right dock. Until a panel is installed there it has
+  /// nothing to show, so this is a no-op beyond flipping the flag.
+  func toggleRightDock() {
+    windowModel.rightDockVisible.toggle()
   }
 
   // MARK: - Debug Snapshot Actions
@@ -672,22 +561,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
   // MARK: - Actions
 
   @objc private func toggleHiddenAction(_ sender: Any?) {
-    // Use the WindowModel callback which rebuilds the SwiftUI tree + persists.
     windowModel.onToggleHidden?()
-    // Update toolbar button icon and tooltip to reflect new state.
-    updateToggleHiddenToolbarItem()
-  }
-
-  /// Updates the toggle-hidden toolbar item icon to match current state.
-  private func updateToggleHiddenToolbarItem() {
-    guard let toolbar = window?.toolbar else { return }
-    for item in toolbar.items where item.itemIdentifier == Self.toolbarToggleHidden {
-      let showing = windowModel.showHiddenFiles
-      item.image = NSImage(
-        systemSymbolName: showing ? "eye" : "eye.slash",
-        accessibilityDescription: "Toggle Hidden Files")
-      item.toolTip = showing ? "Hide Hidden Files" : "Show Hidden Files"
-    }
   }
 
   @objc private func collapseAllAction(_ sender: Any?) {
@@ -765,7 +639,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
   private func setSidebarVisible(_ visible: Bool) {
     windowModel.sidebarVisible = visible
-    updateSidebarToolbarItems()
   }
 
   // MARK: - Custom Keybinding Monitor
@@ -1765,6 +1638,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.tabManager.refreshSegmentLabels()
       }
     )
+    notificationObservers.append(
+      nc.addObserver(forName: .editorDirtyStateChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let editor = notification.object as? EditorTab,
+          self.tabManager.tabs.contains(where: {
+            if case .editor(let e) = $0 { return e === editor } else { return false }
+          })
+        else { return }
+        self.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalProgressChanged, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self,
+          let terminal = notification.object as? TerminalTab,
+          self.tabManager.ownsTerminal(terminal)
+        else { return }
+        self.tabManager.refreshSegmentLabels()
+      }
+    )
 
     // Terminal process terminated — close the tab.
     notificationObservers.append(
@@ -2509,7 +2403,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     if windowModel.showHiddenFiles != settings.sidebarShowHidden {
       windowModel.showHiddenFiles = settings.sidebarShowHidden
       fileTreeData.showHidden = settings.sidebarShowHidden
-      updateToggleHiddenToolbarItem()
       if !fileTreeRootPath.isEmpty {
         windowModel.onRefreshTree?()
       }
@@ -2898,31 +2791,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     next()
   }
 
-  private func currentSidebarWidth() -> CGFloat {
-    guard windowModel.sidebarVisible, let contentView = window?.contentView else {
-      return sidebarTargetWidth
-    }
-    guard let splitView = Self.firstSubview(of: NSSplitView.self, in: contentView),
-      let sidebar = splitView.arrangedSubviews.first,
-      sidebar.frame.width >= 180
-    else {
-      return sidebarTargetWidth
-    }
-    return sidebar.frame.width
-  }
-
-  private static func firstSubview<T: NSView>(of type: T.Type, in view: NSView) -> T? {
-    if let typed = view as? T {
-      return typed
-    }
-    for subview in view.subviews {
-      if let match = firstSubview(of: type, in: subview) {
-        return match
-      }
-    }
-    return nil
-  }
-
   // MARK: - NSWindowDelegate
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -2943,7 +2811,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     return false
   }
 
-  func windowDidResize(_ notification: Notification) {
+  func windowWillEnterFullScreen(_ notification: Notification) {
+    windowModel.isFullScreen = true
+    // The sizing toolbar has no items; in full screen it would only appear as
+    // an empty reveal strip over the chrome bar.
+    window?.toolbar?.isVisible = false
+  }
+
+  func windowDidExitFullScreen(_ notification: Notification) {
+    windowModel.isFullScreen = false
+    window?.toolbar?.isVisible = true
   }
 
   func windowDidBecomeKey(_ notification: Notification) {
@@ -2960,10 +2837,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // Persist restorable window state before tab cleanup clears it.
     if let delegate = NSApp.delegate as? AppDelegate {
-      sidebarTargetWidth = currentSidebarWidth()
-      windowModel.sidebarWidth = sidebarTargetWidth
       delegate.settings.sidebarVisible = windowModel.sidebarVisible
-      delegate.settings.sidebarWidth = Int(sidebarTargetWidth)
+      delegate.settings.sidebarWidth = Int(windowModel.sidebarWidth)
       delegate.persistSessionStateFromOpenWindows()
     }
 

@@ -47,7 +47,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private(set) var lspLanguage: String = "plaintext"
 
     /// Whether the content has been modified since the last save.
-    private(set) var isModified: Bool = false
+    private(set) var isModified: Bool = false {
+        didSet {
+            guard isModified != oldValue else { return }
+            NotificationCenter.default.post(name: .editorDirtyStateChanged, object: self)
+        }
+    }
 
     /// The sidebar root directory that was active when this editor tab was opened.
     /// Restored when the user switches back to this tab.

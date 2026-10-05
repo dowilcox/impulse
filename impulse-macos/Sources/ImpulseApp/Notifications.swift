@@ -106,6 +106,8 @@ extension Notification.Name {
     static let terminalAttentionChanged = Notification.Name("impulse.terminalAttentionChanged")
     /// Posted by a TerminalTab when its OSC 9;4 progress report changes.
     static let terminalProgressChanged = Notification.Name("impulse.terminalProgressChanged")
+    /// Posted by an EditorTab when its unsaved-changes state flips.
+    static let editorDirtyStateChanged = Notification.Name("impulse.editorDirtyStateChanged")
     /// Posted when a command block starts or ends in a terminal
     /// (userInfo["block"]: TerminalCommandBlock).
     static let terminalCommandBlockChanged = Notification.Name("impulse.terminalCommandBlockChanged")

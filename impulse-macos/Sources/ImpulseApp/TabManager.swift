@@ -940,8 +940,18 @@ final class TabManager: NSObject {
     let infos = tabs.enumerated().map { (i, tab) in
       let directory = tabDirectory(for: tab)
       var isDirectInteractionActive = false
-      if case .terminal(let container) = tab {
+      var progress: TerminalProgress? = nil
+      var isDirty = false
+      switch tab {
+      case .terminal(let container):
         isDirectInteractionActive = container.activeTerminal?.isDirectInteraction ?? false
+        if let report = container.activeTerminal?.progress, report.state != .hidden {
+          progress = report
+        }
+      case .editor(let editor):
+        isDirty = editor.isModified
+      default:
+        break
       }
       return TabDisplayInfo(
         id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
@@ -953,7 +963,9 @@ final class TabManager: NSObject {
         needsAttention: tab.needsAttention,
         gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },
         directory: directory.map(Self.abbreviateHomePath),
-        isDirectInteractionActive: isDirectInteractionActive
+        isDirectInteractionActive: isDirectInteractionActive,
+        progress: progress,
+        isDirty: isDirty
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)

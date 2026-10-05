@@ -43,12 +43,57 @@ enum DebugSnapshot {
     }
   }
 
+  /// Which views receive a click at points along the titlebar band and in the
+  /// content — verifies that the custom chrome under the transparent titlebar
+  /// actually gets mouse events.
+  private static func hitTestReport() -> String {
+    var out = ""
+    for (index, window) in NSApp.windows.enumerated() where window.isVisible {
+      guard let frameView = window.contentView?.superview else { continue }
+      let height = frameView.bounds.height
+      let width = frameView.bounds.width
+      let ys: [CGFloat] = [12, 20, 30]
+      let xs: [CGFloat] = [20, 95, 160, 320, 520, width / 2, width - 160, width - 30]
+      out += "window-\(index) frame=\(Int(width))x\(Int(height)) titlebarHeight=\(Int(height - window.contentLayoutRect.height))\n"
+      for y in ys {
+        for x in xs {
+          // Theme frame coordinates are y-up.
+          let point = NSPoint(x: x, y: height - y)
+          var chain: [String] = []
+          var view = frameView.hitTest(point)
+          while let current = view, chain.count < 4 {
+            chain.append(String(describing: type(of: current)))
+            view = current.superview
+          }
+          out += "  hit(\(Int(x)),\(Int(y))): \(chain.joined(separator: " < "))\n"
+        }
+      }
+      for name in ["closeButton", "miniaturizeButton", "zoomButton"] {
+        let button: NSButton?
+        switch name {
+        case "closeButton": button = window.standardWindowButton(.closeButton)
+        case "miniaturizeButton": button = window.standardWindowButton(.miniaturizeButton)
+        default: button = window.standardWindowButton(.zoomButton)
+        }
+        if let button, let superview = button.superview {
+          let frame = superview.convert(button.frame, to: frameView)
+          out += "  \(name): x=\(Int(frame.minX)) yFromTop=\(Int(height - frame.maxY)) h=\(Int(frame.height))\n"
+        }
+      }
+    }
+    return out
+  }
+
   /// Called once windows exist. Hides them, runs actions, captures, quits.
   static func run(actionHandler: @escaping (String) -> Void) {
     guard let outputDirectory else { return }
     try? FileManager.default.createDirectory(
       at: outputDirectory, withIntermediateDirectories: true)
-    for window in NSApp.windows { window.alphaValue = 0 }
+    for window in NSApp.windows {
+      window.alphaValue = 0
+      // Fixed size so snapshots are comparable run to run.
+      if window.isVisible { window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true) }
+    }
 
     // Run actions spaced out so each one's animations settle.
     for (index, action) in actions.enumerated() {
@@ -71,9 +116,10 @@ enum DebugSnapshot {
         let url = outputDirectory.appendingPathComponent(name)
         if (try? png.write(to: url)) != nil { written.append(name) }
       }
+      var report = "captured: \(written.joined(separator: ", "))\n"
+      report += hitTestReport()
       let log = outputDirectory.appendingPathComponent("snapshot.log")
-      try? "captured: \(written.joined(separator: ", "))\n".write(
-        to: log, atomically: true, encoding: .utf8)
+      try? report.write(to: log, atomically: true, encoding: .utf8)
       exit(0)
     }
   }

@@ -27,6 +27,10 @@ struct TabDisplayInfo: Identifiable {
   /// terminal's grid. When true the tab title shows the program name instead
   /// of the folder, so the subtitle shows the folder alongside the branch.
   var isDirectInteractionActive: Bool = false
+  /// OSC 9;4 progress reported by the terminal's foreground program.
+  var progress: TerminalProgress? = nil
+  /// Editor tab with unsaved changes.
+  var isDirty: Bool = false
 }
 
 // MARK: - Window Model
@@ -53,7 +57,21 @@ final class WindowModel {
   var sidebarWidth: CGFloat = 250
   var showHiddenFiles: Bool = false
 
-  // MARK: File tree (populated by MainWindowController)
+  // MARK: Workbench docks
+  //
+  // The left dock is the sidebar (`sidebarVisible` / `sidebarWidth` /
+  // `sidebarPanel`). The right and bottom docks host panels such as the live
+  // Review and Problems views.
+
+  var rightDockVisible: Bool = false
+  var rightDockWidth: CGFloat = Metrics.rightDockDefaultWidth
+  var bottomDockVisible: Bool = false
+  var bottomDockHeight: CGFloat = Metrics.bottomDockDefaultHeight
+  /// True while the window is in native full screen (traffic lights hidden,
+  /// so the titlebar drops their inset).
+  var isFullScreen: Bool = false
+
+    // MARK: File tree (populated by MainWindowController)
 
   var fileTreeNodes: [FileTreeNode] = []
   var fileTreeRootPath: String = ""
@@ -146,7 +164,11 @@ final class WindowModel {
 
   // MARK: Theme
 
-  var theme: Theme = ThemeManager.theme(forName: "nord")
+  var theme: Theme = ThemeManager.theme(forName: "nord") {
+    didSet { palette = ChromePalette(theme: theme) }
+  }
+  /// Chrome colors derived from `theme` (see `ChromePalette`).
+  private(set) var palette = ChromePalette(theme: ThemeManager.theme(forName: "nord"))
 
   // MARK: Icons
 
@@ -197,6 +219,8 @@ final class WindowModel {
   var onDismissSettingsWarning: (() -> Void)?
   /// Open the Review Changes tab for the current workspace git root.
   var onOpenDiffReview: (() -> Void)?
+  var onShowCommandPalette: (() -> Void)?
+  var onToggleRightDock: (() -> Void)?
 
   // MARK: Methods
 

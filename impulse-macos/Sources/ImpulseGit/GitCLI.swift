@@ -177,6 +177,12 @@ public enum GitCLI {
     var errData = Data()
     let errLines = LineSplitter(onLine: onOutputLine)
 
+    // Signal exit from the termination handler rather than waitUntilExit():
+    // waitUntilExit on a background thread can miss the exit of a child that
+    // finished quickly and then block forever.
+    let exited = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in exited.signal() }
+
     do {
       try process.run()
     } catch {
@@ -212,17 +218,16 @@ public enum GitCLI {
     }
 
     var timedOut = false
-    let exited = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .userInitiated).async {
-      process.waitUntilExit()
-      exited.signal()
-    }
     if exited.wait(timeout: .now() + timeout) == .timedOut {
       timedOut = true
       process.terminate()
-      exited.wait()
+      if exited.wait(timeout: .now() + 5) == .timedOut {
+        kill(process.processIdentifier, SIGKILL)
+        _ = exited.wait(timeout: .now() + 5)
+      }
     }
-    group.wait()
+    // Pipes close when the process (and any children holding them) exit.
+    _ = group.wait(timeout: .now() + 5)
 
     let stdout = String(decoding: outData, as: UTF8.self)
     let stderr = String(decoding: errData, as: UTF8.self)

@@ -119,18 +119,14 @@ public enum LoginShell {
     let stdout = Pipe()
     process.standardOutput = stdout
     process.standardError = FileHandle.nullDevice
+    let done = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in done.signal() }
     do {
       try process.run()
     } catch {
       return nil
     }
-    let deadline = DispatchTime.now() + timeout
-    let done = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
-      process.waitUntilExit()
-      done.signal()
-    }
-    if done.wait(timeout: deadline) == .timedOut {
+    if done.wait(timeout: .now() + timeout) == .timedOut {
       process.terminate()
       return nil
     }
