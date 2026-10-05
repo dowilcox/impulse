@@ -152,6 +152,9 @@ public enum ControlProtocol {
       {
         event = event ?? object["hook_event_name"] as? String ?? object["type"] as? String
         message = object["message"] as? String ?? object["last-assistant-message"] as? String
+        if let session = object["session_id"] as? String ?? object["thread-id"] as? String {
+          request.arguments["session"] = session
+        }
       }
       guard let event, !event.isEmpty else {
         return .failure(UsageError("usage: impulse hook <claude|codex> <event>"))

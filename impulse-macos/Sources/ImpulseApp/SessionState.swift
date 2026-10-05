@@ -227,12 +227,14 @@ struct SessionSurface: Codable {
   var column: Int?
   /// Terminal: file name of its saved output under `SessionScrollback`.
   var scrollback: String?
+  /// Terminal: a command that resumes the agent that was running in it.
+  var resume: String?
   /// Terminal output carried in memory (closed tabs, or loaded from
   /// `scrollback` on restore). Not written to the session file.
   var transcript: String?
 
   enum CodingKeys: String, CodingKey {
-    case kind, path, cwd, title, shell, line, column, scrollback
+    case kind, path, cwd, title, shell, line, column, scrollback, resume
   }
 
   static func terminal(cwd: String, title: String?, shell: String?, transcript: String? = nil)

@@ -33,6 +33,13 @@
       #expect(KnownAgents.match(executablePath: "/bin/zsh", arguments: ["-zsh"]) == nil)
     }
 
+    @Test func resumeCommands() {
+      #expect(KnownAgents.resumeCommand(agentID: "claude", session: "3f2a-91bc") == "claude --resume 3f2a-91bc")
+      #expect(KnownAgents.resumeCommand(agentID: "codex", session: "abc_1") == "codex resume abc_1")
+      #expect(KnownAgents.resumeCommand(agentID: "claude", session: "x; rm -rf ~") == nil)
+      #expect(KnownAgents.resumeCommand(agentID: "aider", session: "s") == nil)
+    }
+
     @Test func userAgentsExtendTheTable() {
       let custom = AgentKind(id: "mine", displayName: "Mine", names: ["my-agent"])
       #expect(

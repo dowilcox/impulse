@@ -23,6 +23,18 @@ public struct AgentKind: Equatable, Hashable, Codable, Sendable {
 }
 
 public enum KnownAgents {
+  /// The command that resumes an agent's session, when the agent supports
+  /// it.
+  public static func resumeCommand(agentID: String, session: String) -> String? {
+    let safe = session.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    guard safe, !session.isEmpty else { return nil }
+    switch agentID {
+    case "claude": return "claude --resume \(session)"
+    case "codex": return "codex resume \(session)"
+    default: return nil
+    }
+  }
+
   public static let builtIn: [AgentKind] = [
     AgentKind(
       id: "claude", displayName: "Claude Code", names: ["claude"],

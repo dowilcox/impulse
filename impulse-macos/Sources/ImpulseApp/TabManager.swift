@@ -1085,6 +1085,10 @@ final class TabManager: NSObject {
       )
       container.applyTheme(theme: terminalTheme, dividerColor: theme.bgHighlightColor)
       container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
+      // An agent was running here: offer to pick its session back up.
+      if let resume = surface.resume {
+        container.activeTerminal?.inputDraft = resume
+      }
       return .terminal(container)
     case "file":
       guard let path = surface.path, !openFilePaths.contains(path),
@@ -1168,9 +1172,13 @@ final class TabManager: NSObject {
       case .terminal(let container):
         guard let terminal = container.activeTerminal else { return nil }
         let cwd = terminal.currentWorkingDirectory
-        return .terminal(
+        var state = SessionSurface.terminal(
           cwd: cwd.isEmpty ? NSHomeDirectory() : cwd, title: nonEmpty(terminal.tabTitle),
           shell: nonEmpty(shellName), transcript: withScrollback ? terminal.transcript() : nil)
+        if terminal.agent != nil, let session = terminal.agentSession {
+          state.resume = KnownAgents.resumeCommand(agentID: session.agentID, session: session.id)
+        }
+        return state
       case .editor(let editor):
         guard let path = editor.filePath, FileManager.default.fileExists(atPath: path) else {
           return nil

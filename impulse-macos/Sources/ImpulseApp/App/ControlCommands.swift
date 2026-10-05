@@ -117,6 +117,9 @@ extension MainWindowController {
       default: hook = nil  // other events (tool use, subagents) don't change state
       }
       if let hook { terminal.agentHook(hook, agentID: agentID) }
+      if let agentID, let session = args["session"], !session.isEmpty {
+        terminal.agentSession = (agentID, session)
+      }
       reply(ControlResponse(ok: true))
 
     case "checkpoint":

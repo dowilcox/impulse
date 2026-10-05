@@ -39,6 +39,7 @@
     @Test func claudeHooksReadStdin() {
       let stop = parse(["hook", "claude", "Stop"], stdin: #"{"session_id":"s1","hook_event_name":"Stop"}"#)
       #expect(stop?.arguments["event"] == "Stop")
+      #expect(stop?.arguments["session"] == "s1")
       let notification = parse(
         ["hook", "claude"],
         stdin: #"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#)

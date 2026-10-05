@@ -72,6 +72,7 @@ extension TerminalTab {
     recordTurnBoundary(from: before, to: .exited)
     agent = nil
     agentFromHooks = false
+    agentSession = nil
     agentTickTimer?.invalidate()
     agentTickTimer = nil
     agentTickDeadline = nil
