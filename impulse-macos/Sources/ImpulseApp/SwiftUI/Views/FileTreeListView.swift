@@ -285,15 +285,29 @@ private struct FlatFileRowView: View {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Discard")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if ImpulseCore.gitDiscardChanges(filePath: node.path, workspaceRoot: model.fileTreeRootPath)
-        {
-          NotificationCenter.default.post(
-            name: .impulseReloadEditorFile,
-            object: nil,
-            userInfo: ["path": node.path]
-          )
-          model.onRefreshTree?()
+        alert.buttons.first?.hasDestructiveAction = true
+        let path = node.path
+        let root = model.fileTreeRootPath
+        let discard: (NSApplication.ModalResponse) -> Void = { response in
+          guard response == .alertFirstButtonReturn else { return }
+          // Checkout touches the index and the file; keep it off the main thread.
+          DispatchQueue.global(qos: .userInitiated).async {
+            let ok = ImpulseCore.gitDiscardChanges(filePath: path, workspaceRoot: root)
+            DispatchQueue.main.async {
+              guard ok else { return }
+              NotificationCenter.default.post(
+                name: .impulseReloadEditorFile,
+                object: nil,
+                userInfo: ["path": path]
+              )
+              model.onRefreshTree?()
+            }
+          }
+        }
+        if let window = NSApp.keyWindow {
+          alert.beginSheetModal(for: window, completionHandler: discard)
+        } else {
+          discard(alert.runModal())
         }
       }
     }

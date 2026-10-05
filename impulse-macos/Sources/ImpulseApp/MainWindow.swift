@@ -1494,7 +1494,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     notificationObservers.append(
       nc.addObserver(forName: .impulseReloadEditorFile, object: nil, queue: .main) {
         [weak self] notification in
-        guard let self, self.window?.isKeyWindow == true else { return }
+        // Not gated on key window: the file changed on disk, so every window
+        // with it open must reload.
+        guard let self else { return }
         if let path = notification.userInfo?["path"] as? String {
           // Find the open editor tab for this file and reload from disk.
           // Reading a single source file is fast enough to do synchronously

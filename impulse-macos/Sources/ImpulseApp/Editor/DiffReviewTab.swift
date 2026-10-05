@@ -446,6 +446,14 @@ final class DiffReviewTab: NSView, WKScriptMessageHandler, WKNavigationDelegate 
                             failAlert.runModal()
                         }
                     }
+                    if ok {
+                        // Open editor tabs still hold the discarded content.
+                        NotificationCenter.default.post(
+                            name: .impulseReloadEditorFile,
+                            object: nil,
+                            userInfo: ["path": (repo as NSString).appendingPathComponent(path)]
+                        )
+                    }
                     // Reload + re-render regardless: even on partial failure the
                     // file list should reflect the current state.
                     self.reloadAndRender()
