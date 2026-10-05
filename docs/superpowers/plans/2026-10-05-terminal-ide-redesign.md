@@ -561,7 +561,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - queued delivery while the agent is "working";
   - send to composer instead (setting).
   - Same path for blocks, editor selections, diagnostics and files ("Send to agent").
-- [ ] **`.impulse/project.toml`** (ImpulseKit parser plus JSON Schema): worktree location and copy list, scripts, actions, layouts with params. Per-repo trust prompt before running any command from it. Palette `a:` mode and an actions menu.
+- [x] **`.impulse/project.toml`** (ImpulseKit parser plus JSON Schema): worktree location and copy list, scripts, actions, layouts with params. Per-repo trust prompt before running any command from it. Palette `a:` mode and an actions menu. (no schema or layouts yet; worktree location stays the sibling folder)
 - [x] **Worktree tasks:** New task (branch name generator, worktree add, copy list / `.worktreeinclude`, setup scripts, open the layout with the agent command); Archive (dirty/unpushed check, archive scripts, worktree remove, restorable list).
 - [x] **Ports:** a process-tree walk per workspace (`proc_pidinfo` socket info) on a 2 s timer while visible. Chips in the status bar and workspace row. Optional `IMPULSE_PORT` block per workspace.
 
