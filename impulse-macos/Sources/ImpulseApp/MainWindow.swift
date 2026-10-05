@@ -343,6 +343,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onFocusTerminal = { [weak self] in
       self?.tabManager.selectedTerminal?.activeTerminal?.focus()
     }
+    windowModel.onSelectBlocks = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.beginBlockSelection() ?? false
+    }
     windowModel.onTabMoved = { [weak self] from, to in
       self?.tabManager.moveTab(from: from, to: to)
     }
@@ -868,6 +871,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showHistory()
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
+      } else if action.hasPrefix("select-blocks="), let terminal = tabManager.selectedTerminal?.activeTerminal {
+        terminal.beginBlockSelection()
+        for _ in 1..<max(1, Int(action.dropFirst(14)) ?? 1) { terminal.handleBlockSelectionKey(.up(extend: true)) }
       } else if action.hasPrefix("pr-threads=") {
         // A saved `gh api graphql` reviewThreads answer, applied to the open review.
         let data = FileManager.default.contents(atPath: String(action.dropFirst(11))) ?? Data()

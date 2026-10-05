@@ -596,6 +596,8 @@ struct TerminalContextBarView: View {
       return true
     case .alternateSubmit:
       return false
+    case .selectBlock:
+      return model.onSelectBlocks?() ?? false
     }
   }
 

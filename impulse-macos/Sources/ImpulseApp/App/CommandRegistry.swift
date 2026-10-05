@@ -121,6 +121,12 @@ enum CommandRegistry {
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },
       AppCommand(
+        id: "select_blocks", title: "Select Command Blocks", category: "Terminal",
+        keywords: ["block", "copy", "output"], icon: .squareTerminal, shortcut: "⌘↑"
+      ) { [weak controller] in
+        _ = controller?.tabManager.selectedTerminal?.activeTerminal?.beginBlockSelection()
+      },
+      AppCommand(
         id: "import_shell_history", title: "Import Shell History", category: "Terminal",
         keywords: ["zsh", "bash", "fish", "history"], icon: .history
       ) { [weak controller] in controller?.importShellHistory() },

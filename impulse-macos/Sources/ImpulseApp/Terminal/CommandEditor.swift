@@ -15,6 +15,8 @@ enum CommandEditorKey {
   /// ⌥⌘↩ in prompt mode (send without pressing Return). Not ⇧⌘↩: that's
   /// Zoom Pane.
   case alternateSubmit
+  /// ⌘↑: select the most recent command block.
+  case selectBlock
 }
 
 /// The terminal input: a multi-line shell command editor. Return runs the
@@ -290,6 +292,11 @@ final class CommandTextView: NSTextView {
     // ⌘↩ doesn't arrive as insertNewline; route it the same way.
     if flags.contains(.command), event.keyCode == 36 || event.keyCode == 76 {
       _ = coordinator?.textView(self, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+      return
+    }
+    if flags.subtracting(.numericPad).subtracting(.function) == .command, event.keyCode == 126,
+      coordinator?.parent.onKey(.selectBlock) == true
+    {
       return
     }
     if flags == .control, let characters = event.charactersIgnoringModifiers?.lowercased() {

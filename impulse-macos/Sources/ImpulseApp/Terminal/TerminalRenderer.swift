@@ -94,6 +94,22 @@ class TerminalRenderer: NSView {
     /// Hand a command block (command, exit status, output) to an agent.
     var onSendBlockToAgent: ((UInt64) -> Void)?
     var onRerunBlock: ((UInt64) -> Void)?
+
+    // MARK: Block Selection
+
+    enum BlockSelectionKey {
+        case up(extend: Bool), down(extend: Bool), copy, sendToAgent, exit
+    }
+    /// Blocks selected with the keyboard or ⌘-click (accent wash + stripe).
+    /// While non-empty, keys drive the selection instead of the shell.
+    var selectedBlockIds: Set<UInt64> = [] {
+        didSet {
+            guard selectedBlockIds != oldValue else { return }
+            for id in oldValue.symmetricDifference(selectedBlockIds) { invalidateBlockRows(id) }
+        }
+    }
+    var onBlockSelectionKey: ((BlockSelectionKey) -> Void)?
+    var onToggleBlockSelection: ((UInt64) -> Void)?
     private var contextBlockId: UInt64?
 
     // MARK: Block Hover Toolbar
@@ -973,7 +989,8 @@ class TerminalRenderer: NSView {
         var clearRect = dirtyRect
         if let blockOverlay {
             for block in blockOverlay.blocks
-            where block.id == hoveredBlockId || block.id == highlightedBlockId || block.failed {
+            where block.id == hoveredBlockId || block.id == highlightedBlockId || block.failed
+                || selectedBlockIds.contains(block.id) {
                 let bStart = max(Int(block.startRow), 0)
                 let bEnd = min(Int(block.endRow), rowCeiling - 1)
                 guard bEnd >= bStart, drawRows.overlaps(bStart..<(bEnd + 1)) else { continue }
@@ -1494,7 +1511,7 @@ class TerminalRenderer: NSView {
             // Blank prompt padding is collapsed away, so the real prompt row
             // already abuts the previous block — wash from there.
             let start = Int(block.startRow)
-            let isHighlighted = block.id == highlightedBlockId
+            let isHighlighted = block.id == highlightedBlockId || selectedBlockIds.contains(block.id)
             let isHovered = block.id == hoveredBlockId
             if isHovered, !isHighlighted,
                let hover = blockPromptFillColor.copy(alpha: 0.05) {
@@ -1546,7 +1563,8 @@ class TerminalRenderer: NSView {
 
             // Left-edge stripe for failed, running, and highlighted blocks,
             // drawn in the padding gutter so it never covers glyphs.
-            if block.failed || block.isRunning || block.id == highlightedBlockId {
+            if block.failed || block.isRunning || block.id == highlightedBlockId
+                || selectedBlockIds.contains(block.id) {
                 let color = block.failed ? blockFailedColor : blockAccentColor
                 context.setFillColor(color)
                 let visibleStart = max(startRow, 0)
@@ -2409,6 +2427,7 @@ class TerminalRenderer: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if !selectedBlockIds.isEmpty, handleBlockSelectionKey(event) { return }
         if eventMatchesKeybinding(event, id: "paste") {
             paste(event)
             return
@@ -2456,6 +2475,32 @@ class TerminalRenderer: NSView {
         }
     }
 
+    /// Keys while blocks are selected: ↑/↓ (⇧ extends), ⌘C copies, ⌘⇧A sends
+    /// to an agent, Esc returns to the input. Anything else (typing) leaves
+    /// the selection and goes to the input as usual.
+    private func handleBlockSelectionKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        switch (event.keyCode, flags) {
+        case (126, []), (126, [.shift]):
+            onBlockSelectionKey?(.up(extend: flags.contains(.shift)))
+        case (125, []), (125, [.shift]):
+            onBlockSelectionKey?(.down(extend: flags.contains(.shift)))
+        case (126, [.command]):
+            onBlockSelectionKey?(.up(extend: false))
+        case (53, _):
+            onBlockSelectionKey?(.exit)
+        case (_, [.command]) where event.charactersIgnoringModifiers == "c":
+            onBlockSelectionKey?(.copy)
+        case (_, [.command, .shift]) where event.charactersIgnoringModifiers?.lowercased() == "a":
+            onBlockSelectionKey?(.sendToAgent)
+        default:
+            if flags.contains(.command) { return false }
+            onBlockSelectionKey?(.exit)
+            return false
+        }
+        return true
+    }
+
     // Prevent the system beep for unhandled key events.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // performKeyEquivalent is offered to every view in the key window, not
@@ -2463,6 +2508,10 @@ class TerminalRenderer: NSView {
         // grid actually has focus — otherwise we'd steal Cmd+V/Cmd+C from a
         // focused text field (e.g. the command input bar).
         if window?.firstResponder === self {
+            if !selectedBlockIds.isEmpty, event.modifierFlags.contains(.command),
+               handleBlockSelectionKey(event) {
+                return true
+            }
             if eventMatchesKeybinding(event, id: "paste") {
                 paste(event)
                 return true
@@ -2589,6 +2638,14 @@ class TerminalRenderer: NSView {
             needsDisplay = true
             window?.invalidateCursorRects(for: self)
         }
+    }
+
+    /// The command block under the pointer (not the live prompt region).
+    private func blockId(at event: NSEvent) -> UInt64? {
+        guard blocksEnabled, let overlay = backend?.blockOverlay(), !overlay.altScreen else { return nil }
+        let rowI = Int32(gridPoint(from: event).row)
+        if let promptRow = overlay.promptRow, rowI >= promptRow { return nil }
+        return overlay.blocks.first { rowI >= $0.startRow && rowI <= $0.endRow }?.id
     }
 
     /// Track which command block the pointer is over (Warp-style hover wash).
@@ -2792,6 +2849,17 @@ class TerminalRenderer: NSView {
                 NSWorkspace.shared.open(url)
                 return
             }
+        }
+
+        // ⌘-click elsewhere on a block adds it to (or drops it from) the
+        // block selection; a plain click leaves the selection.
+        if event.modifierFlags.contains(.command), let id = blockId(at: event) {
+            onToggleBlockSelection?(id)
+            if !selectedBlockIds.isEmpty { window?.makeFirstResponder(self) }
+            return
+        }
+        if !selectedBlockIds.isEmpty {
+            onBlockSelectionKey?(.exit)
         }
 
         if reportMouseEvent(event, button: 0, motion: false, release: false) {

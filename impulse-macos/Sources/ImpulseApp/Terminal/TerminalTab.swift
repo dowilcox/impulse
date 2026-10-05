@@ -207,6 +207,12 @@ class TerminalTab: NSView {
     renderer.onRerunBlock = { [weak self] id in
       self?.rerunBlock(id: id)
     }
+    renderer.onBlockSelectionKey = { [weak self] key in
+      self?.handleBlockSelectionKey(key)
+    }
+    renderer.onToggleBlockSelection = { [weak self] id in
+      self?.toggleBlockSelection(id)
+    }
     renderer.onSendBlockToAgent = { [weak self] id in
       guard let self, let text = self.agentDescription(ofBlock: id) else { return }
       NotificationCenter.default.post(
@@ -322,6 +328,7 @@ class TerminalTab: NSView {
       renderer.commandRunning = true
       selectedCommandBlockId = nil
       renderer.highlightedBlockId = nil
+      if !blockSelection.isEmpty { endBlockSelection(focusInput: false) }
       renderer.needsDisplay = true
       NotificationCenter.default.post(
         name: .terminalCommandBlockChanged,
@@ -1306,6 +1313,109 @@ class TerminalTab: NSView {
   /// Make this terminal the first responder.
   func focus() {
     window?.makeFirstResponder(renderer)
+  }
+
+  // MARK: Block selection
+
+  /// Blocks picked with ⌘↑ / ↑↓ / ⇧ / ⌘-click, in block order.
+  private var blockSelection: [UInt64] = []
+  /// Where ↑/↓ move from, and ⇧ extends from.
+  private var blockSelectionCursor: UInt64?
+  private var blockSelectionAnchor: UInt64?
+
+  /// Select the most recent block and take keyboard focus for ↑/↓/⇧/⌘C/Esc.
+  /// False when there's nothing to select.
+  @discardableResult
+  func beginBlockSelection() -> Bool {
+    guard let last = navigableCommandBlocks().last else { return false }
+    selectBlocks(cursor: last.id, extend: false)
+    window?.makeFirstResponder(renderer)
+    return true
+  }
+
+  private func selectBlocks(cursor: UInt64, extend: Bool) {
+    let ids = navigableCommandBlocks().map(\.id)
+    if extend, let anchor = blockSelectionAnchor ?? blockSelectionCursor,
+      let a = ids.firstIndex(of: anchor), let b = ids.firstIndex(of: cursor)
+    {
+      blockSelection = Array(ids[min(a, b)...max(a, b)])
+      blockSelectionAnchor = anchor
+    } else {
+      blockSelection = [cursor]
+      blockSelectionAnchor = cursor
+    }
+    blockSelectionCursor = cursor
+    renderer.selectedBlockIds = Set(blockSelection)
+    if backend?.scrollToCommandBlock(id: cursor) == true { renderer.needsDisplay = true }
+  }
+
+  /// ⌘-click: add or remove one block.
+  private func toggleBlockSelection(_ id: UInt64) {
+    let ids = navigableCommandBlocks().map(\.id)
+    if blockSelection.contains(id) {
+      blockSelection.removeAll { $0 == id }
+    } else {
+      blockSelection.append(id)
+      blockSelection.sort { (ids.firstIndex(of: $0) ?? 0) < (ids.firstIndex(of: $1) ?? 0) }
+    }
+    blockSelectionCursor = blockSelection.contains(id) ? id : blockSelection.last
+    blockSelectionAnchor = blockSelectionCursor
+    renderer.selectedBlockIds = Set(blockSelection)
+    if blockSelection.isEmpty { endBlockSelection(focusInput: false) }
+  }
+
+  private func endBlockSelection(focusInput: Bool) {
+    blockSelection = []
+    blockSelectionCursor = nil
+    blockSelectionAnchor = nil
+    renderer.selectedBlockIds = []
+    if focusInput { NotificationCenter.default.post(name: .terminalRequestInputFocus, object: self) }
+  }
+
+  func handleBlockSelectionKey(_ key: TerminalRenderer.BlockSelectionKey) {
+    let ids = navigableCommandBlocks().map(\.id)
+    switch key {
+    case .up(let extend), .down(let extend):
+      let delta: Int = { if case .up = key { return -1 } else { return 1 } }()
+      guard let cursor = blockSelectionCursor, let index = ids.firstIndex(of: cursor) else {
+        _ = beginBlockSelection()
+        return
+      }
+      let next = index + delta
+      if next >= ids.count, !extend {
+        // Past the newest block: back to the input, like leaving a list.
+        endBlockSelection(focusInput: true)
+        backend?.scrollToBottom()
+        renderer.needsDisplay = true
+        return
+      }
+      guard ids.indices.contains(next) else { return }
+      selectBlocks(cursor: ids[next], extend: extend)
+    case .copy:
+      copySelectedBlocks()
+    case .sendToAgent:
+      let texts = blockSelection.compactMap { agentDescription(ofBlock: $0) }
+      guard !texts.isEmpty else { return }
+      NotificationCenter.default.post(
+        name: .impulseSendToAgent, object: self, userInfo: ["text": texts.joined(separator: "\n")])
+    case .exit:
+      endBlockSelection(focusInput: true)
+    }
+  }
+
+  /// ⌘C on selected blocks: each command and its output.
+  private func copySelectedBlocks() {
+    let parts = blockSelection.compactMap { id -> String? in
+      guard let block = block(withId: id) else { return nil }
+      let command = block.command?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let output = block.output.trimmingCharacters(in: .newlines)
+      let text = [command.isEmpty ? nil : "$ \(command)", output.isEmpty ? nil : output]
+        .compactMap { $0 }.joined(separator: "\n")
+      return text.isEmpty ? nil : text
+    }
+    guard !parts.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(parts.joined(separator: "\n\n"), forType: .string)
   }
 
   // MARK: Search
