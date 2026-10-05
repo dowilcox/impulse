@@ -87,6 +87,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Allows a deferred close after dirty editors have been reviewed without
   /// re-triggering the same review loop.
   private var closingAfterDirtyReview = false
+  /// The user confirmed closing over running processes (the sheet's answer).
+  private var closeRiskConfirmed = false
   private var reviewingDirtyWindowClose = false
 
   /// Local event monitor for custom keybinding interception.
@@ -2240,20 +2242,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let self, self.window?.isKeyWindow == true else { return }
         DispatchQueue.global(qos: .userInitiated).async {
           let result = ImpulseCore.lspInstall()
-          DispatchQueue.main.async {
-            let alert = NSAlert()
+          DispatchQueue.main.async { [weak self] in
             switch result {
             case .success(let path):
-              alert.messageText = "LSP Servers Installed"
-              alert.informativeText = "Web LSP servers installed to \(path)"
-              alert.alertStyle = .informational
+              self?.toasts.show(
+                Toast(kind: .success, message: "Language servers installed in \(TabManager.abbreviateHomePath(path))"))
             case .failure(let error):
-              alert.messageText = "LSP Install Failed"
-              alert.informativeText = error.message
-              alert.alertStyle = .warning
+              self?.toasts.show(Toast(kind: .warning, message: "Couldn't install language servers: \(error.message)", lifetime: 12))
             }
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
           }
         }
       }
@@ -3088,28 +3084,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
   }
 
+  /// ⌘G: the palette's line mode ("42" or "42:7").
   private func showGoToLineDialog() {
-    guard let editor = tabManager.selectedEditor else { return }
-
-    let alert = NSAlert()
-    alert.messageText = "Go to Line"
-    alert.informativeText = "Enter a line number:"
-    alert.alertStyle = .informational
-    alert.addButton(withTitle: "Go")
-    alert.addButton(withTitle: "Cancel")
-
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-    input.placeholderString = "Line number"
-    alert.accessoryView = input
-    alert.window.initialFirstResponder = input
-
-    let response = alert.runModal()
-    guard response == .alertFirstButtonReturn else { return }
-
-    let text = input.stringValue.trimmingCharacters(in: .whitespaces)
-    guard let lineNumber = UInt32(text), lineNumber > 0 else { return }
-    editor.goToPosition(line: lineNumber, column: 1)
-    editor.focus()
+    guard tabManager.selectedEditor != nil else { return }
+    showPalette(prefix: ":")
   }
 
   // MARK: - Font Size
@@ -3770,8 +3748,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     return input.summarize()
   }
 
+  /// True to close now. Otherwise a sheet asks about the running
+  /// processes, and confirming it closes the window.
   private func confirmClosingTerminalProcessesIfNeeded() -> Bool {
-    guard settings.confirmCloseWarnings else { return true }
+    if closeRiskConfirmed {
+      closeRiskConfirmed = false
+      return true
+    }
+    guard settings.confirmCloseWarnings, let window else { return true }
     guard let summary = closeRiskSummary(action: .closeWindow), summary.hasRisk else {
       return true
     }
@@ -3782,7 +3766,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     alert.alertStyle = .warning
     alert.addButton(withTitle: summary.destructiveActionTitle)
     alert.addButton(withTitle: summary.cancelTitle)
-    return alert.runModal() == .alertFirstButtonReturn
+    alert.beginSheetModal(for: window) { [weak self, weak window] response in
+      guard response == .alertFirstButtonReturn, let self, let window else { return }
+      // Unsaved files were already dealt with; close straight through.
+      self.closeRiskConfirmed = true
+      self.closingAfterDirtyReview = true
+      window.performClose(nil)
+    }
+    return false
   }
 
   private func closeRiskInformativeText(_ summary: CloseRiskSummary) -> String {

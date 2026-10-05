@@ -318,52 +318,53 @@ private struct FlatFileRowView: View {
 
     Button("Rename…") {
       let currentName = (node.path as NSString).lastPathComponent
+      guard let window = NSApp.keyWindow else { return }
       let alert = NSAlert()
-      alert.messageText = "Rename"
-      alert.informativeText = "Enter a new name:"
+      alert.messageText = "Rename \(currentName)"
       alert.addButton(withTitle: "Rename")
       alert.addButton(withTitle: "Cancel")
       let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
       input.stringValue = currentName
       alert.accessoryView = input
       alert.window.initialFirstResponder = input
-      guard alert.runModal() == .alertFirstButtonReturn else { return }
-      let newName = input.stringValue.trimmingCharacters(in: .whitespaces)
-      guard !newName.isEmpty, newName != currentName,
-        !newName.contains("/"), !newName.contains("\0"),
-        !newName.contains("..")
-      else { return }
-      let parentDir = (node.path as NSString).deletingLastPathComponent
-      let newPath = ((parentDir as NSString).appendingPathComponent(newName) as NSString)
-        .standardizingPath
-      let normalizedParent = (parentDir as NSString).standardizingPath
-      guard (newPath as NSString).deletingLastPathComponent == normalizedParent else { return }
-      do {
-        try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
-        model.onRefreshTree?()
-      } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Rename Failed"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.alertStyle = .warning
-        errAlert.runModal()
+      alert.beginSheetModal(for: window) { response in
+        guard response == .alertFirstButtonReturn else { return }
+        rename(to: input.stringValue.trimmingCharacters(in: .whitespaces), from: currentName)
       }
     }
 
     Button("Move to Trash", role: .destructive) {
+      let source = URL(fileURLWithPath: node.path)
+      var trashed: NSURL?
       do {
-        try FileManager.default.trashItem(
-          at: URL(fileURLWithPath: node.path),
-          resultingItemURL: nil
-        )
+        try FileManager.default.trashItem(at: source, resultingItemURL: &trashed)
         model.onRefreshTree?()
+        model.toasts.show(
+          Toast(
+            kind: .success, message: "Moved \(source.lastPathComponent) to the Trash", actionTitle: "Undo",
+            action: { [model] in
+              guard let trashed = trashed as URL? else { return }
+              try? FileManager.default.moveItem(at: trashed, to: source)
+              model.onRefreshTree?()
+            }, lifetime: 10))
       } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Move to Trash Failed"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.alertStyle = .warning
-        errAlert.runModal()
+        model.toasts.show(Toast(kind: .warning, message: "Couldn't move to the Trash: \(error.localizedDescription)"))
       }
+    }
+  }
+
+  private func rename(to newName: String, from currentName: String) {
+    guard !newName.isEmpty, newName != currentName, !newName.contains("/"), !newName.contains("\0"),
+      !newName.contains("..")
+    else { return }
+    let parentDir = (node.path as NSString).deletingLastPathComponent
+    let newPath = ((parentDir as NSString).appendingPathComponent(newName) as NSString).standardizingPath
+    guard (newPath as NSString).deletingLastPathComponent == (parentDir as NSString).standardizingPath else { return }
+    do {
+      try FileManager.default.moveItem(atPath: node.path, toPath: newPath)
+      model.onRefreshTree?()
+    } catch {
+      model.toasts.show(Toast(kind: .warning, message: "Couldn't rename: \(error.localizedDescription)"))
     }
   }
 }
@@ -502,26 +503,37 @@ enum FileDropHelper {
 
     let isInternal = normalizedSource.hasPrefix((projectRoot as NSString).standardizingPath)
 
-    // If destination exists, ask to replace.
+    // If destination exists, ask to replace (the old one goes to the Trash).
     if fm.fileExists(atPath: destPath) {
+      guard let window = NSApp.keyWindow else { return }
       let alert = NSAlert()
       alert.messageText = "An item named \"\(sourceName)\" already exists"
       alert.informativeText =
         isInternal
-        ? "Do you want to replace it? The original will be moved."
-        : "Do you want to replace it with the one you're copying?"
+        ? "Replace it? The existing one goes to the Trash and the original is moved."
+        : "Replace it with the one you're copying? The existing one goes to the Trash."
       alert.alertStyle = .warning
       alert.addButton(withTitle: "Replace")
       alert.addButton(withTitle: "Cancel")
-      guard alert.runModal() == .alertFirstButtonReturn else { return }
-      do {
-        try fm.removeItem(atPath: destPath)
-      } catch {
-        showError("Replace Failed", error.localizedDescription)
-        return
+      alert.beginSheetModal(for: window) { response in
+        guard response == .alertFirstButtonReturn else { return }
+        do {
+          try fm.trashItem(at: URL(fileURLWithPath: destPath), resultingItemURL: nil)
+        } catch {
+          showError("Couldn't replace \(sourceName)", error.localizedDescription)
+          return
+        }
+        place(normalizedSource, at: destPath, move: isInternal, onComplete: onComplete)
       }
+      return
     }
+    place(normalizedSource, at: destPath, move: isInternal, onComplete: onComplete)
+  }
 
+  private static func place(_ source: String, at destPath: String, move: Bool, onComplete: @escaping () -> Void) {
+    let fm = FileManager.default
+    let isInternal = move
+    let normalizedSource = source
     do {
       if isInternal {
         try fm.moveItem(atPath: normalizedSource, toPath: destPath)
@@ -534,11 +546,9 @@ enum FileDropHelper {
     }
   }
 
+  /// A warning toast in the front window.
   private static func showError(_ title: String, _ message: String) {
-    let alert = NSAlert()
-    alert.messageText = title
-    alert.informativeText = message
-    alert.alertStyle = .warning
-    alert.runModal()
+    (NSApp.keyWindow?.windowController as? MainWindowController)?.toasts.show(
+      Toast(kind: .warning, message: "\(title): \(message)", lifetime: 10))
   }
 }

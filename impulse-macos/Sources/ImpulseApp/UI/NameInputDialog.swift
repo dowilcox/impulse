@@ -1,9 +1,9 @@
 import AppKit
 
-/// Modal text-input dialog used for new file / new folder / rename actions.
+/// Text-input sheet used for new file / new folder / rename actions.
 enum NameInputDialog {
 
-    /// Show a modal alert with a text field for entering a name. Calls
+    /// Show a sheet with a text field for entering a name. Calls
     /// `completion` with the trimmed text only when the user confirms.
     static func show(
         title: String,
@@ -34,9 +34,16 @@ enum NameInputDialog {
             textField.currentEditor()?.selectedRange = NSRange(location: 0, length: stemLength)
         }
 
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            completion(textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn {
+                completion(textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        // A sheet on the front window; app-modal only when there's none.
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(alert.runModal())
         }
     }
 }

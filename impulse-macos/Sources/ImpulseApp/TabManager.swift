@@ -428,13 +428,11 @@ final class TabManager: NSObject {
 
     // Reject binary files.
     if Self.isBinaryFile(path) {
-      let alert = NSAlert()
-      alert.messageText = "Binary File"
-      alert.informativeText =
-        "The file \"\((path as NSString).lastPathComponent)\" appears to be a binary file and cannot be opened in the editor."
-      alert.alertStyle = .informational
-      alert.addButton(withTitle: "OK")
-      alert.runModal()
+      windowModel?.toasts.show(
+        Toast(
+          kind: .info, message: "\((path as NSString).lastPathComponent) is a binary file the editor can't show.",
+          actionTitle: "Open in Default App",
+          action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
       return
     }
 
