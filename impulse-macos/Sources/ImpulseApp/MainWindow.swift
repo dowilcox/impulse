@@ -3935,6 +3935,19 @@ extension MainWindowController: PaletteHost {
     workspaceSymbols(query: query, editor: editor, completion: completion)
   }
 
+  var paletteProjectActions: [ProjectConfig.Action] {
+    projectRoot.flatMap { projectConfig(root: $0)?.actions } ?? []
+  }
+
+  func paletteRunProjectAction(_ action: ProjectConfig.Action) {
+    guard let root = projectRoot else { return }
+    runProjectAction(action, root: root)
+  }
+
+  func paletteEditProjectConfig() {
+    editProjectConfig()
+  }
+
   func paletteOpenSetting(_ key: String) {
     openSettings(query: key)
   }

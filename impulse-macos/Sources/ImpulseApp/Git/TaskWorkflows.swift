@@ -159,8 +159,9 @@ extension MainWindowController {
       let taken = Set(GitOperations.branches(root: root).local)
       let include = try? String(
         contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
+      let projectCopies = ProjectConfig.load(root: root).flatMap { try? $0.config.get().worktreeCopy } ?? []
       let copies = WorktreeTasks.matchingFiles(
-        patterns: WorktreeTasks.includePatterns(fromFile: include), root: root)
+        patterns: WorktreeTasks.includePatterns(fromFile: include) + projectCopies, root: root)
       let agents = KnownAgents.builtIn.compactMap { kind -> (name: String, command: String)? in
         guard let name = kind.names.first, LoginShell.which(name) != nil else { return nil }
         return (kind.displayName, name)
@@ -244,8 +245,14 @@ extension MainWindowController {
           return
         }
         done()
-        self?.tabManager.openWorkspace(folder: path, initialCommand: command.isEmpty ? nil : command)
-        self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+        guard let self else { return }
+        // The project's setup script (once trusted) runs before the agent.
+        self.trustProjectConfig(root: path) { [weak self] config in
+          let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
+          self?.tabManager.openWorkspace(
+            folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
+          self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+        }
       }
     }
   }
@@ -341,17 +348,26 @@ extension MainWindowController {
     gitConfirm(title: "Archive \(workspace.name)?", message: message, confirmTitle: "Archive", destructive: true) {
       [weak self] confirmed in
       guard let self, confirmed else { return }
-      self.tabManager.ensureScratchWorkspace()
-      // Close the workspace first (it confirms unsaved files and running
-      // processes), then remove the folder once it's gone.
-      self.requestCloseWorkspace(id) { [weak self] in
-        self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0)
+      // The project's archive script (once trusted) runs before removal.
+      self.trustProjectConfig(root: root) { [weak self] config in
+        guard let self else { return }
+        self.tabManager.ensureScratchWorkspace()
+        // Close the workspace first (it confirms unsaved files and running
+        // processes), then remove the folder once it's gone.
+        self.requestCloseWorkspace(id) { [weak self] in
+          self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0, archiveScript: config?.archiveScript)
+        }
       }
     }
   }
 
-  private func removeTaskWorktree(root: String, branch: String, dirty: Bool) {
+  private func removeTaskWorktree(root: String, branch: String, dirty: Bool, archiveScript: String? = nil) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      if let archiveScript, !Self.runScript(archiveScript, in: root) {
+        DispatchQueue.main.async {
+          self?.toasts.show(Toast(kind: .warning, message: "The archive script failed; archiving anyway."))
+        }
+      }
       // Run git from the main checkout: the worktree is about to vanish.
       let mainRoot =
         GitClient.commonGitDirectory(forPath: root).map { ($0 as NSString).deletingLastPathComponent }

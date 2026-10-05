@@ -129,6 +129,14 @@ enum CommandRegistry {
         keywords: ["workspace", "function", "class", "#"], icon: .code
       ) { [weak controller] in controller?.showPalette(prefix: "#") },
       AppCommand(
+        id: "project_actions", title: "Run Project Action…", category: "Workspaces",
+        keywords: ["task", "script", "run", "project.toml", "a:"], icon: .play
+      ) { [weak controller] in controller?.showPalette(prefix: "a:") },
+      AppCommand(
+        id: "edit_project_config", title: "Edit Project Actions", category: "Workspaces",
+        keywords: ["project.toml", "scripts", "worktree"], icon: .pencil
+      ) { [weak controller] in controller?.editProjectConfig() },
+      AppCommand(
         id: "show_problems", title: "Show Problems", category: "Editor",
         keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert
       ) { [weak controller] in controller?.showProblems() },

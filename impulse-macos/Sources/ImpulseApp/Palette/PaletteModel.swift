@@ -33,6 +33,10 @@ protocol PaletteHost: AnyObject {
   func paletteOpenSetting(_ key: String)
   /// The focused editor's symbols (nil: no editor or no language server).
   func paletteDocumentSymbols(_ completion: @escaping ([OutlineSymbol]?) -> Void)
+  /// The project's `.impulse/project.toml` actions, and running one.
+  var paletteProjectActions: [ProjectConfig.Action] { get }
+  func paletteRunProjectAction(_ action: ProjectConfig.Action)
+  func paletteEditProjectConfig()
   /// Project symbols matching `query` from the focused editor's language
   /// server (nil: no editor or no server).
   func paletteWorkspaceSymbols(
@@ -65,7 +69,7 @@ struct PaletteRow: Identifiable {
 final class PaletteModel {
   enum Mode: Equatable {
     case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, symbols
-    case workspaceSymbols, help
+    case workspaceSymbols, actions, help
 
     var placeholder: String {
       switch self {
@@ -81,6 +85,7 @@ final class PaletteModel {
       case .settings: return "Find a setting…"
       case .symbols: return "Go to symbol in this file…"
       case .workspaceSymbols: return "Go to symbol in the project…"
+      case .actions: return "Run a project action…"
       case .help: return "Palette modes"
       }
     }
@@ -99,6 +104,7 @@ final class PaletteModel {
       case .settings: return .settings
       case .symbols: return .code
       case .workspaceSymbols: return .code
+      case .actions: return .play
       case .help: return .info
       }
     }
@@ -186,6 +192,7 @@ final class PaletteModel {
     if query.hasPrefix("set:") { return (.settings, String(query.dropFirst(4))) }
     if query.hasPrefix("@") { return (.symbols, String(query.dropFirst())) }
     if query.hasPrefix("#") { return (.workspaceSymbols, String(query.dropFirst())) }
+    if query.hasPrefix("a:") { return (.actions, String(query.dropFirst(2))) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -210,6 +217,7 @@ final class PaletteModel {
     case .settings: refreshSettings(trimmed)
     case .symbols: refreshSymbols(trimmed)
     case .workspaceSymbols: refreshWorkspaceSymbols(trimmed)
+    case .actions: refreshActions(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -659,6 +667,29 @@ final class PaletteModel {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
   }
 
+  private func refreshActions(_ term: String) {
+    let actions = host?.paletteProjectActions ?? []
+    let ranked = FuzzyMatcher.rank(actions, query: term) { $0.name }
+    rows = ranked.map { entry in
+      let action = entry.item
+      return PaletteRow(
+        id: "action:" + action.name, glyph: .lucide(.play), title: action.name, highlights: entry.match.positions,
+        subtitle: action.command, trailing: action.open == "right" || action.open == "down" ? "split" : nil
+      ) { [weak self] in
+        self?.host?.paletteRunProjectAction(action)
+      }
+    }
+    rows.append(
+      PaletteRow(
+        id: "action-edit", glyph: .lucide(.pencil),
+        title: actions.isEmpty ? "Add project actions…" : "Edit project actions…",
+        subtitle: ProjectConfig.relativePath
+      ) { [weak self] in
+        self?.host?.paletteEditProjectConfig()
+      })
+    emptyMessage = ""
+  }
+
   private static func icon(forSymbolKind kind: Int) -> LucideIcon {
     switch kind {
     case 5, 10, 11, 23, 26: return .layers  // class, enum, interface, struct, type parameter
@@ -791,6 +822,7 @@ final class PaletteModel {
       ("set:", "Find a setting", .settings),
       ("@", "Go to a symbol in this file", .code),
       ("#", "Go to a symbol in the project", .code),
+      ("a:", "Run a project action", .play),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(
