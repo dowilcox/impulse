@@ -3475,3 +3475,24 @@ extension TerminalRenderer: NSTextInputClient {
         return NSNotFound
     }
 }
+
+// MARK: - Services
+
+/// Selected terminal text can go to the Services menu (Look Up, Search
+/// with…, Make New Sticky Note, …).
+extension TerminalRenderer: NSServicesMenuRequestor {
+    override func validRequestor(
+        forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?
+    ) -> Any? {
+        if sendType == .string, returnType == nil, !(backend?.selectedText()?.isEmpty ?? true) {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard types.contains(.string), let text = backend?.selectedText(), !text.isEmpty else { return false }
+        pboard.clearContents()
+        return pboard.setString(text, forType: .string)
+    }
+}

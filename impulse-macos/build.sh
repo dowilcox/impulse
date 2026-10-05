@@ -615,6 +615,26 @@ cat > "${CONTENTS}/Info.plist" << PLIST
             </dict>
         </dict>
     </array>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>New Impulse Workspace Here</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>openWorkspace</string>
+            <key>NSPortName</key>
+            <string>${APP_NAME}</string>
+            <key>NSRequiredContext</key>
+            <dict/>
+            <key>NSSendFileTypes</key>
+            <array>
+                <string>public.folder</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

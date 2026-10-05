@@ -47,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
+    NSApp.servicesProvider = serviceProvider
+    NSApp.registerServicesMenuSendTypes([.string], returnTypes: [])
     EditorTab.jsonSchemaProvider = { path in
       guard path == Settings.filePath.path,
         let data = try? JSONSerialization.data(
@@ -482,6 +484,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   // MARK: Menu Actions
+
+  private let serviceProvider = ServiceProvider()
+
+  /// A folder from the Finder service: a workspace in the front window.
+  func openWorkspaceFromService(_ path: String) {
+    let controller =
+      windowControllers.first { $0.window?.isKeyWindow == true } ?? windowControllers.first ?? openNewWindow()
+    controller.window?.makeKeyAndOrderFront(nil)
+    controller.tabManager.openWorkspace(folder: path)
+  }
 
   /// ⌘, opens Settings as a tab in the front window.
   @objc func showPreferences(_ sender: Any?) {
