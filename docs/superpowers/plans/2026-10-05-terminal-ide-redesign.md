@@ -84,7 +84,7 @@ foundations ├──────────── Track B: git ─────
 - [x] **File-tree discard runs on the main thread.**
   - Problem: it runs after `runModal` (`FileTreeListView.swift:276-296`).
   - Fix: move it to a background queue.
-- [ ] **Review discard doesn't reload editors.**
+- [x] **Review discard doesn't reload editors.**
   - Problem: discarding from the review leaves open editor tabs stale.
   - Fix: post `.impulseReloadEditorFile` like the file-tree path does (`DiffReviewTab.swift:416`).
 - [x] **Review sticky header never sticks.**
@@ -97,7 +97,7 @@ foundations ├──────────── Track B: git ─────
   - Problem: `ImpulseGit/Status.swift:74,151` passes `GIT_STATUS_OPT_UPDATE_INDEX` on background polls, which contends with agents' `index.lock`.
   - Fix: drop the flag for background refreshes and keep it only for explicit user refresh. Re-run the parity fixtures; status output must not change.
 - [x] **Session restore drops pinned state.** Re-apply pinned state, and fix the editor/terminal insertion-order drift (`MainWindow.swift:2643-2681`).
-- [ ] **Remove dead code:**
+- [x] **Remove dead code:**
   - toolbar items `newFile/newFolder/refresh/collapseAll/toggleHidden` and `sidebarOnlyItems` (`MainWindow.swift:483-674`);
   - `WindowModel.commandPaletteVisible`;
   - `IconCache` `toolbar-*` SVGs;
@@ -355,7 +355,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - retention pruning.
   - Tests: restore after a discard reproduces the exact pre-discard workdir and index.
 - [x] **Blame:** whole-file blame cached by blob id; `lineBlame` becomes a lookup. Keep its fixture.
-- [ ] **Log and graph data:** a revwalk with topo+time order, parents and ref decorations, paged. Oracle: `git log --format=%H%x00%P%x00%D --topo-order`.
+- [x] **Log and graph data:** a revwalk with topo+time order, parents and ref decorations, paged. Oracle: `git log --format=%H%x00%P%x00%D --topo-order`. (read with the git CLI in `GitLog`, paged, tested against real repositories)
 - [x] **App-side `GitRepositoryState`** (`@Observable`, one per repo, shared across windows):
   - fed by snapshot plus watcher;
   - replaces the branch cache (`MainWindow.swift:2600`), the 15 s branch TTL (`TabManager.swift:978`), `refreshReviewSummary` (`MainWindow.swift:982`) and the file-tree git polling.
@@ -473,7 +473,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - optional import of zsh/bash/fish history.
   - Rust `history.rs` stays the per-session ranking source, or moves to Swift. Decide in the task and record the decision.
 - [x] **⌃R history panel:** fuzzy, with filters for cwd, repo, failed and today. Replaces `TerminalHistoryPicker`. Has an option to defer to the shell's own ⌃R binding (atuin/fzf).
-- [ ] **Classic mode** (D6) as a first-class setting: "Input: Impulse editor | Shell prompt". Wire OSC 133;B so prompt and command are separable.
+- [x] **Classic mode** (D6) as a first-class setting: "Input: Impulse editor | Shell prompt". Wire OSC 133;B so prompt and command are separable. (the Input bar setting in Settings › Terminal turns the Impulse editor off)
 
 ### 5.2 Blocks v2 (§6.3)
 
