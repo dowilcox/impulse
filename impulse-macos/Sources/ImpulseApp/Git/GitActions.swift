@@ -301,7 +301,8 @@ struct GitActions {
   }
 
   /// Push; publishes the branch to the first remote when it has no upstream.
-  func push(forceWithLease: Bool = false) {
+  /// `then` runs after a successful push.
+  func push(forceWithLease: Bool = false, then: (() -> Void)? = nil) {
     let repository = self.repository
     let snapshot = repository.snapshot
     let needsUpstream = snapshot?.upstream == nil
@@ -317,6 +318,7 @@ struct GitActions {
       case .success:
         host?.toasts.show(
           Toast(kind: .success, message: needsUpstream ? "Published \(branch ?? "branch")" : "Pushed"))
+        then?()
       case .failure(let error):
         host?.gitPresentError(error, title: needsUpstream ? "Couldn't publish" : "Couldn't push")
       }

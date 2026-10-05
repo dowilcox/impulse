@@ -70,6 +70,10 @@ enum CommandRegistry {
         keywords: ["github", "gh", "pr", "review"], icon: .gitPullRequest
       ) { [weak controller] in controller?.openOrCreatePullRequest() },
       AppCommand(
+        id: "create_draft_pr", title: "Create Draft Pull Request", category: "Git",
+        keywords: ["github", "gh", "pr", "draft"], icon: .gitPullRequest
+      ) { [weak controller] in controller?.createDraftPullRequest() },
+      AppCommand(
         id: "git_history", title: "Show Git History", category: "Git",
         keywords: ["log", "commits", "graph", "blame"], icon: .history
       ) { [weak controller] in controller?.showHistory() },

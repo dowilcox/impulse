@@ -35,6 +35,21 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
   /// Show a notification for a terminal. `thread` groups a workspace's
   /// notifications.
   func post(title: String, subtitle: String?, body: String, terminalID: UUID, thread: String) {
+    let id = UUID().uuidString
+    delivered[terminalID.uuidString, default: []].append(id)
+    post(
+      id: id, title: title, subtitle: subtitle, body: body,
+      userInfo: ["terminal": terminalID.uuidString], thread: thread)
+  }
+
+  /// A notification that opens `url` when clicked (e.g. a pull request).
+  func post(title: String, subtitle: String?, body: String, url: String, thread: String) {
+    post(id: UUID().uuidString, title: title, subtitle: subtitle, body: body, userInfo: ["url": url], thread: thread)
+  }
+
+  private func post(
+    id: String, title: String, subtitle: String?, body: String, userInfo: [String: String], thread: String
+  ) {
     guard let center else { return }
     let content = UNMutableNotificationContent()
     content.title = title
@@ -42,10 +57,8 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
     content.body = body
     content.threadIdentifier = thread
     content.sound = .default
-    content.userInfo = ["terminal": terminalID.uuidString]
-    let id = UUID().uuidString
+    content.userInfo = userInfo
     let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-    delivered[terminalID.uuidString, default: []].append(id)
 
     switch authorization {
     case true?:
@@ -96,7 +109,12 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let terminal = response.notification.request.content.userInfo["terminal"] as? String
+    let url = (response.notification.request.content.userInfo["url"] as? String).flatMap(URL.init(string:))
     DispatchQueue.main.async {
+      if let url, url.scheme == "https" {
+        NSWorkspace.shared.open(url)
+        return completionHandler()
+      }
       NSApp.activate(ignoringOtherApps: true)
       if let terminal {
         NotificationCenter.default.post(

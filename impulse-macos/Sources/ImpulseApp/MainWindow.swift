@@ -1844,6 +1844,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .pullRequestChecksFinished, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let repository = notification.object as? GitRepositoryState,
+          self.windowModel.repository === repository, self.window?.isKeyWindow == true,
+          let info = notification.userInfo
+        else { return }
+        let url = (info["url"] as? String).flatMap(URL.init(string:))
+        self.toasts.show(
+          Toast(
+            kind: info["passed"] as? Bool == true ? .success : .warning,
+            message: "\(info["title"] as? String ?? "Checks finished") · \(info["body"] as? String ?? "")",
+            actionTitle: url == nil ? nil : "Open",
+            action: url.map { url in { NSWorkspace.shared.open(url) } }, lifetime: 12))
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .impulseManageBranches, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.presentBranchManager()
@@ -3139,6 +3155,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       if !ok {
         self?.toasts.show(
           Toast(kind: .warning, message: "gh couldn't start a pull request (is the branch pushed and gh signed in?)."))
+      }
+    }
+  }
+
+  /// A draft PR for the current branch, titled and described from its
+  /// commits. The branch must be pushed (offers to publish it first).
+  func createDraftPullRequest() {
+    guard let repository = windowModel.repository, let snapshot = repository.snapshot else {
+      toasts.show(Toast(kind: .info, message: "Not in a git repository."))
+      return
+    }
+    if let pr = repository.pullRequest, pr.state == .open {
+      toasts.show(Toast(kind: .info, message: "This branch already has #\(pr.number)."))
+      return
+    }
+    guard snapshot.upstream != nil else {
+      toasts.show(
+        Toast(
+          kind: .info, message: "Publish the branch first, then create the pull request.",
+          actionTitle: "Publish",
+          action: { [weak self] in
+            guard let self else { return }
+            GitActions(repository: repository, host: self).push { [weak self] in
+              self?.createDraftPullRequest()
+            }
+          }, lifetime: 12))
+      return
+    }
+    toasts.show(Toast(kind: .info, message: "Creating a draft pull request…"))
+    PullRequestMonitor.shared.createDraft(root: repository.root) { [weak self] result in
+      switch result {
+      case .success(let url):
+        PullRequestMonitor.shared.refresh(repository, force: true)
+        self?.toasts.show(
+          Toast(
+            kind: .success, message: "Created a draft pull request", actionTitle: url.isEmpty ? nil : "Open",
+            action: URL(string: url).map { link in { NSWorkspace.shared.open(link) } }, lifetime: 12))
+      case .failure(let message):
+        self?.toasts.show(Toast(kind: .warning, message: "gh: \(message)", lifetime: 12))
       }
     }
   }
