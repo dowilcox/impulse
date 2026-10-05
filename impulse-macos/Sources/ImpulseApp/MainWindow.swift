@@ -654,6 +654,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("run=") {
+        tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
+      } else if action == "newtab" {
+        tabManager.addTerminalTab()
       } else if action.hasPrefix("pane=") {
         performPaneCommand(String(action.dropFirst(5)))
       } else {

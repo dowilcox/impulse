@@ -57,7 +57,13 @@ class TerminalRenderer: NSView {
 
     // MARK: Public Properties
 
-    var backend: TerminalBackend?
+    var backend: TerminalBackend? {
+        didSet {
+            // A shell started before its tab was ever shown (restored or
+            // background tabs) is polled by the hub until it is.
+            if backend != nil, window == nil { TerminalSessionHub.shared.add(self) }
+        }
+    }
     private(set) var fontMetrics: TerminalFontMetrics
     let padding: CGFloat = 12
 
@@ -435,11 +441,21 @@ class TerminalRenderer: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
+            TerminalSessionHub.shared.remove(self)
             startRefreshLoop()
             needsDisplay = true
         } else {
             stopRefreshLoop()
+            // Off screen (another tab or workspace): keep its events flowing.
+            if backend != nil { TerminalSessionHub.shared.add(self) }
         }
+    }
+
+    /// One poll on behalf of `TerminalSessionHub` while off screen. Returns
+    /// whether anything happened, or nil once the terminal has shut down.
+    func pollInBackground() -> Bool? {
+        guard let backend, !backend.isShutdown else { return nil }
+        return tick()
     }
 
     // MARK: Adaptive Refresh Loop
