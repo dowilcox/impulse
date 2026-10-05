@@ -477,17 +477,17 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 5.2 Blocks v2 (§6.3)
 
-- [ ] **Native block header rows** with inline chips: exit, duration, cwd when changed, branch. Hover toolbar: copy, rerun, filter, bookmark, send to agent (M6), overflow.
-- [ ] **Block selection:** ⌘↑, ↑/↓, ⇧-extend, ⌘-click; copy selection; Esc back to input.
-- [ ] **Fold/collapse output**; "last N lines" mode.
-- [ ] **Block filter** (⌥⇧F): regex, case, invert, context lines. Rendering filters rows in the overlay layer and is non-destructive.
-- [ ] **Find v2:**
+- [x] **Native block header rows** with inline chips: exit, duration, cwd when changed, branch. Hover toolbar: copy, rerun, filter, bookmark, send to agent (M6), overflow. (exit/duration chips on the prompt row; cwd and branch come from the shell's own prompt; toolbar has copy, run again, send to agent and a menu with bookmark)
+- [x] **Block selection:** ⌘↑, ↑/↓, ⇧-extend, ⌘-click; copy selection; Esc back to input.
+- [ ] **Fold/collapse output**; "last N lines" mode. (not started: the renderer draws only the viewport rows, so folding needs virtualized rendering first)
+- [ ] **Block filter** (⌥⇧F): regex, case, invert, context lines. Rendering filters rows in the overlay layer and is non-destructive. (not started: same virtualization dependency as folding)
+- [x] **Find v2:** (block scope not done)
   - match count, case/regex/whole-word toggles, block scope;
   - themed bar in the pane header instead of the AppKit `NSSearchField` bar (`MainWindow.swift:793-980`);
   - search results stop being discarded (`TerminalBackend.swift:681-684`).
-- [ ] **Bookmarks** (⌘⇧K) with scrollbar markers and ⌥↑/↓.
-- [ ] **Rendered-text block output** via the FFI from 2.3. `command_blocks()` stops serializing all output on every call: add `impulse_terminal_command_block(id)` and a metadata-only list.
-- [ ] **Performance:**
+- [x] **Bookmarks** (⌘⇧K) with scrollbar markers and ⌥↑/↓. (ribbon on the block; next/previous are menu commands, unbound by default; no scrollbar to mark)
+- [x] **Rendered-text block output** via the FFI from 2.3. `command_blocks()` stops serializing all output on every call: add `impulse_terminal_command_block(id)` and a metadata-only list.
+- [x] **Performance:**
   - `block_overlay()` gets a generation counter, so it is cached until blocks or viewport change, instead of JSON every frame and every mouse move (`TerminalRenderer.swift:2361-2380`);
   - `mode()` is cached;
   - `gridPoint()` stops taking a full snapshot per mouse event (`TerminalRenderer.swift:2793-2802`).
@@ -495,7 +495,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 ### 5.3 Links, hints, protocols, notifications
 
 - [x] **Path detection** (`file:line:col` and common stack-trace formats) on hover, opening in the Impulse editor. OSC 8 `file://` routes to the editor.
-- [ ] **Hints mode** (⌘⇧Space): labels for URLs, paths, SHAs and ports; open, copy or insert.
+- [x] **Hints mode** (⌘⇧Space): labels for URLs, paths, SHAs and ports; open, copy or insert.
 - [ ] **Protocols:**
   - OSC 9;4 progress UI (tab ring, sidebar);
   - OSC 21337 status;
