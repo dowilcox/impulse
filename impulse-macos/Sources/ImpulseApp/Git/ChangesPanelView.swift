@@ -225,6 +225,7 @@ private struct ChangesPanelContent: View {
     if snapshot.stashCount > 0 {
       SectionHeader(title: "Stashes", count: snapshot.stashCount, isExpanded: $stashesExpanded)
         .onChange(of: stashesExpanded) { _, expanded in if expanded { loadStashes() } }
+        .onChange(of: snapshot.stashCount) { _, _ in if stashesExpanded { loadStashes() } }
       if stashesExpanded {
         ForEach(stashes, id: \.index) { entry in
           StashRow(entry: entry, actions: actions) {

@@ -548,4 +548,57 @@
       #expect(byName["open-topic"]?.upstream == nil)
     }
   }
+
+  struct StashUndoTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func droppedStashCanBeStoredBack() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "first")
+      try repo.write("a.txt", "two\n")
+      try repo.write("fresh.txt", "new\n")
+      _ = try GitOperations.stash(message: "wip", root: repo.root).get()
+
+      let sha = try #require(GitOperations.stashCommit(0, root: repo.root))
+      #expect(GitOperations.stashUntrackedPaths(sha, root: repo.root) == ["fresh.txt"])
+      #expect(GitOperations.stashPaths(sha, root: repo.root) == ["a.txt", "fresh.txt"])
+      _ = try GitOperations.stashDrop(0, root: repo.root).get()
+      #expect(GitOperations.stashList(root: repo.root).isEmpty)
+
+      _ = try GitOperations.stashStore(sha, message: "On main: wip", root: repo.root).get()
+      let restored = GitOperations.stashList(root: repo.root)
+      #expect(restored.map(\.message) == ["On main: wip"])
+      #expect(GitOperations.stashCommit(0, root: repo.root) == sha)
+      #expect(GitOperations.stashCommit(3, root: repo.root) == nil)
+    }
+
+    @Test func undoingAPopRestoresOnlyTheStashsFiles() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n", "b.txt": "b\n"], message: "first")
+      try repo.write("a.txt", "stashed\n")
+      try repo.write("fresh.txt", "new\n")
+      _ = try GitOperations.stash(message: "wip", root: repo.root).get()
+      try repo.write("a.txt", "before pop\n")
+      _ = try GitOperations.stash(message: "keep", root: repo.root).get()
+      // stash@{0} = keep, stash@{1} = wip; pop wip onto a clean tree.
+      let sha = try #require(GitOperations.stashCommit(1, root: repo.root))
+      let snapshot = try SafetySnapshots.create(reason: "pop stash", root: repo.root).get()
+      _ = try GitOperations.stashApply(1, pop: true, root: repo.root).get()
+      #expect(try repo.git("show", ":a.txt") == "one", "pop --index keeps the index as it was")
+      #expect(FileManager.default.fileExists(atPath: repo.root + "/fresh.txt"))
+      try repo.write("b.txt", "edited after the pop\n")
+
+      _ = try GitOperations.undoStashPop(sha, message: "On main: wip", snapshot: snapshot, root: repo.root).get()
+      #expect(try String(contentsOfFile: repo.root + "/a.txt", encoding: .utf8) == "one\n")
+      #expect(!FileManager.default.fileExists(atPath: repo.root + "/fresh.txt"))
+      #expect(
+        try String(contentsOfFile: repo.root + "/b.txt", encoding: .utf8) == "edited after the pop\n",
+        "files outside the stash are left alone")
+      #expect(GitOperations.stashList(root: repo.root).map(\.message) == ["On main: wip", "On main: keep"])
+    }
+  }
 #endif

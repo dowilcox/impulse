@@ -347,6 +347,62 @@ public enum GitOperations {
     void(git(["stash", "drop", "stash@{\(index)}"], in: root))
   }
 
+  /// The commit behind `stash@{index}` (kept so a drop or pop can be undone).
+  public static func stashCommit(_ index: Int, root: String) -> String? {
+    guard case .success(let result) = git(["rev-parse", "--verify", "-q", "stash@{\(index)}"], in: root)
+    else { return nil }
+    let sha = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return sha.isEmpty ? nil : sha
+  }
+
+  /// Put a dropped stash commit back on top of the stash list.
+  public static func stashStore(_ commit: String, message: String, root: String) -> GitResult {
+    void(git(["stash", "store", "-m", message, commit], in: root))
+  }
+
+  /// Undo `git stash pop`: put the stash's paths back the way `snapshot`
+  /// (taken just before the pop) had them, remove what the pop created, and
+  /// store the stash entry again. Other files are left alone.
+  public static func undoStashPop(
+    _ commit: String, message: String, snapshot: SafetySnapshot, root: String
+  ) -> GitResult {
+    let paths = stashPaths(commit, root: root)
+    var existed = Set<String>()
+    if !paths.isEmpty,
+      case .success(let result) = git(
+        ["ls-tree", "-r", "-z", "--name-only", snapshot.commit, "--"] + paths, in: root)
+    {
+      existed = Set(result.stdout.split(separator: "\0").map(String.init))
+    }
+    for path in paths where !existed.contains(path) {
+      try? FileManager.default.removeItem(atPath: (root as NSString).appendingPathComponent(path))
+      _ = git(["rm", "--cached", "-q", "--ignore-unmatch", "--", path], in: root)
+    }
+    if !existed.isEmpty {
+      let restored = SafetySnapshots.restore(snapshot, paths: paths.filter(existed.contains), root: root)
+      if case .failure(let error) = restored { return .failure(error) }
+    }
+    return stashStore(commit, message: message, root: root)
+  }
+
+  /// Every path a stash touches: tracked changes plus untracked files.
+  public static func stashPaths(_ commit: String, root: String) -> [String] {
+    var paths: [String] = []
+    if case .success(let result) = git(
+      ["diff-tree", "-r", "-z", "--name-only", "--no-commit-id", "\(commit)^1", commit], in: root)
+    {
+      paths = result.stdout.split(separator: "\0").map(String.init)
+    }
+    return paths + stashUntrackedPaths(commit, root: root)
+  }
+
+  /// Untracked files a stash carries (its third parent), relative to `root`.
+  public static func stashUntrackedPaths(_ commit: String, root: String) -> [String] {
+    guard case .success(let result) = git(["ls-tree", "-r", "-z", "--name-only", "\(commit)^3"], in: root)
+    else { return [] }
+    return result.stdout.split(separator: "\0").map(String.init)
+  }
+
   // MARK: - Remote
 
   public static func fetch(root: String, onProgress: ((String) -> Void)? = nil) -> GitResult {

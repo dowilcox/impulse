@@ -396,20 +396,59 @@ struct GitActions {
   }
 
   func applyStash(_ index: Int, pop: Bool) {
-    repository.run { GitOperations.stashApply(index, pop: pop, root: $0) } completion: { result, _ in
-      report(result, failure: pop ? "Couldn't pop the stash" : "Couldn't apply the stash")
+    let root = repository.root
+    guard pop, let commit = GitOperations.stashCommit(index, root: root) else {
+      repository.run { GitOperations.stashApply(index, pop: pop, root: $0) } completion: { result, _ in
+        report(result, failure: pop ? "Couldn't pop the stash" : "Couldn't apply the stash")
+      }
+      return
+    }
+    // Popping drops the entry: remember it, and snapshot the working tree,
+    // so Undo can put both back.
+    let message = GitOperations.stashList(root: root).first { $0.index == index }?.message ?? "Restored stash"
+    let paths = GitOperations.stashPaths(commit, root: root)
+    repository.run(snapshotReason: "pop stash") {
+      GitOperations.stashApply(index, pop: true, root: $0)
+    } completion: { [repository, host] result, snapshot in
+      guard case .success = result else {
+        report(result, failure: "Couldn't pop the stash")
+        return
+      }
+      GitActions.notifyEditors(root: root, paths: paths)
+      guard let snapshot else { return }
+      host?.toasts.show(
+        Toast(
+          kind: .success, message: "Popped “\(message)”", actionTitle: "Undo",
+          action: {
+            repository.run {
+              GitOperations.undoStashPop(commit, message: message, snapshot: snapshot, root: $0)
+            } completion: { result, _ in
+              if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't undo the pop") }
+              GitActions.notifyEditors(root: root, paths: paths)
+            }
+          }, lifetime: 10))
     }
   }
 
+  /// Drop a stash. No confirmation: the toast's Undo stores it again.
   func dropStash(_ index: Int) {
-    host?.gitConfirm(
-      title: "Drop stash@{\(index)}?", message: "The stashed changes will be deleted.",
-      confirmTitle: "Drop", destructive: true
-    ) { proceed in
-      guard proceed else { return }
-      repository.run { GitOperations.stashDrop(index, root: $0) } completion: { result, _ in
+    let root = repository.root
+    guard let commit = GitOperations.stashCommit(index, root: root) else { return }
+    let message = GitOperations.stashList(root: root).first { $0.index == index }?.message ?? "Restored stash"
+    repository.run { GitOperations.stashDrop(index, root: $0) } completion: { [repository, host] result, _ in
+      guard case .success = result else {
         report(result, failure: "Couldn't drop the stash")
+        return
       }
+      host?.toasts.show(
+        Toast(
+          kind: .success, message: "Dropped “\(message)”", actionTitle: "Undo",
+          action: {
+            repository.run { GitOperations.stashStore(commit, message: message, root: $0) } completion: {
+              result, _ in
+              if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't restore the stash") }
+            }
+          }, lifetime: 15))
     }
   }
 
