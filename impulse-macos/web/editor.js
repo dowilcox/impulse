@@ -588,6 +588,10 @@ function handleCommand(cmd) {
       case "SetJsonSchema":
         handleSetJsonSchema(cmd);
         break;
+      case "SetDiffView":
+        if (cmd.enabled) openDiffView(cmd.inline === true);
+        else closeDiffView();
+        break;
       case "ResolveFormatting":
         handleResolveFormatting(cmd);
         break;
@@ -689,6 +693,7 @@ function handleOpenFile(cmd) {
   const uri = monaco.Uri.file(currentFilePath);
   currentModel = monaco.editor.createModel(cmd.content || "", language, uri);
   editor.setModel(currentModel);
+  if (diffEditor) attachDiffModels();
   contentVersion = 0;
   conflictZones = [];
   conflictDecorations = [];
@@ -765,6 +770,8 @@ function handleUpdateSettings(cmd) {
   if (opts.word_based_suggestions != null)
     update.wordBasedSuggestions = opts.word_based_suggestions;
   editor.updateOptions(update);
+  Object.assign(diffEditorOptions, update);
+  if (diffEditor) diffEditor.updateOptions(update);
 
   // Also update model options if tab settings changed
   if (currentModel && (opts.tab_size != null || opts.insert_spaces != null)) {
@@ -1134,6 +1141,7 @@ let gitPeek = null; // { zoneId, hunk }
 
 function resetGitState() {
   gitBaseLines = null;
+  gitBaseText = null;
   gitHunks = [];
   gitBlame = new Map();
   if (editor) {
@@ -1145,6 +1153,10 @@ function resetGitState() {
 
 function handleSetGitBase(cmd) {
   gitBaseLines = typeof cmd.base === "string" ? splitGitLines(cmd.base) : null;
+  gitBaseText = typeof cmd.base === "string" ? cmd.base : null;
+  if (diffOriginalModel && diffOriginalModel.getValue() !== (gitBaseText || "")) {
+    diffOriginalModel.setValue(gitBaseText || "");
+  }
   gitBlame = new Map();
   (cmd.blame || []).forEach(function (b) {
     gitBlame.set(b.line, b);
@@ -1405,6 +1417,9 @@ function renderGitPeek(hunk) {
   }));
   bar.appendChild(peekButton("Stage", "Stage this change (saves first)", function () {
     sendToHost({ type: "GitAction", action: "stage", line: anchorLine(hunk) });
+  }));
+  bar.appendChild(peekButton("Diff", "Show the whole file's changes side by side", function () {
+    openDiffView(false);
   }));
   bar.appendChild(peekButton("Review", "Open in the review", function () {
     sendToHost({ type: "GitAction", action: "review", line: anchorLine(hunk) });
@@ -1676,4 +1691,171 @@ function relativeTime(seconds) {
     if (n >= 1) return n + " " + units[i][0] + (n === 1 ? "" : "s") + " ago";
   }
   return "just now";
+}
+
+
+// ===========================================================================
+// Diff view: the file against its git base (the index) in Monaco's diff
+// editor. The modified side is the live model, so typing, language features
+// and saving work as they do in the plain editor.
+// ===========================================================================
+let gitBaseText = null;
+let diffEditor = null;
+let diffOriginalModel = null;
+let diffHost = null;
+let diffSummary = null;
+let diffLayoutButton = null;
+let diffInline = false;
+const diffEditorOptions = {};
+
+function openDiffView(inline) {
+  diffInline = inline;
+  if (diffEditor) {
+    diffEditor.updateOptions({ renderSideBySide: !inline });
+    updateDiffBar();
+    notifyDiffView(true);
+    return;
+  }
+  if (!currentModel) return;
+  closeGitPeek();
+  var position = editor.getPosition();
+  buildDiffHost();
+  document.getElementById("container").style.display = "none";
+  diffHost.style.display = "flex";
+
+  var options = Object.assign(
+    {
+      automaticLayout: true,
+      renderSideBySide: !inline,
+      useInlineViewWhenSpaceIsLimited: true,
+      enableSplitViewResizing: true,
+      originalEditable: false,
+      ignoreTrimWhitespace: false,
+      renderOverviewRuler: true,
+      hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 3, revealLineCount: 20 },
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      fontSize: editor.getOption(monaco.editor.EditorOption.fontSize),
+      fontFamily: editor.getOption(monaco.editor.EditorOption.fontFamily),
+      padding: { top: 4 },
+      scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
+      multiCursorModifier: "alt",
+    },
+    diffEditorOptions
+  );
+  diffEditor = monaco.editor.createDiffEditor(diffHost.querySelector(".diff-view-editor"), options);
+  attachDiffModels();
+
+  var modified = diffEditor.getModifiedEditor();
+  modified.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
+    sendToHost({ type: "SaveRequested" });
+  });
+  modified.onDidFocusEditorText(function () {
+    sendToHost({ type: "FocusChanged", focused: true });
+  });
+  modified.onDidBlurEditorText(function () {
+    sendToHost({ type: "FocusChanged", focused: false });
+  });
+  modified.onDidChangeCursorPosition(function (e) {
+    sendToHost({ type: "CursorMoved", line: e.position.lineNumber, column: e.position.column });
+  });
+  diffEditor.onDidUpdateDiff(updateDiffBar);
+  if (position) {
+    modified.setPosition(position);
+    modified.revealPositionInCenterIfOutsideViewport(position);
+  }
+  modified.focus();
+  updateDiffBar();
+  notifyDiffView(true);
+}
+
+function attachDiffModels() {
+  if (diffOriginalModel) diffOriginalModel.dispose();
+  diffOriginalModel = monaco.editor.createModel(gitBaseText || "", currentModel.getLanguageId());
+  diffEditor.setModel({ original: diffOriginalModel, modified: currentModel });
+  if (diffHost) {
+    var name = currentFilePath.split("/").pop() || currentFilePath;
+    diffHost.querySelector(".diff-view-file").textContent = name;
+    diffHost.querySelector(".diff-view-file").title = currentFilePath;
+  }
+}
+
+function closeDiffView() {
+  if (!diffEditor) return;
+  var position = diffEditor.getModifiedEditor().getPosition();
+  diffEditor.dispose();
+  diffEditor = null;
+  if (diffOriginalModel) diffOriginalModel.dispose();
+  diffOriginalModel = null;
+  diffHost.style.display = "none";
+  document.getElementById("container").style.display = "block";
+  editor.layout();
+  if (position) {
+    editor.setPosition(position);
+    editor.revealPositionInCenterIfOutsideViewport(position);
+  }
+  editor.focus();
+  scheduleGitDiff(0);
+  notifyDiffView(false);
+}
+
+function notifyDiffView(active) {
+  sendToHost({ type: "DiffViewChanged", active: active, inline: diffInline });
+}
+
+function buildDiffHost() {
+  if (diffHost) return;
+  diffHost = document.createElement("div");
+  diffHost.id = "diff-view";
+  diffHost.className = "diff-view";
+  var bar = document.createElement("div");
+  bar.className = "diff-view-bar git-peek-bar";
+  var file = document.createElement("span");
+  file.className = "diff-view-file";
+  var sides = document.createElement("span");
+  sides.className = "diff-view-sides";
+  sides.textContent = "Index ↔ Working copy";
+  diffSummary = document.createElement("span");
+  diffSummary.className = "git-peek-title diff-view-summary";
+  bar.appendChild(file);
+  bar.appendChild(sides);
+  bar.appendChild(diffSummary);
+  bar.appendChild(peekButton("↑", "Previous change", function () {
+    if (diffEditor) diffEditor.goToDiff("previous");
+  }));
+  bar.appendChild(peekButton("↓", "Next change", function () {
+    if (diffEditor) diffEditor.goToDiff("next");
+  }));
+  diffLayoutButton = peekButton("Inline", "Switch between side by side and inline", function () {
+    openDiffView(!diffInline);
+  });
+  bar.appendChild(diffLayoutButton);
+  bar.appendChild(peekButton("Done", "Back to the editor", closeDiffView));
+  var pane = document.createElement("div");
+  pane.className = "diff-view-editor";
+  diffHost.appendChild(bar);
+  diffHost.appendChild(pane);
+  document.body.appendChild(diffHost);
+}
+
+function updateDiffBar() {
+  if (!diffEditor || !diffSummary) return;
+  var changes = diffEditor.getLineChanges();
+  if (changes == null) {
+    diffSummary.textContent = "";
+  } else if (changes.length === 0) {
+    diffSummary.textContent = "No changes";
+  } else {
+    var added = 0;
+    var removed = 0;
+    changes.forEach(function (c) {
+      if (c.modifiedEndLineNumber >= c.modifiedStartLineNumber && c.modifiedEndLineNumber > 0)
+        added += c.modifiedEndLineNumber - c.modifiedStartLineNumber + 1;
+      if (c.originalEndLineNumber >= c.originalStartLineNumber && c.originalEndLineNumber > 0)
+        removed += c.originalEndLineNumber - c.originalStartLineNumber + 1;
+    });
+    diffSummary.textContent =
+      changes.length + (changes.length === 1 ? " change" : " changes") + "  +" + added + " −" + removed;
+  }
+  if (diffLayoutButton) diffLayoutButton.textContent = diffInline ? "Side by Side" : "Inline";
 }

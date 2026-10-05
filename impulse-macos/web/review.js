@@ -389,6 +389,13 @@ function renderHeader(rec) {
       ),
     );
   }
+  if (state.caps.stage && item.status !== "D") {
+    h.appendChild(
+      actionButton("Edit Diff", "Edit the file beside its staged version", () =>
+        post({ type: "OpenFile", path: item.path, diff: true }),
+      ),
+    );
+  }
   h.appendChild(
     actionButton("Open", "Open file (o)", () =>
       post({ type: "OpenFile", path: item.path, line: firstChangedLine(rec) }),

@@ -1030,6 +1030,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         QuickTerminal.shared.toggle()
       } else if action == "preview-beside" {
         togglePreviewBeside()
+      } else if action == "diff-view" {
+        toggleDiffView()
       } else if action == "outline" {
         toggleRightDock()
       } else if action == "problems" {
@@ -3105,6 +3107,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     togglePreview()
   }
 
+  /// The file against its staged version in Monaco's diff editor; the
+  /// working copy side stays editable.
+  func toggleDiffView() {
+    guard let editor = tabManager.selectedEditor else {
+      toasts.show(Toast(kind: .info, message: "Open a file to see its changes."))
+      return
+    }
+    setDiffView(editor, enabled: !editor.isDiffView)
+  }
+
+  private func setDiffView(_ editor: EditorTab, enabled: Bool) {
+    if enabled {
+      guard let path = editor.filePath, GitClient.repoRoot(forPath: path) != nil else {
+        toasts.show(Toast(kind: .info, message: "This file isn't in a git repository."))
+        return
+      }
+      if editor.isPreviewing, !editor.isPreviewBeside { togglePreview() }
+    }
+    editor.setDiffView(enabled)
+  }
+
   /// Markdown or SVG preview beside the editor, following edits.
   func togglePreviewBeside() {
     guard let editor = tabManager.selectedEditor, let fp = editor.filePath, EditorTab.isPreviewableFile(fp) else {
@@ -4096,6 +4119,12 @@ extension MainWindowController: GitPanelHost {
 
   func gitOpenFile(_ absolutePath: String) {
     openCommandPaletteSearchResult(path: absolutePath, line: nil)
+  }
+
+  func gitOpenDiffEditor(_ absolutePath: String) {
+    openCommandPaletteSearchResult(path: absolutePath, line: nil)
+    guard let editor = findEditorTab(forPath: absolutePath) else { return }
+    setDiffView(editor, enabled: true)
   }
 
   func gitOpenReview(scope: DiffScope, focusPath: String?) {

@@ -6,6 +6,8 @@ import ImpulseKit
 protocol GitPanelHost: AnyObject {
   var toasts: ToastCenter { get }
   func gitOpenFile(_ absolutePath: String)
+  /// Open the file in the editor's diff view (index ↔ working copy).
+  func gitOpenDiffEditor(_ absolutePath: String)
   func gitOpenReview(scope: DiffScope, focusPath: String?)
   func gitPresentError(_ error: GitOperationError, title: String)
   /// Ask before something destructive; `completion(true)` to proceed.

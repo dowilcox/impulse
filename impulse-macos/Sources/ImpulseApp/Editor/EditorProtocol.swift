@@ -28,6 +28,9 @@ enum EditorCommand: Encodable {
     case setGitBase(base: String?, blame: [EditorBlameLine])
     /// Validate (and complete) a JSON file against `schema` (JSON text).
     case setJsonSchema(fileMatch: String, schema: String)
+    /// Show the file against its git base in Monaco's diff editor (or go
+    /// back to the plain editor).
+    case setDiffView(enabled: Bool, inline: Bool)
 
     // MARK: Tagged Enum Encoding
 
@@ -50,6 +53,7 @@ enum EditorCommand: Encodable {
         case resolvePrepareRename = "ResolvePrepareRename"
         case setGitBase = "SetGitBase"
         case setJsonSchema = "SetJsonSchema"
+        case setDiffView = "SetDiffView"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -78,6 +82,8 @@ enum EditorCommand: Encodable {
         case blame
         case fileMatch = "file_match"
         case schema
+        case enabled
+        case inline
     }
 
     func encode(to encoder: Encoder) throws {
@@ -172,6 +178,10 @@ enum EditorCommand: Encodable {
             try container.encode(TypeTag.setJsonSchema, forKey: .type)
             try container.encode(fileMatch, forKey: .fileMatch)
             try container.encode(schema, forKey: .schema)
+        case let .setDiffView(enabled, inline):
+            try container.encode(TypeTag.setDiffView, forKey: .type)
+            try container.encode(enabled, forKey: .enabled)
+            try container.encode(inline, forKey: .inline)
         }
     }
 }
@@ -201,6 +211,8 @@ enum EditorEvent: Decodable {
     case prepareRenameRequested(requestId: UInt64, line: UInt32, character: UInt32)
     /// From the git peek widget: "stage" or "review" at a 1-based line.
     case gitAction(action: String, line: UInt32)
+    /// The diff view opened, closed or changed layout.
+    case diffViewChanged(active: Bool, inline: Bool)
 
     private enum TypeTag: String, Decodable {
         case ready = "Ready"
@@ -220,6 +232,7 @@ enum EditorEvent: Decodable {
         case renameRequested = "RenameRequested"
         case prepareRenameRequested = "PrepareRenameRequested"
         case gitAction = "GitAction"
+        case diffViewChanged = "DiffViewChanged"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -242,6 +255,8 @@ enum EditorEvent: Decodable {
         case diagnostics
         case newName = "new_name"
         case action
+        case active
+        case inline
     }
 
     init(from decoder: Decoder) throws {
@@ -341,6 +356,11 @@ enum EditorEvent: Decodable {
             let action = try container.decode(String.self, forKey: .action)
             let line = try container.decode(UInt32.self, forKey: .line)
             self = .gitAction(action: action, line: line)
+
+        case .diffViewChanged:
+            let active = try container.decode(Bool.self, forKey: .active)
+            let inline = try container.decodeIfPresent(Bool.self, forKey: .inline) ?? false
+            self = .diffViewChanged(active: active, inline: inline)
         }
     }
 }

@@ -257,7 +257,12 @@ private struct ChangesPanelContent: View {
     }
   }
 
-  enum Section { case conflicted, staged, unstaged, untracked }
+  enum Section {
+    case conflicted, staged, unstaged, untracked
+
+    /// The working copy differs from the index (what the diff view shows).
+    var hasWorkingCopyDiff: Bool { self == .unstaged || self == .untracked }
+  }
 
   /// Keyboard focus to the list, with the first row selected if none is.
   private func focusList(_ snapshot: RepoSnapshot?) {
@@ -285,7 +290,8 @@ private struct ChangesPanelContent: View {
   }
 
   /// ↑/↓ move, space stages or unstages (marks a conflict resolved), ⏎ opens
-  /// the diff, ⌘⏎ the file, ⌫ discards, Esc goes back to the work.
+  /// the diff, ⌥⏎ the editable diff view, ⌘⏎ the file, ⌫ discards, Esc goes
+  /// back to the work.
   private func handleKey(_ press: KeyPress, snapshot: RepoSnapshot, proxy: ScrollViewProxy) -> KeyPress.Result {
     let rows = visibleRows(snapshot)
     guard !rows.isEmpty else { return .ignored }
@@ -316,8 +322,11 @@ private struct ChangesPanelContent: View {
     case .return:
       guard let index else { return .ignored }
       let row = rows[index]
+      let absolute = (repository.root as NSString).appendingPathComponent(row.change.path)
       if press.modifiers.contains(.command) {
-        model.gitHost?.gitOpenFile((repository.root as NSString).appendingPathComponent(row.change.path))
+        model.gitHost?.gitOpenFile(absolute)
+      } else if press.modifiers.contains(.option), row.section.hasWorkingCopyDiff, row.change.status != .deleted {
+        model.gitHost?.gitOpenDiffEditor(absolute)
       } else {
         let scope: DiffScope =
           row.section == .staged ? .staged : row.section == .conflicted ? .uncommitted : .unstaged
@@ -352,6 +361,9 @@ private struct ChangesPanelContent: View {
       },
       openFile: {
         model.gitHost?.gitOpenFile((repository.root as NSString).appendingPathComponent(change.path))
+      },
+      openDiffEditor: {
+        model.gitHost?.gitOpenDiffEditor((repository.root as NSString).appendingPathComponent(change.path))
       }
     )
     .id(id)
@@ -371,6 +383,7 @@ private struct ChangeRow: View {
   let select: () -> Void
   let openDiff: () -> Void
   let openFile: () -> Void
+  let openDiffEditor: () -> Void
 
   @State private var hovering = false
 
@@ -458,6 +471,9 @@ private struct ChangeRow: View {
   @ViewBuilder
   private var contextMenu: some View {
     Button("Open Changes") { openDiff() }
+    if section.hasWorkingCopyDiff, change.status != .deleted {
+      Button("Open in Diff Editor") { openDiffEditor() }
+    }
     Button("Open File") { openFile() }
     Divider()
     switch section {

@@ -125,6 +125,10 @@ enum CommandRegistry {
         keywords: ["markdown", "svg", "split", "live"], icon: .columns2
       ) { [weak controller] in controller?.togglePreviewBeside() },
       AppCommand(
+        id: "diff_view", title: "Toggle Diff View", category: "Editor",
+        keywords: ["changes", "git", "compare", "staged", "side by side"], icon: .fileDiff
+      ) { [weak controller] in controller?.toggleDiffView() },
+      AppCommand(
         id: "go_to_symbol", title: "Go to Symbol in File…", category: "Editor",
         keywords: ["outline", "function", "class", "@"], icon: .code, keybindingId: "go_to_symbol"
       ) { [weak controller] in controller?.showPalette(prefix: "@") },

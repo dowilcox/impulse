@@ -151,7 +151,8 @@ enum ReviewEvent: Decodable {
     action: ReviewAction, path: String, hunkIndex: Int, hunkId: String, lines: [Int]?)
   case fileAction(action: ReviewAction, path: String)
   case toggleViewed(path: String, viewed: Bool)
-  case openFile(path: String, line: Int?)
+  /// `diff`: in the editor's diff view rather than the plain editor.
+  case openFile(path: String, line: Int?, diff: Bool)
   case addComment(path: String, side: String, line: Int, endLine: Int, text: String, snippet: String)
   case editComment(id: String, text: String)
   case deleteComment(id: String)
@@ -160,6 +161,7 @@ enum ReviewEvent: Decodable {
 
   private enum Keys: String, CodingKey {
     case type, path, action, hunkIndex, hunkId, lines, viewed, line, side, endLine, text, snippet, id, url
+    case diff
   }
 
   init(from decoder: Decoder) throws {
@@ -187,7 +189,8 @@ enum ReviewEvent: Decodable {
     case "OpenFile":
       self = .openFile(
         path: try c.decode(String.self, forKey: .path),
-        line: try c.decodeIfPresent(Int.self, forKey: .line))
+        line: try c.decodeIfPresent(Int.self, forKey: .line),
+        diff: try c.decodeIfPresent(Bool.self, forKey: .diff) ?? false)
     case "AddComment":
       self = .addComment(
         path: try c.decode(String.self, forKey: .path),

@@ -357,9 +357,11 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         markReviewed()
       }
 
-    case let .openFile(path, line):
+    case let .openFile(path, line, diff):
       let absolute = (repoRoot as NSString).appendingPathComponent(path)
-      if let controller = host as? MainWindowController {
+      if diff {
+        host?.gitOpenDiffEditor(absolute)
+      } else if let controller = host as? MainWindowController {
         controller.paletteOpenFile(absolute, line: line.map(UInt32.init), column: nil)
       } else {
         host?.gitOpenFile(absolute)

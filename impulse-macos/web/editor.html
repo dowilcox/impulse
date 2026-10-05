@@ -162,6 +162,34 @@
         background: color-mix(in srgb, var(--git-removed) 12%, transparent);
         white-space: pre;
       }
+      .diff-view {
+        position: absolute;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        background: var(--git-peek-bg);
+        color: var(--git-peek-fg);
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 12px;
+      }
+      .diff-view-bar {
+        flex: none;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+      }
+      .diff-view-file {
+        font-weight: 600;
+      }
+      .diff-view-sides {
+        opacity: 0.6;
+      }
+      .diff-view-summary {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .diff-view-editor {
+        flex: 1;
+        min-height: 0;
+      }
       /* Default diff gutter colors (overridden by theme) */
       .diff-gutter-added {
         background: #9ece6a;

@@ -104,6 +104,9 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// The preview shows beside the editor (and follows edits) rather than
     /// in place of it.
     private(set) var isPreviewBeside = false
+    /// Monaco's diff editor is showing the file against its git base.
+    private(set) var isDiffView = false
+    private(set) var isDiffInline = false
     /// Theme the preview was last rendered with (for live refreshes).
     private var previewTheme: (json: String, bg: String)?
     private var previewRefreshWork: DispatchWorkItem?
@@ -305,6 +308,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             NotificationCenter.default.post(
                 name: .editorGitAction, object: self,
                 userInfo: ["action": action, "line": Int(line)])
+
+        case let .diffViewChanged(active, inline):
+            isDiffView = active
+            isDiffInline = inline
 
         case .saveRequested:
             // Route through the main save pipeline so format-on-save, LSP
@@ -671,6 +678,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Give Monaco the file's git base (index version) and blame so it can
     /// mark changes against the live buffer.
+    /// Show (or leave) the diff against the file's git base. The state
+    /// follows Monaco's reply, since the view can also be closed from inside.
+    func setDiffView(_ enabled: Bool, inline: Bool? = nil) {
+        sendCommand(.setDiffView(enabled: enabled, inline: inline ?? isDiffInline))
+    }
+
     func setGitBase(_ base: String?, blame: [EditorBlameLine]) {
         sendCommand(.setGitBase(base: base, blame: blame))
     }
