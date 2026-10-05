@@ -413,6 +413,25 @@ struct GitActions {
     }
   }
 
+  // MARK: Conflicts
+
+  /// Take one side of every conflict in these files (snapshot first).
+  func resolve(_ changes: [FileChange], takeOurs: Bool) {
+    let paths = changes.map(\.path)
+    repository.run(
+      takeOurs ? "Keeping current…" : "Taking incoming…",
+      snapshotReason: takeOurs ? "keep current side" : "take incoming side"
+    ) {
+      GitOperations.resolveConflicts(paths, takeOurs: takeOurs, root: $0)
+    } completion: { [repository] result, _ in
+      if case .failure(let error) = result {
+        host?.gitPresentError(error, title: "Couldn't resolve the conflict")
+      } else {
+        GitActions.notifyEditors(root: repository.root, paths: paths)
+      }
+    }
+  }
+
   // MARK: History
 
   /// Look at an old commit (detached HEAD).

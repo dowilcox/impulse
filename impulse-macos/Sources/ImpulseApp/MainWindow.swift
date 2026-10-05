@@ -3170,6 +3170,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       gitOpenReview(scope: .unstaged, focusPath: relative)
       return
     }
+    if action == "conflicts" { return }
+    if action == "conflicts-resolved" {
+      // The last conflict marker in a conflicted file is gone.
+      guard let change = repository.snapshot?.conflicted.first(where: { $0.path == relative }) else {
+        return
+      }
+      let actions = GitActions(repository: repository, host: self)
+      toasts.show(
+        Toast(
+          kind: .success, message: "No conflicts left in \((relative as NSString).lastPathComponent).",
+          actionTitle: "Save & Mark Resolved",
+          action: { [weak editor] in
+            editor?.fetchContentAndSave { saved in
+              if saved { actions.markResolved([change]) }
+            }
+          }, lifetime: 20))
+      return
+    }
     guard !editor.isModified else {
       toasts.show(
         Toast(

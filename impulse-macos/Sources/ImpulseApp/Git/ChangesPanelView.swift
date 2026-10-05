@@ -346,6 +346,12 @@ private struct ChangeRow: View {
           actions.stage([change])
         }
       case .conflicted:
+        ChromeIconButton(icon: .arrowUp, help: "Keep Current (HEAD) for the whole file", size: 20, iconSize: 12) {
+          actions.resolve([change], takeOurs: true)
+        }
+        ChromeIconButton(icon: .arrowDown, help: "Take Incoming for the whole file", size: 20, iconSize: 12) {
+          actions.resolve([change], takeOurs: false)
+        }
         ChromeIconButton(icon: .check, help: "Mark Resolved", size: 20, iconSize: 12) {
           actions.markResolved([change])
         }
@@ -366,6 +372,9 @@ private struct ChangeRow: View {
       Button("Stage") { actions.stage([change]) }
       Button("Discard Changes…") { actions.discard([change]) }
     case .conflicted:
+      Button("Open to Resolve") { openFile() }
+      Button("Keep Current (HEAD)") { actions.resolve([change], takeOurs: true) }
+      Button("Take Incoming") { actions.resolve([change], takeOurs: false) }
       Button("Mark Resolved") { actions.markResolved([change]) }
     }
     Divider()

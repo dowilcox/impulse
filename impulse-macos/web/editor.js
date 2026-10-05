@@ -224,6 +224,7 @@ require(["vs/editor/editor.main"], function () {
   editor.onDidChangeModelContent(function (e) {
     contentVersion++;
     scheduleGitDiff(250);
+    scheduleConflictLenses();
     sendToHost({
       type: "ContentChanged",
       changes: e.changes.map(function (change) {
@@ -660,6 +661,10 @@ function handleOpenFile(cmd) {
   currentModel = monaco.editor.createModel(cmd.content || "", language, uri);
   editor.setModel(currentModel);
   contentVersion = 0;
+  conflictZones = [];
+  conflictDecorations = [];
+  lastConflictCount = 0;
+  updateConflictLenses();
 
   // Reset undo stack by setting the model fresh
   editor.focus();
@@ -1363,6 +1368,115 @@ function renderGitPeek(hunk) {
     });
   });
   gitPeek = { zoneId: zoneId, hunk: hunk };
+}
+
+// --- Merge conflict lenses ---
+// Above each <<<<<<< block: Accept Current / Incoming / Both, applied as one
+// undoable edit; the two sides are tinted.
+
+var conflictZones = [];
+var conflictDecorations = [];
+var conflictTimer = null;
+
+function scheduleConflictLenses() {
+  clearTimeout(conflictTimer);
+  conflictTimer = setTimeout(updateConflictLenses, 150);
+}
+
+/** Conflict blocks as 1-based line numbers: start (<<<<<<<), optional
+ *  base (|||||||), mid (=======), end (>>>>>>>). */
+function findConflicts(model) {
+  var blocks = [];
+  if (model.findMatches("<<<<<<<", false, false, true, null, false, 1).length === 0) return blocks;
+  var lines = model.getLinesContent();
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].indexOf("<<<<<<<") !== 0) continue;
+    var base = -1, mid = -1, end = -1;
+    for (var j = i + 1; j < lines.length; j++) {
+      if (lines[j].indexOf("<<<<<<<") === 0) break;
+      if (lines[j].indexOf("|||||||") === 0 && mid < 0 && base < 0) base = j;
+      else if (lines[j].indexOf("=======") === 0 && mid < 0) mid = j;
+      else if (lines[j].indexOf(">>>>>>>") === 0 && mid >= 0) { end = j; break; }
+    }
+    if (mid < 0 || end < 0) continue;
+    blocks.push({
+      start: i + 1, base: base >= 0 ? base + 1 : -1, mid: mid + 1, end: end + 1,
+      currentLabel: lines[i].slice(7).trim() || "current",
+      incomingLabel: lines[end].slice(7).trim() || "incoming",
+    });
+    i = end;
+  }
+  return blocks;
+}
+
+function updateConflictLenses() {
+  var model = currentModel;
+  if (!editor || !model) return;
+  var blocks = findConflicts(model);
+  var decorations = [];
+  function whole(from, to, className) {
+    if (from > to) return;
+    decorations.push({ range: new monaco.Range(from, 1, to, 1), options: { isWholeLine: true, className: className } });
+  }
+  blocks.forEach(function (b) {
+    var currentEnd = (b.base > 0 ? b.base : b.mid) - 1;
+    whole(b.start, b.start, "conflict-marker-line");
+    whole(b.start + 1, currentEnd, "conflict-current");
+    if (b.base > 0) whole(b.base, b.mid - 1, "conflict-marker-line");
+    whole(b.mid, b.mid, "conflict-marker-line");
+    whole(b.mid + 1, b.end - 1, "conflict-incoming");
+    whole(b.end, b.end, "conflict-marker-line");
+  });
+  conflictDecorations = editor.deltaDecorations(conflictDecorations, decorations);
+  editor.changeViewZones(function (accessor) {
+    conflictZones.forEach(function (id) { accessor.removeZone(id); });
+    conflictZones = blocks.map(function (b) {
+      var bar = document.createElement("div");
+      bar.className = "conflict-bar";
+      bar.appendChild(peekButton("Accept Current", "Keep " + b.currentLabel, function () { resolveConflict(b, "current"); }));
+      bar.appendChild(peekButton("Accept Incoming", "Take " + b.incomingLabel, function () { resolveConflict(b, "incoming"); }));
+      bar.appendChild(peekButton("Accept Both", "Current, then incoming", function () { resolveConflict(b, "both"); }));
+      var note = document.createElement("span");
+      note.className = "git-peek-title";
+      note.textContent = b.currentLabel + " ⟷ " + b.incomingLabel;
+      bar.appendChild(note);
+      return accessor.addZone({ afterLineNumber: b.start - 1, heightInPx: 24, domNode: bar, suppressMouseDown: true });
+    });
+  });
+  if (blocks.length !== lastConflictCount) {
+    lastConflictCount = blocks.length;
+    sendToHost({ type: "GitAction", action: blocks.length ? "conflicts" : "conflicts-resolved", line: blocks.length });
+  }
+}
+var lastConflictCount = 0;
+
+function resolveConflict(b, choice) {
+  var model = currentModel;
+  if (!model) return;
+  // Re-find the block: earlier edits may have moved it.
+  var fresh = findConflicts(model).filter(function (c) { return c.currentLabel === b.currentLabel && c.incomingLabel === b.incomingLabel; });
+  var block = fresh.reduce(function (best, c) {
+    return best === null || Math.abs(c.start - b.start) < Math.abs(best.start - b.start) ? c : best;
+  }, null);
+  if (!block) return;
+  var lines = model.getLinesContent();
+  var current = lines.slice(block.start, (block.base > 0 ? block.base : block.mid) - 1);
+  var incoming = lines.slice(block.mid, block.end - 1);
+  var kept = choice === "current" ? current : choice === "incoming" ? incoming : current.concat(incoming);
+  var eol = model.getEOL();
+  var lineCount = model.getLineCount();
+  var range, text;
+  if (block.end < lineCount) {
+    range = new monaco.Range(block.start, 1, block.end + 1, 1);
+    text = kept.length ? kept.join(eol) + eol : "";
+  } else {
+    range = new monaco.Range(block.start, 1, block.end, model.getLineMaxColumn(block.end));
+    text = kept.join(eol);
+  }
+  editor.pushUndoStop();
+  editor.executeEdits("conflict", [{ range: range, text: text, forceMoveMarkers: true }]);
+  editor.pushUndoStop();
+  editor.focus();
 }
 
 function anchorLine(hunk) {

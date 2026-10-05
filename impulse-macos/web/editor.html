@@ -94,6 +94,27 @@
         font-style: italic;
         opacity: 0.75;
       }
+      .conflict-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 100%;
+        padding: 0 10px;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 11.5px;
+        color: var(--git-peek-fg);
+        opacity: 0.9;
+      }
+      .conflict-current {
+        background: color-mix(in srgb, var(--git-added) 13%, transparent);
+      }
+      .conflict-incoming {
+        background: color-mix(in srgb, #7aa2f7 15%, transparent);
+      }
+      .conflict-marker-line {
+        background: color-mix(in srgb, var(--git-modified) 18%, transparent);
+        opacity: 0.85;
+      }
       .git-peek {
         margin: 4px 0;
         border-top: 1px solid var(--git-modified);

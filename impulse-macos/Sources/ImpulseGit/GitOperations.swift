@@ -366,6 +366,18 @@ public enum GitOperations {
 
   // MARK: - History edits
 
+  /// Resolve conflicted files by taking one side wholesale (`ours` is HEAD,
+  /// `theirs` the incoming change) and marking them resolved.
+  public static func resolveConflicts(_ paths: [String], takeOurs: Bool, root: String) -> GitResult {
+    guard !paths.isEmpty else { return .success(()) }
+    if case .failure(let error) = git(
+      ["checkout", takeOurs ? "--ours" : "--theirs", "--"] + paths, in: root)
+    {
+      return .failure(error)
+    }
+    return void(git(["add", "--"] + paths, in: root))
+  }
+
   public enum ResetMode: String, Sendable { case soft, mixed, hard }
 
   public static func reset(_ mode: ResetMode, to revision: String, root: String) -> GitResult {
