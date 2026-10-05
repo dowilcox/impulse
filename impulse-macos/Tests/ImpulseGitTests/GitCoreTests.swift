@@ -317,6 +317,23 @@
       GitOperations.environment = TempRepo.gitOverrides
     }
 
+    @Test func nestedCheckpointsListAndSurvivePruning() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      let prefix = SafetySnapshots.checkpointPrefix + "TERMINAL-UUID-1234/"
+      let start = try SafetySnapshots.create(reason: "turn start", root: repo.root, prefix: prefix).get()
+      try repo.write("a.txt", "two\n")
+      let end = try SafetySnapshots.create(reason: "turn end", root: repo.root, prefix: prefix).get()
+
+      let listed = SafetySnapshots.list(root: repo.root, prefix: SafetySnapshots.checkpointPrefix)
+      #expect(listed.map(\.ref) == [end.ref, start.ref])
+      #expect(abs(listed[1].date.timeIntervalSince(start.date)) < 1)
+      // Fresh checkpoints aren't mistaken for ancient ones.
+      SafetySnapshots.prune(root: repo.root, prefix: SafetySnapshots.checkpointPrefix)
+      #expect(SafetySnapshots.list(root: repo.root, prefix: SafetySnapshots.checkpointPrefix).count == 2)
+    }
+
     @Test func snapshotRestoresDiscardedAndUntrackedWork() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

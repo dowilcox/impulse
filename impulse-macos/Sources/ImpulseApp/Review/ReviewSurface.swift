@@ -19,12 +19,16 @@ final class ReviewSurfaceModel {
   var isLoading = false
   /// Branch to compare against for "vs base" (auto-detected).
   var baseBranch: String?
+  /// The most recent agent turn in this repository, if any.
+  var agentTurn: (name: String, scope: DiffScope)?
   var palette: ChromePalette
 
   @ObservationIgnored var onSelectScope: ((DiffScope) -> Void)?
   @ObservationIgnored var onSetLayout: ((String) -> Void)?
   @ObservationIgnored var onToggleWhitespace: (() -> Void)?
   @ObservationIgnored var onCopyPrompt: (() -> Void)?
+  @ObservationIgnored var onListAgents: (() -> [AgentSummary])?
+  @ObservationIgnored var onSendToAgent: ((UUID) -> Void)?
   @ObservationIgnored var onClearComments: (() -> Void)?
   @ObservationIgnored var onRefresh: (() -> Void)?
   @ObservationIgnored var onShowChanges: (() -> Void)?
@@ -54,6 +58,7 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
   /// Latest diff per path (for viewed hashes and comment anchoring).
   private var diffs: [String: FileDiff] = [:]
   private var changeListener: UUID?
+  private var checkpointObserver: NSObjectProtocol?
   private var refreshWork: DispatchWorkItem?
   private let comments: ReviewCommentStore
   private let queue = DispatchQueue(label: "impulse.review", qos: .userInitiated)
@@ -86,6 +91,23 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     queue.async { [weak self] in
       let base = GitClient.defaultBaseBranch(repoPath: root)
       DispatchQueue.main.async { self?.model.baseBranch = base }
+    }
+    updateAgentTurn()
+    checkpointObserver = NotificationCenter.default.addObserver(
+      forName: .agentCheckpointsChanged, object: nil, queue: .main
+    ) { [weak self] _ in
+      self?.updateAgentTurn()
+    }
+  }
+
+  private func updateAgentTurn() {
+    let turn = AgentCheckpoints.shared.lastTurn(inRepo: repository.root)
+    model.agentTurn = turn.map { ($0.agentName, $0.scope) }
+    // Following the latest turn: when it finishes, show the finished diff.
+    if case .snapshot(let from, _) = model.scope, let turn, turn.start.ref == from,
+      model.scope != turn.scope
+    {
+      setScope(turn.scope)
     }
   }
 
@@ -147,6 +169,8 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       self.refreshFiles()
     }
     model.onCopyPrompt = { [weak self] in self?.copyCommentsAsPrompt() }
+    model.onListAgents = { [weak self] in self?.host?.agentTargets ?? [] }
+    model.onSendToAgent = { [weak self] id in self?.sendCommentsToAgent(id) }
     model.onClearComments = { [weak self] in self?.clearComments() }
     model.onRefresh = { [weak self] in self?.refresh() }
     model.onShowChanges = { [weak self] in
@@ -162,6 +186,8 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
   func cleanup() {
     if let changeListener { repository.removeChangeListener(changeListener) }
     changeListener = nil
+    if let checkpointObserver { NotificationCenter.default.removeObserver(checkpointObserver) }
+    checkpointObserver = nil
     webView?.configuration.userContentController.removeScriptMessageHandler(
       forName: Self.handlerName)
     webView?.navigationDelegate = nil
@@ -523,6 +549,15 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         message: "Copied \(comments.comments.count) comment\(comments.comments.count == 1 ? "" : "s") as a prompt"))
   }
 
+  private func sendCommentsToAgent(_ terminalID: UUID) {
+    let prompt = ReviewCommentAnchoring.prompt(for: comments.comments)
+    guard !prompt.isEmpty else {
+      host?.toasts.show(Toast(kind: .info, message: "There are no review comments yet."))
+      return
+    }
+    host?.sendToAgent(prompt, terminalID: terminalID)
+  }
+
   private func clearComments() {
     guard !comments.comments.isEmpty else { return }
     host?.gitConfirm(
@@ -616,6 +651,9 @@ struct ReviewHeaderBar: View {
         }
         items.append(.separator)
         items.append(ChromeMenuItem("Last commit") { model.onSelectScope?(.commit(sha: "HEAD")) })
+        if let turn = model.agentTurn {
+          items.append(ChromeMenuItem("Last agent turn (\(turn.name))") { model.onSelectScope?(turn.scope) })
+        }
         return items
       } label: {
         HStack(spacing: 5) {
@@ -664,7 +702,16 @@ struct ReviewHeaderBar: View {
       ) { model.onToggleWhitespace?() }
 
       ChromeMenuButton(help: "Review comments") {
-        [
+        var items: [ChromeMenuItem] = []
+        let agents = model.onListAgents?() ?? []
+        for agent in agents {
+          items.append(
+            ChromeMenuItem("Send Comments to \(agent.agentName) · \(agent.tabTitle)", isEnabled: model.commentCount > 0) {
+              model.onSendToAgent?(agent.id)
+            })
+        }
+        if !agents.isEmpty { items.append(.separator) }
+        return items + [
           ChromeMenuItem("Copy Comments as Prompt", isEnabled: model.commentCount > 0) {
             model.onCopyPrompt?()
           },

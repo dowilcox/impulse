@@ -12,6 +12,10 @@ protocol GitPanelHost: AnyObject {
   func gitConfirm(
     title: String, message: String, confirmTitle: String, destructive: Bool,
     completion: @escaping (Bool) -> Void)
+  /// Coding agents that could take text (for "Send to agent").
+  var agentTargets: [AgentSummary] { get }
+  /// Type text into an agent's prompt (queued while it's mid-turn).
+  func sendToAgent(_ text: String, terminalID: UUID)
 }
 
 /// User-level git actions with the UX around them: safety snapshots + Undo

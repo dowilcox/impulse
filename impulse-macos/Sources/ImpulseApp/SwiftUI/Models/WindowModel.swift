@@ -54,6 +54,8 @@ struct AgentSummary: Identifiable {
   let workspaceName: String
   let state: AgentState
   let since: Date
+  /// Whether it has recorded turns to review.
+  var hasTurns: Bool = false
 }
 
 extension AgentState {
@@ -322,6 +324,8 @@ final class WindowModel {
   var onShowWorkspaceSwitcher: (() -> Void)?
   /// Show a terminal by id (selects its workspace, tab and pane).
   var onRevealTerminal: ((UUID) -> Void)?
+  /// Review a terminal's agent's last turn.
+  var onReviewAgentTurn: ((UUID) -> Void)?
 
   // MARK: Methods
 

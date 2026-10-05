@@ -53,6 +53,10 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "review_agent_turn", title: "Review Last Agent Turn", category: "Agents",
+        keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff
+      ) { [weak controller] in controller?.reviewLastAgentTurn() },
+      AppCommand(
         id: "next_agent", title: "Go to Next Agent Needing You", category: "Agents",
         keywords: ["claude", "codex", "inbox", "waiting"], icon: .bot, keybindingId: "next_agent"
       ) { [weak controller] in controller?.revealNextWaitingAgent() },

@@ -499,6 +499,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onRevealTerminal = { [weak self] id in
       self?.revealTerminal(id: id)
     }
+    windowModel.onReviewAgentTurn = { [weak self] id in
+      self?.reviewLastAgentTurn(terminalID: id)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
@@ -609,6 +612,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     return true
   }
 
+  /// The agent's terminal, by terminal id.
+  func agentTerminal(id: UUID) -> TerminalTab? {
+    for case .terminal(let container) in tabManager.allSurfaces {
+      if let terminal = container.activeTerminal, terminal.id == id { return terminal }
+    }
+    return nil
+  }
+
+  /// Open the review on the agent's most recent turn (the focused agent, or
+  /// the latest turn in the window's repository).
+  func reviewLastAgentTurn(terminalID: UUID? = nil) {
+    let id = terminalID ?? tabManager.selectedTerminal?.activeTerminal?.id
+    let turn =
+      id.flatMap { AgentCheckpoints.shared.lastTurn(terminalID: $0) }
+      ?? windowModel.repository.flatMap { AgentCheckpoints.shared.lastTurn(inRepo: $0.root) }
+    guard let turn else {
+      toasts.show(Toast(kind: .info, message: "No agent turns recorded yet in this repository."))
+      return
+    }
+    GitRepositoryStore.shared.resolve(directory: turn.repoRoot) { [weak self] state in
+      guard let self, let state else { return }
+      self.tabManager.addReviewTab(repository: state, scope: turn.scope, focusPath: nil, host: self)
+    }
+  }
+
   /// ⌘⇧U: the next agent waiting on the user (needs input first), cycling
   /// past the one already in front.
   func revealNextWaitingAgent() {
@@ -699,6 +727,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showPalette(prefix: String(action.dropFirst(8)))
       } else if action.hasPrefix("run=") {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
+      } else if action == "agent-submit" {
+        tabManager.selectedTerminal?.activeTerminal?.agentEvent(.submit)
+      } else if action == "review-agent" {
+        reviewLastAgentTurn()
       } else if action == "close-pane" {
         requestCloseFocusedPane()
       } else if action == "reopen" {
@@ -1914,6 +1946,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           self.tabManager.ownsTerminal(terminal)
         else { return }
         self.tabManager.refreshSegmentLabels()
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .agentCheckpointsChanged, object: nil, queue: .main) { [weak self] _ in
+        self?.tabManager.refreshSegmentLabels()
       }
     )
     notificationObservers.append(
@@ -3427,6 +3464,28 @@ extension MainWindowController: PaletteHost {
 
 extension MainWindowController: GitPanelHost {
   var toasts: ToastCenter { windowModel.toasts }
+
+  var agentTargets: [AgentSummary] {
+    // Agents in the window's repository first, then the rest.
+    windowModel.agents.filter { $0.state != .exited }
+  }
+
+  func sendToAgent(_ text: String, terminalID: UUID) {
+    guard let terminal = agentTerminal(id: terminalID), let agent = terminal.agent else {
+      toasts.show(Toast(kind: .warning, message: "That agent isn't running anymore."))
+      return
+    }
+    let busy = terminal.agentState == .working || terminal.agentState == .needsInput
+    terminal.sendToAgent(text)
+    toasts.show(
+      Toast(
+        kind: .success,
+        message: busy
+          ? "Queued for \(agent.displayName); it's sent when the current turn ends."
+          : "Sent to \(agent.displayName). Review it in its prompt, then press Return.",
+        actionTitle: "Show",
+        action: { [weak self] in self?.revealTerminal(id: terminalID) }))
+  }
 
   func gitOpenFile(_ absolutePath: String) {
     openCommandPaletteSearchResult(path: absolutePath, line: nil)

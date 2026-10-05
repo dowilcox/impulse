@@ -30,6 +30,8 @@ class TerminalTab: NSView {
   var agentTickTimer: Timer?
   var agentTickDeadline: Date?
   var agentProbeTimer: Timer?
+  /// Text waiting for the agent to finish its turn (see `sendToAgent`).
+  var pendingAgentText: [String] = []
   var agentState: AgentState? { agent == nil ? nil : agentMachine.state }
   /// When the agent entered its current state.
   var agentStateSince: Date { agentMachine.since }

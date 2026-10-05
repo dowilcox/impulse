@@ -101,7 +101,8 @@ public enum SafetySnapshots {
       SafetySnapshot(ref: ref, commit: commit, indexTree: indexTree, date: now, reason: reason))
   }
 
-  /// Snapshots under `prefix`, newest first.
+  /// Snapshots under `prefix` (including nested folders, e.g. one per
+  /// terminal under the checkpoint prefix), newest first.
   public static func list(root: String, prefix: String = oplogPrefix) -> [SafetySnapshot] {
     guard
       case .success(let result) = GitOperations.git(
@@ -115,8 +116,9 @@ public enum SafetySnapshots {
       let fields = chunk.trimmingCharacters(in: .newlines).components(separatedBy: "\0")
       guard fields.count >= 4 else { return nil }
       let ref = fields[0]
-      let name = String(ref.dropFirst(prefix.count))
-      let millis = name.split(separator: "-").first.flatMap { Double($0) } ?? 0
+      // <millis>-<reason> is the last path component.
+      let leaf = ref.split(separator: "/").last ?? ""
+      let millis = leaf.split(separator: "-").first.flatMap { Double($0) } ?? 0
       let subject = fields[2]
       let reason =
         subject.hasPrefix("impulse snapshot: ")
@@ -127,7 +129,7 @@ public enum SafetySnapshots {
       return SafetySnapshot(
         ref: ref, commit: fields[1], indexTree: indexTree,
         date: Date(timeIntervalSince1970: millis / 1000), reason: reason)
-    }
+    }.sorted { $0.date > $1.date }
   }
 
   /// Put `paths` (default: everything) back to how they were in `snapshot`,

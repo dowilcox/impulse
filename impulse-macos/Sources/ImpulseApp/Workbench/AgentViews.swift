@@ -76,7 +76,13 @@ struct AgentInboxView: View {
         ScrollView {
           VStack(spacing: 1) {
             ForEach(model.agents) { agent in
-              AgentInboxRow(agent: agent, relative: Self.relative) {
+              AgentInboxRow(
+                agent: agent, relative: Self.relative,
+                review: {
+                  model.onReviewAgentTurn?(agent.id)
+                  dismiss()
+                }
+              ) {
                 model.onRevealTerminal?(agent.id)
                 dismiss()
               }
@@ -97,6 +103,7 @@ private struct AgentInboxRow: View {
   @Environment(\.chrome) private var chrome
   let agent: AgentSummary
   let relative: RelativeDateTimeFormatter
+  let review: () -> Void
   let action: () -> Void
   @State private var hovering = false
 
@@ -120,6 +127,12 @@ private struct AgentInboxRow: View {
           .lineLimit(1)
         }
         Spacer(minLength: 0)
+        if agent.hasTurns && (hovering || agent.state == .done) {
+          ChromeButton(title: "Review", icon: .fileDiff, kind: .secondary, help: "Review the last turn's changes")
+          {
+            review()
+          }
+        }
       }
       .padding(.horizontal, 12)
       .frame(height: 40)

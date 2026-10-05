@@ -33,10 +33,43 @@ extension TerminalTab {
     scheduleAgentTick()
   }
 
+  /// Type `text` into the agent's prompt as a paste (so newlines don't
+  /// submit), without pressing Return. While the agent is mid-turn it waits
+  /// until the turn ends. Returns false when there's no agent.
+  @discardableResult
+  func sendToAgent(_ text: String) -> Bool {
+    guard agent != nil else { return false }
+    if agentMachine.state == .working || agentMachine.state == .needsInput {
+      pendingAgentText.append(text)
+      return true
+    }
+    pasteToAgent(text)
+    return true
+  }
+
+  private func pasteToAgent(_ text: String) {
+    guard let backend else { return }
+    if backend.mode()?.bracketedPaste == true {
+      backend.write("\u{1b}[200~" + text + "\u{1b}[201~")
+    } else {
+      backend.write(text)
+    }
+  }
+
+  /// Deliver text queued while the agent was busy.
+  private func flushPendingAgentText() {
+    guard !pendingAgentText.isEmpty else { return }
+    let text = pendingAgentText.joined(separator: "\n\n")
+    pendingAgentText = []
+    pasteToAgent(text)
+  }
+
   /// The agent left (its command ended or another program took over).
   func endAgent() {
     guard agent != nil else { return }
+    let before = agentMachine.state
     agentMachine.handle(.exited, at: Date())
+    recordTurnBoundary(from: before, to: .exited)
     agent = nil
     agentTickTimer?.invalidate()
     agentTickTimer = nil
@@ -107,8 +140,24 @@ extension TerminalTab {
     }
   }
 
+  /// Checkpoint the repository when a turn starts (work begins from idle or
+  /// done) and when it ends (done, idle, exit). A mid-turn question
+  /// (needs input) doesn't split the turn.
+  private func recordTurnBoundary(from before: AgentState, to state: AgentState) {
+    if state == .working, before == .idle || before == .done, let agent {
+      AgentCheckpoints.shared.turnStarted(
+        terminalID: id, agentName: agent.displayName, cwd: currentWorkingDirectory)
+    } else if before == .working || before == .needsInput,
+      state == .done || state == .idle || state == .exited
+    {
+      AgentCheckpoints.shared.turnEnded(terminalID: id)
+    }
+  }
+
   private func agentStateChanged(from before: AgentState, cause: AgentEvent?) {
     let state = agentMachine.state
+    recordTurnBoundary(from: before, to: state)
+    if state == .done || state == .idle { flushPendingAgentText() }
     if state.wantsUser, let agent {
       if isWatched, state == .done {
         // The user saw it finish; nothing to flag.

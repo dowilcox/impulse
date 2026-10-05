@@ -1573,7 +1573,8 @@ final class TabManager: NSObject {
         return AgentSummary(
           id: terminal.id, agentName: agent.displayName, tabTitle: terminal.tabTitle,
           workspaceName: names[record.workspaceID] ?? "", state: state,
-          since: terminal.agentStateSince)
+          since: terminal.agentStateSince,
+          hasTurns: AgentCheckpoints.shared.turnCount(terminalID: terminal.id) > 0)
       }
     }.sorted {
       $0.state.urgency != $1.state.urgency ? $0.state.urgency > $1.state.urgency : $0.since > $1.since
