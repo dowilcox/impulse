@@ -454,6 +454,41 @@ struct GitActions {
 
   // MARK: Conflicts
 
+  /// Agents that could take a prompt.
+  var agentTargets: [AgentSummary] { host?.agentTargets ?? [] }
+
+  /// Hand the conflict blocks in these files (every conflicted file when
+  /// empty) to an agent, or copy the prompt when `terminalID` is nil.
+  func askAgentToResolve(_ changes: [FileChange], terminalID: UUID?) {
+    let root = repository.root
+    let targets = changes.isEmpty ? repository.snapshot?.conflicted ?? [] : changes
+    let files = targets.compactMap { change -> (path: String, text: String)? in
+      let path = (root as NSString).appendingPathComponent(change.path)
+      return (try? String(contentsOfFile: path, encoding: .utf8)).map { (change.path, $0) }
+    }
+    guard files.contains(where: { !ConflictPrompt.blocks(in: $0.text).isEmpty }) else {
+      host?.toasts.show(Toast(kind: .info, message: "No conflict markers left. Mark the files resolved."))
+      return
+    }
+    let operation: String? = {
+      switch repository.snapshot?.operation {
+      case .merge: return "merge"
+      case .rebase: return "rebase"
+      case .cherryPick: return "cherry-pick"
+      case .revert: return "revert"
+      default: return nil
+      }
+    }()
+    let prompt = ConflictPrompt.make(files: files, operation: operation)
+    if let terminalID {
+      host?.sendToAgent(prompt, terminalID: terminalID)
+    } else {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(prompt, forType: .string)
+      host?.toasts.show(Toast(kind: .success, message: "Copied a prompt to resolve the conflicts"))
+    }
+  }
+
   /// Take one side of every conflict in these files (snapshot first).
   func resolve(_ changes: [FileChange], takeOurs: Bool) {
     let paths = changes.map(\.path)

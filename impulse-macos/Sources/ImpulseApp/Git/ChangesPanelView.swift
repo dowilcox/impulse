@@ -43,7 +43,8 @@ private struct ChangesPanelContent: View {
     VStack(spacing: 0) {
       header(snapshot)
       if let operation = snapshot?.operation {
-        OperationBanner(operation: operation, actions: actions)
+        OperationBanner(
+          operation: operation, hasConflicts: !(snapshot?.conflicted.isEmpty ?? true), actions: actions)
       }
       if let activity = repository.activity {
         activityBar(activity)
@@ -377,6 +378,15 @@ private struct ChangeRow: View {
       Button("Keep Current (HEAD)") { actions.resolve([change], takeOurs: true) }
       Button("Take Incoming") { actions.resolve([change], takeOurs: false) }
       Button("Mark Resolved") { actions.markResolved([change]) }
+      Menu("Ask Agent to Resolve") {
+        ForEach(actions.agentTargets) { agent in
+          Button("\(agent.agentName) · \(agent.tabTitle)") {
+            actions.askAgentToResolve([change], terminalID: agent.id)
+          }
+        }
+        if !actions.agentTargets.isEmpty { Divider() }
+        Button("Copy as Prompt") { actions.askAgentToResolve([change], terminalID: nil) }
+      }
     }
     Divider()
     Button("Copy Path") {
@@ -446,6 +456,7 @@ private struct StashRow: View {
 private struct OperationBanner: View {
   @Environment(\.chrome) private var chrome
   let operation: RepoOperation
+  let hasConflicts: Bool
   let actions: GitActions
 
   var body: some View {
@@ -455,6 +466,27 @@ private struct OperationBanner: View {
         .font(ChromeFont.ui(12, weight: .semibold))
         .foregroundStyle(chrome.text)
       Spacer(minLength: 4)
+      if hasConflicts {
+        ChromeMenuButton(help: "Ask an agent to resolve the conflicts") {
+          let agents = actions.agentTargets
+          var items = agents.map { agent in
+            ChromeMenuItem("Send to \(agent.agentName) · \(agent.tabTitle)") {
+              actions.askAgentToResolve([], terminalID: agent.id)
+            }
+          }
+          if !agents.isEmpty { items.append(.separator) }
+          items.append(ChromeMenuItem("Copy as Prompt") { actions.askAgentToResolve([], terminalID: nil) })
+          return items
+        } label: {
+          HStack(spacing: 4) {
+            Icon(.bot, size: 12)
+            Text("Ask Agent").font(ChromeFont.ui(11.5, weight: .medium))
+          }
+          .foregroundStyle(chrome.textSecondary)
+          .padding(.horizontal, 6)
+          .frame(height: 22)
+        }
+      }
       ChromeButton(title: "Continue", kind: .secondary) { actions.perform(.continue, on: operation) }
       if operation.canSkip {
         ChromeButton(title: "Skip", kind: .ghost) { actions.perform(.skip, on: operation) }

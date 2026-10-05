@@ -41,12 +41,13 @@ extension MainWindowController {
         goToColumn: line == nil ? nil : (column ?? 1))
       guard request.wait else { return reply(ControlResponse(ok: true)) }
       // Answer when the tab closes (for $EDITOR=impulse edit).
-      var observer: NSObjectProtocol?
-      observer = NotificationCenter.default.addObserver(
+      let observer = ObserverToken()
+      observer.token = NotificationCenter.default.addObserver(
         forName: .impulseEditorClosed, object: nil, queue: .main
       ) { notification in
-        guard notification.userInfo?["path"] as? String == path else { return }
-        if let observer { NotificationCenter.default.removeObserver(observer) }
+        guard notification.userInfo?["path"] as? String == path, let token = observer.token else { return }
+        NotificationCenter.default.removeObserver(token)
+        observer.token = nil
         reply(ControlResponse(ok: true))
       }
 
@@ -142,4 +143,9 @@ extension MainWindowController {
       reply(ControlResponse(ok: false, message: "impulse: unknown command '\(request.command)'"))
     }
   }
+}
+
+/// Holds a block observer's token so the block can remove itself.
+private final class ObserverToken: @unchecked Sendable {
+  var token: NSObjectProtocol?
 }
