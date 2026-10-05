@@ -33,6 +33,10 @@ protocol PaletteHost: AnyObject {
   func paletteOpenSetting(_ key: String)
   /// The focused editor's symbols (nil: no editor or no language server).
   func paletteDocumentSymbols(_ completion: @escaping ([OutlineSymbol]?) -> Void)
+  /// Project symbols matching `query` from the focused editor's language
+  /// server (nil: no editor or no server).
+  func paletteWorkspaceSymbols(
+    _ query: String, completion: @escaping ([(symbol: OutlineSymbol, path: String)]?) -> Void)
 }
 
 /// One result row.
@@ -60,7 +64,8 @@ struct PaletteRow: Identifiable {
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, symbols, help
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, symbols
+    case workspaceSymbols, help
 
     var placeholder: String {
       switch self {
@@ -75,6 +80,7 @@ final class PaletteModel {
       case .pullRequests: return "Check out a pull request into a new task…"
       case .settings: return "Find a setting…"
       case .symbols: return "Go to symbol in this file…"
+      case .workspaceSymbols: return "Go to symbol in the project…"
       case .help: return "Palette modes"
       }
     }
@@ -92,6 +98,7 @@ final class PaletteModel {
       case .pullRequests: return .gitPullRequest
       case .settings: return .settings
       case .symbols: return .code
+      case .workspaceSymbols: return .code
       case .help: return .info
       }
     }
@@ -178,6 +185,7 @@ final class PaletteModel {
     if query.hasPrefix("pr:") { return (.pullRequests, String(query.dropFirst(3))) }
     if query.hasPrefix("set:") { return (.settings, String(query.dropFirst(4))) }
     if query.hasPrefix("@") { return (.symbols, String(query.dropFirst())) }
+    if query.hasPrefix("#") { return (.workspaceSymbols, String(query.dropFirst())) }
     if query.hasPrefix("?") { return (.help, "") }
     return (.files, query)
   }
@@ -201,6 +209,7 @@ final class PaletteModel {
     case .pullRequests: refreshPullRequests(trimmed)
     case .settings: refreshSettings(trimmed)
     case .symbols: refreshSymbols(trimmed)
+    case .workspaceSymbols: refreshWorkspaceSymbols(trimmed)
     case .help: refreshHelp()
     }
   }
@@ -606,6 +615,50 @@ final class PaletteModel {
     }
   }
 
+  private func refreshWorkspaceSymbols(_ term: String) {
+    rows = []
+    guard host?.paletteHasEditor == true else {
+      emptyMessage = "Open a file so its language server can search the project"
+      return
+    }
+    guard !term.isEmpty else {
+      emptyMessage = "Type a symbol name"
+      return
+    }
+    isBusy = true
+    emptyMessage = "Searching…"
+    let generation = self.generation
+    let root = fileIndexRoot
+    // Debounced like text search: servers search the whole project.
+    let work = DispatchWorkItem { [weak self] in
+      self?.host?.paletteWorkspaceSymbols(term) { [weak self] results in
+        guard let self, self.generation == generation else { return }
+        self.isBusy = false
+        guard let results else {
+          self.emptyMessage = "No language server for this file"
+          return
+        }
+        let ranked = FuzzyMatcher.rank(results, query: term, limit: 200) { $0.symbol.name }
+        self.rows = ranked.map { entry in
+          let (symbol, path) = entry.item
+          let relative = path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : path
+          return PaletteRow(
+            id: "wsymbol:\(path):\(symbol.line):\(symbol.name)", glyph: .lucide(Self.icon(forSymbolKind: symbol.kind)),
+            title: symbol.name, highlights: entry.match.positions,
+            subtitle: ([symbol.container.joined(separator: " › ")].filter { !$0.isEmpty } + ["\(relative):\(symbol.line)"])
+              .joined(separator: "  "),
+            trailing: symbol.kindName
+          ) { [weak self] in
+            self?.host?.paletteOpenFile(path, line: UInt32(symbol.line), column: UInt32(symbol.column))
+          }
+        }
+        self.emptyMessage = "No symbols match “\(term)”"
+      }
+    }
+    textSearchWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+  }
+
   private static func icon(forSymbolKind kind: Int) -> LucideIcon {
     switch kind {
     case 5, 10, 11, 23, 26: return .layers  // class, enum, interface, struct, type parameter
@@ -737,6 +790,7 @@ final class PaletteModel {
       ("pr:", "Check out a pull request", .gitPullRequest),
       ("set:", "Find a setting", .settings),
       ("@", "Go to a symbol in this file", .code),
+      ("#", "Go to a symbol in the project", .code),
     ]
     rows = modes.map { prefix, title, icon in
       PaletteRow(

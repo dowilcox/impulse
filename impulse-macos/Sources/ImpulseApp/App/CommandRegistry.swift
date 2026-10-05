@@ -125,6 +125,10 @@ enum CommandRegistry {
         keywords: ["outline", "function", "class", "@"], icon: .code, keybindingId: "go_to_symbol"
       ) { [weak controller] in controller?.showPalette(prefix: "@") },
       AppCommand(
+        id: "go_to_project_symbol", title: "Go to Symbol in Project…", category: "Editor",
+        keywords: ["workspace", "function", "class", "#"], icon: .code
+      ) { [weak controller] in controller?.showPalette(prefix: "#") },
+      AppCommand(
         id: "show_problems", title: "Show Problems", category: "Editor",
         keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert
       ) { [weak controller] in controller?.showProblems() },

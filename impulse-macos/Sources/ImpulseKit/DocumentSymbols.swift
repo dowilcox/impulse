@@ -70,6 +70,22 @@ public enum DocumentSymbols {
     return out
   }
 
+  /// `workspace/symbol` results (SymbolInformation or WorkspaceSymbol):
+  /// each symbol with the file it's in.
+  public static func parseWorkspace(_ json: Data) -> [(symbol: OutlineSymbol, path: String)] {
+    guard let array = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return [] }
+    return array.compactMap { item in
+      guard let name = item["name"] as? String, let kind = item["kind"] as? Int,
+        let location = item["location"] as? [String: Any], let uri = location["uri"] as? String,
+        let url = URL(string: uri), url.isFileURL
+      else { return nil }
+      // WorkspaceSymbol may leave the range out until resolved: line 1.
+      let (line, column) = start(location["range"]) ?? (1, 1)
+      let container = (item["containerName"] as? String).flatMap { $0.isEmpty ? nil : [$0] } ?? []
+      return (OutlineSymbol(name: name, kind: kind, line: line, column: column, container: container), url.path)
+    }
+  }
+
   /// A range's start as 1-based (line, column).
   private static func start(_ range: Any?) -> (Int, Int)? {
     guard let range = range as? [String: Any], let start = range["start"] as? [String: Any],

@@ -3868,6 +3868,13 @@ extension MainWindowController: PaletteHost {
     documentSymbols(for: editor, completion: completion)
   }
 
+  func paletteWorkspaceSymbols(
+    _ query: String, completion: @escaping ([(symbol: OutlineSymbol, path: String)]?) -> Void
+  ) {
+    guard let editor = tabManager.selectedEditor else { return completion(nil) }
+    workspaceSymbols(query: query, editor: editor, completion: completion)
+  }
+
   func paletteOpenSetting(_ key: String) {
     openSettings(query: key)
   }

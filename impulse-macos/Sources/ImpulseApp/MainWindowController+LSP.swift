@@ -72,6 +72,26 @@ extension MainWindowController {
     }
   }
 
+  /// Project-wide symbols matching `query`, from the language server of
+  /// `editor`'s file.
+  func workspaceSymbols(
+    query: String, editor: EditorTab, completion: @escaping ([(symbol: OutlineSymbol, path: String)]?) -> Void
+  ) {
+    guard let path = editor.filePath else { return completion(nil) }
+    lspDidOpenIfNeeded(path: path)
+    let uri = filePathToUri(path)
+    let language = editor.lspLanguage
+    let params = encodeLspJSON(["query": query])
+    lspQueue.async { [weak self] in
+      let response = self?.core.lspRequest(
+        languageId: language, fileUri: uri, method: "workspace/symbol", paramsJson: params)
+      let data = response.flatMap { $0.data(using: .utf8) }
+      let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
+      let results = failed ? nil : data.map(DocumentSymbols.parseWorkspace)
+      DispatchQueue.main.async { completion(results) }
+    }
+  }
+
   /// Keep every file's diagnostics for the Problems panel, open or not
   /// (servers like rust-analyzer report the whole workspace).
   private func recordProblems(path: String, _ diagnosticsArray: [[String: Any]]) {

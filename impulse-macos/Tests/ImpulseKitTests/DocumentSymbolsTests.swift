@@ -46,5 +46,19 @@
       #expect(DocumentSymbols.parse(Data("null".utf8)).isEmpty)
       #expect(DocumentSymbols.kindName(99) == "symbol")
     }
+
+    @Test func workspaceSymbolsCarryTheirFiles() {
+      let json = #"""
+        [{"name": "Search", "kind": 5, "containerName": "app",
+          "location": {"uri": "file:///repo/src/search.ts", "range": {"start": {"line": 3, "character": 13}, "end": {"line": 3, "character": 19}}}},
+         {"name": "lazy", "kind": 12, "location": {"uri": "file:///repo/a%20b.ts"}},
+         {"name": "remote", "kind": 12, "location": {"uri": "https://example.com/x.ts"}}]
+        """#
+      let results = DocumentSymbols.parseWorkspace(Data(json.utf8))
+      #expect(results.map(\.path) == ["/repo/src/search.ts", "/repo/a b.ts"])
+      #expect(results[0].symbol.line == 4 && results[0].symbol.column == 14)
+      #expect(results[0].symbol.container == ["app"])
+      #expect(results[1].symbol.line == 1, "no range yet")
+    }
   }
 #endif
