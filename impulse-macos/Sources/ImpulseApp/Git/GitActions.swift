@@ -413,6 +413,79 @@ struct GitActions {
     }
   }
 
+  // MARK: History
+
+  /// Look at an old commit (detached HEAD).
+  func checkout(commit sha: String) {
+    repository.run("Checking out \(sha.prefix(7))…") { GitOperations.checkoutDetached(sha, root: $0) }
+      completion: { result, _ in
+        report(result, failure: "Couldn't check out \(sha.prefix(7))")
+      }
+  }
+
+  func createBranch(_ name: String, at sha: String) {
+    repository.run("Creating \(name)…") {
+      GitOperations.createBranch(name, startPoint: sha, checkout: true, root: $0)
+    } completion: { result, _ in
+      report(result, failure: "Couldn't create \(name)")
+    }
+  }
+
+  /// Apply a commit on top of HEAD. Conflicts leave the operation open (the
+  /// Changes panel offers Continue / Abort).
+  func cherryPick(_ sha: String) {
+    repository.run("Cherry-picking \(sha.prefix(7))…", snapshotReason: "cherry-pick \(sha.prefix(7))") {
+      GitOperations.cherryPick(sha, root: $0)
+    } completion: { result, _ in
+      report(result, failure: "Cherry-pick stopped")
+    }
+  }
+
+  func revert(_ sha: String) {
+    repository.run("Reverting \(sha.prefix(7))…", snapshotReason: "revert \(sha.prefix(7))") {
+      GitOperations.revert(sha, root: $0)
+    } completion: { result, _ in
+      report(result, failure: "Revert stopped")
+    }
+  }
+
+  /// Move the current branch to a commit. Hard resets ask first; every reset
+  /// can be undone (HEAD and the working tree come back).
+  func reset(_ mode: GitOperations.ResetMode, to sha: String) {
+    let previousHead = repository.snapshot?.headOid
+    let perform = {
+      repository.run("Resetting…", snapshotReason: "reset --\(mode.rawValue) \(sha.prefix(7))") {
+        GitOperations.reset(mode, to: sha, root: $0)
+      } completion: { [repository, host] result, snapshot in
+        if case .failure(let error) = result {
+          host?.gitPresentError(error, title: "Couldn't reset")
+          return
+        }
+        guard let previousHead else { return }
+        host?.toasts.show(
+          Toast(
+            kind: .success, message: "Reset to \(sha.prefix(7)) (\(mode.rawValue))", actionTitle: "Undo",
+            action: {
+              repository.run {
+                let back = GitOperations.reset(.hard, to: previousHead, root: $0)
+                guard case .success = back, let snapshot else { return back }
+                return SafetySnapshots.restore(snapshot, root: $0)
+              } completion: { result, _ in
+                if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't undo the reset") }
+              }
+            }, lifetime: 15))
+      }
+    }
+    guard mode == .hard else { return perform() }
+    host?.gitConfirm(
+      title: "Reset hard to \(sha.prefix(7))?",
+      message: "The branch moves to this commit and uncommitted changes are thrown away. A snapshot is kept so Undo can bring everything back.",
+      confirmTitle: "Reset", destructive: true
+    ) { confirmed in
+      if confirmed { perform() }
+    }
+  }
+
   // MARK: Helpers
 
   private func report(_ result: GitResult, failure title: String) {

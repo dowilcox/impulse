@@ -47,6 +47,7 @@ enum TabEntry {
   case editor(EditorTab)
   case imagePreview(path: String, view: NSView)
   case diffReview(repoRoot: String, view: ReviewSurface)
+  case history(repoRoot: String, view: HistorySurface)
   /// Several of the above side by side (never nested).
   case split(SplitTab)
 
@@ -57,6 +58,7 @@ enum TabEntry {
     case .editor(let editor): return editor
     case .imagePreview(_, let view): return view
     case .diffReview(_, let view): return view
+    case .history(_, let view): return view
     case .split(let split): return split.view
     }
   }
@@ -100,6 +102,8 @@ enum TabEntry {
     case .diffReview(let repoRoot, _):
       let name = (repoRoot as NSString).lastPathComponent
       return name.isEmpty ? "Review" : "Review · \(name)"
+    case .history(_, let view):
+      return view.title
     }
   }
 
@@ -110,7 +114,7 @@ enum TabEntry {
       return container.needsAttention
     case .split(let split):
       return split.panes.values.contains { $0.needsAttention }
-    case .editor, .imagePreview, .diffReview:
+    case .editor, .imagePreview, .diffReview, .history:
       return false
     }
   }
@@ -149,7 +153,7 @@ enum TabEntry {
         encoding: nil,
         indentInfo: nil
       )
-    case .diffReview(let repoRoot, _):
+    case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return TabInfo(
         cwd: repoRoot,
         gitBranch: nil,
@@ -174,6 +178,8 @@ enum TabEntry {
     case .imagePreview:
       break
     case .diffReview(_, let view):
+      view.focus()
+    case .history(_, let view):
       view.focus()
     }
   }
@@ -203,6 +209,8 @@ enum TabEntry {
     case .imagePreview(_, let view):
       view.layer?.backgroundColor = theme.bgColor.cgColor
     case .diffReview(_, let view):
+      view.applyTheme(theme)
+    case .history(_, let view):
       view.applyTheme(theme)
     }
   }
@@ -538,6 +546,20 @@ final class TabManager: NSObject {
     insertTab(TabEntry.diffReview(repoRoot: repository.root, view: review))
   }
 
+  /// Open (or show) the history of a repository, or of one path in it.
+  func addHistoryTab(repository: GitRepositoryState, path: String? = nil, host: GitPanelHost?) {
+    if let location = locate(where: {
+      if case .history(let root, let view) = $0 { return root == repository.root && view.model.path == path }
+      return false
+    }) {
+      reveal(location)
+      if case .history(_, let view) = tabs[location.tabIndex].focused { view.refresh() }
+      return
+    }
+    let view = HistorySurface(repository: repository, path: path, theme: theme, host: host)
+    insertTab(.history(repoRoot: repository.root, view: view))
+  }
+
   /// Detect the Monaco language ID for a file path.
   func detectLanguage(forPath path: String) -> String {
     languageIdForPath(path)
@@ -645,6 +667,8 @@ final class TabManager: NSObject {
     case .imagePreview:
       break
     case .diffReview(_, let view):
+      view.cleanup()
+    case .history(_, let view):
       view.cleanup()
     }
   }
@@ -1216,7 +1240,7 @@ final class TabManager: NSObject {
           column: editor.cursorPosition.map { Int($0.column) })
       case .imagePreview(let path, _):
         return FileManager.default.fileExists(atPath: path) ? .file(path: path) : nil
-      case .diffReview, .split:
+      case .diffReview, .history, .split:
         return nil
       }
     }
@@ -1691,7 +1715,7 @@ final class TabManager: NSObject {
         ?? editor.filePath.map { ($0 as NSString).deletingLastPathComponent }
     case .imagePreview(let path, _):
       return (path as NSString).deletingLastPathComponent
-    case .diffReview(let repoRoot, _):
+    case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return repoRoot
     case .split(let split):
       return tabDirectory(for: split.focused)
@@ -1756,6 +1780,8 @@ final class TabManager: NSObject {
     case .diffReview:
       return NSImage(
         systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Review Changes")
+    case .history:
+      return NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
     case .split(let split):
       return tabIcon(for: split.focused)
     }

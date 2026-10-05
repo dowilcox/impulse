@@ -313,6 +313,8 @@ final class WindowModel {
   var onOpenFileBeside: ((String) -> Void)?
   /// Send "@path" to the most relevant running agent.
   var onMentionInAgent: ((String) -> Void)?
+  /// History of a path (nil: the whole repository).
+  var onShowHistory: ((String?) -> Void)?
   var onNewFile: ((String) -> Void)?
   var onNewFolder: ((String) -> Void)?
   /// Sidebar action-bar buttons (act on the selected tree dir, or the root):

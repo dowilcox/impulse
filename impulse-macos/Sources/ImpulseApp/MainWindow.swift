@@ -359,6 +359,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         userInfo: ["path": path, "line": line as Any]
       )
     }
+    windowModel.onShowHistory = { [weak self] path in
+      self?.showHistory(path: path)
+    }
     windowModel.onMentionInAgent = { [weak self] path in
       guard let self else { return }
       self.sendToBestAgent("@" + self.relativeToWorkspace(path) + " ")
@@ -732,6 +735,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     return true
   }
 
+  /// History of the window's repository, or of one file or folder in it.
+  func showHistory(path absolutePath: String? = nil) {
+    let anchor = absolutePath ?? windowModel.repository?.root ?? fileTreeRootPath
+    GitRepositoryStore.shared.resolve(directory: anchor) { [weak self] state in
+      guard let self else { return }
+      guard let state else {
+        self.toasts.show(Toast(kind: .info, message: "Not in a git repository."))
+        return
+      }
+      var relative: String?
+      if let absolutePath, absolutePath != state.root, absolutePath.hasPrefix(state.root + "/") {
+        relative = String(absolutePath.dropFirst(state.root.count + 1))
+      }
+      self.tabManager.addHistoryTab(repository: state, path: relative, host: self)
+    }
+  }
+
   /// The agent's terminal, by terminal id.
   func agentTerminal(id: UUID) -> TerminalTab? {
     for case .terminal(let container) in tabManager.allSurfaces {
@@ -843,6 +863,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action == "history" {
+        showHistory()
       } else if action.hasPrefix("composer=") {
         windowModel.composerDraft = String(action.dropFirst(9))
         toggleAgentComposer()
@@ -1651,7 +1673,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             dir = editor.projectDirectory
           case .imagePreview, .split:
             dir = nil
-          case .diffReview(let repoRoot, _):
+          case .diffReview(let repoRoot, _), .history(let repoRoot, _):
             dir = repoRoot
           }
           if self.followsActiveDirectory, let dir, !dir.isEmpty, dir != self.fileTreeRootPath {
@@ -1988,7 +2010,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           )
         case .terminal:
           self.toggleTerminalSearch()
-        case .imagePreview, .diffReview, .split:
+        case .imagePreview, .diffReview, .history, .split:
           break
         }
       }
@@ -2704,7 +2726,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     case .imagePreview(let path, _):
       return (path as NSString).deletingLastPathComponent
-    case .diffReview(let repoRoot, _):
+    case .diffReview(let repoRoot, _), .history(let repoRoot, _):
       return repoRoot.isEmpty ? nil : repoRoot
     case .split:
       break
@@ -2832,7 +2854,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview, .split:
+      case .imagePreview, .diffReview, .history, .split:
         break
       }
     }
@@ -2852,7 +2874,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview, .split:
+      case .imagePreview, .diffReview, .history, .split:
         break
       }
     }
@@ -3302,7 +3324,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return editor.filePath
       case .imagePreview(let path, _):
         return path
-      case .terminal, .diffReview, .split:
+      case .terminal, .diffReview, .history, .split:
         return nil
       }
     }

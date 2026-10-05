@@ -473,4 +473,53 @@
       #expect(GitClient.baseContent(forFile: "/tmp/not-in-a-repo-\(UUID().uuidString).txt") == nil)
     }
   }
+
+  struct GitLogTests {
+    init() {
+      GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func readsHistoryWithParentsAndRefs() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      try repo.git("checkout", "-q", "-b", "topic")
+      try repo.commit(["b.txt": "topic\n"])
+      try repo.git("checkout", "-q", "main")
+      try repo.commit(["a.txt": "two\n"])
+      try repo.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic")
+      try repo.git("tag", "v1")
+
+      let entries = try GitLog.entries(root: repo.root).get()
+      #expect(entries.count == 4)
+      let merge = entries[0]
+      #expect(merge.subject == "Merge topic")
+      #expect(merge.parents.count == 2)
+      #expect(merge.refs.contains("HEAD -> main"))
+      #expect(merge.refs.contains("tag: v1"))
+      #expect(merge.author == "Impulse Test")
+      #expect(entries.last?.parents.isEmpty == true)
+
+      // Paging.
+      let page = try GitLog.entries(root: repo.root, skip: 1, limit: 2).get()
+      #expect(page.map(\.sha) == Array(entries[1...2]).map(\.sha))
+
+      // Path filter: only commits that touched b.txt.
+      let file = try GitLog.entries(root: repo.root, path: "b.txt").get()
+      #expect(file.count == 1)
+      #expect(file[0].refs.contains("topic"))
+    }
+
+    @Test func allBranchesSkipsPrivateRefs() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      try repo.write("a.txt", "dirty\n")
+      _ = try SafetySnapshots.create(reason: "test", root: repo.root).get()
+      try repo.git("checkout", "-q", "-b", "side")
+      try repo.git("checkout", "-q", "-")
+      let all = try GitLog.entries(root: repo.root, scope: .all).get()
+      #expect(all.count == 1, "the snapshot commit isn't history")
+    }
+  }
 #endif

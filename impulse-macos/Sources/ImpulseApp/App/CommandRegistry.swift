@@ -61,6 +61,17 @@ enum CommandRegistry {
         keywords: ["git commit", "visual", "editor", "wait"], icon: .pencil
       ) { [weak controller] in controller?.toggleEditorIntegration() },
       AppCommand(
+        id: "git_history", title: "Show Git History", category: "Git",
+        keywords: ["log", "commits", "graph", "blame"], icon: .history
+      ) { [weak controller] in controller?.showHistory() },
+      AppCommand(
+        id: "file_history", title: "Show History of This File", category: "Git",
+        keywords: ["log", "commits", "blame"], icon: .history
+      ) { [weak controller] in
+        guard let controller else { return }
+        controller.showHistory(path: controller.tabManager.selectedEditor?.filePath)
+      },
+      AppCommand(
         id: "new_task", title: "New Task…", category: "Workspaces",
         keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus
       ) { [weak controller] in controller?.presentNewTaskSheet() },

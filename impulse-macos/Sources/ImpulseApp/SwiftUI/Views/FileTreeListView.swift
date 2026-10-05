@@ -248,6 +248,10 @@ private struct FlatFileRowView: View {
       Divider()
     }
 
+    Button("Show History") {
+      model.onShowHistory?(node.path)
+    }
+
     Button("Reveal in Finder") {
       if node.isDirectory {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: node.path)
