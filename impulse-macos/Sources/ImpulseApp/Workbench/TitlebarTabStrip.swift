@@ -77,6 +77,14 @@ struct TitlebarTabStrip: View {
           .lineLimit(1)
           .truncationMode(.middle)
           .frame(maxWidth: 180, alignment: .leading)
+        if tab.paneCount > 1 {
+          HStack(spacing: 2) {
+            Icon(tab.isZoomed ? .maximize2 : .columns2, size: 10)
+            Text("\(tab.paneCount)").font(ChromeFont.mono(10))
+          }
+          .foregroundStyle(chrome.textTertiary)
+          .help(tab.isZoomed ? "Zoomed pane (⌘⇧↩ to restore)" : "\(tab.paneCount) panes")
+        }
         trailingAccessory(tab, selected: selected, hovered: hovered)
       }
     }
@@ -173,6 +181,15 @@ struct TitlebarTabStrip: View {
     Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { model.onTabPinToggled?(tab.index) }
     Button("Close Tab") { model.onTabClosed?(tab.index) }
     Divider()
+    if tab.index != model.selectedTabIndex {
+      Button("Move into Current Tab, Right") { model.onJoinTab?(tab.index, false) }
+      Button("Move into Current Tab, Below") { model.onJoinTab?(tab.index, true) }
+      Divider()
+    } else if tab.paneCount > 1 {
+      Button("Even Out Panes") { model.onPaneCommand?("equalize_panes") }
+      Button("Move Pane to New Tab") { model.onPaneCommand?("move_pane_to_tab") }
+      Divider()
+    }
     Button("New Terminal Tab") { model.onNewTab?() }
   }
 

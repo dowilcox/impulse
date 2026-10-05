@@ -687,6 +687,9 @@ class TerminalTab: NSView {
       .filter { seen.insert($0).inserted }
   }
 
+  /// Unsent input-bar text, kept while the bar is in another terminal.
+  var inputDraft: String = ""
+
   /// Whether the alternate screen (vim, htop, ...) is active.
   var isAltScreen: Bool {
     backend?.mode()?.altScreen ?? false

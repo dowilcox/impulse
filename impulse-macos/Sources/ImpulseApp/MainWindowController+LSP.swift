@@ -1033,7 +1033,7 @@ extension MainWindowController {
       return editor
     }
     // Fallback: linear scan (keeps behavior correct if dictionary is stale).
-    for tab in tabManager.tabs {
+    for tab in tabManager.allSurfaces {
       if case .editor(let editor) = tab, editor.filePath == path {
         // Re-track it for future lookups.
         editorTabsByPath[path] = editor

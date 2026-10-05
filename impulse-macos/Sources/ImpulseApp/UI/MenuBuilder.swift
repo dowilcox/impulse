@@ -295,6 +295,45 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
+        let panesItem = NSMenuItem(title: "Panes", action: nil, keyEquivalent: "")
+        let panesMenu = NSMenu(title: "Panes")
+        let paneCommands: [(String, String)?] = [
+            ("split_right", "Split Right"),
+            ("split_down", "Split Down"),
+            nil,
+            ("focus_pane_left", "Focus Pane Left"),
+            ("focus_pane_right", "Focus Pane Right"),
+            ("focus_pane_up", "Focus Pane Above"),
+            ("focus_pane_down", "Focus Pane Below"),
+            ("next_pane", "Next Pane"),
+            ("prev_pane", "Previous Pane"),
+            nil,
+            ("resize_pane_left", "Grow Pane Left"),
+            ("resize_pane_right", "Grow Pane Right"),
+            ("resize_pane_up", "Grow Pane Up"),
+            ("resize_pane_down", "Grow Pane Down"),
+            ("equalize_panes", "Even Out Panes"),
+            nil,
+            ("zoom_pane", "Zoom Pane"),
+            ("move_pane_to_tab", "Move Pane to New Tab"),
+        ]
+        for entry in paneCommands {
+            guard let (id, title) = entry else {
+                panesMenu.addItem(.separator())
+                continue
+            }
+            let paneItem = NSMenuItem(
+                title: title, action: #selector(MenuActions.menuPaneCommand(_:)), keyEquivalent: "")
+            paneItem.target = MenuActions.shared
+            paneItem.representedObject = id
+            applyKeybinding(id, overrides: overrides, to: paneItem)
+            panesMenu.addItem(paneItem)
+        }
+        panesItem.submenu = panesMenu
+        menu.addItem(panesItem)
+
+        menu.addItem(.separator())
+
         let fontIncreaseItem = NSMenuItem(title: "Increase Font Size",
                                           action: #selector(MenuActions.menuFontIncrease(_:)),
                                           keyEquivalent: "=")
@@ -478,6 +517,12 @@ final class MenuActions: NSObject {
 
     @objc func menuToggleRightDock(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulseToggleRightDock, object: nil)
+    }
+
+    @objc func menuPaneCommand(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? String else { return }
+        NotificationCenter.default.post(
+            name: .impulsePaneCommand, object: nil, userInfo: ["command": command])
     }
 
     @objc func menuFindInProject(_ sender: Any?) {

@@ -66,6 +66,17 @@ struct TerminalContextBarView: View {
     .onChange(of: model.inputBarFocusToken) {
       inputFocused = true
     }
+    .onAppear {
+      if !model.passwordInputActive { text = model.inputDraft }
+    }
+    .onChange(of: model.inputDraftRestoreToken) {
+      // The bar moved to another terminal: show that terminal's draft.
+      text = model.passwordInputActive ? "" : model.inputDraft
+      suggestion = nil
+      historyIndex = nil
+      savedDraft = ""
+      closeDropdown()
+    }
     .onChange(of: model.passwordInputActive) {
       // Entering password mode: a half-typed command draft must not be sent
       // as (part of) the password. Leaving it: a half-typed password must not
@@ -115,6 +126,20 @@ struct TerminalContextBarView: View {
 
   private var chipRow: some View {
     HStack(spacing: 6) {
+      // In a narrow split pane the chips clip at the trailing edge instead of
+      // forcing the whole bar wider than the pane.
+      chips
+        .fixedSize()
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
+      actionButton(symbol: "clock.arrow.circlepath", help: "Command History (⌃R)") {
+        model.onShowCommandHistory?()
+      }
+    }
+  }
+
+  private var chips: some View {
+    HStack(spacing: 6) {
       if !model.shellName.isEmpty {
         ContextChip(symbol: "terminal", text: model.shellName, theme: model.theme)
       }
@@ -134,10 +159,6 @@ struct TerminalContextBarView: View {
           removed: model.reviewRemovedLines)
       }
       statusChip
-      Spacer(minLength: 8)
-      actionButton(symbol: "clock.arrow.circlepath", help: "Command History (⌃R)") {
-        model.onShowCommandHistory?()
-      }
     }
   }
 
@@ -254,6 +275,7 @@ struct TerminalContextBarView: View {
             .focused($inputFocused)
             .onSubmit(handleSubmit)
             .onChange(of: text) { _, newValue in
+              model.inputDraft = newValue
               if historyIndex == nil || newValue != currentHistoryEntry() {
                 historyIndex = nil
               }

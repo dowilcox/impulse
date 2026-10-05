@@ -272,6 +272,23 @@ require(["vs/editor/editor.main"], function () {
     sendToHost({ type: "SaveRequested" });
   });
 
+  // ⌥⌘↑/↓ move focus between the app's split panes; give them up here
+  // (Monaco binds them to "add cursor above/below").
+  try {
+    monaco.editor.addKeybindingRules([
+      {
+        keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+        command: "-editor.action.insertCursorAbove",
+      },
+      {
+        keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+        command: "-editor.action.insertCursorBelow",
+      },
+    ]);
+  } catch (e) {
+    // Older Monaco without keybinding rules: the editor keeps them.
+  }
+
   // --- Register LSP Completion Provider ---
   monaco.languages.registerCompletionItemProvider("*", {
     triggerCharacters: [".", ":", "<", '"', "/", "@", "\\", " "],

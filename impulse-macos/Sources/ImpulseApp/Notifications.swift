@@ -136,6 +136,8 @@ extension Notification.Name {
     static let impulseShowCommandPalette = Notification.Name("impulseShowCommandPalette")
     /// Toggles the right dock in the frontmost window.
     static let impulseToggleRightDock = Notification.Name("impulseToggleRightDock")
+    /// A pane command (split, focus, zoom…); userInfo["command"] is its keybinding id.
+    static let impulsePaneCommand = Notification.Name("impulsePaneCommand")
     /// Shows the git Changes panel in the frontmost window.
     static let impulseShowChanges = Notification.Name("impulseShowChanges")
     /// Opens the branch switcher in the frontmost window.

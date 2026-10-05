@@ -219,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var result: [DirtyEditorRef] = []
     for window in NSApp.windows {
       guard let controller = window.windowController as? MainWindowController else { continue }
-      for tab in controller.tabManager.tabs {
+      for tab in controller.tabManager.allSurfaces {
         if case .editor(let editor) = tab, editor.isModified {
           result.append(DirtyEditorRef(controller: controller, editor: editor))
         }
@@ -247,17 +247,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let ref = remaining.removeFirst()
       // The editor may have been closed while we were processing earlier
       // tabs in the same window; skip stale entries.
-      guard
-        let tabIndex = ref.controller.tabManager.tabs.firstIndex(where: {
-          if case .editor(let e) = $0 { return e === ref.editor }
-          return false
-        })
-      else {
+      guard let location = ref.controller.tabManager.location(of: ref.editor) else {
         next()
         return
       }
       ref.controller.window?.makeKeyAndOrderFront(nil)
-      ref.controller.tabManager.selectTab(index: tabIndex)
+      ref.controller.tabManager.reveal(location)
       ref.controller.reviewAndSave(editor: ref.editor) { proceed in
         if proceed {
           DispatchQueue.main.async { next() }

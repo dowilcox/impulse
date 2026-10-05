@@ -62,6 +62,28 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.showPalette(prefix: "%") },
     ]
 
+    let paneCommands: [(id: String, title: String, keywords: [String], icon: LucideIcon)] = [
+      ("split_right", "Split Right", ["pane", "vertical split", "side by side"], .columns2),
+      ("split_down", "Split Down", ["pane", "horizontal split", "stack"], .rows2),
+      ("focus_pane_left", "Focus Pane Left", ["pane", "move"], .chevronLeft),
+      ("focus_pane_right", "Focus Pane Right", ["pane", "move"], .chevronRight),
+      ("focus_pane_up", "Focus Pane Above", ["pane", "move"], .chevronUp),
+      ("focus_pane_down", "Focus Pane Below", ["pane", "move"], .chevronDown),
+      ("next_pane", "Next Pane", ["pane", "cycle"], .chevronRight),
+      ("prev_pane", "Previous Pane", ["pane", "cycle"], .chevronLeft),
+      ("zoom_pane", "Zoom Pane", ["pane", "maximize", "fullscreen"], .maximize2),
+      ("equalize_panes", "Even Out Panes", ["pane", "equalize", "balance"], .columns2),
+      ("move_pane_to_tab", "Move Pane to New Tab", ["pane", "pop out", "detach"], .externalLink),
+    ]
+    for command in paneCommands {
+      let id = command.id
+      result.append(
+        AppCommand(
+          id: id, title: command.title, category: "Panes", keywords: command.keywords,
+          icon: command.icon, keybindingId: id
+        ) { [weak controller] in controller?.performPaneCommand(id) })
+    }
+
     for custom in customKeybindings where !custom.name.isEmpty {
       let command = custom.command
       let args = custom.args

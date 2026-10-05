@@ -64,6 +64,127 @@ enum Keybindings {
             keyEquivalent: "\u{0019}", // backtab
             modifierFlags: [.control, .shift]
         ),
+        // -- Panes --
+        BuiltinKeybinding(
+            id: "split_right",
+            description: "Split Right",
+            category: "Panes",
+            defaultShortcut: "Cmd+D",
+            keyEquivalent: "d",
+            modifierFlags: [.command]
+        ),
+        BuiltinKeybinding(
+            id: "split_down",
+            description: "Split Down",
+            category: "Panes",
+            defaultShortcut: "Cmd+Shift+D",
+            keyEquivalent: "D",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
+            id: "focus_pane_left",
+            description: "Focus Pane Left",
+            category: "Panes",
+            defaultShortcut: "Cmd+Alt+Left",
+            keyEquivalent: "\u{F702}",
+            modifierFlags: [.command, .option]
+        ),
+        BuiltinKeybinding(
+            id: "focus_pane_right",
+            description: "Focus Pane Right",
+            category: "Panes",
+            defaultShortcut: "Cmd+Alt+Right",
+            keyEquivalent: "\u{F703}",
+            modifierFlags: [.command, .option]
+        ),
+        BuiltinKeybinding(
+            id: "focus_pane_up",
+            description: "Focus Pane Up",
+            category: "Panes",
+            defaultShortcut: "Cmd+Alt+Up",
+            keyEquivalent: "\u{F700}",
+            modifierFlags: [.command, .option]
+        ),
+        BuiltinKeybinding(
+            id: "focus_pane_down",
+            description: "Focus Pane Down",
+            category: "Panes",
+            defaultShortcut: "Cmd+Alt+Down",
+            keyEquivalent: "\u{F701}",
+            modifierFlags: [.command, .option]
+        ),
+        BuiltinKeybinding(
+            id: "resize_pane_left",
+            description: "Grow Pane Left",
+            category: "Panes",
+            defaultShortcut: "Ctrl+Cmd+Left",
+            keyEquivalent: "\u{F702}",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "resize_pane_right",
+            description: "Grow Pane Right",
+            category: "Panes",
+            defaultShortcut: "Ctrl+Cmd+Right",
+            keyEquivalent: "\u{F703}",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "resize_pane_up",
+            description: "Grow Pane Up",
+            category: "Panes",
+            defaultShortcut: "Ctrl+Cmd+Up",
+            keyEquivalent: "\u{F700}",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "resize_pane_down",
+            description: "Grow Pane Down",
+            category: "Panes",
+            defaultShortcut: "Ctrl+Cmd+Down",
+            keyEquivalent: "\u{F701}",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "next_pane",
+            description: "Next Pane",
+            category: "Panes",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "prev_pane",
+            description: "Previous Pane",
+            category: "Panes",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "zoom_pane",
+            description: "Zoom Pane",
+            category: "Panes",
+            defaultShortcut: "Cmd+Shift+Return",
+            keyEquivalent: "\r",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
+            id: "equalize_panes",
+            description: "Even Out Panes",
+            category: "Panes",
+            defaultShortcut: "Ctrl+Cmd+=",
+            keyEquivalent: "=",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "move_pane_to_tab",
+            description: "Move Pane to New Tab",
+            category: "Panes",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
         // -- Terminal --
         BuiltinKeybinding(
             id: "copy",
@@ -289,7 +410,7 @@ enum Keybindings {
 
     /// Ordered list of keybinding categories for display purposes.
     static func categories() -> [String] {
-        ["Tabs", "Terminal", "Editor", "Navigation", "Font", "App"]
+        ["Tabs", "Panes", "Terminal", "Editor", "Navigation", "Font", "App"]
     }
 
     // MARK: Shortcut String Parsing
@@ -353,7 +474,22 @@ enum Keybindings {
     static func symbolDisplay(shortcut: String) -> String? {
         let parsed = parseShortcut(shortcut)
         guard !parsed.keyEquivalent.isEmpty else { return nil }
-        return modifierSymbols(parsed.modifierFlags) + keyDisplay(parsed.keyEquivalent).uppercased()
+        return modifierSymbols(parsed.modifierFlags) + keySymbol(parsed.keyEquivalent)
+    }
+
+    /// A key equivalent in macOS symbol notation ("↩", "←", "P").
+    static func keySymbol(_ key: String) -> String {
+        switch keyDisplay(key) {
+        case "Left": return "\u{2190}"
+        case "Right": return "\u{2192}"
+        case "Up": return "\u{2191}"
+        case "Down": return "\u{2193}"
+        case "Return": return "\u{21A9}"
+        case "Tab": return "\u{21E5}"
+        case "Escape": return "\u{238B}"
+        case "Delete": return "\u{232B}"
+        case let other: return other.uppercased()
+        }
     }
 
     /// Converts modifier flags to a display string using standard names.

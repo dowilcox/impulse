@@ -1,8 +1,9 @@
 import AppKit
 
-/// Wraps a single `TerminalTab` as the content of a terminal tab. (Split
-/// panes were removed; this stays a one-terminal container so the surrounding
-/// tab/session code keeps a stable shape.)
+/// A terminal surface: one `TerminalTab` (grid) above a slot for the
+/// window's terminal input bar. The bar lives in whichever terminal has
+/// focus; the others keep its space with a quiet stand-in so moving focus
+/// between split panes never resizes their grids.
 class TerminalContainer: NSView {
 
   // MARK: Public Properties
@@ -24,6 +25,14 @@ class TerminalContainer: NSView {
 
   private var currentSettings: TerminalSettings
   private var currentTheme: TerminalTheme
+
+  /// Height of the input bar the last time it was measured, shared so new
+  /// panes reserve the same space.
+  private static var lastInputBarHeight: CGFloat = 0
+  private let accessorySlot = AccessorySlot()
+  private let placeholder = InputBarPlaceholder()
+  private var reservedHeight: NSLayoutConstraint?
+  private var interactionObserver: NSObjectProtocol?
 
   // MARK: Initializer
 
@@ -163,11 +172,118 @@ class TerminalContainer: NSView {
 
   private func constrainChildToFill(_ child: NSView) {
     child.translatesAutoresizingMaskIntoConstraints = false
+    accessorySlot.translatesAutoresizingMaskIntoConstraints = false
+    placeholder.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(accessorySlot)
+    accessorySlot.addSubview(placeholder)
+    // Collapses to zero when the slot is empty and nothing is reserved.
+    let collapse = accessorySlot.heightAnchor.constraint(equalToConstant: 0)
+    collapse.priority = NSLayoutConstraint.Priority(1)
+    let reserved = accessorySlot.heightAnchor.constraint(equalToConstant: 0)
+    reservedHeight = reserved
     NSLayoutConstraint.activate([
       child.topAnchor.constraint(equalTo: topAnchor),
       child.leadingAnchor.constraint(equalTo: leadingAnchor),
       child.trailingAnchor.constraint(equalTo: trailingAnchor),
-      child.bottomAnchor.constraint(equalTo: bottomAnchor),
+      child.bottomAnchor.constraint(equalTo: accessorySlot.topAnchor),
+      accessorySlot.leadingAnchor.constraint(equalTo: leadingAnchor),
+      accessorySlot.trailingAnchor.constraint(equalTo: trailingAnchor),
+      accessorySlot.bottomAnchor.constraint(equalTo: bottomAnchor),
+      collapse,
+      placeholder.topAnchor.constraint(equalTo: accessorySlot.topAnchor),
+      placeholder.leadingAnchor.constraint(equalTo: accessorySlot.leadingAnchor),
+      placeholder.trailingAnchor.constraint(equalTo: accessorySlot.trailingAnchor),
+      placeholder.bottomAnchor.constraint(equalTo: accessorySlot.bottomAnchor),
     ])
+    accessorySlot.onWillRemove = { [weak self] view in
+      guard let self, view !== self.placeholder else { return }
+      let height = self.accessorySlot.bounds.height
+      if height > 0 { Self.lastInputBarHeight = height }
+      // Let the removal finish before reserving space again.
+      DispatchQueue.main.async { self.updatePlaceholder() }
+    }
+    interactionObserver = NotificationCenter.default.addObserver(
+      forName: .terminalInteractionModeChanged, object: child, queue: .main
+    ) { [weak self] _ in
+      self?.updatePlaceholder()
+    }
+    updatePlaceholder()
+  }
+
+  deinit {
+    if let interactionObserver { NotificationCenter.default.removeObserver(interactionObserver) }
+  }
+
+  // MARK: Input bar
+
+  /// Whether the window's input bar is currently in this terminal.
+  var hasAccessory: Bool { accessorySlot.subviews.contains { $0 !== placeholder } }
+
+  /// Move the window's input bar into this terminal.
+  func attachAccessory(_ view: NSView) {
+    guard view.superview !== accessorySlot else { return }
+    view.removeFromSuperview()
+    view.translatesAutoresizingMaskIntoConstraints = false
+    // The bar's own height decides the slot's.
+    view.setContentCompressionResistancePriority(.required, for: .vertical)
+    view.setContentHuggingPriority(.required, for: .vertical)
+    accessorySlot.addSubview(view)
+    NSLayoutConstraint.activate([
+      view.topAnchor.constraint(equalTo: accessorySlot.topAnchor),
+      view.leadingAnchor.constraint(equalTo: accessorySlot.leadingAnchor),
+      view.trailingAnchor.constraint(equalTo: accessorySlot.trailingAnchor),
+      view.bottomAnchor.constraint(equalTo: accessorySlot.bottomAnchor),
+    ])
+    updatePlaceholder()
+  }
+
+  func setInputBarColors(background: NSColor, border: NSColor) {
+    placeholder.background = background
+    placeholder.border = border
+  }
+
+  /// Reserve the bar's space while it's elsewhere — unless a TUI owns this
+  /// grid or the bar is turned off, in which case the grid takes it all.
+  private func updatePlaceholder() {
+    let reserve = !hasAccessory && !(activeTerminal?.wantsGridFocus ?? true)
+      && Self.lastInputBarHeight > 0
+    placeholder.isHidden = !reserve
+    reservedHeight?.constant = Self.lastInputBarHeight
+    reservedHeight?.isActive = reserve
+  }
+}
+
+/// Reports subviews leaving, so the container notices the input bar moving
+/// to another pane.
+private final class AccessorySlot: NSView {
+  var onWillRemove: ((NSView) -> Void)?
+
+  override func willRemoveSubview(_ subview: NSView) {
+    super.willRemoveSubview(subview)
+    onWillRemove?(subview)
+  }
+}
+
+/// The stand-in drawn where the input bar sits in an unfocused terminal: the
+/// bar's background and top border, with a faint prompt mark.
+private final class InputBarPlaceholder: NSView {
+  var background: NSColor = .windowBackgroundColor { didSet { needsDisplay = true } }
+  var border: NSColor = .separatorColor { didSet { needsDisplay = true } }
+
+  override var isFlipped: Bool { true }
+
+  override func draw(_ dirtyRect: NSRect) {
+    background.setFill()
+    bounds.fill()
+    border.setFill()
+    NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+      .foregroundColor: border.blended(withFraction: 0.35, of: .gray) ?? border,
+    ]
+    // Where the live bar's prompt chevron sits (input row, bottom half).
+    let mark = NSAttributedString(string: "›", attributes: attributes)
+    let size = mark.size()
+    mark.draw(at: NSPoint(x: 26, y: bounds.height - 25 - size.height / 2))
   }
 }

@@ -32,6 +32,9 @@ struct TabDisplayInfo: Identifiable {
   var progress: TerminalProgress? = nil
   /// Editor tab with unsaved changes.
   var isDirty: Bool = false
+  /// Panes in the tab (1 unless it's split), and whether one is zoomed.
+  var paneCount: Int = 1
+  var isZoomed: Bool = false
 }
 
 // MARK: - Window Model
@@ -151,6 +154,11 @@ final class WindowModel {
   var terminalDirectInteraction: Bool = false
   /// Bumped whenever the input bar should grab keyboard focus.
   var inputBarFocusToken: Int = 0
+  /// The unsent command in the input bar, mirrored by the bar as it changes.
+  /// When the bar moves to another terminal, the window stores this on the
+  /// old terminal, loads the new one's, and bumps `inputDraftRestoreToken`.
+  @ObservationIgnored var inputDraft: String = ""
+  var inputDraftRestoreToken: Int = 0
 
   // MARK: Status bar — right group
 
@@ -216,6 +224,8 @@ final class WindowModel {
   var onSidebarVisibilityChanged: ((Bool) -> Void)?
   var onPreviewToggle: (() -> Void)?
   var onOpenFile: ((String, Int?) -> Void)?
+  /// Open a file in a new pane to the right of the focused one.
+  var onOpenFileBeside: ((String) -> Void)?
   var onNewFile: ((String) -> Void)?
   var onNewFolder: ((String) -> Void)?
   /// Sidebar action-bar buttons (act on the selected tree dir, or the root):
@@ -234,6 +244,10 @@ final class WindowModel {
   /// Open the branch switcher (palette in branch mode).
   var onShowBranchSwitcher: (() -> Void)?
   var onToggleRightDock: (() -> Void)?
+  /// Move tab `index`'s surfaces into the selected tab (below when true).
+  var onJoinTab: ((Int, Bool) -> Void)?
+  /// Run a pane command by keybinding id ("split_right", "zoom_pane", …).
+  var onPaneCommand: ((String) -> Void)?
 
   // MARK: Methods
 

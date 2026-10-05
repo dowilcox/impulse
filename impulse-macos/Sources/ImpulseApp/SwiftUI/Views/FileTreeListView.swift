@@ -191,6 +191,8 @@ private struct FlatFileRowView: View {
       model.selectedFileTreePath = node.path
       if node.isDirectory {
         handleDirectoryTap()
+      } else if NSEvent.modifierFlags.contains(.option) {
+        model.onOpenFileBeside?(node.path)
       } else {
         model.onOpenFile?(node.path, nil)
       }
@@ -234,6 +236,11 @@ private struct FlatFileRowView: View {
       }
       Button("New Folder...") {
         model.onNewFolder?(node.path)
+      }
+      Divider()
+    } else {
+      Button("Open to the Side") {
+        model.onOpenFileBeside?(node.path)
       }
       Divider()
     }

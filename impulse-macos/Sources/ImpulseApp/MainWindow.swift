@@ -71,6 +71,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let termSearchBar = NSView()
   private let termSearchField = NSSearchField()
   private var termSearchBarVisible = false
+  /// The window's terminal input bar (see `attachInputBar`).
+  private var inputBarHost: NSView?
+  private weak var inputBarTerminal: TerminalTab?
   private var termSearchHeightConstraint: NSLayoutConstraint?
 
   /// The command palette, lazily created on first use.
@@ -352,6 +355,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         userInfo: ["path": path, "line": line as Any]
       )
     }
+    windowModel.onOpenFileBeside = { path in
+      NotificationCenter.default.post(
+        name: .impulseOpenFile, object: nil, userInfo: ["path": path, "beside": true])
+    }
     windowModel.onRefreshTree = { [weak self] in
       guard let self else { return }
       let root = self.fileTreeRootPath
@@ -463,6 +470,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onToggleRightDock = { [weak self] in
       self?.toggleRightDock()
     }
+    windowModel.onJoinTab = { [weak self] index, below in
+      self?.tabManager.joinTab(at: index, axis: below ? .vertical : .horizontal)
+    }
+    windowModel.onPaneCommand = { [weak self] command in
+      self?.performPaneCommand(command)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
@@ -472,6 +485,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // titlebar band would otherwise push the chrome down by its height).
     // The banner and input bar keep their intrinsic height.
     let inputHost = WorkbenchHosting.make(TerminalInputHost(model: windowModel), intrinsicHeight: true)
+    inputBarHost = inputHost
     let workbench = WorkbenchView(
       model: windowModel,
       titlebar: WorkbenchHosting.make(ChromeBarView(model: windowModel)),
@@ -491,20 +505,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       workbench.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
 
+    // The terminal input bar lives inside whichever terminal has focus
+    // (see attachInputBar), so the content fills the center column.
     let center = workbench.centerColumn
-    for view in [centerContent, inputHost] as [NSView] {
-      view.translatesAutoresizingMaskIntoConstraints = false
-      center.addSubview(view)
-    }
+    centerContent.translatesAutoresizingMaskIntoConstraints = false
+    center.addSubview(centerContent)
     NSLayoutConstraint.activate([
       centerContent.topAnchor.constraint(equalTo: center.topAnchor),
       centerContent.leadingAnchor.constraint(equalTo: center.leadingAnchor),
       centerContent.trailingAnchor.constraint(equalTo: center.trailingAnchor),
-      inputHost.topAnchor.constraint(equalTo: centerContent.bottomAnchor),
-      inputHost.leadingAnchor.constraint(equalTo: center.leadingAnchor),
-      inputHost.trailingAnchor.constraint(equalTo: center.trailingAnchor),
-      inputHost.bottomAnchor.constraint(equalTo: center.bottomAnchor),
+      centerContent.bottomAnchor.constraint(equalTo: center.bottomAnchor),
     ])
+    attachInputBar()
 
     setupTerminalSearchBar()
   }
@@ -530,6 +542,59 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Show or hide the right dock. Until a panel is installed there it has
   /// nothing to show, so this is a no-op beyond flipping the flag.
+  /// Move the input bar into the focused terminal, carrying each terminal's
+  /// unsent draft with it. Outside a terminal the bar leaves the hierarchy.
+  func attachInputBar() {
+    guard let host = inputBarHost else { return }
+    let container = tabManager.selectedTerminal
+    let terminal = container?.activeTerminal
+    if terminal !== inputBarTerminal {
+      inputBarTerminal?.inputDraft = windowModel.inputDraft
+      windowModel.inputDraft = terminal?.inputDraft ?? ""
+      windowModel.inputDraftRestoreToken += 1
+      inputBarTerminal = terminal
+    }
+    if let container {
+      container.attachAccessory(host)
+    } else {
+      host.removeFromSuperview()
+    }
+  }
+
+  /// Split, focus, resize and zoom panes of the selected tab. `command` is
+  /// the pane keybinding id ("split_right", "focus_pane_left", …).
+  func performPaneCommand(_ command: String) {
+    let directions: [String: PaneDirection] = [
+      "left": .left, "right": .right, "up": .up, "down": .down,
+    ]
+    switch command {
+    case "split_right", "split_down":
+      let container = tabManager.makeTerminalContainer(directory: getActiveCwd())
+      tabManager.splitSelectedTab(
+        with: .terminal(container), axis: command == "split_right" ? .horizontal : .vertical)
+    case "next_pane":
+      tabManager.cyclePane(by: 1)
+    case "prev_pane":
+      tabManager.cyclePane(by: -1)
+    case "zoom_pane":
+      tabManager.toggleZoomSelectedPane()
+    case "equalize_panes":
+      tabManager.equalizeSelectedPanes()
+    case "move_pane_to_tab":
+      tabManager.movePaneToNewTab()
+    default:
+      if command.hasPrefix("focus_pane_"),
+        let direction = directions[String(command.dropFirst("focus_pane_".count))]
+      {
+        if !tabManager.focusNeighborPane(direction) { NSSound.beep() }
+      } else if command.hasPrefix("resize_pane_"),
+        let direction = directions[String(command.dropFirst("resize_pane_".count))]
+      {
+        tabManager.resizeFocusedPane(toward: direction)
+      }
+    }
+  }
+
   func toggleRightDock() {
     windowModel.rightDockVisible.toggle()
   }
@@ -548,12 +613,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     case "search": NotificationCenter.default.post(name: .impulseFindInProject, object: nil)
     case "changes": showChangesPanel()
     case "review-split":
-      for case .diffReview(_, let review) in tabManager.tabs { review.setLayout("split") }
+      for case .diffReview(_, let review) in tabManager.allSurfaces { review.setLayout("split") }
     default:
       if action.hasPrefix("open=") {
         let relative = String(action.dropFirst(5))
         let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
         openFile(path: (base as NSString).appendingPathComponent(relative))
+      } else if action.hasPrefix("beside=") {
+        let relative = String(action.dropFirst(7))
+        let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
+        tabManager.addEditorTab(
+          path: (base as NSString).appendingPathComponent(relative),
+          projectDirectory: fileTreeRootPath, beside: true)
+      } else if action.hasPrefix("pane=") {
+        performPaneCommand(String(action.dropFirst(5)))
       } else {
         NSLog("DebugSnapshot: unknown action '\(action)'")
       }
@@ -960,7 +1033,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // Re-render previews with updated theme
     let themeJSON = ThemeManager.markdownThemeJSON(forName: newTheme.id)
-    for tab in tabManager.tabs {
+    for tab in tabManager.allSurfaces {
       if case .editor(let editor) = tab {
         editor.refreshPreview(themeJSON: themeJSON, bgColor: newTheme.bg)
       }
@@ -1008,9 +1081,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: - Tab Close with Save Confirmation
 
-  /// Closes a tab at the given index, showing a save confirmation dialog if
-  /// the tab is an editor with unsaved changes. Used by both the Cmd+W
-  /// shortcut and the tab bar close button / context menu.
+  /// Closes a whole tab (every pane), after confirming unsaved editors and
+  /// running processes. Used by the tab strip's close button and menus.
   func requestCloseTab(index: Int) {
     guard index >= 0, index < tabManager.tabs.count else { return }
 
@@ -1035,79 +1107,114 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       return
     }
 
-    if case .editor(let editor) = tabManager.tabs[index], editor.isModified {
-      let filename =
-        editor.filePath.map {
-          ($0 as NSString).lastPathComponent
-        } ?? "Untitled"
-
-      let alert = NSAlert()
-      alert.messageText = "Unsaved Changes"
-      alert.informativeText = "\"\(filename)\" has unsaved changes. Close anyway?"
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "Save & Close")
-      alert.addButton(withTitle: "Don't Save")
-      alert.addButton(withTitle: "Cancel")
-
-      guard let window = self.window else { return }
-      alert.beginSheetModal(for: window) { [weak self] response in
-        guard let self else { return }
-        // Re-find the tab by identity — the index may be stale if
-        // other tabs were closed while the alert was visible.
-        guard
-          let currentIndex = self.tabManager.tabs.firstIndex(where: {
-            if case .editor(let e) = $0 { return e === editor }
-            return false
-          })
-        else { return }
-        switch response {
-        case .alertFirstButtonReturn:
-          // Save & Close
-          self.saveEditorTab(editor)
-          if let path = editor.filePath {
-            self.untrackEditorTab(forPath: path)
-          }
-          self.lspDidClose(editor: editor)
-          self.tabManager.closeTab(index: currentIndex)
-        case .alertSecondButtonReturn:
-          // Don't Save
-          if let path = editor.filePath {
-            self.untrackEditorTab(forPath: path)
-          }
-          self.lspDidClose(editor: editor)
-          self.tabManager.closeTab(index: currentIndex)
-        default:
-          // Cancel — do nothing
-          break
-        }
-      }
-    } else if case .terminal(let container) = tabManager.tabs[index] {
-      confirmClosingTerminalTabIfNeeded(container) { [weak self] shouldClose in
-        guard let self, shouldClose else { return }
-        guard
-          let currentIndex = self.tabManager.tabs.firstIndex(where: {
-            if case .terminal(let currentContainer) = $0 {
-              return currentContainer === container
-            }
-            return false
-          })
-        else { return }
-        self.tabManager.closeTab(index: currentIndex)
-      }
-    } else {
-      // Non-editor tabs without terminal processes can close immediately.
-      if case .editor(let editor) = tabManager.tabs[index] {
-        if let path = editor.filePath {
-          untrackEditorTab(forPath: path)
-        }
-        lspDidClose(editor: editor)
-      }
-      tabManager.closeTab(index: index)
+    let tabView = tabManager.tabs[index].view
+    let surfaces = tabManager.tabs[index].surfaces
+    confirmClosing(surfaces) { [weak self] in
+      guard let self,
+        // Re-find the tab by identity — the index may be stale if other
+        // tabs were closed while a confirmation was up.
+        let currentIndex = self.tabManager.tabs.firstIndex(where: { $0.view === tabView })
+      else { return }
+      for surface in surfaces { self.willCloseSurface(surface) }
+      self.tabManager.closeTab(index: currentIndex)
     }
   }
 
-  private func confirmClosingTerminalTabIfNeeded(
-    _ container: TerminalContainer,
+  /// ⌘W: closes the focused pane of a split tab, otherwise the whole tab.
+  func requestCloseFocusedPane() {
+    guard let split = tabManager.selectedSplit else {
+      requestCloseTab(index: tabManager.selectedIndex)
+      return
+    }
+    let surface = split.focused
+    confirmClosing([surface]) { [weak self] in
+      guard let self,
+        let location = self.tabManager.locate(where: { $0.view === surface.view })
+      else { return }
+      self.willCloseSurface(surface)
+      self.tabManager.closePane(location.paneID, inTabAt: location.tabIndex)
+    }
+  }
+
+  /// Bookkeeping before a surface goes away.
+  private func willCloseSurface(_ surface: TabEntry) {
+    guard case .editor(let editor) = surface else { return }
+    if let path = editor.filePath {
+      untrackEditorTab(forPath: path)
+    }
+    lspDidClose(editor: editor)
+  }
+
+  /// Walks the surfaces' unsaved editors one sheet at a time, then confirms
+  /// running terminal processes, then calls `proceed`. Cancelling anywhere
+  /// stops.
+  private func confirmClosing(_ surfaces: [TabEntry], proceed: @escaping () -> Void) {
+    var dirty = surfaces.compactMap { surface -> EditorTab? in
+      if case .editor(let editor) = surface, editor.isModified { return editor }
+      return nil
+    }
+    let terminals = surfaces.compactMap { surface -> TerminalContainer? in
+      if case .terminal(let container) = surface { return container }
+      return nil
+    }
+
+    func confirmTerminals() {
+      guard !terminals.isEmpty else {
+        proceed()
+        return
+      }
+      confirmClosingTerminalsIfNeeded(terminals) { shouldClose in
+        if shouldClose { proceed() }
+      }
+    }
+
+    func next() {
+      guard !dirty.isEmpty else {
+        confirmTerminals()
+        return
+      }
+      let editor = dirty.removeFirst()
+      confirmClosingEditor(editor) { shouldClose in
+        if shouldClose { next() }
+      }
+    }
+    next()
+  }
+
+  private func confirmClosingEditor(_ editor: EditorTab, completion: @escaping (Bool) -> Void) {
+    let filename =
+      editor.filePath.map {
+        ($0 as NSString).lastPathComponent
+      } ?? "Untitled"
+
+    let alert = NSAlert()
+    alert.messageText = "Unsaved Changes"
+    alert.informativeText = "\"\(filename)\" has unsaved changes. Close anyway?"
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Save & Close")
+    alert.addButton(withTitle: "Don't Save")
+    alert.addButton(withTitle: "Cancel")
+
+    guard let window = self.window else {
+      completion(false)
+      return
+    }
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self else { return }
+      switch response {
+      case .alertFirstButtonReturn:
+        self.saveEditorTab(editor)
+        completion(true)
+      case .alertSecondButtonReturn:
+        completion(true)
+      default:
+        completion(false)
+      }
+    }
+  }
+
+  private func confirmClosingTerminalsIfNeeded(
+    _ containers: [TerminalContainer],
     completion: @escaping (Bool) -> Void
   ) {
     guard settings.confirmCloseWarnings else {
@@ -1119,8 +1226,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       let summary = closeRiskSummary(
         action: .closeTab,
         unsavedEditorCount: 0,
-        runningTerminalProcessCount: container.runningDescendantProcessCount(),
-        runningCommands: container.runningCloseRiskCommands()
+        runningTerminalProcessCount: containers.reduce(0) {
+          $0 + $1.runningDescendantProcessCount()
+        },
+        runningCommands: containers.flatMap { $0.runningCloseRiskCommands() }
       ),
       summary.hasRisk
     else {
@@ -1264,7 +1373,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let self, self.window?.isKeyWindow == true else { return }
         let index = self.tabManager.selectedIndex
         guard index >= 0, index < self.tabManager.tabs.count else { return }
-        self.requestCloseTab(index: index)
+        self.requestCloseFocusedPane()
       }
     )
     notificationObservers.append(
@@ -1284,17 +1393,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           return
         }
         self.updateStatusBar()
+        self.attachInputBar()
         // Rebuild the file tree when the active tab's directory context differs
         // from the current root. Terminal tabs use their CWD; editor tabs use
         // the parent directory of the open file.
-        if let tab = self.tabManager.selectedTab {
+        if let tab = self.tabManager.selectedTab?.focused {
           let dir: String?
           switch tab {
           case .terminal(let container):
             dir = container.activeTerminal?.currentWorkingDirectory
           case .editor(let editor):
             dir = editor.projectDirectory
-          case .imagePreview:
+          case .imagePreview, .split:
             dir = nil
           case .diffReview(let repoRoot, _):
             dir = repoRoot
@@ -1331,7 +1441,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             path: path,
             projectDirectory: self.fileTreeRootPath,
             goToLine: line,
-            goToColumn: line == nil ? nil : 1
+            goToColumn: line == nil ? nil : 1,
+            beside: notification.userInfo?["beside"] as? Bool ?? false
           )
           // Navigate to specific line if provided (e.g. from search results).
           if let editor = self.findEditorTab(forPath: path) {
@@ -1391,6 +1502,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showPalette(prefix: "")
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .impulsePaneCommand, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, self.window?.isKeyWindow == true,
+          let command = notification.userInfo?["command"] as? String
+        else { return }
+        self.performPaneCommand(command)
       }
     )
     notificationObservers.append(
@@ -1578,7 +1698,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     notificationObservers.append(
       nc.addObserver(forName: .impulseFind, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        guard let tab = self.tabManager.selectedTab else { return }
+        guard let tab = self.tabManager.selectedTab?.focused else { return }
         switch tab {
         case .editor(let editor):
           editor.webView?.evaluateJavaScript(
@@ -1587,7 +1707,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           )
         case .terminal:
           self.toggleTerminalSearch()
-        case .imagePreview, .diffReview:
+        case .imagePreview, .diffReview, .split:
           break
         }
       }
@@ -1655,9 +1775,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       nc.addObserver(forName: .editorDirtyStateChanged, object: nil, queue: .main) {
         [weak self] notification in
         guard let self, let editor = notification.object as? EditorTab,
-          self.tabManager.tabs.contains(where: {
-            if case .editor(let e) = $0 { return e === editor } else { return false }
-          })
+          self.tabManager.ownsEditor(editor)
         else { return }
         self.tabManager.refreshSegmentLabels()
       }
@@ -1681,13 +1799,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let terminalTab = notification.object as? TerminalTab,
           self.tabManager.ownsTerminal(terminalTab)
         else { return }
-        for (index, tab) in self.tabManager.tabs.enumerated() {
-          if case .terminal(let container) = tab,
-            container.terminals.contains(where: { $0 === terminalTab })
-          {
-            self.tabManager.closeTab(index: index)
-            break
+        if let location = self.tabManager.locate(where: {
+          if case .terminal(let container) = $0 {
+            return container.terminals.contains { $0 === terminalTab }
           }
+          return false
+        }) {
+          self.tabManager.closePane(location.paneID, inTabAt: location.tabIndex)
         }
       }
     )
@@ -2234,7 +2352,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Returns the current working directory from the active tab:
   /// terminal CWD, or the parent directory of the active editor file.
   private func getActiveCwd() -> String? {
-    guard let tab = tabManager.selectedTab else { return nil }
+    guard let tab = tabManager.selectedTab?.focused else { return nil }
     switch tab {
     case .terminal(let container):
       if let cwd = container.activeTerminal?.currentWorkingDirectory, !cwd.isEmpty {
@@ -2248,6 +2366,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       return (path as NSString).deletingLastPathComponent
     case .diffReview(let repoRoot, _):
       return repoRoot.isEmpty ? nil : repoRoot
+    case .split:
+      break
     }
     return nil
   }
@@ -2366,13 +2486,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     )
     let termSettings = settings.terminalSettings()
 
-    for tab in tabManager.tabs {
+    for tab in tabManager.allSurfaces {
       switch tab {
       case .editor(let editor):
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview:
+      case .imagePreview, .diffReview, .split:
         break
       }
     }
@@ -2386,13 +2506,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let editorOptions = tabManager.editorOptionsFromSettings()
     let termSettings = settings.terminalSettings()
 
-    for tab in tabManager.tabs {
+    for tab in tabManager.allSurfaces {
       switch tab {
       case .editor(let editor):
         editor.applySettings(editorOptions)
       case .terminal(let container):
         container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview:
+      case .imagePreview, .diffReview, .split:
         break
       }
     }
@@ -2622,9 +2742,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         Toast(
           kind: .info, message: "Save the file to stage this change.", actionTitle: "Save",
           action: { [weak self] in
-            self?.tabManager.selectTab(index: self?.tabManager.tabs.firstIndex {
-              if case .editor(let e) = $0 { return e === editor } else { return false }
-            } ?? -1)
+            if let location = self?.tabManager.location(of: editor) {
+              self?.tabManager.reveal(location)
+            }
             NotificationCenter.default.post(name: .impulseSaveFile, object: nil)
           }))
       return
@@ -2736,13 +2856,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func restorableOpenFiles() -> [String] {
-    let paths = tabManager.tabs.compactMap { tab -> String? in
+    let paths = tabManager.allSurfaces.compactMap { tab -> String? in
       switch tab {
       case .editor(let editor):
         return editor.filePath
       case .imagePreview(let path, _):
         return path
-      case .terminal, .diffReview:
+      case .terminal, .diffReview, .split:
         return nil
       }
     }
@@ -2757,7 +2877,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   private func dirtyEditors() -> [EditorTab] {
-    tabManager.tabs.compactMap { tab in
+    tabManager.allSurfaces.compactMap { tab in
       if case .editor(let editor) = tab, editor.isModified {
         return editor
       }
@@ -2766,7 +2886,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func runningTerminalProcessCount() -> Int {
-    tabManager.tabs.reduce(0) { count, tab in
+    tabManager.allSurfaces.reduce(0) { count, tab in
       if case .terminal(let container) = tab {
         return count + container.runningDescendantProcessCount()
       }
@@ -2775,7 +2895,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func runningCloseRiskCommands() -> [CloseRiskCommand] {
-    tabManager.tabs.flatMap { tab in
+    tabManager.allSurfaces.flatMap { tab in
       if case .terminal(let container) = tab {
         return container.runningCloseRiskCommands()
       }
@@ -2848,17 +2968,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
 
       let editor = remaining.removeFirst()
-      guard
-        let tabIndex = self.tabManager.tabs.firstIndex(where: {
-          if case .editor(let candidate) = $0 { return candidate === editor }
-          return false
-        })
-      else {
+      guard let location = self.tabManager.location(of: editor) else {
         next()
         return
       }
 
-      self.tabManager.selectTab(index: tabIndex)
+      self.tabManager.reveal(location)
       self.reviewAndSave(editor: editor) { proceed in
         if proceed {
           DispatchQueue.main.async { next() }
@@ -2979,7 +3094,7 @@ extension MainWindowController: PaletteHost {
   var paletteRoot: String { fileTreeRootPath }
 
   var paletteOpenFiles: [String] {
-    tabManager.tabs.compactMap { tab in
+    tabManager.allSurfaces.compactMap { tab in
       if case .editor(let editor) = tab { return editor.filePath }
       return nil
     }

@@ -46,6 +46,8 @@ enum TabEntry {
   case editor(EditorTab)
   case imagePreview(path: String, view: NSView)
   case diffReview(repoRoot: String, view: ReviewSurface)
+  /// Several of the above side by side (never nested).
+  case split(SplitTab)
 
   /// The view to display in the content area.
   var view: NSView {
@@ -54,12 +56,32 @@ enum TabEntry {
     case .editor(let editor): return editor
     case .imagePreview(_, let view): return view
     case .diffReview(_, let view): return view
+    case .split(let split): return split.view
     }
+  }
+
+  var isSplit: Bool {
+    if case .split = self { return true }
+    return false
+  }
+
+  /// The surface that has focus: the focused pane of a split, else itself.
+  var focused: TabEntry {
+    if case .split(let split) = self { return split.focused }
+    return self
+  }
+
+  /// Every surface in the tab, in reading order.
+  var surfaces: [TabEntry] {
+    if case .split(let split) = self { return split.orderedPanes.map(\.entry) }
+    return [self]
   }
 
   /// The title to show in the tab bar segment.
   var title: String {
     switch self {
+    case .split(let split):
+      return split.focused.title
     case .terminal(let container):
       if let active = container.activeTerminal {
         let title = active.tabTitle
@@ -85,6 +107,8 @@ enum TabEntry {
     switch self {
     case .terminal(let container):
       return container.needsAttention
+    case .split(let split):
+      return split.panes.values.contains { $0.needsAttention }
     case .editor, .imagePreview, .diffReview:
       return false
     }
@@ -93,6 +117,8 @@ enum TabEntry {
   /// Extracts a `TabInfo` snapshot for the status bar.
   var info: TabInfo {
     switch self {
+    case .split(let split):
+      return split.focused.info
     case .terminal(let container):
       return TabInfo(
         cwd: container.activeTerminal?.currentWorkingDirectory,
@@ -138,6 +164,8 @@ enum TabEntry {
   /// Focus the primary interactive view.
   func focus() {
     switch self {
+    case .split(let split):
+      split.focused.focus()
     case .terminal(let container):
       container.activeTerminal?.focus()
     case .editor(let editor):
@@ -152,6 +180,9 @@ enum TabEntry {
   /// Apply a new theme.
   func applyTheme(_ theme: Theme) {
     switch self {
+    case .split(let split):
+      split.applyPalette(ChromePalette(theme: theme))
+      for pane in split.panes.values { pane.applyTheme(theme) }
     case .terminal(let container):
       let termTheme = TerminalTheme(
         bg: theme.terminalBg,
@@ -165,6 +196,7 @@ enum TabEntry {
         terminalPalette: theme.terminalPalette
       )
       container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
+      container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
     case .editor(let editor):
       editor.applyTheme(ThemeManager.monacoTheme(forName: theme.id))
     case .imagePreview(_, let view):
@@ -274,37 +306,42 @@ final class TabManager: NSObject {
 
   // MARK: - Adding Tabs
 
-  /// Creates a new terminal tab (wrapped in a TerminalContainer for split
-  /// support) and makes it active.
+  /// Creates a new terminal tab and makes it active.
   func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
+    insertTab(.terminal(makeTerminalContainer(directory: directory, initialCommand: initialCommand)))
+  }
+
+  /// A new terminal surface (shell spawns once it's laid out).
+  func makeTerminalContainer(directory: String?, initialCommand: String? = nil)
+    -> TerminalContainer
+  {
     let dir = directory ?? NSHomeDirectory()
-    let termSettings = settings.terminalSettings(directory: dir)
-    let termTheme = TerminalTheme(
-      bg: theme.terminalBg,
-      fg: theme.terminalFg,
-      selection: theme.selection,
-      cursor: theme.cursor,
-      border: theme.border,
-      fgMuted: theme.fgMuted,
-      accent: theme.accent,
-      red: theme.red,
-      terminalPalette: theme.terminalPalette
-    )
     let container = TerminalContainer(
       frame: NSRect(x: 0, y: 0, width: 800, height: 600),
-      settings: termSettings,
-      theme: termTheme,
+      settings: settings.terminalSettings(directory: dir),
+      theme: terminalTheme,
       initialCommand: initialCommand
     )
-    container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-    let entry = TabEntry.terminal(container)
-    insertTab(entry)
+    container.applyTheme(theme: terminalTheme, dividerColor: theme.bgHighlightColor)
+    container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
+    return container
   }
 
   func addRestoredTerminalTab(_ tab: SessionTabState) {
     let dir = nonEmpty(tab.cwd) ?? NSHomeDirectory()
-    let termSettings = settings.terminalSettings(directory: dir)
-    let termTheme = TerminalTheme(
+    let container = TerminalContainer(
+      frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+      settings: settings.terminalSettings(directory: dir),
+      theme: terminalTheme,
+      sessionTab: tab
+    )
+    container.applyTheme(theme: terminalTheme, dividerColor: theme.bgHighlightColor)
+    container.setInputBarColors(background: theme.bgDarkColor, border: theme.borderColor)
+    insertTab(.terminal(container))
+  }
+
+  private var terminalTheme: TerminalTheme {
+    TerminalTheme(
       bg: theme.terminalBg,
       fg: theme.terminalFg,
       selection: theme.selection,
@@ -315,15 +352,6 @@ final class TabManager: NSObject {
       red: theme.red,
       terminalPalette: theme.terminalPalette
     )
-    let container = TerminalContainer(
-      frame: NSRect(x: 0, y: 0, width: 800, height: 600),
-      settings: termSettings,
-      theme: termTheme,
-      sessionTab: tab
-    )
-    container.applyTheme(theme: termTheme, dividerColor: theme.bgHighlightColor)
-    let entry = TabEntry.terminal(container)
-    insertTab(entry)
   }
 
   /// Creates a new editor tab for the given file path.
@@ -333,22 +361,23 @@ final class TabManager: NSObject {
   /// files (>10 MB or containing null bytes) are skipped with an alert.
   func addEditorTab(
     path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil,
-    goToColumn: UInt32? = nil
+    goToColumn: UInt32? = nil, beside: Bool = false
   ) {
     // O(1) deduplication using the openFilePaths set.
     if openFilePaths.contains(path) {
-      if let existingIndex = tabs.firstIndex(where: {
+      let location = locate {
         switch $0 {
         case .editor(let e): return e.filePath == path
         case .imagePreview(let p, _): return p == path
         default: return false
         }
-      }) {
-        updateCloseReturnTarget(forTabAt: existingIndex, sourceIndex: selectedIndex)
-        selectTab(index: existingIndex)
+      }
+      if let location {
+        updateCloseReturnTarget(forTabAt: location.tabIndex, sourceIndex: selectedIndex)
+        reveal(location)
         // Navigate to position in the already-open editor.
         if let line = goToLine, let column = goToColumn,
-          case .editor(let editor) = tabs[existingIndex]
+          case .editor(let editor) = tabs[location.tabIndex].focused
         {
           editor.goToPosition(line: line, column: column)
         }
@@ -358,7 +387,7 @@ final class TabManager: NSObject {
 
     // Image files get a preview tab instead of an editor.
     if Self.isImageFile(path) {
-      addImagePreviewTab(path: path)
+      addImagePreviewTab(path: path, beside: beside)
       return
     }
 
@@ -388,7 +417,8 @@ final class TabManager: NSObject {
         if self.openFilePaths.contains(path) { return }
         self.insertLoadedEditorTab(
           path: path, content: fileContent, largeFile: largeFile,
-          projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn)
+          projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn,
+          beside: beside)
       }
     }
   }
@@ -398,7 +428,8 @@ final class TabManager: NSObject {
   /// which preloads every file first so tabs can be inserted in saved order.
   func insertLoadedEditorTab(
     path: String, content fileContent: String, largeFile: Bool,
-    projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil
+    projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil,
+    beside: Bool = false
   ) {
     guard !openFilePaths.contains(path) else { return }
     let editorOptions = editorOptionsFromSettings()
@@ -426,7 +457,11 @@ final class TabManager: NSObject {
       editorTab.goToPosition(line: line, column: column)
     }
 
-    insertTab(TabEntry.editor(editorTab))
+    if beside {
+      splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
+    } else {
+      insertTab(.editor(editorTab))
+    }
   }
 
   /// Creates a new untitled editor tab with no file on disk.
@@ -462,16 +497,16 @@ final class TabManager: NSObject {
     repository: GitRepositoryState, scope: DiffScope? = nil, focusPath: String? = nil,
     host: GitPanelHost?
   ) {
-    if let existingIndex = tabs.firstIndex(where: {
+    if let location = locate(where: {
       if case .diffReview(let r, _) = $0 { return r == repository.root }
       return false
     }) {
-      selectTab(index: existingIndex)
-      if case .diffReview(_, let view) = tabs[existingIndex] {
+      reveal(location)
+      if case .diffReview(_, let view) = tabs[location.tabIndex].focused {
         view.show(scope: scope, focusPath: focusPath)
         view.refresh()
+        view.focus()
       }
-      tabs[existingIndex].focus()
       return
     }
     let review = ReviewSurface(
@@ -485,7 +520,7 @@ final class TabManager: NSObject {
   }
 
   /// Creates an image preview tab that scales large images to fit.
-  private func addImagePreviewTab(path: String) {
+  private func addImagePreviewTab(path: String, beside: Bool = false) {
     let container = NSView()
     container.wantsLayer = true
 
@@ -510,7 +545,11 @@ final class TabManager: NSObject {
     ])
 
     let entry = TabEntry.imagePreview(path: path, view: container)
-    insertTab(entry)
+    if beside {
+      splitSelectedTab(with: entry, axis: .horizontal)
+    } else {
+      insertTab(entry)
+    }
   }
 
   /// Inserts a new tab after the currently selected tab and selects it.
@@ -540,15 +579,7 @@ final class TabManager: NSObject {
     tabCloseReturnIds.insert(returnId, at: insertionIndex)
     nextTabUniqueId += 1
 
-    // Track open file paths for O(1) deduplication.
-    switch entry {
-    case .editor(let e):
-      if let p = e.filePath { openFilePaths.insert(p) }
-    case .imagePreview(let p, _):
-      openFilePaths.insert(p)
-    default:
-      break
-    }
+    track(entry)
 
     // No rebuildSegments() here: selectTab() syncs to the WindowModel, and
     // syncing before selection would push the transient (selectedIndex not
@@ -572,6 +603,8 @@ final class TabManager: NSObject {
   /// WebViews) so they don't linger after the tab is removed.
   private func cleanupTab(_ entry: TabEntry) {
     switch entry {
+    case .split(let split):
+      for pane in split.panes.values { cleanupTab(pane) }
     case .terminal(let container):
       container.terminateAllProcesses()
     case .editor(let editor):
@@ -598,6 +631,8 @@ final class TabManager: NSObject {
       if closedTabs.count > maxClosedTabs {
         closedTabs.removeFirst()
       }
+    case .split(let split):
+      for (_, pane) in split.orderedPanes { recordClosedTab(pane) }
     case .terminal, .diffReview:
       break  // Terminals and review tabs cannot be reopened
     }
@@ -620,15 +655,7 @@ final class TabManager: NSObject {
     recordClosedTab(entry)
     cleanupTab(entry)
 
-    // Remove from open file paths tracking.
-    switch entry {
-    case .editor(let e):
-      if let p = e.filePath { openFilePaths.remove(p) }
-    case .imagePreview(let p, _):
-      openFilePaths.remove(p)
-    default:
-      break
-    }
+    untrack(entry)
 
     // Remove the tab's view from the content area if it is currently displayed.
     if index == selectedIndex {
@@ -756,32 +783,44 @@ final class TabManager: NSObject {
     }
 
     selectedIndex = index
-    if case .terminal(let container) = tabs[index] {
+    if case .terminal(let container) = tabs[index].focused {
       container.activeTerminal?.clearAttention()
     }
     syncToWindowModel()
 
     // Activate the new tab.
     let entry = tabs[index]
-    let view = entry.view
+    install(entry.view)
+    activateKeyboardFocus(entry.focused)
+
+    NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+  }
+
+  /// Show a tab's view in the content area.
+  private func install(_ view: NSView) {
+    view.removeFromSuperview()
     view.translatesAutoresizingMaskIntoConstraints = false
-    contentView.addSubview(view)
+    contentView.addSubview(view, positioned: .below, relativeTo: nil)
     NSLayoutConstraint.activate([
       view.topAnchor.constraint(equalTo: contentView.topAnchor),
       view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
       view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
       view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
-    entry.focus()
+  }
 
-    // Terminal tabs are normally driven by the input bar (the read-only grid
-    // refuses first-responder), so move keyboard focus there. But when the tab
-    // is already running a TUI (vim, Claude Code), the input bar is hidden and
-    // the grid owns the keyboard — keep focus on the grid instead, or the
-    // token bump would steal the first keystrokes (and image paste) into the
-    // about-to-disappear bar. Async either way so it lands after the new
-    // terminal's own focus attempt during spawn.
-    if case .terminal(let container) = entry {
+  /// Give a surface the keyboard.
+  ///
+  /// Terminals are normally driven by the input bar (the read-only grid
+  /// refuses first-responder), so focus moves there. But when the terminal is
+  /// already running a TUI (vim, Claude Code), the input bar is hidden and the
+  /// grid owns the keyboard — keep focus on the grid instead, or the token
+  /// bump would steal the first keystrokes (and image paste) into the
+  /// about-to-disappear bar. Async either way so it lands after the new
+  /// terminal's own focus attempt during spawn.
+  private func activateKeyboardFocus(_ surface: TabEntry) {
+    surface.focus()
+    if case .terminal(let container) = surface {
       let model = windowModel
       if container.activeTerminal?.wantsGridFocus == true {
         DispatchQueue.main.async { container.activeTerminal?.focus() }
@@ -789,8 +828,219 @@ final class TabManager: NSObject {
         DispatchQueue.main.async { model?.inputBarFocusToken += 1 }
       }
     }
+  }
 
+  // MARK: - Panes
+
+  /// Where a surface lives: its tab, and its pane when the tab is split.
+  struct SurfaceLocation {
+    let tabIndex: Int
+    let paneID: Int?
+  }
+
+  /// Every surface in every tab.
+  var allSurfaces: [TabEntry] { tabs.flatMap(\.surfaces) }
+
+  func locate(where predicate: (TabEntry) -> Bool) -> SurfaceLocation? {
+    for (index, tab) in tabs.enumerated() {
+      if case .split(let split) = tab {
+        if let id = split.paneID(where: predicate) {
+          return SurfaceLocation(tabIndex: index, paneID: id)
+        }
+      } else if predicate(tab) {
+        return SurfaceLocation(tabIndex: index, paneID: nil)
+      }
+    }
+    return nil
+  }
+
+  func location(of editor: EditorTab) -> SurfaceLocation? {
+    locate {
+      if case .editor(let candidate) = $0 { return candidate === editor }
+      return false
+    }
+  }
+
+  /// Select the tab holding a surface and focus its pane.
+  func reveal(_ location: SurfaceLocation) {
+    if location.tabIndex != selectedIndex { selectTab(index: location.tabIndex) }
+    if let id = location.paneID { focusPane(id, inTabAt: location.tabIndex) }
+  }
+
+  /// The split of the selected tab, if it has one.
+  var selectedSplit: SplitTab? {
+    if case .split(let split)? = selectedTab { return split }
+    return nil
+  }
+
+  /// Put `entry` beside the selected tab's focused surface (turning the tab
+  /// into a split if needed) and focus it.
+  func splitSelectedTab(with entry: TabEntry, axis: SplitAxis, before: Bool = false) {
+    guard selectedIndex >= 0, selectedIndex < tabs.count else {
+      insertTab(entry)
+      return
+    }
+    let index = selectedIndex
+    track(entry)
+    let split: SplitTab
+    if case .split(let existing) = tabs[index] {
+      split = existing
+    } else {
+      let current = tabs[index]
+      current.view.removeFromSuperview()
+      split = SplitTab(first: current, palette: ChromePalette(theme: theme))
+      wire(split)
+      tabs[index] = .split(split)
+      install(split.view)
+    }
+    let id = split.insert(entry, beside: split.focusedPane, axis: axis, before: before)
+    focusPane(id, inTabAt: index)
+  }
+
+  /// Focus one pane of a split tab.
+  func focusPane(_ id: Int, inTabAt index: Int) {
+    guard tabs.indices.contains(index), case .split(let split) = tabs[index] else { return }
+    split.focus(id)
+    guard index == selectedIndex else {
+      syncToWindowModel()
+      return
+    }
+    if case .terminal(let container) = split.focused {
+      container.activeTerminal?.clearAttention()
+    }
+    syncToWindowModel()
+    activateKeyboardFocus(split.focused)
     NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+  }
+
+  /// Close one pane (callers confirm first). The last pane left turns the
+  /// tab back into a plain one; closing a plain tab's only surface closes it.
+  func closePane(_ id: Int?, inTabAt index: Int) {
+    guard tabs.indices.contains(index) else { return }
+    guard let id, case .split(let split) = tabs[index] else {
+      closeTab(index: index)
+      return
+    }
+    guard let removed = split.remove(id) else { return }
+    recordClosedTab(removed)
+    cleanupTab(removed)
+    untrack(removed)
+    removed.view.removeFromSuperview()
+    collapseIfSingle(split, at: index)
+    afterPaneChange(at: index)
+  }
+
+  /// Move the focused pane of the selected tab into a tab of its own.
+  func movePaneToNewTab() {
+    guard let split = selectedSplit, let removed = split.remove(split.focusedPane) else { return }
+    removed.view.removeFromSuperview()
+    collapseIfSingle(split, at: selectedIndex)
+    insertTab(removed)
+  }
+
+  /// Move another tab's surfaces into the selected tab as panes.
+  func joinTab(at sourceIndex: Int, axis: SplitAxis) {
+    guard tabs.indices.contains(sourceIndex), selectedIndex >= 0, sourceIndex != selectedIndex
+    else { return }
+    let source = tabs[sourceIndex]
+    source.view.removeFromSuperview()
+    tabs.remove(at: sourceIndex)
+    pinnedTabs.remove(at: sourceIndex)
+    tabUniqueIds.remove(at: sourceIndex)
+    tabCloseReturnIds.remove(at: sourceIndex)
+    if sourceIndex < selectedIndex { selectedIndex -= 1 }
+    for surface in source.surfaces {
+      splitSelectedTab(with: surface, axis: axis)
+    }
+  }
+
+  @discardableResult
+  func focusNeighborPane(_ direction: PaneDirection) -> Bool {
+    guard let split = selectedSplit,
+      let id = split.layout.neighbor(of: split.focusedPane, toward: direction)
+    else { return false }
+    focusPane(id, inTabAt: selectedIndex)
+    return true
+  }
+
+  func cyclePane(by step: Int) {
+    guard let split = selectedSplit else { return }
+    let order = split.layout.leaves
+    guard let position = order.firstIndex(of: split.focusedPane) else { return }
+    let next = order[(position + step % order.count + order.count) % order.count]
+    focusPane(next, inTabAt: selectedIndex)
+  }
+
+  func toggleZoomSelectedPane() {
+    guard let split = selectedSplit else { return }
+    split.toggleZoom()
+    syncToWindowModel()
+  }
+
+  func equalizeSelectedPanes() {
+    guard let split = selectedSplit else { return }
+    split.setLayout(split.layout.equalized())
+  }
+
+  func resizeFocusedPane(toward direction: PaneDirection, by delta: Double = 0.05) {
+    guard let split = selectedSplit else { return }
+    split.setLayout(split.layout.resizing(split.focusedPane, toward: direction, by: delta))
+  }
+
+  private func wire(_ split: SplitTab) {
+    split.onFocusRequest = { [weak self, weak split] id in
+      guard let self, let split,
+        let index = self.tabs.firstIndex(where: {
+          if case .split(let candidate) = $0 { return candidate === split }
+          return false
+        })
+      else { return }
+      self.focusPane(id, inTabAt: index)
+    }
+  }
+
+  private func collapseIfSingle(_ split: SplitTab, at index: Int) {
+    guard split.count == 1, let last = split.orderedPanes.first?.entry,
+      tabs.indices.contains(index)
+    else { return }
+    split.view.removeFromSuperview()
+    last.view.removeFromSuperview()
+    tabs[index] = last
+    if index == selectedIndex { install(last.view) }
+  }
+
+  private func afterPaneChange(at index: Int) {
+    syncToWindowModel()
+    guard index == selectedIndex, tabs.indices.contains(index) else { return }
+    activateKeyboardFocus(tabs[index].focused)
+    NotificationCenter.default.post(name: .impulseActiveTabDidChange, object: self)
+  }
+
+  /// Track (or forget) open file paths for O(1) deduplication.
+  private func track(_ entry: TabEntry) {
+    for surface in entry.surfaces {
+      switch surface {
+      case .editor(let e):
+        if let p = e.filePath { openFilePaths.insert(p) }
+      case .imagePreview(let p, _):
+        openFilePaths.insert(p)
+      default:
+        break
+      }
+    }
+  }
+
+  private func untrack(_ entry: TabEntry) {
+    for surface in entry.surfaces {
+      switch surface {
+      case .editor(let e):
+        if let p = e.filePath { openFilePaths.remove(p) }
+      case .imagePreview(let p, _):
+        openFilePaths.remove(p)
+      default:
+        break
+      }
+    }
   }
 
   // MARK: - Selected Tab Helpers
@@ -804,14 +1054,14 @@ final class TabManager: NSObject {
   /// The currently selected terminal container, or `nil` if the selection is
   /// not a terminal tab.
   var selectedTerminal: TerminalContainer? {
-    if case .terminal(let tc) = selectedTab { return tc }
+    if case .terminal(let tc)? = selectedTab?.focused { return tc }
     return nil
   }
 
   /// The currently selected editor tab, or `nil` if the selection is not an
   /// editor tab.
   var selectedEditor: EditorTab? {
-    if case .editor(let et) = selectedTab { return et }
+    if case .editor(let et)? = selectedTab?.focused { return et }
     return nil
   }
 
@@ -821,9 +1071,10 @@ final class TabManager: NSObject {
 
     for (index, tab) in tabs.enumerated() {
       let pinned = index < pinnedTabs.count ? pinnedTabs[index] : false
+      for surface in tab.surfaces {
       let sessionTab: SessionTabState?
 
-      switch tab {
+      switch surface {
       case .editor(let editor):
         if let path = editor.filePath, FileManager.default.fileExists(atPath: path) {
           sessionTab = .editor(path: path, pinned: pinned)
@@ -836,7 +1087,7 @@ final class TabManager: NSObject {
         } else {
           sessionTab = nil
         }
-      case .diffReview:
+      case .diffReview, .split:
         // Review tabs are not persisted across sessions.
         sessionTab = nil
       case .terminal(let container):
@@ -865,9 +1116,10 @@ final class TabManager: NSObject {
 
       if let sessionTab {
         sessionTabs.append(sessionTab)
-        if index == selectedIndex {
+        if index == selectedIndex, activeSessionTabIndex == nil {
           activeSessionTabIndex = sessionTabs.count - 1
         }
+      }
       }
     }
 
@@ -885,19 +1137,17 @@ final class TabManager: NSObject {
   /// Returns `true` if this TabManager owns the given terminal (i.e. it lives
   /// in one of our terminal containers).
   func ownsTerminal(_ terminal: TerminalTab) -> Bool {
-    for tab in tabs {
-      if case .terminal(let container) = tab {
-        if container.terminals.contains(where: { $0 === terminal }) {
-          return true
-        }
+    allSurfaces.contains {
+      if case .terminal(let container) = $0 {
+        return container.terminals.contains { $0 === terminal }
       }
+      return false
     }
-    return false
   }
 
   /// Returns `true` if this TabManager owns the given editor tab.
   func ownsEditor(_ editor: EditorTab) -> Bool {
-    return tabs.contains {
+    allSurfaces.contains {
       if case .editor(let e) = $0 { return e === editor }
       return false
     }
@@ -943,34 +1193,44 @@ final class TabManager: NSObject {
     )
 
     let infos = tabs.enumerated().map { (i, tab) in
-      let directory = tabDirectory(for: tab)
+      let surface = tab.focused
+      let directory = tabDirectory(for: surface)
       var isDirectInteractionActive = false
       var progress: TerminalProgress? = nil
-      var isDirty = false
-      switch tab {
+      let isDirty = tab.surfaces.contains {
+        if case .editor(let editor) = $0 { return editor.isModified }
+        return false
+      }
+      switch surface {
       case .terminal(let container):
         isDirectInteractionActive = container.activeTerminal?.isDirectInteraction ?? false
         if let report = container.activeTerminal?.progress, report.state != .hidden {
           progress = report
         }
-      case .editor(let editor):
-        isDirty = editor.isModified
       default:
         break
+      }
+      var paneCount = 1
+      var isZoomed = false
+      if case .split(let split) = tab {
+        paneCount = split.count
+        isZoomed = split.isZoomed
       }
       return TabDisplayInfo(
         id: i < tabUniqueIds.count ? tabUniqueIds[i] : i,
         index: i,
         title: tab.title,
-        icon: tabIcon(for: tab),
+        icon: tabIcon(for: surface),
         isPinned: i < pinnedTabs.count ? pinnedTabs[i] : false,
-        isTerminal: { if case .terminal = tab { return true } else { return false } }(),
+        isTerminal: { if case .terminal = surface { return true } else { return false } }(),
         needsAttention: tab.needsAttention,
         gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },
         directory: directory.map(Self.abbreviateHomePath),
         isDirectInteractionActive: isDirectInteractionActive,
         progress: progress,
-        isDirty: isDirty
+        isDirty: isDirty,
+        paneCount: paneCount,
+        isZoomed: isZoomed
       )
     }
     ws.refreshTabs(infos, selectedIndex: selectedIndex)
@@ -1004,6 +1264,8 @@ final class TabManager: NSObject {
       return (path as NSString).deletingLastPathComponent
     case .diffReview(let repoRoot, _):
       return repoRoot
+    case .split(let split):
+      return tabDirectory(for: split.focused)
     }
   }
 
@@ -1065,6 +1327,8 @@ final class TabManager: NSObject {
     case .diffReview:
       return NSImage(
         systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Review Changes")
+    case .split(let split):
+      return tabIcon(for: split.focused)
     }
   }
 
