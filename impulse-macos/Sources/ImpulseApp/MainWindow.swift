@@ -425,6 +425,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     }
     windowModel.onShowProblems = { [weak self] in self?.showProblems() }
+    windowModel.onOpenComposer = { [weak self] in self?.toggleAgentComposer() }
+    windowModel.agentTurns = { id in
+      AgentCheckpoints.shared.turns(terminalID: id).enumerated().reversed().map {
+        AgentTurnItem(id: $0.offset, started: $0.element.start.date, finished: $0.element.end != nil)
+      }
+    }
+    windowModel.onReviewAgentTurnAt = { [weak self] id, index in
+      let turns = AgentCheckpoints.shared.turns(terminalID: id)
+      guard let self, turns.indices.contains(index) else { return }
+      let turn = turns[index]
+      GitRepositoryStore.shared.resolve(directory: turn.repoRoot) { [weak self] state in
+        guard let self, let state else { return }
+        self.tabManager.addReviewTab(repository: state, scope: turn.scope, focusPath: nil, host: self)
+      }
+    }
+    windowModel.onRestoreAgentTurn = { [weak self] id, index in self?.restoreAgentTurn(terminalID: id, index: index) }
     windowModel.onRefreshOutline = { [weak self] in self?.refreshOutline(force: true) }
     windowModel.onOutlineSelect = { [weak self] symbol in
       self?.paletteGoToLine(UInt32(symbol.line), column: UInt32(symbol.column))
@@ -831,6 +847,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     GitRepositoryStore.shared.resolve(directory: turn.repoRoot) { [weak self] state in
       guard let self, let state else { return }
       self.tabManager.addReviewTab(repository: state, scope: turn.scope, focusPath: nil, host: self)
+    }
+  }
+
+  /// Put the repository's files back to how they were when an agent turn
+  /// started (snapshot first, so Undo brings the newer state back).
+  func restoreAgentTurn(terminalID: UUID, index: Int) {
+    let turns = AgentCheckpoints.shared.turns(terminalID: terminalID)
+    guard turns.indices.contains(index) else { return }
+    let turn = turns[index]
+    gitConfirm(
+      title: "Restore files to before turn \(index + 1)?",
+      message: "Every file in the repository goes back to how it was when \(turn.agentName) started that turn. Commits are kept, and you can undo this right after.",
+      confirmTitle: "Restore", destructive: true
+    ) { [weak self] proceed in
+      guard proceed, let self else { return }
+      GitRepositoryStore.shared.resolve(directory: turn.repoRoot) { [weak self] state in
+        guard let self, let state else { return }
+        state.run("Restoring…", snapshotReason: "restore agent checkpoint") {
+          SafetySnapshots.restore(turn.start, root: $0)
+        } completion: { [weak self] result, snapshot in
+          guard let self else { return }
+          if case .failure(let error) = result {
+            self.gitPresentError(error, title: "Couldn't restore")
+            return
+          }
+          self.toasts.show(
+            Toast(
+              kind: .success, message: "Restored files to before turn \(index + 1)",
+              actionTitle: snapshot == nil ? nil : "Undo",
+              action: snapshot.map { snapshot in
+                { state.run { SafetySnapshots.restore(snapshot, root: $0) } completion: { _, _ in } }
+              }, lifetime: 15))
+        }
+      }
     }
   }
 
@@ -1437,6 +1487,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       windowModel.lastCommandExitCode = active?.lastCommandExitCode
       windowModel.lastCommandDurationMs = active?.lastCommandDurationMs
       windowModel.terminalDirectInteraction = active?.isDirectInteraction ?? false
+      windowModel.focusedTerminalID = active?.id
     } else if let language = tabInfo.language {
       let cwd = tabInfo.cwd ?? ""
       // Sync to SwiftUI

@@ -76,6 +76,11 @@ final class AgentCheckpoints {
     turns[terminalID]?.last
   }
 
+  /// Every recorded turn in a terminal, oldest first.
+  func turns(terminalID: UUID) -> [Turn] {
+    turns[terminalID] ?? []
+  }
+
   func turnCount(terminalID: UUID) -> Int {
     turns[terminalID]?.count ?? 0
   }

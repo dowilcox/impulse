@@ -46,6 +46,14 @@ struct TabDisplayInfo: Identifiable {
 // MARK: - Agents
 
 /// A coding agent running in one of the window's terminals (inbox rows).
+/// One agent turn as the toolbelt lists it.
+struct AgentTurnItem: Identifiable {
+  /// Index among the terminal's turns (oldest = 0).
+  let id: Int
+  let started: Date
+  let finished: Bool
+}
+
 struct AgentSummary: Identifiable {
   /// The terminal's id.
   let id: UUID
@@ -120,6 +128,15 @@ final class WindowModel {
   var workspaces: [WorkspaceInfo] = []
   /// Coding agents in this window, most urgent first.
   var agents: [AgentSummary] = []
+  /// The terminal with focus (for the agent toolbelt).
+  var focusedTerminalID: UUID?
+  var focusedAgent: AgentSummary? { agents.first { $0.id == focusedTerminalID } }
+  /// The agent toolbelt's actions on a terminal: its turns (newest first),
+  /// review one, restore the files to before one.
+  @ObservationIgnored var agentTurns: ((UUID) -> [AgentTurnItem])?
+  @ObservationIgnored var onReviewAgentTurnAt: ((UUID, Int) -> Void)?
+  @ObservationIgnored var onRestoreAgentTurn: ((UUID, Int) -> Void)?
+  @ObservationIgnored var onOpenComposer: (() -> Void)?
   /// Ports the active workspace's processes listen on.
   var ports: [ListeningPort] = []
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).

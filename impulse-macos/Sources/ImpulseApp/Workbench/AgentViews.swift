@@ -201,3 +201,86 @@ struct AgentInboxButton: View {
     }
   }
 }
+
+/// Under an agent's terminal while its TUI runs: what it's doing, and the
+/// things you do around it — write to it, review its last turn, step back
+/// through its turns.
+struct AgentToolbelt: View {
+  @Environment(\.chrome) private var chrome
+  var model: WindowModel
+  let agent: AgentSummary
+
+  private static let time: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .none
+    formatter.timeStyle = .short
+    return formatter
+  }()
+
+  var body: some View {
+    HStack(spacing: 8) {
+      AgentStatusGlyph(state: agent.state, size: 12)
+      Text(agent.agentName).font(ChromeFont.ui(11.5, weight: .semibold)).foregroundStyle(chrome.text)
+      TimelineView(.periodic(from: .now, by: 1)) { context in
+        Text(statusText(now: context.date)).font(ChromeFont.ui(11)).foregroundStyle(chrome.textSecondary)
+          .monospacedDigit()
+      }
+      Spacer(minLength: 8)
+      button("Compose", icon: .messageSquarePlus, hint: "⌘I") { model.onOpenComposer?() }
+      button("Review Turn", icon: .fileDiff, hint: nil) { model.onReviewAgentTurn?(agent.id) }
+        .disabled(!agent.hasTurns)
+        .opacity(agent.hasTurns ? 1 : 0.5)
+      ChromeMenuButton(help: "Turns this agent took: review one, or restore the files to before it") {
+        let turns = model.agentTurns?(agent.id) ?? []
+        guard !turns.isEmpty else { return [ChromeMenuItem("No turns yet", isEnabled: false) {}] }
+        var items: [ChromeMenuItem] = []
+        for turn in turns.prefix(12) {
+          let label = "Turn \(turn.id + 1) · \(Self.time.string(from: turn.started))\(turn.finished ? "" : " (running)")"
+          items.append(ChromeMenuItem("Review \(label)") { model.onReviewAgentTurnAt?(agent.id, turn.id) })
+          items.append(ChromeMenuItem("Restore Files to Before \(label)…") { model.onRestoreAgentTurn?(agent.id, turn.id) })
+          items.append(.separator)
+        }
+        return Array(items.dropLast())
+      } label: {
+        HStack(spacing: 4) {
+          Icon(.history, size: 11)
+          Text("Turns").font(ChromeFont.ui(11))
+        }
+        .foregroundStyle(chrome.textSecondary)
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+      }
+    }
+    .padding(.horizontal, 12)
+    .frame(height: 32)
+    .background(model.theme.colorBgDark)
+    .overlay(alignment: .top) { Rectangle().fill(model.theme.colorBorder).frame(height: 1) }
+  }
+
+  private func statusText(now: Date) -> String {
+    let seconds = max(0, Int(now.timeIntervalSince(agent.since)))
+    let elapsed = seconds < 60 ? "\(seconds)s" : seconds < 3600 ? "\(seconds / 60)m" : "\(seconds / 3600)h \(seconds / 60 % 60)m"
+    switch agent.state {
+    case .working: return "Working · \(elapsed)"
+    case .needsInput: return "Needs your input"
+    case .done: return "Finished \(elapsed) ago"
+    case .idle: return "Idle"
+    case .exited: return "Exited"
+    }
+  }
+
+  private func button(_ title: String, icon: LucideIcon, hint: String?, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        Icon(icon, size: 11)
+        Text(title).font(ChromeFont.ui(11))
+        if let hint { Text(hint).font(ChromeFont.ui(10)).foregroundStyle(chrome.textTertiary) }
+      }
+      .foregroundStyle(chrome.textSecondary)
+      .padding(.horizontal, 6)
+      .frame(height: 22)
+      .background(RoundedRectangle(cornerRadius: 5).fill(chrome.raised))
+    }
+    .buttonStyle(.plain)
+  }
+}

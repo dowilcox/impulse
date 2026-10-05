@@ -355,6 +355,15 @@ struct TerminalInputHost: View {
     if showsComposer {
       AgentComposerView(model: model)
         .environment(\.chrome, model.palette)
+    } else if showsInput, let agent = toolbeltAgent {
+      VStack(spacing: 0) {
+        AgentToolbelt(model: model, agent: agent)
+        TerminalContextBarView(model: model)
+      }
+      .environment(\.chrome, model.palette)
+    } else if let agent = toolbeltAgent {
+      AgentToolbelt(model: model, agent: agent)
+        .environment(\.chrome, model.palette)
     } else if showsInput {
       TerminalContextBarView(model: model)
         .environment(\.chrome, model.palette)
@@ -365,6 +374,14 @@ struct TerminalInputHost: View {
   private var showsComposer: Bool {
     model.composerVisible && model.terminalDirectInteraction
       && (model.selectedTabInfo?.isTerminal ?? false)
+  }
+
+  /// An agent runs in the focused terminal: show its toolbelt.
+  private var toolbeltAgent: AgentSummary? {
+    guard model.selectedTabInfo?.isTerminal ?? false, let agent = model.focusedAgent,
+      agent.state != .exited
+    else { return nil }
+    return agent
   }
 
   private var showsInput: Bool {
