@@ -195,6 +195,12 @@ private struct WorkspaceRow: View {
   @ViewBuilder
   private func trailing(snapshot: RepoSnapshot?) -> some View {
     HStack(spacing: 6) {
+      if let port = workspace.ports.first {
+        Text(verbatim: workspace.ports.count > 1 ? ":\(port.port)+" : ":\(port.port)")
+          .font(ChromeFont.mono(10))
+          .foregroundStyle(chrome.textTertiary)
+          .help(workspace.ports.map { ":\($0.port) \($0.process)" }.joined(separator: "\n"))
+      }
       if workspace.agentsWorking > 0 {
         ProgressRing(progress: nil, color: chrome.working, size: 10, lineWidth: 1.4)
           .help("\(workspace.agentsWorking) agent(s) working")

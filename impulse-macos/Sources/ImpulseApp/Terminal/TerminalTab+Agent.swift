@@ -125,10 +125,11 @@ extension TerminalTab {
     let count = proc_listchildpids(pid, nil, 0)
     guard count > 0 else { return [] }
     var pids = [pid_t](repeating: 0, count: Int(count))
-    let bytes = pids.withUnsafeMutableBufferPointer {
+    // Returns a count of PIDs (not bytes).
+    let filled = pids.withUnsafeMutableBufferPointer {
       proc_listchildpids(pid, $0.baseAddress, Int32(Int(count) * MemoryLayout<pid_t>.size))
     }
-    return Array(pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size)).filter { $0 > 0 }
+    return Array(pids.prefix(max(0, min(Int(filled), pids.count)))).filter { $0 > 0 }
   }
 
   /// Keep one timer armed for the machine's next timeout. Output pushes the

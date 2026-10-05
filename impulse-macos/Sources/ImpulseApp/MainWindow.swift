@@ -75,6 +75,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private var inputBarHost: NSView?
   /// The directory the window's repository was last resolved from.
   private var repositoryAnchor = ""
+  /// Drives `startPortScanning`.
+  var portTimer: Timer?
   private weak var inputBarTerminal: TerminalTab?
   private var termSearchHeightConstraint: NSLayoutConstraint?
 
@@ -508,6 +510,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onShowAgentHooks = { [weak self] in
       self?.presentAgentHooksSheet()
     }
+    startPortScanning()
     windowModel.onArchiveTask = { [weak self] id in
       self?.archiveTask(id)
     }
@@ -604,6 +607,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       container.attachAccessory(host)
     } else {
       host.removeFromSuperview()
+    }
+  }
+
+  /// Look for dev servers every few seconds while the window is visible:
+  /// listening ports of anything running in the window's terminals.
+  func startPortScanning() {
+    portTimer?.invalidate()
+    portTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+      guard let self, let window = self.window, window.isVisible, !window.isMiniaturized else { return }
+      let trees = self.tabManager.processTrees()
+      DispatchQueue.global(qos: .utility).async { [weak self] in
+        var ports: [UUID: [ListeningPort]] = [:]
+        for tree in trees where !tree.pids.isEmpty {
+          ports[tree.workspace] = PortScanner.listeningPorts(of: tree.pids)
+        }
+        DispatchQueue.main.async { self?.tabManager.setPorts(ports) }
+      }
     }
   }
 

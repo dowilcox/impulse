@@ -553,6 +553,14 @@ class TerminalTab: NSView {
     )
   }
 
+  /// The shell and everything running under it.
+  func processTreePids() -> [pid_t] {
+    guard let backend, !backend.isShutdown else { return [] }
+    let shell = pid_t(backend.childPid())
+    guard shell > 0 else { return [] }
+    return [shell] + collectDescendants(of: shell)
+  }
+
   /// Recursively collect all descendant PIDs of a given process using
   /// `proc_listchildpids()`. Returns PIDs in leaf-first order.
   private func collectDescendants(of pid: pid_t) -> [pid_t] {
@@ -564,7 +572,8 @@ class TerminalTab: NSView {
     let actual = pids.withUnsafeMutableBufferPointer { buf in
       proc_listchildpids(pid, buf.baseAddress, Int32(bufferSize))
     }
-    let childCount = Int(actual) / MemoryLayout<pid_t>.size
+    // libproc's proc_listchildpids returns a count of PIDs, not bytes.
+    let childCount = min(Int(actual), pids.count)
     guard childCount > 0 else { return [] }
 
     var result: [pid_t] = []

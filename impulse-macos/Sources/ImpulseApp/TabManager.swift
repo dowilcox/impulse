@@ -1054,6 +1054,34 @@ final class TabManager: NSObject {
     }
   }
 
+  /// Each workspace's terminals' process trees (for port scanning).
+  func processTrees() -> [(workspace: UUID, pids: [pid_t])] {
+    workspaces.map { workspace in
+      let pids = tabIndices(inWorkspace: workspace.id).flatMap { index in
+        records[index].entry.surfaces.flatMap { surface -> [pid_t] in
+          guard case .terminal(let container) = surface else { return [] }
+          return container.activeTerminal?.processTreePids() ?? []
+        }
+      }
+      return (workspace.id, pids)
+    }
+  }
+
+  /// Record scanned ports; returns whether anything changed.
+  @discardableResult
+  func setPorts(_ ports: [UUID: [ListeningPort]]) -> Bool {
+    var changed = false
+    for workspace in workspaces {
+      let next = ports[workspace.id] ?? []
+      if workspace.ports != next {
+        workspace.ports = next
+        changed = true
+      }
+    }
+    if changed { syncToWindowModel() }
+    return changed
+  }
+
   /// Make sure a scratch workspace exists (so closing the last folder
   /// workspace leaves somewhere to land).
   func ensureScratchWorkspace() {
@@ -1615,6 +1643,7 @@ final class TabManager: NSObject {
     ws.allTabs = infos
     ws.refreshTabs(
       infos.filter { $0.workspaceID == activeWorkspaceID }, selectedIndex: selectedIndex)
+    ws.ports = activeWorkspace.ports
     ws.workspaces = workspaces.map { workspace in
       let tabs = infos.filter { $0.workspaceID == workspace.id }
       return WorkspaceInfo(
@@ -1629,6 +1658,7 @@ final class TabManager: NSObject {
         progress: tabs.compactMap(\.progress).first,
         repository: workspace.repository,
         isTask: workspace.isTask,
+        ports: workspace.ports,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count
       )

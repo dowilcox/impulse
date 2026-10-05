@@ -41,6 +41,18 @@ struct WorkbenchStatusBar: View {
         }
       }
     }
+    ForEach(model.ports.prefix(3), id: \.port) { port in
+      StatusItem(icon: .globe, help: "\(port.process) is listening on \(port.port) — open in browser") {
+        if let url = URL(string: "http://localhost:\(port.port)") { NSWorkspace.shared.open(url) }
+      } label: {
+        Text(verbatim: ":\(port.port)").monospacedDigit()
+      }
+    }
+    if model.ports.count > 3 {
+      StatusItem(help: model.ports.dropFirst(3).map { ":\($0.port) \($0.process)" }.joined(separator: "\n")) {
+        Text(verbatim: "+\(model.ports.count - 3)")
+      }
+    }
     if !model.currentCwd.isEmpty, model.cursorLine == nil {
       StatusItem(
         icon: .folder, help: model.currentCwd,
@@ -62,7 +74,7 @@ struct WorkbenchStatusBar: View {
       StatusItem(help: "Go to Line (⌘G)") {
         NotificationCenter.default.post(name: .impulseGoToLine, object: nil)
       } label: {
-        Text("Ln \(line), Col \(col)")
+        Text(verbatim: "Ln \(line), Col \(col)")
       }
       if let indent = model.currentIndent {
         StatusItem(help: "Indentation", label: { Text(indent) })

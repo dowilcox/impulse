@@ -88,6 +88,8 @@ struct WorkspaceInfo: Identifiable {
   let repository: GitRepositoryState?
   /// A task worktree (can be archived).
   var isTask: Bool = false
+  /// Listening ports of its terminals' processes.
+  var ports: [ListeningPort] = []
   /// Agents waiting on the user, and agents working.
   var agentsWaiting: Int = 0
   var agentsWorking: Int = 0
@@ -118,6 +120,8 @@ final class WindowModel {
   var workspaces: [WorkspaceInfo] = []
   /// Coding agents in this window, most urgent first.
   var agents: [AgentSummary] = []
+  /// Ports the active workspace's processes listen on.
+  var ports: [ListeningPort] = []
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
   var tabBarPosition: String = "sidebar"
 

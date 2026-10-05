@@ -24,6 +24,8 @@ final class Workspace {
   var repository: GitRepositoryState?
   /// A linked worktree made by "New Task" (or by hand), not a main checkout.
   var isTask = false
+  /// Ports that processes in this workspace's terminals listen on.
+  var ports: [ListeningPort] = []
 
   init(id: UUID = UUID(), kind: Kind, root: String, customName: String? = nil) {
     self.id = id
