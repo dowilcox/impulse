@@ -505,6 +505,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     windowModel.onNewTask = { [weak self] in
       self?.presentNewTaskSheet()
     }
+    windowModel.onShowAgentHooks = { [weak self] in
+      self?.presentAgentHooksSheet()
+    }
     windowModel.onArchiveTask = { [weak self] id in
       self?.archiveTask(id)
     }

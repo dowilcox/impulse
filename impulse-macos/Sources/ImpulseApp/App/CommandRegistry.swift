@@ -53,6 +53,14 @@ enum CommandRegistry {
         keybindingId: "switch_branch"
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
+        id: "agent_hooks", title: "Install Agent Hooks…", category: "Agents",
+        keywords: ["claude", "codex", "hooks", "status", "setup"], icon: .plug
+      ) { [weak controller] in controller?.presentAgentHooksSheet() },
+      AppCommand(
+        id: "editor_integration", title: "Use Impulse as $EDITOR in Terminals", category: "Terminal",
+        keywords: ["git commit", "visual", "editor", "wait"], icon: .pencil
+      ) { [weak controller] in controller?.toggleEditorIntegration() },
+      AppCommand(
         id: "new_task", title: "New Task…", category: "Workspaces",
         keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus
       ) { [weak controller] in controller?.presentNewTaskSheet() },

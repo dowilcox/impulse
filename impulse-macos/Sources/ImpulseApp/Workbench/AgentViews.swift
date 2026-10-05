@@ -92,6 +92,23 @@ struct AgentInboxView: View {
         }
         .frame(maxHeight: 320)
       }
+      Hairline()
+      Button {
+        model.onShowAgentHooks?()
+        dismiss()
+      } label: {
+        HStack(spacing: 5) {
+          Icon(.plug, size: 11)
+          Text("Agent hooks give exact status…")
+            .font(ChromeFont.ui(11))
+          Spacer(minLength: 0)
+        }
+        .foregroundStyle(chrome.textTertiary)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(ChromePressStyle())
     }
     .frame(width: 340)
     .background(chrome.overlay)

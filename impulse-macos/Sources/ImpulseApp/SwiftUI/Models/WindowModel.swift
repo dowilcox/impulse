@@ -329,6 +329,7 @@ final class WindowModel {
   /// Review a terminal's agent's last turn.
   var onReviewAgentTurn: ((UUID) -> Void)?
   var onNewTask: (() -> Void)?
+  var onShowAgentHooks: (() -> Void)?
   var onArchiveTask: ((UUID) -> Void)?
 
   // MARK: Methods

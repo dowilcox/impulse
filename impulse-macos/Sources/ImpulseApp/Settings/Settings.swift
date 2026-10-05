@@ -106,6 +106,8 @@ struct Settings: Codable {
     var restoreScrollback: Bool = true
     /// Keep command history across terminals and launches.
     var terminalPersistentHistory: Bool = true
+    /// New terminals set $EDITOR / $VISUAL to `impulse edit`.
+    var terminalEditorIntegration: Bool = false
     var lastDirectory: String
     var openFiles: [String]
 
@@ -202,6 +204,7 @@ struct Settings: Codable {
         case restoreSession = "restore_session"
         case restoreScrollback = "restore_scrollback"
         case terminalPersistentHistory = "terminal_persistent_history"
+        case terminalEditorIntegration = "terminal_editor_integration"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -342,6 +345,8 @@ struct Settings: Codable {
         restoreScrollback = (try? c.decode(Bool.self, forKey: .restoreScrollback)) ?? d.restoreScrollback
         terminalPersistentHistory =
             (try? c.decode(Bool.self, forKey: .terminalPersistentHistory)) ?? d.terminalPersistentHistory
+        terminalEditorIntegration =
+            (try? c.decode(Bool.self, forKey: .terminalEditorIntegration)) ?? d.terminalEditorIntegration
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

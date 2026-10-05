@@ -1124,6 +1124,12 @@ class TerminalTab: NSView {
     if let cli = Self.cliPath {
       let folder = (cli as NSString).deletingLastPathComponent
       envDict["PATH"] = folder + ":" + (envDict["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+      // Opt-in: git commit, crontab -e … open an Impulse tab.
+      if SettingsStore.shared.settings.terminalEditorIntegration {
+        let editor = "'\(cli)' edit"
+        envDict["EDITOR"] = editor
+        envDict["VISUAL"] = editor
+      }
     }
 
     var args: [String] = []
