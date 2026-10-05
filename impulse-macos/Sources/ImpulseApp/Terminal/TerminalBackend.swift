@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ImpulseKit
 
 // MARK: - Configuration
 
@@ -63,6 +64,8 @@ struct TerminalModeFlags: Codable {
     var focusInOut: Bool { bits & (1 << 8) != 0 }
     var altScreen: Bool { bits & (1 << 9) != 0 }
     var lineWrap: Bool { bits & (1 << 10) != 0 }
+    /// Kitty keyboard enhancements the program asked for (bits 11–15).
+    var kittyFlags: KittyKeyboard.Flags { KittyKeyboard.Flags(rawValue: Int(bits >> 11) & 0x1F) }
 }
 
 // MARK: - Events

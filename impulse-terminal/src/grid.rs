@@ -89,5 +89,12 @@ bitflags::bitflags! {
         const FOCUS_IN_OUT        = 1 << 8;
         const ALT_SCREEN          = 1 << 9;
         const LINE_WRAP           = 1 << 10;
+        // Kitty keyboard protocol enhancements the program asked for, in
+        // the protocol's own bit order (1, 2, 4, 8, 16 shifted by 11).
+        const KITTY_DISAMBIGUATE  = 1 << 11;
+        const KITTY_EVENT_TYPES   = 1 << 12;
+        const KITTY_ALTERNATE_KEYS = 1 << 13;
+        const KITTY_ALL_KEYS      = 1 << 14;
+        const KITTY_TEXT          = 1 << 15;
     }
 }

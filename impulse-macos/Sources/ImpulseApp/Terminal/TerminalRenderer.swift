@@ -2629,6 +2629,26 @@ class TerminalRenderer: NSView {
 
         onUserKey?(event.keyCode == 36 || event.keyCode == 76)
 
+        // A program that asked for the kitty keyboard protocol gets keys it
+        // can tell apart (Ctrl-I vs Tab, Esc vs Alt); plain typing still goes
+        // through the input manager below.
+        if let backend, let flags = backend.mode()?.kittyFlags, !flags.isEmpty, !hasMarkedText(),
+            let key = KeyEncoder.kittyKey(for: event),
+            let bytes = KittyKeyboard.encode(
+                key.key, modifiers: key.modifiers, event: event.isARepeat ? .repeat : .press, text: key.text,
+                flags: flags)
+        {
+            if !bytes.isEmpty {
+                if isScrolledBack {
+                    isScrolledBack = false
+                    backend.scrollToBottom()
+                }
+                backend.write(bytes: bytes)
+                resetBlink()
+            }
+            return
+        }
+
         // Route through the input manager so dead keys and IME composition
         // work. interpretKeyEvents will call:
         //   - insertText(_:) for committed text (including composed chars)
@@ -2639,6 +2659,21 @@ class TerminalRenderer: NSView {
         currentKeyEvent = event
         interpretKeyEvents([event])
         currentKeyEvent = nil
+    }
+
+    override func keyUp(with event: NSEvent) {
+        // Releases, for programs that asked for kitty event types.
+        if let backend, !event.modifierFlags.contains(.command),
+            let flags = backend.mode()?.kittyFlags, flags.contains(.reportEventTypes),
+            let key = KeyEncoder.kittyKey(for: event),
+            let bytes = KittyKeyboard.encode(
+                key.key, modifiers: key.modifiers, event: .release, text: key.text, flags: flags),
+            !bytes.isEmpty
+        {
+            backend.write(bytes: bytes)
+            return
+        }
+        super.keyUp(with: event)
     }
 
     override func doCommand(by selector: Selector) {

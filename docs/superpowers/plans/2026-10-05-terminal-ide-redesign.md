@@ -502,7 +502,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - OSC 99 notifications.
   - Tests in `osc_scanner.rs`.
 - [ ] **Grapheme clusters** (zero-width and combining characters) and styled or colored underlines: snapshot format v2 with a side-table. Requires matching FFI and Swift `GridBufferReader` changes behind a version byte in the header.
-- [ ] **Kitty keyboard protocol** (progressive enhancement flags) in `KeyEncoder.swift`.
+- [x] **Kitty keyboard protocol** (progressive enhancement flags) in `KeyEncoder.swift`. *(alacritty_terminal tracks the flags; they ride in bits 11–15 of the mode word; the encoder lives in ImpulseKit with tests; releases via keyUp. Typing with a real keyboard in fish/Neovim still needs a manual check.)*
 - [x] **`UNUserNotificationCenter`** (§6.6):
   - request authorization on first need;
   - thread per workspace; click focuses the pane;

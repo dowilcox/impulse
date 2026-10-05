@@ -108,6 +108,8 @@ impl TerminalConfig {
                 },
                 blinking: self.cursor_blink,
             },
+            // Programs can ask for the kitty keyboard protocol (CSI > u).
+            kitty_keyboard: true,
             ..Default::default()
         }
     }

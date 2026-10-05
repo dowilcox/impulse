@@ -1919,6 +1919,29 @@ fn convert_mode(mode: TermMode) -> TerminalMode {
     if mode.contains(TermMode::LINE_WRAP) {
         flags |= TerminalMode::LINE_WRAP;
     }
+    for (kitty, bit) in [
+        (
+            TermMode::DISAMBIGUATE_ESC_CODES,
+            TerminalMode::KITTY_DISAMBIGUATE,
+        ),
+        (
+            TermMode::REPORT_EVENT_TYPES,
+            TerminalMode::KITTY_EVENT_TYPES,
+        ),
+        (
+            TermMode::REPORT_ALTERNATE_KEYS,
+            TerminalMode::KITTY_ALTERNATE_KEYS,
+        ),
+        (
+            TermMode::REPORT_ALL_KEYS_AS_ESC,
+            TerminalMode::KITTY_ALL_KEYS,
+        ),
+        (TermMode::REPORT_ASSOCIATED_TEXT, TerminalMode::KITTY_TEXT),
+    ] {
+        if mode.contains(kitty) {
+            flags |= bit;
+        }
+    }
     flags
 }
 
@@ -2211,6 +2234,35 @@ mod tests {
         assert_eq!(colors.palette[dim_red].r, 191);
         assert_eq!(colors.palette[dim_red].g, 180);
         assert_eq!(colors.palette[dim_red].b, 168);
+    }
+
+    #[test]
+    fn kitty_keyboard_flags_reach_the_mode() {
+        use super::convert_mode;
+        use crate::grid::TerminalMode;
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Term;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        let size = TermSize {
+            columns: 20,
+            screen_lines: 5,
+        };
+        let config = TerminalConfig::default().to_alacritty_config();
+        let mut term = Term::new(config, &size, VoidListener);
+        let mut processor: Processor = Processor::new();
+
+        // Push disambiguate + report all keys (1 | 8).
+        processor.advance(&mut term, b"\x1b[>9u");
+        let mode = convert_mode(*term.mode());
+        assert!(mode.contains(TerminalMode::KITTY_DISAMBIGUATE));
+        assert!(mode.contains(TerminalMode::KITTY_ALL_KEYS));
+        assert!(!mode.contains(TerminalMode::KITTY_EVENT_TYPES));
+        assert_eq!(mode.bits() >> 11, 9, "flags keep the protocol's bit order");
+
+        // Pop: back to legacy keys.
+        processor.advance(&mut term, b"\x1b[<u");
+        assert_eq!(convert_mode(*term.mode()).bits() >> 11, 0);
     }
 
     #[test]

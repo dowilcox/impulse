@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 
 /// Translates NSEvent key events into terminal escape byte sequences.
 struct KeyEncoder {
@@ -104,6 +105,46 @@ struct KeyEncoder {
 
     static func encode(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
         encodeForDoCommand(event: event, appCursor: appCursor, appKeypad: appKeypad)
+    }
+
+    /// The key, modifiers and typed text of `event` for the kitty keyboard
+    /// protocol (nil for keys it doesn't describe, which keep the legacy path).
+    static func kittyKey(for event: NSEvent) -> (
+        key: KittyKeyboard.Key, modifiers: KittyKeyboard.Modifiers, text: String?
+    )? {
+        let flags = event.modifierFlags
+        var modifiers: KittyKeyboard.Modifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.option) { modifiers.insert(.alt) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.command) { modifiers.insert(.superKey) }
+
+        let functional: [UInt16: KittyKeyboard.Key] = [
+            53: .escape, 36: .enter, 76: .enter, 48: .tab, 51: .backspace,
+            114: .insert, 117: .delete, 116: .pageUp, 121: .pageDown,
+            126: .up, 125: .down, 124: .right, 123: .left, 115: .home, 119: .end,
+            122: .function(1), 120: .function(2), 99: .function(3), 118: .function(4),
+            96: .function(5), 97: .function(6), 98: .function(7), 100: .function(8),
+            101: .function(9), 109: .function(10), 103: .function(11), 111: .function(12),
+        ]
+        if let key = functional[event.keyCode] {
+            return (key, modifiers, nil)
+        }
+        // Option typing a character (å, ∫) or starting a dead key (´) keeps
+        // the legacy path: composing, special characters, and the meta keys
+        // Cocoa's word bindings send.
+        if modifiers.subtracting(.shift) == [.alt],
+            event.characters.map({ $0.isEmpty || $0.unicodeScalars.contains { $0.value >= 0x80 } }) ?? true
+        {
+            return nil
+        }
+        // The key's own character without modifiers, and with Shift.
+        guard let unmodified = event.characters(byApplyingModifiers: []),
+            unmodified.unicodeScalars.count == 1,
+            let base = unmodified.lowercased().unicodeScalars.first, base.value >= 0x20, base.value != 0x7F
+        else { return nil }
+        let shifted = event.characters(byApplyingModifiers: .shift)?.unicodeScalars.first
+        return (.text(base: base, shifted: shifted), modifiers, event.characters)
     }
 
     private static func modifierParam(shift: Bool, alt: Bool, ctrl: Bool) -> Int {
