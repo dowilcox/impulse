@@ -121,6 +121,10 @@ enum CommandRegistry {
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },
       AppCommand(
+        id: "preview_beside", title: "Open Preview to the Side", category: "Editor",
+        keywords: ["markdown", "svg", "split", "live"], icon: .columns2
+      ) { [weak controller] in controller?.togglePreviewBeside() },
+      AppCommand(
         id: "go_to_symbol", title: "Go to Symbol in File…", category: "Editor",
         keywords: ["outline", "function", "class", "@"], icon: .code, keybindingId: "go_to_symbol"
       ) { [weak controller] in controller?.showPalette(prefix: "@") },

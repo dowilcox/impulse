@@ -1026,6 +1026,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         windowModel.searchReplacement = String(action[action.index(after: colon)...])
         windowModel.searchReplaceVisible = true
         windowModel.runSearchNow()
+      } else if action == "preview-beside" {
+        togglePreviewBeside()
       } else if action == "outline" {
         toggleRightDock()
       } else if action == "problems" {
@@ -2229,6 +2231,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // Quick Open — show sidebar in search mode
     notificationObservers.append(
+      nc.addObserver(forName: .impulseRunInTerminal, object: nil, queue: .main) { [weak self] notification in
+        guard let self, let editor = notification.object as? EditorTab, self.tabManager.ownsEditor(editor),
+          let command = notification.userInfo?["command"] as? String
+        else { return }
+        self.runFromPreview(
+          command, directory: notification.userInfo?["directory"] as? String ?? NSHomeDirectory(), editor: editor)
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .impulseGoToSymbol, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showPalette(prefix: "@")
@@ -3090,6 +3101,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   @objc private func previewButtonClicked(_ sender: Any?) {
     togglePreview()
+  }
+
+  /// Markdown or SVG preview beside the editor, following edits.
+  func togglePreviewBeside() {
+    guard let editor = tabManager.selectedEditor, let fp = editor.filePath, EditorTab.isPreviewableFile(fp) else {
+      toasts.show(Toast(kind: .info, message: "Open a Markdown or SVG file to preview it."))
+      return
+    }
+    let themeJSON = ThemeManager.markdownThemeJSON(forName: theme.id)
+    if let isPreviewing = editor.togglePreviewBeside(themeJSON: themeJSON, bgColor: theme.bg) {
+      windowModel.isPreviewing = isPreviewing
+    }
+  }
+
+  /// A preview's Run button: run the command in a terminal of the same tab
+  /// (the first one), or in a new one split below.
+  func runFromPreview(_ command: String, directory: String, editor: EditorTab) {
+    if let location = tabManager.location(of: editor),
+      case .split(let split) = tabManager.tabs[location.tabIndex],
+      let terminal = split.orderedPanes.lazy.compactMap({ pane -> TerminalTab? in
+        if case .terminal(let container) = pane.entry { return container.activeTerminal } else { return nil }
+      }).first
+    {
+      terminal.runCommand(command)
+      terminal.focus()
+      return
+    }
+    let container = tabManager.makeTerminalContainer(directory: directory, initialCommand: command)
+    tabManager.splitSelectedTab(with: .terminal(container), axis: .vertical)
   }
 
   /// Toggle preview for the active editor tab (markdown or SVG).

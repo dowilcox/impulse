@@ -101,6 +101,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Whether this editor is currently showing markdown preview instead of Monaco.
     private(set) var isPreviewing: Bool = false
+    /// The preview shows beside the editor (and follows edits) rather than
+    /// in place of it.
+    private(set) var isPreviewBeside = false
+    /// Theme the preview was last rendered with (for live refreshes).
+    private var previewTheme: (json: String, bg: String)?
+    private var previewRefreshWork: DispatchWorkItem?
+    /// The editor's trailing edge: the view's, or the middle when beside.
+    private var editorTrailing: NSLayoutConstraint?
+    private var editorHalf: NSLayoutConstraint?
 
     /// Lazily created WKWebView used for markdown preview rendering.
     private var previewWebView: WKWebView?
@@ -128,11 +137,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         if let warmed = EditorWebViewPool.shared.claim(newHandler: self, weakProxy: proxy) {
             warmed.translatesAutoresizingMaskIntoConstraints = false
             addSubview(warmed)
+            let trailing = warmed.trailingAnchor.constraint(equalTo: trailingAnchor)
+            editorTrailing = trailing
             NSLayoutConstraint.activate([
                 warmed.topAnchor.constraint(equalTo: topAnchor),
                 warmed.bottomAnchor.constraint(equalTo: bottomAnchor),
                 warmed.leadingAnchor.constraint(equalTo: leadingAnchor),
-                warmed.trailingAnchor.constraint(equalTo: trailingAnchor),
+                trailing,
             ])
             self.webView = warmed
             self.isEditorReady = true
@@ -161,11 +172,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         wv.underPageBackgroundColor = .clear
 
         addSubview(wv)
+        let trailing = wv.trailingAnchor.constraint(equalTo: trailingAnchor)
+        editorTrailing = trailing
         NSLayoutConstraint.activate([
             wv.topAnchor.constraint(equalTo: topAnchor),
             wv.bottomAnchor.constraint(equalTo: bottomAnchor),
             wv.leadingAnchor.constraint(equalTo: leadingAnchor),
-            wv.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailing,
         ])
 
         self.webView = wv
@@ -192,6 +205,15 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
+        if message.name == "impulseRun" {
+            // A Run button in the markdown preview.
+            guard let command = message.body as? String, !command.isEmpty else { return }
+            let directory = filePath.map { ($0 as NSString).deletingLastPathComponent }
+            NotificationCenter.default.post(
+                name: .impulseRunInTerminal, object: self,
+                userInfo: ["command": command, "directory": directory ?? NSHomeDirectory()])
+            return
+        }
         guard message.name == "impulse" else { return }
 
         guard let body = message.body as? String,
@@ -258,6 +280,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             } else {
                 isModified = true
             }
+            if isPreviewing, isPreviewBeside { schedulePreviewRefresh() }
             NotificationCenter.default.post(
                 name: .editorContentChanged,
                 object: self,
@@ -820,15 +843,40 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         if isPreviewing {
             // Switch back to editor
-            previewWebView?.isHidden = true
-            webView?.isHidden = false
-            isPreviewing = false
+            closePreview()
             return false
         }
+        return showPreview(beside: false, themeJSON: themeJSON, bgColor: bgColor) ? true : nil
+    }
 
-        guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else {
-            return nil
+    /// Show or hide the preview beside the editor, re-rendered as you type.
+    func togglePreviewBeside(themeJSON: String, bgColor: String) -> Bool? {
+        guard let fp = filePath, EditorTab.isPreviewableFile(fp) else { return nil }
+        if isPreviewing {
+            let wasBeside = isPreviewBeside
+            closePreview()
+            if wasBeside { return false }
         }
+        return showPreview(beside: true, themeJSON: themeJSON, bgColor: bgColor) ? true : nil
+    }
+
+    private func closePreview() {
+        previewWebView?.isHidden = true
+        webView?.isHidden = false
+        if isPreviewBeside {
+            editorHalf?.isActive = false
+            editorTrailing?.isActive = true
+        }
+        isPreviewing = false
+        isPreviewBeside = false
+        previewRefreshWork?.cancel()
+    }
+
+    private func showPreview(beside: Bool, themeJSON: String, bgColor: String) -> Bool {
+        guard let fp = filePath,
+            let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor)
+        else { return false }
+        previewTheme = (themeJSON, bgColor)
 
         // Create or reuse preview WebView. `allowFileAccessFromFileURLs` is
         // intentionally *not* enabled — it would let JS in rendered markdown
@@ -836,15 +884,17 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // via `<img src>` still work without that preference.
         if previewWebView == nil {
             let config = WKWebViewConfiguration()
+            config.userContentController.add(WeakScriptMessageHandler(delegate: self), name: "impulseRun")
             let wv = WKWebView(frame: bounds, configuration: config)
             wv.navigationDelegate = previewNavigationDelegate
             wv.translatesAutoresizingMaskIntoConstraints = false
             wv.underPageBackgroundColor = .clear
             addSubview(wv)
+            previewLeading = wv.leadingAnchor.constraint(equalTo: leadingAnchor)
             NSLayoutConstraint.activate([
                 wv.topAnchor.constraint(equalTo: topAnchor),
                 wv.bottomAnchor.constraint(equalTo: bottomAnchor),
-                wv.leadingAnchor.constraint(equalTo: leadingAnchor),
+                previewLeading!,
                 wv.trailingAnchor.constraint(equalTo: trailingAnchor),
             ])
             previewWebView = wv
@@ -852,14 +902,50 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         loadPreviewHTML(html, filePath: fp)
         previewWebView?.isHidden = false
-        webView?.isHidden = true
+        if beside, let webView, let preview = previewWebView {
+            // Editor on the left half, preview on the right.
+            editorTrailing?.isActive = false
+            editorHalf?.isActive = false
+            editorHalf = webView.trailingAnchor.constraint(equalTo: centerXAnchor)
+            editorHalf?.isActive = true
+            previewLeading?.isActive = false
+            previewLeading = preview.leadingAnchor.constraint(equalTo: centerXAnchor, constant: 1)
+            previewLeading?.isActive = true
+            webView.isHidden = false
+        } else {
+            previewLeading?.isActive = false
+            previewLeading = previewWebView?.leadingAnchor.constraint(equalTo: leadingAnchor)
+            previewLeading?.isActive = true
+            webView?.isHidden = true
+        }
         isPreviewing = true
+        isPreviewBeside = beside
         return true
+    }
+
+    private var previewLeading: NSLayoutConstraint?
+
+    /// Re-render a beside preview shortly after typing stops, keeping its
+    /// scroll position.
+    private func schedulePreviewRefresh() {
+        previewRefreshWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isPreviewing, let theme = self.previewTheme, let fp = self.filePath,
+                let html = self.renderPreviewHTML(filePath: fp, themeJSON: theme.json, bgColor: theme.bg)
+            else { return }
+            self.previewWebView?.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
+                self?.previewNavigationDelegate.restoreScrollY = value as? Double
+                self?.loadPreviewHTML(html, filePath: fp)
+            }
+        }
+        previewRefreshWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     /// Re-render the preview with new theme colors (for theme changes).
     func refreshPreview(themeJSON: String, bgColor: String) {
         guard isPreviewing, let fp = filePath else { return }
+        previewTheme = (themeJSON, bgColor)
         guard let html = renderPreviewHTML(filePath: fp, themeJSON: themeJSON, bgColor: bgColor) else { return }
         loadPreviewHTML(html, filePath: fp)
     }
@@ -889,7 +975,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         return MarkdownPreview.render(
             source: content,
             theme: theme,
-            highlightJSPath: hljs
+            highlightJSPath: hljs,
+            runButtons: true
         )
     }
 
@@ -944,6 +1031,15 @@ private extension String.Index {
 /// Allows file:// and about: navigations (needed for the preview itself).
 /// External URLs (http/https) are opened in the default browser instead.
 private class PreviewNavigationDelegate: NSObject, WKNavigationDelegate {
+    /// Scroll back here after the next load (live refresh).
+    var restoreScrollY: Double?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let y = restoreScrollY, y > 0 else { return }
+        restoreScrollY = nil
+        webView.evaluateJavaScript("window.scrollTo(0, \(y))")
+    }
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,

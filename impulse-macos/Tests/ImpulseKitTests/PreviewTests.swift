@@ -60,6 +60,17 @@
       #expect(html.contains("connect-src 'none'"))
     }
 
+    @Test func runButtonsAreOptIn() throws {
+      let source = "```bash\nnpm install\n```\n"
+      let plain = try #require(MarkdownPreview.render(source: source, theme: .fallback, highlightJSPath: ""))
+      #expect(!plain.contains("impulseRun"))
+      let runnable = try #require(
+        MarkdownPreview.render(source: source, theme: .fallback, highlightJSPath: "", runButtons: true))
+      #expect(runnable.contains("messageHandlers.impulseRun"))
+      #expect(runnable.contains("language-bash"), "cmark tags fenced code with its language")
+      #expect(runnable.contains("nonce=\"aW1wdWxzZVByZXZpZXc=\""), "allowed by the page's CSP")
+    }
+
     @Test func renderOversized() {
       let big = String(repeating: "x", count: SVGPreview.maxSVGSize + 1)
       #expect(SVGPreview.render(source: big, bgColor: "#000") == nil)

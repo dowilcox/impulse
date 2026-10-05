@@ -169,6 +169,8 @@ extension Notification.Name {
     static let impulseSwitchBranch = Notification.Name("impulseSwitchBranch")
     static let impulseManageBranches = Notification.Name("impulseManageBranches")
     static let impulseGoToSymbol = Notification.Name("impulseGoToSymbol")
+    /// A preview's Run button (object: EditorTab; userInfo: command, directory).
+    static let impulseRunInTerminal = Notification.Name("impulseRunInTerminal")
     /// A Command Blocks menu item (userInfo["command"]) for the focused terminal.
     static let impulseBlockCommand = Notification.Name("impulseBlockCommand")
     /// A pull request's checks finished (object: GitRepositoryState).

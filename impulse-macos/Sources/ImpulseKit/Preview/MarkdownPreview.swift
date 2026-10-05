@@ -80,8 +80,44 @@ public enum MarkdownPreview {
   /// themed CSS and highlight.js code highlighting. `highlightJSPath` should
   /// be an absolute `file://` URL string to `highlight.min.js` (empty to
   /// disable highlighting). Returns nil if the source exceeds the size limit.
+  /// Adds a Run button to shell code blocks. `$ ` prompts are stripped
+  /// (only prompted lines run when a block has any).
+  static let runButtonScript = """
+    <style nonce="aW1wdWxzZVByZXZpZXc=">
+    pre { position: relative; }
+    .impulse-run { position: absolute; top: 6px; right: 6px; font: 12px -apple-system, sans-serif;
+      padding: 2px 8px; border-radius: 5px; border: 1px solid rgba(127,127,127,.4);
+      background: rgba(127,127,127,.15); color: inherit; cursor: pointer; opacity: .75; }
+    .impulse-run:hover { opacity: 1; }
+    </style>
+    <script nonce="aW1wdWxzZVByZXZpZXc=">
+    (function () {
+      var shells = /(^|\\s)language-(bash|sh|shell|zsh|fish|console|shell-session|terminal)(\\s|$)/;
+      function command(code) {
+        var lines = code.innerText.replace(/\\n$/, "").split("\\n");
+        var prompted = lines.filter(function (l) { return /^\\s*\\$ /.test(l); });
+        return (prompted.length ? prompted.map(function (l) { return l.replace(/^\\s*\\$ /, ""); }) : lines).join("\\n");
+      }
+      document.querySelectorAll("pre > code").forEach(function (code) {
+        if (!shells.test(code.className) || !window.webkit || !window.webkit.messageHandlers.impulseRun) return;
+        var button = document.createElement("button");
+        button.className = "impulse-run";
+        button.textContent = "\u{25B6} Run";
+        button.title = "Run in a terminal";
+        button.addEventListener("click", function () {
+          window.webkit.messageHandlers.impulseRun.postMessage(command(code));
+        });
+        code.parentElement.appendChild(button);
+      });
+    })();
+    </script>
+    """
+
+  /// With `runButtons`, shell code blocks (bash, sh, zsh, fish, console…)
+  /// get a Run button that posts the command to the `impulseRun` message
+  /// handler.
   public static func render(
-    source: String, theme: MarkdownThemeColors, highlightJSPath: String
+    source: String, theme: MarkdownThemeColors, highlightJSPath: String, runButtons: Bool = false
   ) -> String? {
     guard source.utf8.count <= maxMarkdownSize else {
       NSLog("Markdown source exceeds %d byte limit, skipping preview", maxMarkdownSize)
@@ -241,6 +277,7 @@ public enum MarkdownPreview {
       <body>
       \(body)
       \(highlightScripts)
+      \(runButtons ? runButtonScript : "")
       </body>
       </html>
       """
