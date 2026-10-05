@@ -2978,10 +2978,12 @@ class TerminalRenderer: NSView {
         let point = convert(event.locationInWindow, from: nil)
         var col = max(0, Int((point.x - padding) / fontMetrics.cellWidth))
         var row = gridRowForContentY(point.y - contentYOffset)
-        if let grid = backend?.gridSnapshot() {
-            col = min(col, max(0, grid.cols - 1))
-            row = min(row, max(0, grid.lines - 1))
-        }
+        // The grid is sized to the view (resizeToFit), so clamp to that
+        // instead of taking a snapshot per mouse event.
+        let (cols, rows) = fontMetrics.gridSize(
+            viewWidth: bounds.width, viewHeight: bounds.height, padding: padding)
+        col = min(col, max(0, cols - 1))
+        row = min(row, max(0, rows - 1))
         return (UInt16(col), UInt16(row))
     }
 

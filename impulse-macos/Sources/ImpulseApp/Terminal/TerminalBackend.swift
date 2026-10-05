@@ -48,9 +48,7 @@ struct TerminalRgb: Codable {
 
 // MARK: - Mode Flags
 
-/// Decoded terminal mode bitflags from the Rust side.
-///
-/// The Rust `TerminalMode` is serialized via serde as `{"bits": N}`.
+/// Terminal mode bitflags from the Rust side (`TerminalMode::bits()`).
 struct TerminalModeFlags: Codable {
     let bits: UInt16
 
@@ -724,10 +722,7 @@ final class TerminalBackend {
 
     func mode() -> TerminalModeFlags? {
         guard let handle, !isShutdown else { return nil }
-        guard let json = ImpulseCore.terminalMode(handle: handle),
-              let data = json.data(using: .utf8)
-        else { return nil }
-        return try? decoder.decode(TerminalModeFlags.self, from: data)
+        return TerminalModeFlags(bits: UInt16(truncatingIfNeeded: ImpulseCore.terminalMode(handle: handle)))
     }
 
     func setFocus(_ focused: Bool) {

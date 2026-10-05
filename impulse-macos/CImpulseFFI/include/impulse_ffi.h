@@ -34,7 +34,7 @@ int32_t impulse_terminal_foreground_pid(void *handle);
 void impulse_terminal_scroll(void *handle, int delta);
 void impulse_terminal_scroll_to_bottom(void *handle);
 _Bool impulse_terminal_scroll_to_command_block(void *handle, unsigned long long block_id);
-char *impulse_terminal_mode(void *handle);
+uint32_t impulse_terminal_mode(void *handle);
 void impulse_terminal_set_focus(void *handle, _Bool focused);
 unsigned int impulse_terminal_child_pid(void *handle);
 char *impulse_terminal_search(void *handle, const char *pattern);

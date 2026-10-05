@@ -579,9 +579,9 @@ final class ImpulseCore {
     }
 
     /// Returns terminal mode flags as a JSON string.
-    static func terminalMode(handle: OpaquePointer) -> String? {
-        guard let ptr = impulse_terminal_mode(UnsafeMutableRawPointer(handle)) else { return nil }
-        return consumeCString(ptr)
+    /// The terminal's mode bits (see `TerminalModeFlags`).
+    static func terminalMode(handle: OpaquePointer) -> UInt32 {
+        impulse_terminal_mode(UnsafeMutableRawPointer(handle))
     }
 
     /// Notifies the terminal of focus changes (for focus-in/out reporting).

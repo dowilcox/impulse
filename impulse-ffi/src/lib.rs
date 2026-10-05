@@ -578,20 +578,15 @@ pub extern "C" fn impulse_terminal_scroll_to_command_block(
 }
 
 #[no_mangle]
-pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> *mut c_char {
+pub extern "C" fn impulse_terminal_mode(handle: *mut TerminalHandle) -> u32 {
     ffi_catch(
-        std::ptr::null_mut(),
+        0,
         AssertUnwindSafe(|| {
             if handle.is_null() {
-                return to_c_string("{}");
+                return 0;
             }
             let h = unsafe { &*handle };
-            let mode = h.backend.mode();
-            let json_mode = serde_json::json!({ "bits": mode.bits() });
-            match serde_json::to_string(&json_mode) {
-                Ok(json) => to_c_string(&json),
-                Err(_) => to_c_string("{}"),
-            }
+            u32::from(h.backend.mode().bits())
         }),
     )
 }
