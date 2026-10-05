@@ -46,6 +46,9 @@ pub(crate) struct CommandBlockTracker {
     current: Option<TerminalCommandBlock>,
     completed: Vec<TerminalCommandBlock>,
     completed_output_bytes: usize,
+    /// Bumped whenever block boundaries or prompt marks change, so callers
+    /// can cache anything derived from them (the viewport overlay).
+    version: u64,
 }
 
 impl CommandBlockTracker {
@@ -61,6 +64,14 @@ impl CommandBlockTracker {
         self.pending_command = Some(command);
     }
 
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn touch(&mut self) {
+        self.version = self.version.wrapping_add(1);
+    }
+
     pub(crate) fn observe_output(&mut self, bytes: &[u8]) {
         self.output_line += bytes.iter().filter(|b| **b == b'\n').count() as u64;
         if let Some(block) = &mut self.current {
@@ -71,6 +82,7 @@ impl CommandBlockTracker {
     /// Record the absolute grid row of an OSC 133;A prompt-start mark.
     pub(crate) fn prompt_marked(&mut self, abs_row: i64) {
         self.pending_prompt_row = Some(abs_row);
+        self.touch();
     }
 
     /// Absolute grid row of the live input prompt, when the shell is idle at
@@ -87,6 +99,7 @@ impl CommandBlockTracker {
     /// absolute rows recorded before and after eviction stay comparable.
     pub(crate) fn bump_row_base(&mut self, evicted_lines: u64) {
         self.row_base += evicted_lines.min(i64::MAX as u64) as i64;
+        self.touch();
     }
 
     pub(crate) fn row_base(&self) -> i64 {
@@ -102,6 +115,7 @@ impl CommandBlockTracker {
         started_at_ms: u64,
         abs_row: Option<i64>,
     ) -> TerminalCommandBlock {
+        self.touch();
         if let Some(mut current) = self.current.take() {
             // Shells repaint the prompt (re-emitting OSC 133;A/C) before the
             // real command's marks arrive, producing an empty stub block with
@@ -157,6 +171,7 @@ impl CommandBlockTracker {
         abs_row: Option<i64>,
     ) -> Option<TerminalCommandBlock> {
         let mut block = self.current.take()?;
+        self.touch();
         block.ended_at_ms = Some(ended_at_ms);
         block.exit_code = Some(exit_code);
         block.output_end_line = Some(self.output_line);
@@ -336,6 +351,25 @@ fn plain_text_from_terminal_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_tracks_boundary_changes_but_not_output() {
+        let mut tracker = CommandBlockTracker::new();
+        let start = tracker.version();
+        tracker.observe_output(b"hello\n");
+        assert_eq!(tracker.version(), start, "plain output doesn't move blocks");
+        tracker.prompt_marked(0);
+        let marked = tracker.version();
+        assert_ne!(marked, start);
+        tracker.command_started_at(10, Some(1));
+        let started = tracker.version();
+        assert_ne!(started, marked);
+        tracker.command_ended_at(0, 20, Some(3));
+        assert_ne!(tracker.version(), started);
+        let ended = tracker.version();
+        assert!(tracker.command_ended_at(0, 30, Some(4)).is_none());
+        assert_eq!(tracker.version(), ended, "nothing running, nothing changed");
+    }
 
     #[test]
     fn absorbs_empty_prompt_stub_into_the_real_command_block() {

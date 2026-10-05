@@ -569,17 +569,24 @@ final class TerminalBackend {
     }
 
     /// Viewport-mapped block regions for Warp-style block decorations.
-    /// Cheap enough to call per frame: only blocks intersecting the
-    /// viewport are serialized.
+    /// Reused until the backend's overlay key changes (block marks, scroll,
+    /// scrollback, cursor line or size), so per-frame and per-mouse-move
+    /// callers don't re-serialize it.
     func blockOverlay() -> TerminalBlockOverlay? {
-        guard let handle, !isShutdown,
-              let json = ImpulseCore.terminalBlockOverlay(handle: handle),
-              let data = json.data(using: .utf8)
+        guard let handle, !isShutdown else { return nil }
+        let key = ImpulseCore.terminalBlockOverlayKey(handle: handle)
+        if let cached = cachedOverlay, cached.key == key { return cached.overlay }
+        guard let json = ImpulseCore.terminalBlockOverlay(handle: handle),
+              let data = json.data(using: .utf8),
+              let overlay = try? decoder.decode(TerminalBlockOverlay.self, from: data)
         else {
+            cachedOverlay = nil
             return nil
         }
-        return try? decoder.decode(TerminalBlockOverlay.self, from: data)
+        cachedOverlay = (key, overlay)
+        return overlay
     }
+    private var cachedOverlay: (key: UInt64, overlay: TerminalBlockOverlay)?
 
     func commandBlockFlags() -> TerminalCommandBlockFlags {
         guard let handle, !isShutdown else {

@@ -310,6 +310,22 @@ pub extern "C" fn impulse_terminal_block_overlay(handle: *mut TerminalHandle) ->
     )
 }
 
+/// Changes whenever `impulse_terminal_block_overlay` could return something
+/// different; 0 for a null handle.
+#[no_mangle]
+pub extern "C" fn impulse_terminal_block_overlay_key(handle: *mut TerminalHandle) -> u64 {
+    ffi_catch(
+        0,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return 0;
+            }
+            let h = unsafe { &*handle };
+            h.backend.block_overlay_key()
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_command_block_flags(handle: *mut TerminalHandle) -> u32 {
     ffi_catch(

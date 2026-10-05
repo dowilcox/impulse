@@ -1262,6 +1262,41 @@ impl TerminalBackend {
         overlay
     }
 
+    /// A key that changes whenever `block_overlay()` could return something
+    /// different (block marks, scroll position, scrollback size, cursor
+    /// line, screen size, alternate screen), so callers can reuse the last
+    /// overlay instead of re-serializing it on every frame and mouse move.
+    pub fn block_overlay_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let (alt, rows, display_offset, history_size, cursor_line) = {
+            let term = self.term.lock();
+            let grid = term.grid();
+            (
+                term.mode().contains(TermMode::ALT_SCREEN),
+                term.screen_lines(),
+                grid.display_offset(),
+                grid.history_size(),
+                grid.cursor.point.line.0,
+            )
+        };
+        let version = self
+            .blocks
+            .lock()
+            .map(|blocks| blocks.version())
+            .unwrap_or(0);
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (
+            version,
+            alt,
+            rows,
+            display_offset,
+            history_size,
+            cursor_line,
+        )
+            .hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Return lightweight command-block availability flags without cloning block output.
     pub fn command_block_flags(&self) -> CommandBlockFlags {
         self.blocks

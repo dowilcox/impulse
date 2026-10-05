@@ -19,6 +19,7 @@ int64_t impulse_terminal_take_damage(void *handle, unsigned short *out_rows, uns
 char *impulse_terminal_poll_events(void *handle);
 char *impulse_terminal_command_blocks(void *handle);
 char *impulse_terminal_block_overlay(void *handle);
+uint64_t impulse_terminal_block_overlay_key(void *handle);
 unsigned int impulse_terminal_command_block_flags(void *handle);
 char *impulse_terminal_command_history_search(void *handle, const char *query_json);
 char *impulse_terminal_recent_commands(void *handle, unsigned long limit);

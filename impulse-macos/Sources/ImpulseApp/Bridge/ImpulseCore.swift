@@ -499,6 +499,10 @@ final class ImpulseCore {
         return consumeCString(ptr)
     }
 
+    static func terminalBlockOverlayKey(handle: OpaquePointer) -> UInt64 {
+        impulse_terminal_block_overlay_key(UnsafeMutableRawPointer(handle))
+    }
+
     /// Returns up to `limit` recent command strings from the terminal's block
     /// history (newest first), for the Swift-side input completion.
     static func terminalRecentCommands(handle: OpaquePointer, limit: Int) -> [String] {
