@@ -294,24 +294,32 @@ extension SectionHeader where Trailing == EmptyView {
 
 // MARK: - Row background
 
-/// Hover/selection background for list rows.
+/// Hover/selection background for list rows; the selected row of a list
+/// with keyboard focus also gets a focus ring.
 struct RowBackground: ViewModifier {
   @Environment(\.chrome) private var chrome
   let isSelected: Bool
   let isHovered: Bool
+  var isFocused = false
 
   func body(content: Content) -> some View {
     content.background(
       RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
         .fill(isSelected ? chrome.selection : isHovered ? chrome.hover : .clear)
+        .overlay {
+          if isSelected && isFocused {
+            RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
+              .strokeBorder(chrome.focusRing, lineWidth: 1.5)
+          }
+        }
         .padding(.horizontal, 6)
     )
   }
 }
 
 extension View {
-  func rowBackground(selected: Bool, hovered: Bool) -> some View {
-    modifier(RowBackground(isSelected: selected, isHovered: hovered))
+  func rowBackground(selected: Bool, hovered: Bool, focused: Bool = false) -> some View {
+    modifier(RowBackground(isSelected: selected, isHovered: hovered, isFocused: focused))
   }
 }
 

@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var isPollingLspEvents = false
   private var lspPollAgain = false
   private var settingsObserver: NSObjectProtocol?
+  private var displayOptionsObserver: NSObjectProtocol?
 
   /// File paths to open once the first window is ready (from Finder or CLI).
   var pendingFiles: [String] = []
@@ -659,6 +660,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self.rebuildMainMenu()
       QuickTerminal.shared.configure(
         enabled: self.settings.quickTerminalEnabled, shortcut: self.settings.quickTerminalShortcut)
+    }
+    // Increase Contrast changes the chrome palette: re-apply the theme.
+    displayOptionsObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      self.applyTheme(named: self.settings.colorScheme)
     }
   }
 

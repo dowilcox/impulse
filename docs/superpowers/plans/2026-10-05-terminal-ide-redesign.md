@@ -196,7 +196,7 @@ foundations ├──────────── Track B: git ─────
   - Add `Icon` enum mapping.
   - Material file icons stay for the tree.
 - [ ] **Component Gallery:** a debug-only window (Debug menu in Dev builds) showing every component × every built-in theme × light/dark.
-- [ ] **Accessibility baseline:** focus rings, `accessibilityLabel` on all icon-only buttons, Reduce Motion / Contrast / Transparency honored. (partly: icon buttons are labeled and Reduce Motion is honored; focus rings and Increase Contrast/Reduce Transparency still to check)
+- [x] **Accessibility baseline:** focus rings, `accessibilityLabel` on all icon-only buttons, Reduce Motion / Contrast / Transparency honored. (icon buttons labeled; Reduce Motion honored; Increase Contrast firms up the chrome palette live; the chrome has no translucent materials for Reduce Transparency; keyboard-focused lists ring their selected row)
 
 ### 1.2 Window and layout
 

@@ -65,19 +65,24 @@ struct ChromePalette {
 
   let isLight: Bool
 
-  init(theme: Theme) {
+  /// System Settings ▸ Accessibility ▸ Display ▸ Increase contrast: firmer
+  /// edges, stronger selection, and secondary text closer to the foreground.
+  /// (The chrome uses no translucent materials, so Reduce Transparency has
+  /// nothing to turn off.)
+  init(theme: Theme, increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast) {
     let bg = NSColor(hex: theme.bg)
     let fg = NSColor(hex: theme.fg)
     let isLight = theme.isLight
     self.isLight = isLight
+    let boost: CGFloat = increaseContrast ? 1 : 0
 
     // A chrome surface a little "further back" than content.
     let chromeNS = Self.mix(bg, toward: isLight ? .black : .black, amount: isLight ? 0.035 : 0.22)
     let panelNS = Self.mix(bg, toward: .black, amount: isLight ? 0.02 : 0.14)
     let raisedNS = Self.mix(bg, toward: fg, amount: isLight ? 0.06 : 0.07)
     let overlayNS = Self.mix(bg, toward: fg, amount: isLight ? 0.02 : 0.05)
-    let hairlineNS = Self.mix(bg, toward: fg, amount: isLight ? 0.12 : 0.12)
-    let hairlineStrongNS = Self.mix(bg, toward: fg, amount: isLight ? 0.2 : 0.2)
+    let hairlineNS = Self.mix(bg, toward: fg, amount: 0.12 + 0.2 * boost)
+    let hairlineStrongNS = Self.mix(bg, toward: fg, amount: 0.2 + 0.25 * boost)
     let accentNS = NSColor(hex: theme.accent)
 
     window = Color(nsColor: chromeNS)
@@ -89,19 +94,21 @@ struct ChromePalette {
     hairline = Color(nsColor: hairlineNS)
     hairlineStrong = Color(nsColor: hairlineStrongNS)
 
-    hover = Color(nsColor: fg).opacity(isLight ? 0.06 : 0.07)
-    pressed = Color(nsColor: fg).opacity(isLight ? 0.1 : 0.12)
-    selection = Color(nsColor: accentNS).opacity(isLight ? 0.14 : 0.18)
-    selectionStrong = Color(nsColor: accentNS).opacity(isLight ? 0.24 : 0.3)
-    focusRing = Color(nsColor: accentNS).opacity(0.75)
+    hover = Color(nsColor: fg).opacity((isLight ? 0.06 : 0.07) + 0.06 * boost)
+    pressed = Color(nsColor: fg).opacity((isLight ? 0.1 : 0.12) + 0.08 * boost)
+    selection = Color(nsColor: accentNS).opacity((isLight ? 0.14 : 0.18) + 0.14 * boost)
+    selectionStrong = Color(nsColor: accentNS).opacity((isLight ? 0.24 : 0.3) + 0.15 * boost)
+    focusRing = Color(nsColor: accentNS).opacity(0.75 + 0.25 * boost)
 
+    let muted = NSColor(hex: theme.fgMuted)
+    let comment = NSColor(hex: theme.fgComment)
     text = Color(nsColor: fg)
-    textSecondary = Color(nsColor: NSColor(hex: theme.fgMuted))
-    textTertiary = Color(nsColor: NSColor(hex: theme.fgComment))
+    textSecondary = Color(nsColor: increaseContrast ? Self.mix(muted, toward: fg, amount: 0.5) : muted)
+    textTertiary = Color(nsColor: increaseContrast ? muted : comment)
     textOnAccent = Color(nsColor: Self.readableText(on: accentNS))
 
     accent = Color(nsColor: accentNS)
-    accentSoft = Color(nsColor: accentNS).opacity(0.16)
+    accentSoft = Color(nsColor: accentNS).opacity(0.16 + 0.12 * boost)
     success = Color(nsColor: NSColor(hex: theme.green))
     warning = Color(nsColor: NSColor(hex: theme.yellow))
     danger = Color(nsColor: NSColor(hex: theme.red))
@@ -121,7 +128,7 @@ struct ChromePalette {
     nsContent = bg
     nsHairline = hairlineNS
     nsText = fg
-    nsTextSecondary = NSColor(hex: theme.fgMuted)
+    nsTextSecondary = increaseContrast ? Self.mix(muted, toward: fg, amount: 0.5) : muted
     nsAccent = accentNS
   }
 

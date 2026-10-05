@@ -382,7 +382,7 @@ struct HistoryListView: View {
               ForEach(rows, id: \.entry.sha) { item in
                 HistoryRowView(
                   entry: item.entry, row: item.row, lanes: lanes,
-                  selected: item.entry.sha == model.selectedSha, model: model)
+                  selected: item.entry.sha == model.selectedSha, focused: focused, model: model)
                 .id(item.entry.sha)
                 .onAppear {
                   if item.entry.sha == rows.last?.entry.sha { model.loadMore() }
@@ -488,6 +488,8 @@ private struct HistoryRowView: View {
   let row: GraphRow?
   let lanes: Int
   let selected: Bool
+  /// The list has keyboard focus.
+  let focused: Bool
   var model: HistoryModel
   @State private var hovering = false
 
@@ -545,6 +547,11 @@ private struct HistoryRowView: View {
     .padding(.trailing, 10)
     .frame(height: 28)
     .background(selected ? chrome.selection : hovering ? chrome.hover : .clear)
+    .overlay {
+      if selected && focused {
+        Rectangle().strokeBorder(chrome.focusRing, lineWidth: 1.5)
+      }
+    }
     .contentShape(Rectangle())
     .onTapGesture { model.select(entry) }
     .onHover { hovering = $0 }

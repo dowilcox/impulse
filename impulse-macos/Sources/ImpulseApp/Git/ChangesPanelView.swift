@@ -348,7 +348,7 @@ private struct ChangesPanelContent: View {
   private func row(_ change: FileChange, section: Section) -> some View {
     let id = "\(section)-\(change.path)"
     return ChangeRow(
-      change: change, section: section, isSelected: selection == id,
+      change: change, section: section, isSelected: selection == id, isFocused: listFocused,
       root: repository.root, iconCache: model.iconCache, actions: actions,
       select: {
         selection = id
@@ -377,6 +377,8 @@ private struct ChangeRow: View {
   let change: FileChange
   let section: ChangesPanelContent.Section
   let isSelected: Bool
+  /// The list has keyboard focus.
+  let isFocused: Bool
   let root: String
   let iconCache: IconCache?
   let actions: GitActions
@@ -424,7 +426,7 @@ private struct ChangeRow: View {
     .padding(.leading, 14)
     .padding(.trailing, 10)
     .frame(height: Metrics.rowHeight)
-    .rowBackground(selected: isSelected, hovered: hovering)
+    .rowBackground(selected: isSelected, hovered: hovering, focused: isFocused)
     .contentShape(Rectangle())
     .onHover { hovering = $0 }
     .onTapGesture(count: 2) { openFile() }
