@@ -111,13 +111,12 @@ private struct ReviewNavigatorRow: View {
 
   var body: some View {
     HStack(spacing: 6) {
-      Button {
-        model.onToggleViewed?(item.path)
-      } label: {
-        ReviewCheckbox(on: item.viewed)
-      }
-      .buttonStyle(.plain)
-      .help(item.viewed ? "Viewed" : "Mark as viewed")
+      // Its own tap ahead of the row's (which selects the file): as a plain
+      // button inside the row, the row's tap took the click.
+      ReviewCheckbox(on: item.viewed)
+        .contentShape(Rectangle())
+        .highPriorityGesture(TapGesture().onEnded { model.onToggleViewed?(item.path) })
+        .help(item.viewed ? "Viewed" : "Mark as viewed")
       ReviewStatusLetter(status: item.status)
       Text((item.path as NSString).lastPathComponent)
         .font(ChromeFont.ui(12))
@@ -154,5 +153,8 @@ private struct ReviewNavigatorRow: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(item.path)\(item.viewed ? ", viewed" : "")")
     .accessibilityAddTraits(.isButton)
+    .accessibilityAction(named: item.viewed ? "Mark as Not Viewed" : "Mark as Viewed") {
+      model.onToggleViewed?(item.path)
+    }
   }
 }

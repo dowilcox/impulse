@@ -47,6 +47,21 @@ extension MainWindowController {
         tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
+      } else if action.hasPrefix("click="), let window {
+        // A click at x:y (points from the window's top-left; snapshot checks).
+        let parts = action.dropFirst(6).split(separator: ":").compactMap { Double($0) }
+        if parts.count == 2 {
+          let point = NSPoint(x: parts[0], y: window.frame.height - parts[1])
+          for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(
+              with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            {
+              // Queued, so tracking loops (a table's mouse-down) see the up.
+              NSApp.postEvent(event, atStart: false)
+            }
+          }
+        }
       } else if action.hasPrefix("key="), let window {
         // A key press to whatever has the keyboard (snapshot checks).
         let keys: [String: (code: UInt16, chars: String)] = [
