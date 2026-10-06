@@ -286,24 +286,89 @@ struct GitActions {
     }
   }
 
-  // MARK: Remote
-
-  func fetch() {
+  /// Undo the last commit, keeping its changes staged. Asks first when the
+  /// commit is already on the upstream (pushing again would need a force).
+  func undoLastCommit() {
     let repository = self.repository
-    repository.run("Fetching…") { root in
-      GitOperations.fetch(root: root) { repository.reportProgress($0) }
-    } completion: { result, _ in
-      report(result, failure: "Couldn't fetch")
+    guard let snapshot = repository.snapshot, let head = snapshot.headOid, !snapshot.isUnborn else { return }
+    let perform = {
+      repository.run { GitOperations.uncommit(root: $0) } completion: { result, _ in
+        guard case .success = result else { return report(result, failure: "Couldn't undo the commit") }
+        host?.toasts.show(
+          Toast(
+            kind: .success, message: "Undid \(head.prefix(7)); its changes are staged", actionTitle: "Redo",
+            action: {
+              repository.run { GitOperations.reset(.soft, to: head, root: $0) } completion: { result, _ in
+                if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't redo the commit") }
+              }
+            }, lifetime: 15))
+      }
+    }
+    guard let upstream = snapshot.upstream, snapshot.ahead == 0 else { return perform() }
+    host?.gitConfirm(
+      title: "Undo a pushed commit?",
+      message: "\(head.prefix(7)) is already on \(upstream). Undoing it here means the next push has to force.",
+      confirmTitle: "Undo Commit", destructive: true
+    ) { confirmed in
+      if confirmed { perform() }
     }
   }
 
-  func pull(rebase: Bool = false) {
+  // MARK: Remote
+
+  /// Fetch the branch's remote (or every remote) and say what came in.
+  func fetch(allRemotes: Bool = false) {
     let repository = self.repository
-    repository.run("Pulling…") { root in
-      GitOperations.pull(rebase: rebase, root: root) { repository.reportProgress($0) }
+    let before = repository.snapshot?.behind ?? 0
+    repository.run(allRemotes ? "Fetching all remotes…" : "Fetching…") { root in
+      GitOperations.fetch(allRemotes: allRemotes, root: root) { repository.reportProgress($0) }
     } completion: { result, _ in
-      report(result, failure: "Couldn't pull")
+      repository.lastFetch = Date()
+      guard case .success = result else { return report(result, failure: "Couldn't fetch") }
+      // The refreshed snapshot says how far behind the branch is now.
+      repository.afterNextRefresh { snapshot in
+        let behind = snapshot?.behind ?? 0
+        let message =
+          behind > before
+          ? "Fetched: \(behind) commit\(behind == 1 ? "" : "s") to pull" : "Fetched: nothing new for this branch"
+        host?.toasts.show(Toast(kind: .success, message: message))
+      }
     }
+  }
+
+  /// Pull with the strategy from settings (or the one given).
+  func pull(mode: GitOperations.PullMode? = nil) {
+    let repository = self.repository
+    let mode = mode ?? GitOperations.PullMode(rawValue: SettingsStore.shared.settings.gitPullMode) ?? .fastForwardOnly
+    let before = repository.snapshot?.headOid
+    repository.run("Pulling…", snapshotReason: mode == .fastForwardOnly ? nil : "pull --\(mode.rawValue)") { root in
+      GitOperations.pull(mode: mode, root: root) { repository.reportProgress($0) }
+    } completion: { result, snapshot in
+      repository.lastFetch = Date()
+      guard case .success = result else { return report(result, failure: "Couldn't pull") }
+      let root = repository.root
+      DispatchQueue.global(qos: .userInitiated).async {
+        let after = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+        let count = before.flatMap { before in after.flatMap { GitOperations.commitCount(from: before, to: $0, root: root) } }
+        DispatchQueue.main.async {
+          guard before != after else {
+            host?.toasts.show(Toast(kind: .success, message: "Already up to date"))
+            return
+          }
+          let message = count.map { "Pulled \($0) commit\($0 == 1 ? "" : "s")" } ?? "Pulled"
+          guard let before, mode != .fastForwardOnly else {
+            host?.toasts.show(Toast(kind: .success, message: message))
+            return
+          }
+          // Rebasing or merging rewrote or added commits: offer Undo.
+          offerHeadUndo(message, previousHead: before, snapshot: snapshot, failure: "Couldn't undo the pull")
+        }
+      }
+    }
+  }
+
+  func pull(rebase: Bool) {
+    pull(mode: rebase ? .rebase : .fastForwardOnly)
   }
 
   /// Push; publishes the branch to the first remote when it has no upstream.
@@ -313,20 +378,207 @@ struct GitActions {
     let snapshot = repository.snapshot
     let needsUpstream = snapshot?.upstream == nil
     let branch = snapshot?.branch
-    repository.run(needsUpstream ? "Publishing…" : "Pushing…") { root in
-      let remote = GitOperations.remotes(root: root).first ?? "origin"
+    let followTags = SettingsStore.shared.settings.gitPushFollowTags
+    repository.run(needsUpstream ? "Publishing…" : forceWithLease ? "Force pushing…" : "Pushing…") { root in
+      let remote = GitOperations.defaultRemote(root: root) ?? "origin"
       return GitOperations.push(
         setUpstream: needsUpstream, remote: remote, branch: branch,
-        forceWithLease: forceWithLease, root: root
+        forceWithLease: forceWithLease, followTags: followTags, root: root
       ) { repository.reportProgress($0) }
     } completion: { result, _ in
       switch result {
       case .success:
         host?.toasts.show(
-          Toast(kind: .success, message: needsUpstream ? "Published \(branch ?? "branch")" : "Pushed"))
+          Toast(
+            kind: .success,
+            message: needsUpstream ? "Published \(branch ?? "branch")" : forceWithLease ? "Force pushed" : "Pushed"))
         then?()
       case .failure(let error):
         host?.gitPresentError(error, title: needsUpstream ? "Couldn't publish" : "Couldn't push")
+      }
+    }
+  }
+
+  /// Overwrite the upstream with this branch, after asking. With a lease:
+  /// git refuses if the remote moved since the last fetch.
+  func forcePush() {
+    guard let snapshot = repository.snapshot, let branch = snapshot.branch else {
+      host?.toasts.show(Toast(kind: .info, message: "Check out a branch to push."))
+      return
+    }
+    let upstream = snapshot.upstream ?? "the remote"
+    host?.gitConfirm(
+      title: "Force push \(branch)?",
+      message: "\(upstream) is replaced with your \(branch), dropping any commits only it has. It stops if someone else pushed since your last fetch (--force-with-lease).",
+      confirmTitle: "Force Push", destructive: true
+    ) { confirmed in
+      if confirmed { push(forceWithLease: true) }
+    }
+  }
+
+  // MARK: Tags
+
+  /// Tag a commit; an empty message makes a lightweight tag. `push` sends
+  /// it to the branch's remote straight away.
+  func createTag(_ name: String, at sha: String = "HEAD", message: String?, push: Bool, force: Bool = false) {
+    let repository = self.repository
+    repository.run("Tagging \(name)…") {
+      GitOperations.createTag(name, at: sha, message: message, force: force, root: $0)
+    } completion: { result, _ in
+      switch result {
+      case .success:
+        if push {
+          pushTag(name, created: true)
+        } else {
+          host?.toasts.show(
+            Toast(
+              kind: .success, message: "Tagged \(name)", actionTitle: "Undo",
+              action: { repository.run { GitOperations.deleteTag(name, root: $0) } }, lifetime: 10))
+        }
+      case .failure(.cli(let error)) where error.kind == .tagAlreadyExists && !force:
+        host?.gitConfirm(
+          title: "\(name) already exists",
+          message: "Move it to \(sha == "HEAD" ? "the current commit" : String(sha.prefix(7)))? Anyone who already fetched it keeps the old one.",
+          confirmTitle: "Move Tag", destructive: true
+        ) { confirmed in
+          if confirmed { createTag(name, at: sha, message: message, push: push, force: true) }
+        }
+      case .failure(let error):
+        host?.gitPresentError(error, title: "Couldn't create \(name)")
+      }
+    }
+  }
+
+  func pushTag(_ name: String, created: Bool = false) {
+    let repository = self.repository
+    var remote = "origin"
+    repository.run("Pushing \(name)…") { root in
+      remote = GitOperations.defaultRemote(root: root) ?? "origin"
+      return GitOperations.pushTag(name, remote: remote, root: root) { repository.reportProgress($0) }
+    } completion: { result, _ in
+      switch result {
+      case .success:
+        host?.toasts.show(
+          Toast(kind: .success, message: created ? "Tagged and pushed \(name) to \(remote)" : "Pushed \(name) to \(remote)"))
+      case .failure(let error):
+        host?.gitPresentError(error, title: created ? "Tagged \(name), but couldn't push it" : "Couldn't push \(name)")
+      }
+    }
+  }
+
+  func pushAllTags() {
+    let repository = self.repository
+    var remote = "origin"
+    repository.run("Pushing tags…") { root in
+      remote = GitOperations.defaultRemote(root: root) ?? "origin"
+      return GitOperations.pushAllTags(remote: remote, root: root) { repository.reportProgress($0) }
+    } completion: { result, _ in
+      if case .success = result { host?.toasts.show(Toast(kind: .success, message: "Pushed tags to \(remote)")) }
+      report(result, failure: "Couldn't push tags")
+    }
+  }
+
+  /// Delete a local tag. Undo puts it back, annotation included.
+  func deleteTag(_ name: String) {
+    let repository = self.repository
+    var object: String?
+    repository.run { root in
+      object = GitOperations.resolveRef("refs/tags/\(name)", root: root)
+      return GitOperations.deleteTag(name, root: root)
+    } completion: { result, _ in
+      guard case .success = result else { return report(result, failure: "Couldn't delete \(name)") }
+      host?.toasts.show(
+        Toast(
+          kind: .success, message: "Deleted tag \(name)", actionTitle: object == nil ? nil : "Undo",
+          action: object.map { object in
+            { repository.run { GitOperations.restoreRef("refs/tags/\(name)", to: object, root: $0) } }
+          }, lifetime: 15))
+    }
+  }
+
+  /// Delete a tag on the remote, after asking (it can't be undone there).
+  func deleteRemoteTag(_ name: String) {
+    let repository = self.repository
+    let remote = GitOperations.defaultRemote(root: repository.root) ?? "origin"
+    host?.gitConfirm(
+      title: "Delete \(name) from \(remote)?",
+      message: "The tag is removed from the remote; your local tag stays. Anyone who already fetched it keeps their copy.",
+      confirmTitle: "Delete", destructive: true
+    ) { confirmed in
+      guard confirmed else { return }
+      repository.run("Deleting \(name) from \(remote)…") {
+        GitOperations.deleteRemoteTag(name, remote: remote, root: $0)
+      } completion: { result, _ in
+        if case .success = result { host?.toasts.show(Toast(kind: .success, message: "Deleted \(name) from \(remote)")) }
+        report(result, failure: "Couldn't delete \(name) from \(remote)")
+      }
+    }
+  }
+
+  // MARK: Merge & rebase
+
+  /// Merge a branch or commit into the current branch. Undo resets to
+  /// where it was; conflicts leave the merge open in the Changes panel.
+  func merge(_ revision: String, label: String? = nil) {
+    let label = label ?? String(revision.prefix(7))
+    let into = repository.snapshot?.branch ?? "HEAD"
+    let before = repository.snapshot?.headOid
+    repository.run("Merging \(label)…", snapshotReason: "merge \(label)") {
+      GitOperations.merge(revision, root: $0)
+    } completion: { result, snapshot in
+      guard case .success = result else { return report(result, failure: "Merge of \(label) stopped") }
+      guard let before, headMoved(from: before) else {
+        host?.toasts.show(Toast(kind: .info, message: "\(into) already has \(label)"))
+        return
+      }
+      offerHeadUndo("Merged \(label) into \(into)", previousHead: before, snapshot: snapshot, failure: "Couldn't undo the merge")
+    }
+  }
+
+  /// Rebase the current branch onto a branch or commit.
+  func rebase(onto revision: String, label: String? = nil) {
+    let label = label ?? String(revision.prefix(7))
+    let branch = repository.snapshot?.branch ?? "HEAD"
+    let before = repository.snapshot?.headOid
+    repository.run("Rebasing onto \(label)…", snapshotReason: "rebase onto \(label)") {
+      GitOperations.rebase(onto: revision, root: $0)
+    } completion: { result, snapshot in
+      guard case .success = result else { return report(result, failure: "Rebase onto \(label) stopped") }
+      guard let before, headMoved(from: before) else {
+        host?.toasts.show(Toast(kind: .info, message: "\(branch) is already on top of \(label)"))
+        return
+      }
+      offerHeadUndo("Rebased \(branch) onto \(label)", previousHead: before, snapshot: snapshot, failure: "Couldn't undo the rebase")
+    }
+  }
+
+  // MARK: On the web
+
+  enum RemotePage {
+    case repository, commit(String), tag(String), branch(String)
+  }
+
+  /// Open a page of the remote's web host (GitHub, GitLab, …).
+  func openOnRemote(_ page: RemotePage) {
+    let root = repository.root
+    DispatchQueue.global(qos: .userInitiated).async {
+      let web = GitOperations.defaultRemote(root: root)
+        .flatMap { GitOperations.remoteURL($0, root: root) }
+        .flatMap { RemoteWebURL(remote: $0) }
+      let url: URL? = web.flatMap { web in
+        switch page {
+        case .repository: return web.repository
+        case .commit(let sha): return web.commit(sha)
+        case .tag(let name): return web.tag(name)
+        case .branch(let name): return web.branch(name)
+        }
+      }
+      DispatchQueue.main.async {
+        guard let url else {
+          host?.toasts.show(Toast(kind: .info, message: "This repository's remote isn't on a web host Impulse recognizes."))
+          return
+        }
+        NSWorkspace.shared.open(url)
       }
     }
   }
@@ -389,6 +641,40 @@ struct GitActions {
         host?.toasts.show(Toast(kind: .success, message: "Created and switched to \(name)"))
       }
       report(result, failure: "Couldn't create \(name)")
+    }
+  }
+
+  /// Delete a local branch; Undo recreates it. A branch that isn't merged
+  /// yet is deleted only after asking (`base` names what it isn't in).
+  func deleteBranch(_ name: String, base: String? = nil, force: Bool = false, completion: (() -> Void)? = nil) {
+    let repository = self.repository
+    let sha = GitClient.resolveCommit(repoPath: repository.root, revision: "refs/heads/\(name)")
+    repository.run { GitOperations.deleteBranch(name, force: force, root: $0) } completion: { result, _ in
+      completion?()
+      switch result {
+      case .success:
+        host?.toasts.show(
+          Toast(
+            kind: .success, message: "Deleted \(name)", actionTitle: sha == nil ? nil : "Undo",
+            action: sha.map { sha in
+              {
+                repository.run {
+                  GitOperations.createBranch(name, startPoint: sha, checkout: false, root: $0)
+                } completion: { _, _ in completion?() }
+              }
+            }, lifetime: 15))
+      case .failure(.cli(let error)) where !force && error.output.contains("not fully merged"):
+        // Not merged: say what would be lost, then force.
+        host?.gitConfirm(
+          title: "\(name) isn't merged",
+          message: "Its commits aren't in \(base ?? "the current branch") yet. Delete it anyway? Undo stays available for a few seconds.",
+          confirmTitle: "Delete", destructive: true
+        ) { confirmed in
+          if confirmed { deleteBranch(name, base: base, force: true, completion: completion) }
+        }
+      case .failure(let error):
+        host?.gitPresentError(error, title: "Couldn't delete \(name)")
+      }
     }
   }
 
@@ -557,24 +843,15 @@ struct GitActions {
     let perform = {
       repository.run("Resetting…", snapshotReason: "reset --\(mode.rawValue) \(sha.prefix(7))") {
         GitOperations.reset(mode, to: sha, root: $0)
-      } completion: { [repository, host] result, snapshot in
+      } completion: { result, snapshot in
         if case .failure(let error) = result {
           host?.gitPresentError(error, title: "Couldn't reset")
           return
         }
         guard let previousHead else { return }
-        host?.toasts.show(
-          Toast(
-            kind: .success, message: "Reset to \(sha.prefix(7)) (\(mode.rawValue))", actionTitle: "Undo",
-            action: {
-              repository.run {
-                let back = GitOperations.reset(.hard, to: previousHead, root: $0)
-                guard case .success = back, let snapshot else { return back }
-                return SafetySnapshots.restore(snapshot, root: $0)
-              } completion: { result, _ in
-                if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't undo the reset") }
-              }
-            }, lifetime: 15))
+        offerHeadUndo(
+          "Reset to \(sha.prefix(7)) (\(mode.rawValue))", previousHead: previousHead, snapshot: snapshot,
+          failure: "Couldn't undo the reset")
       }
     }
     guard mode == .hard else { return perform() }
@@ -588,6 +865,28 @@ struct GitActions {
   }
 
   // MARK: Helpers
+
+  private func headMoved(from previous: String) -> Bool {
+    GitClient.resolveCommit(repoPath: repository.root, revision: "HEAD") != previous
+  }
+
+  /// A success toast whose Undo moves the branch back to `previousHead` and
+  /// restores the working tree from the safety snapshot.
+  private func offerHeadUndo(_ message: String, previousHead: String, snapshot: SafetySnapshot?, failure: String) {
+    let repository = self.repository
+    host?.toasts.show(
+      Toast(
+        kind: .success, message: message, actionTitle: "Undo",
+        action: { [host] in
+          repository.run {
+            let back = GitOperations.reset(.hard, to: previousHead, root: $0)
+            guard case .success = back, let snapshot else { return back }
+            return SafetySnapshots.restore(snapshot, root: $0)
+          } completion: { result, _ in
+            if case .failure(let error) = result { host?.gitPresentError(error, title: failure) }
+          }
+        }, lifetime: 15))
+  }
 
   private func report(_ result: GitResult, failure title: String) {
     if case .failure(let error) = result {

@@ -332,6 +332,23 @@ enum Keybindings {
             keyEquivalent: "b",
             modifierFlags: [.control, .command]
         ),
+        // Git remote and tag commands: unbound until you give them keys.
+        BuiltinKeybinding(
+            id: "git_fetch", description: "Fetch", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_pull", description: "Pull", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_push", description: "Push", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_create_tag", description: "Create Tag", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
         BuiltinKeybinding(
             id: "git_history",
             description: "Show Git History",

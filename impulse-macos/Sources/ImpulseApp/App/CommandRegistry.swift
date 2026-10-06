@@ -73,6 +73,65 @@ enum CommandRegistry {
         keywords: ["github", "gh", "pr", "review", "worktree"], icon: .gitPullRequest
       ) { [weak controller] in controller?.showPalette(prefix: "pr:") },
       AppCommand(
+        id: "git_fetch", title: "Fetch", category: "Git",
+        keywords: ["git", "remote", "update", "sync"], icon: .refreshCw, keybindingId: "git_fetch"
+      ) { [weak controller] in controller?.repositoryActions()?.fetch() },
+      AppCommand(
+        id: "git_fetch_all", title: "Fetch All Remotes", category: "Git",
+        keywords: ["git", "remote", "update", "sync", "upstream"], icon: .refreshCw
+      ) { [weak controller] in controller?.repositoryActions()?.fetch(allRemotes: true) },
+      AppCommand(
+        id: "git_pull", title: "Pull", category: "Git",
+        keywords: ["git", "update", "sync", "download", "merge"], icon: .arrowDown, keybindingId: "git_pull"
+      ) { [weak controller] in controller?.repositoryActions()?.pull() },
+      AppCommand(
+        id: "git_pull_rebase", title: "Pull (Rebase)", category: "Git",
+        keywords: ["git", "update", "sync", "rebase"], icon: .arrowDown
+      ) { [weak controller] in controller?.repositoryActions()?.pull(mode: .rebase) },
+      AppCommand(
+        id: "git_push", title: "Push", category: "Git",
+        keywords: ["git", "upload", "sync", "publish"], icon: .arrowUp, keybindingId: "git_push"
+      ) { [weak controller] in controller?.repositoryActions()?.push() },
+      AppCommand(
+        id: "git_force_push", title: "Force Push (With Lease)…", category: "Git",
+        keywords: ["git", "overwrite", "rebase", "force-with-lease"], icon: .arrowUp
+      ) { [weak controller] in controller?.repositoryActions()?.forcePush() },
+      AppCommand(
+        id: "git_create_tag", title: "Create Tag…", category: "Git",
+        keywords: ["git", "release", "version", "annotated"], icon: .tag, keybindingId: "git_create_tag"
+      ) { [weak controller] in controller?.createTagAtHead() },
+      AppCommand(
+        id: "git_push_tags", title: "Push All Tags", category: "Git",
+        keywords: ["git", "release", "version", "upload"], icon: .tag
+      ) { [weak controller] in controller?.repositoryActions()?.pushAllTags() },
+      AppCommand(
+        id: "git_stash", title: "Stash All Changes", category: "Git",
+        keywords: ["git", "save", "shelve", "wip"], icon: .archive
+      ) { [weak controller] in controller?.repositoryActions()?.stashAll() },
+      AppCommand(
+        id: "git_pop_stash", title: "Pop Latest Stash", category: "Git",
+        keywords: ["git", "restore", "unshelve", "apply"], icon: .archive
+      ) { [weak controller] in controller?.popLatestStash() },
+      AppCommand(
+        id: "git_undo_commit", title: "Undo Last Commit", category: "Git",
+        keywords: ["git", "uncommit", "reset", "soft"], icon: .undo2
+      ) { [weak controller] in controller?.repositoryActions()?.undoLastCommit() },
+      AppCommand(
+        id: "git_open_remote", title: "Open Repository in Browser", category: "Git",
+        keywords: ["git", "github", "gitlab", "bitbucket", "web", "remote"], icon: .externalLink
+      ) { [weak controller] in controller?.repositoryActions()?.openOnRemote(.repository) },
+      AppCommand(
+        id: "git_open_branch_remote", title: "Open Branch in Browser", category: "Git",
+        keywords: ["git", "github", "gitlab", "web", "remote", "compare"], icon: .externalLink
+      ) { [weak controller] in
+        guard let actions = controller?.repositoryActions() else { return }
+        guard let branch = actions.repository.snapshot?.branch else {
+          controller?.toasts.show(Toast(kind: .info, message: "Check out a branch first."))
+          return
+        }
+        actions.openOnRemote(.branch(branch))
+      },
+      AppCommand(
         id: "git_history", title: "Show Git History", category: "Git",
         keywords: ["log", "commits", "graph", "blame"], icon: .history, keybindingId: "git_history"
       ) { [weak controller] in controller?.showHistory() },

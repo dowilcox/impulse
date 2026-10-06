@@ -39,6 +39,9 @@ public struct GitCLIError: Error, Equatable, CustomStringConvertible, Sendable {
     case nothingToCommit
     case unknownRevision
     case branchAlreadyExists
+    case tagAlreadyExists
+    /// `pull --ff-only` on a branch that has diverged from its upstream.
+    case diverged
     case hookFailed
     case timedOut
     case cancelled
@@ -88,6 +91,10 @@ public struct GitCLIError: Error, Equatable, CustomStringConvertible, Sendable {
       return "Git doesn't know that branch or revision."
     case .branchAlreadyExists:
       return "A branch with that name already exists."
+    case .tagAlreadyExists:
+      return "A tag with that name already exists."
+    case .diverged:
+      return "Your branch and its upstream have diverged, so a fast-forward isn't possible. Pull with rebase or merge."
     case .hookFailed:
       return "A git hook rejected the operation. See the hook output for details."
     case .timedOut:
@@ -279,6 +286,15 @@ public enum GitCLI {
     }
     if has("would be overwritten by") || has("your local changes to the following files") {
       return .localChangesWouldBeOverwritten
+    }
+    if has("already exists")
+      && (arguments.first == "tag" || arguments.contains("--tags")
+        || arguments.contains { $0.hasPrefix("refs/tags/") })
+    {
+      return .tagAlreadyExists
+    }
+    if has("not possible to fast-forward") || has("diverging branches can't be fast-forwarded") {
+      return .diverged
     }
     if has("[rejected]") || has("non-fast-forward") || has("updates were rejected")
       || has("fetch first")

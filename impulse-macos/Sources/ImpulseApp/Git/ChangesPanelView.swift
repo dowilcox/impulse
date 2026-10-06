@@ -111,14 +111,21 @@ private struct ChangesPanelContent: View {
       ChromeMenuButton(help: "More git actions") {
         [
           ChromeMenuItem("Fetch") { actions.fetch() },
+          ChromeMenuItem("Fetch All Remotes") { actions.fetch(allRemotes: true) },
           ChromeMenuItem("Pull") { actions.pull() },
-          ChromeMenuItem("Pull (Rebase)") { actions.pull(rebase: true) },
+          ChromeMenuItem("Pull (Rebase)") { actions.pull(mode: .rebase) },
           ChromeMenuItem("Push") { actions.push() },
+          ChromeMenuItem("Force Push (With Lease)…") { actions.forcePush() },
+          .separator,
+          ChromeMenuItem("Create Tag…") { (model.gitHost as? MainWindowController)?.createTagAtHead() },
+          ChromeMenuItem("Push All Tags") { actions.pushAllTags() },
           .separator,
           ChromeMenuItem("Stage All Changes") { actions.stageAll() },
           ChromeMenuItem("Unstage All Changes") { actions.unstageAll() },
           .separator,
           ChromeMenuItem("Stash All Changes") { actions.stashAll() },
+          ChromeMenuItem("Pop Latest Stash") { (model.gitHost as? MainWindowController)?.popLatestStash() },
+          ChromeMenuItem("Undo Last Commit", isEnabled: snapshot?.headOid != nil) { actions.undoLastCommit() },
           .separator,
           ChromeMenuItem("Review Uncommitted Changes") {
             model.gitHost?.gitOpenReview(scope: .uncommitted, focusPath: nil)

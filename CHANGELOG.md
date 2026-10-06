@@ -43,6 +43,10 @@ running in its terminals. Impulse itself never calls an AI service.
 - Live change marks in the editor with a peek, inline blame, and a side-by-side diff view you can edit.
 - History with a commit graph, compare, filters (`author:`, `path:`, `since:`, `until:`) and fork-point dimming.
 - Branch switching and management, undoable stash drop/pop, merge-conflict resolution in the editor (or by an agent), and GitHub pull requests through `gh`.
+- A Git menu and palette commands: fetch (one or all remotes), pull with a chosen strategy, push, force push with lease, stash/pop, and undo last commit.
+- Tags: create lightweight or annotated tags from History or at HEAD (the next version is suggested), optionally pushed on creation; push, delete locally or on the remote from a tag's menu.
+- Merge and rebase from History and the branch manager, with Undo; open commits, tags and branches on GitHub, GitLab, Bitbucket, Codeberg or Azure DevOps.
+- Git settings: pull strategy, `--follow-tags`, push new tags, and background fetch.
 - Writes go through the git CLI; reads stay on libgit2.
 
 **Editor and language servers**

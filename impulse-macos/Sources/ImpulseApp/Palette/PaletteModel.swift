@@ -491,11 +491,7 @@ final class PaletteModel {
   /// Rough `git check-ref-format --branch` rules, enough to avoid offering
   /// obviously invalid names.
   static func isValidBranchName(_ name: String) -> Bool {
-    guard !name.isEmpty, !name.hasPrefix("-"), !name.hasPrefix("/"), !name.hasSuffix("/"),
-      !name.hasSuffix(".lock"), !name.hasSuffix("."), !name.contains("..")
-    else { return false }
-    let forbidden = CharacterSet(charactersIn: " ~^:?*[\\").union(.controlCharacters)
-    return name.unicodeScalars.allSatisfy { !forbidden.contains($0) } && !name.contains("@{")
+    GitRefName.isValid(name)
   }
 
   // MARK: Tabs

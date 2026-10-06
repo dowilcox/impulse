@@ -17,6 +17,7 @@ enum MenuBuilder {
         mainMenu.addItem(buildFileMenu(overrides: overrides))
         mainMenu.addItem(buildEditMenu(overrides: overrides))
         mainMenu.addItem(buildViewMenu(overrides: overrides))
+        mainMenu.addItem(buildGitMenu(overrides: overrides))
         mainMenu.addItem(buildWindowMenu(overrides: overrides))
         mainMenu.addItem(buildHelpMenu())
 
@@ -306,40 +307,6 @@ enum MenuBuilder {
         applyKeybinding("project_search", overrides: overrides, to: findInProjectItem)
         menu.addItem(findInProjectItem)
 
-        let reviewChangesItem = NSMenuItem(title: "Review Changes",
-                                           action: #selector(MenuActions.menuReviewChanges(_:)),
-                                           keyEquivalent: "G")
-        reviewChangesItem.target = MenuActions.shared
-        reviewChangesItem.keyEquivalentModifierMask = [.command, .shift]
-        applyKeybinding("review_changes", overrides: overrides, to: reviewChangesItem)
-        menu.addItem(reviewChangesItem)
-
-        let branchItem = NSMenuItem(title: "Switch Branch…",
-                                    action: #selector(MenuActions.menuSwitchBranch(_:)),
-                                    keyEquivalent: "b")
-        branchItem.target = MenuActions.shared
-        applyKeybinding("switch_branch", overrides: overrides, to: branchItem)
-        menu.addItem(branchItem)
-
-        let manageBranchesItem = NSMenuItem(title: "Manage Branches…",
-                                            action: #selector(MenuActions.menuManageBranches(_:)),
-                                            keyEquivalent: "")
-        manageBranchesItem.target = MenuActions.shared
-        applyKeybinding("manage_branches", overrides: overrides, to: manageBranchesItem)
-        menu.addItem(manageBranchesItem)
-
-        let changesItem = NSMenuItem(title: "Show Changes",
-                                     action: #selector(MenuActions.menuShowChanges(_:)),
-                                     keyEquivalent: "g")
-        changesItem.target = MenuActions.shared
-        applyKeybinding("show_changes", overrides: overrides, to: changesItem)
-        menu.addItem(changesItem)
-        menu.addItem(commandItem("Show Git History", id: "git_history", overrides: overrides))
-        menu.addItem(commandItem("Show History of This File", id: "file_history", overrides: overrides))
-        menu.addItem(commandItem("Toggle Diff View", id: "diff_view", overrides: overrides))
-
-        menu.addItem(.separator())
-
         menu.addItem(commandItem("Go to Symbol in Project…", id: "go_to_project_symbol", overrides: overrides))
         menu.addItem(commandItem("Show Problems", id: "show_problems", overrides: overrides))
         menu.addItem(commandItem("Run Project Action…", id: "project_actions", overrides: overrides))
@@ -454,6 +421,75 @@ enum MenuBuilder {
     }
 
     // MARK: - Terminal Menu
+
+    // MARK: - Git Menu
+
+    private static func buildGitMenu(overrides: [String: String]) -> NSMenuItem {
+        let menu = NSMenu(title: "Git")
+
+        let changesItem = NSMenuItem(title: "Show Changes",
+                                     action: #selector(MenuActions.menuShowChanges(_:)),
+                                     keyEquivalent: "g")
+        changesItem.target = MenuActions.shared
+        applyKeybinding("show_changes", overrides: overrides, to: changesItem)
+        menu.addItem(changesItem)
+
+        let reviewChangesItem = NSMenuItem(title: "Review Changes",
+                                           action: #selector(MenuActions.menuReviewChanges(_:)),
+                                           keyEquivalent: "G")
+        reviewChangesItem.target = MenuActions.shared
+        reviewChangesItem.keyEquivalentModifierMask = [.command, .shift]
+        applyKeybinding("review_changes", overrides: overrides, to: reviewChangesItem)
+        menu.addItem(reviewChangesItem)
+
+        menu.addItem(commandItem("Show Git History", id: "git_history", overrides: overrides))
+        menu.addItem(commandItem("Show History of This File", id: "file_history", overrides: overrides))
+        menu.addItem(commandItem("Toggle Diff View", id: "diff_view", overrides: overrides))
+
+        menu.addItem(.separator())
+
+        let branchItem = NSMenuItem(title: "Switch Branch…",
+                                    action: #selector(MenuActions.menuSwitchBranch(_:)),
+                                    keyEquivalent: "b")
+        branchItem.target = MenuActions.shared
+        applyKeybinding("switch_branch", overrides: overrides, to: branchItem)
+        menu.addItem(branchItem)
+
+        let manageBranchesItem = NSMenuItem(title: "Manage Branches…",
+                                            action: #selector(MenuActions.menuManageBranches(_:)),
+                                            keyEquivalent: "")
+        manageBranchesItem.target = MenuActions.shared
+        applyKeybinding("manage_branches", overrides: overrides, to: manageBranchesItem)
+        menu.addItem(manageBranchesItem)
+
+        menu.addItem(.separator())
+        menu.addItem(commandItem("Fetch", id: "git_fetch", overrides: overrides))
+        menu.addItem(commandItem("Fetch All Remotes", id: "git_fetch_all", overrides: overrides))
+        menu.addItem(commandItem("Pull", id: "git_pull", overrides: overrides))
+        menu.addItem(commandItem("Pull (Rebase)", id: "git_pull_rebase", overrides: overrides))
+        menu.addItem(commandItem("Push", id: "git_push", overrides: overrides))
+        menu.addItem(commandItem("Force Push (With Lease)…", id: "git_force_push", overrides: overrides))
+
+        menu.addItem(.separator())
+        menu.addItem(commandItem("Create Tag…", id: "git_create_tag", overrides: overrides))
+        menu.addItem(commandItem("Push All Tags", id: "git_push_tags", overrides: overrides))
+
+        menu.addItem(.separator())
+        menu.addItem(commandItem("Stash All Changes", id: "git_stash", overrides: overrides))
+        menu.addItem(commandItem("Pop Latest Stash", id: "git_pop_stash", overrides: overrides))
+        menu.addItem(commandItem("Undo Last Commit", id: "git_undo_commit", overrides: overrides))
+
+        menu.addItem(.separator())
+        menu.addItem(commandItem("Open or Create Pull Request", id: "pull_request", overrides: overrides))
+        menu.addItem(commandItem("Create Draft Pull Request", id: "create_draft_pr", overrides: overrides))
+        menu.addItem(commandItem("Check Out Pull Request as Task…", id: "checkout_pr", overrides: overrides))
+        menu.addItem(commandItem("Open Repository in Browser", id: "git_open_remote", overrides: overrides))
+        menu.addItem(commandItem("Open Branch in Browser", id: "git_open_branch_remote", overrides: overrides))
+
+        let item = NSMenuItem(title: "Git", action: nil, keyEquivalent: "")
+        item.submenu = menu
+        return item
+    }
 
     // MARK: - Window Menu
 

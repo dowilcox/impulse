@@ -121,6 +121,15 @@ struct Settings: Codable {
     var editorPreviewTabs: Bool = true
     /// Vim keybindings in the editor (monaco-vim).
     var editorVimMode: Bool = false
+    /// Push a tag to the remote right after creating it (the Create Tag
+    /// sheet's checkbox starts from this).
+    var gitPushTagsOnCreate: Bool = false
+    /// `git push --follow-tags`: annotated tags on pushed commits go along.
+    var gitPushFollowTags: Bool = false
+    /// How Pull brings in upstream commits: ff-only, rebase or merge.
+    var gitPullMode: String = "ff-only"
+    /// Fetch open repositories in the background every N minutes (0 = off).
+    var gitAutoFetchMinutes: Int = 0
     var lastDirectory: String
     var openFiles: [String]
 
@@ -225,6 +234,10 @@ struct Settings: Codable {
         case terminalShellCompletions = "terminal_shell_completions"
         case editorPreviewTabs = "editor_preview_tabs"
         case editorVimMode = "editor_vim_mode"
+        case gitPushTagsOnCreate = "git_push_tags_on_create"
+        case gitPushFollowTags = "git_push_follow_tags"
+        case gitPullMode = "git_pull_mode"
+        case gitAutoFetchMinutes = "git_auto_fetch_minutes"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -378,6 +391,10 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
         editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
         editorVimMode = (try? c.decode(Bool.self, forKey: .editorVimMode)) ?? d.editorVimMode
+        gitPushTagsOnCreate = (try? c.decode(Bool.self, forKey: .gitPushTagsOnCreate)) ?? d.gitPushTagsOnCreate
+        gitPushFollowTags = (try? c.decode(Bool.self, forKey: .gitPushFollowTags)) ?? d.gitPushFollowTags
+        gitPullMode = (try? c.decode(String.self, forKey: .gitPullMode)) ?? d.gitPullMode
+        gitAutoFetchMinutes = (try? c.decode(Int.self, forKey: .gitAutoFetchMinutes)) ?? d.gitAutoFetchMinutes
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

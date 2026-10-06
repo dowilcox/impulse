@@ -64,7 +64,18 @@ final class HistoryModel {
   /// Show a commit's changes by SHA (it may not be loaded in the list yet).
   @ObservationIgnored var onShowCommit: ((String) -> Void)?
   @ObservationIgnored var onAction: ((HistoryAction, LogEntry) -> Void)?
-  @ObservationIgnored var loader: ((Int) -> Result<[LogEntry], GitOperationError>)?
+  /// A page of history: (skip, limit).
+  @ObservationIgnored var loader: ((Int, Int) -> Result<[LogEntry], GitOperationError>)?
+
+  /// What the menus need: the checked-out branch, the remotes (to tell
+  /// `origin/x` from a local `feature/x`) and the web host's name.
+  struct Context: Equatable {
+    var branch: String?
+    var remotes: [String] = []
+    var webHost: String?
+  }
+  private(set) var context = Context()
+  @ObservationIgnored var contextLoader: (() -> Context)?
 
   init(palette: ChromePalette) {
     self.palette = palette
@@ -111,11 +122,41 @@ final class HistoryModel {
     reachedEnd = false
     appliedQuery = query.server
     loadMore()
+    loadSurroundings()
+  }
+
+  /// Re-read the commits already loaded (a ref moved: a new tag, a fetch,
+  /// a commit) keeping the selection and scroll position.
+  func refreshInPlace() {
+    guard !isLoading, let loader else { return }
+    isLoading = true
+    let count = max(entries.count, HistorySurface.pageSize)
+    let applied = appliedQuery
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let result = loader(0, count)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.isLoading = false
+        guard applied == self.appliedQuery else { return self.reload() }
+        if case .success(let page) = result, page != self.entries {
+          self.entries = page
+          self.reachedEnd = page.count < count
+          self.rows = CommitGraph.layout(page.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
+        }
+      }
+    }
+    loadSurroundings()
+  }
+
+  /// Divergence from the upstream, the fork point, and the menu context.
+  private func loadSurroundings() {
     let divergenceLoader = divergenceLoader
     let forkPointLoader = forkPointLoader
+    let contextLoader = contextLoader
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let divergence = divergenceLoader?()
       let fork = forkPointLoader?()
+      let context = contextLoader?()
       DispatchQueue.main.async {
         guard let self else { return }
         if let divergence {
@@ -123,6 +164,7 @@ final class HistoryModel {
           self.incoming = divergence.incoming
         }
         self.forkPoint = fork
+        if let context, context != self.context { self.context = context }
       }
     }
   }
@@ -152,7 +194,7 @@ final class HistoryModel {
     let skip = entries.count
     let applied = appliedQuery
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = loader(skip)
+      let result = loader(skip, HistorySurface.pageSize)
       DispatchQueue.main.async {
         guard let self else { return }
         self.isLoading = false
@@ -204,9 +246,16 @@ final class HistoryModel {
   }
 }
 
-enum HistoryAction {
-  case checkout, branchHere, cherryPick, revert, resetSoft, resetMixed, resetHard
-  case compareWithWorkingTree, selectForCompare, compareWithSelected, copySha, copySubject
+enum HistoryAction: Equatable {
+  case checkout, branchHere, tagHere, cherryPick, revert, resetSoft, resetMixed, resetHard
+  /// Merge this commit (or the branch on it) into the current branch.
+  case mergeIntoCurrent
+  /// Rebase the current branch onto this commit (or the branch on it).
+  case rebaseCurrentOnto
+  case compareWithWorkingTree, selectForCompare, compareWithSelected, copySha, copySubject, openOnRemote
+  // A branch or tag shown on the commit.
+  case switchToBranch(String), mergeRef(String), rebaseOntoRef(String), deleteBranch(String)
+  case pushTag(String), deleteTag(String), deleteRemoteTag(String), openTagOnRemote(String), copyName(String)
 }
 
 final class HistorySurface: NSView {
@@ -227,10 +276,18 @@ final class HistorySurface: NSView {
     super.init(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
     model.path = path
     let root = repository.root
-    model.loader = { [weak model] skip in
+    model.loader = { [weak model] skip, limit in
       GitLog.entries(
         root: root, scope: model?.scope ?? .head, path: model?.path,
-        query: model?.appliedQuery ?? HistoryQuery(), skip: skip, limit: Self.pageSize)
+        query: model?.appliedQuery ?? HistoryQuery(), skip: skip, limit: limit)
+    }
+    model.contextLoader = {
+      let web = GitOperations.defaultRemote(root: root)
+        .flatMap { GitOperations.remoteURL($0, root: root) }
+        .flatMap { RemoteWebURL(remote: $0) }
+      return HistoryModel.Context(
+        branch: GitOperations.currentBranch(root: root), remotes: GitOperations.remotes(root: root),
+        webHost: web?.displayName)
     }
     model.onSelect = { [weak self] entry in
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
@@ -243,6 +300,21 @@ final class HistorySurface: NSView {
     model.detailsLoader = { GitLog.details(root: root, sha: $0) }
     setup()
     model.reload()
+    // Refs moved (a tag, a commit, a fetch): refresh what's loaded.
+    refsListener = repository.addChangeListener { [weak self] change in
+      guard change.contains(.refs) || change.contains(.operation) else { return }
+      self?.scheduleRefresh()
+    }
+  }
+
+  private var refsListener: UUID?
+  private var refreshWork: DispatchWorkItem?
+
+  private func scheduleRefresh() {
+    refreshWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.model.refreshInPlace() }
+    refreshWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
   }
 
   @available(*, unavailable)
@@ -322,6 +394,9 @@ final class HistorySurface: NSView {
 
   func cleanup() {
     review.cleanup()
+    if let refsListener { repository.removeChangeListener(refsListener) }
+    refsListener = nil
+    refreshWork?.cancel()
   }
 
   func focus() {
@@ -357,7 +432,55 @@ final class HistorySurface: NSView {
       NSPasteboard.general.setString(action == .copySha ? entry.sha : entry.subject, forType: .string)
     case .branchHere:
       askBranchName(at: entry)
+    case .tagHere:
+      guard let window else { return }
+      GitPrompts.askForTag(
+        in: window, root: repository.root, revision: entry.sha, subject: entry.subject, host: host
+      ) { tag in
+        actions.createTag(tag.name, at: entry.sha, message: tag.message, push: tag.push)
+      }
+    case .mergeIntoCurrent:
+      let (revision, label) = mergeTarget(entry)
+      actions.merge(revision, label: label)
+    case .rebaseCurrentOnto:
+      let (revision, label) = mergeTarget(entry)
+      actions.rebase(onto: revision, label: label)
+    case .openOnRemote:
+      actions.openOnRemote(.commit(entry.sha))
+    case .switchToBranch(let name):
+      actions.switchBranch(name)
+    case .mergeRef(let name):
+      actions.merge(name, label: name)
+    case .rebaseOntoRef(let name):
+      actions.rebase(onto: name, label: name)
+    case .deleteBranch(let name):
+      actions.deleteBranch(name)
+    case .pushTag(let name):
+      actions.pushTag(name)
+    case .deleteTag(let name):
+      actions.deleteTag(name)
+    case .deleteRemoteTag(let name):
+      actions.deleteRemoteTag(name)
+    case .openTagOnRemote(let name):
+      actions.openOnRemote(.tag(name))
+    case .copyName(let name):
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(name, forType: .string)
     }
+  }
+
+  /// Merging or rebasing onto a commit uses the branch on it, when there is
+  /// one (for the merge message), else the commit.
+  private func mergeTarget(_ entry: LogEntry) -> (revision: String, label: String) {
+    let refs = entry.refs.map { RefDecoration.parse($0, remotes: model.context.remotes) }
+    for ref in refs {
+      switch ref {
+      case .localBranch(let name), .tag(let name): return (name, name)
+      case .remoteBranch(let remote, let branch) where branch != "HEAD": return ("\(remote)/\(branch)", "\(remote)/\(branch)")
+      default: continue
+      }
+    }
+    return (entry.sha, entry.shortSha)
   }
 
   private func askBranchName(at entry: LogEntry) {
@@ -552,8 +675,10 @@ private struct HistoryRowView: View {
       if model.compareBase?.sha == entry.sha {
         Icon(.gitCompare, size: 11).foregroundStyle(chrome.warning).help("Selected for compare")
       }
-      ForEach(entry.refs, id: \.self) { ref in
+      ForEach(entry.refs, id: \.self) { text in
+        let ref = RefDecoration.parse(text, remotes: model.context.remotes)
         RefChip(ref: ref)
+          .contextMenu { RefMenuItems(ref: ref, model: model, entry: entry) }
       }
       if model.scope == .head, let fork = model.forkPoint, fork.sha == entry.sha {
         Icon(.gitFork, size: 10)
@@ -608,17 +733,41 @@ private struct HistoryRowView: View {
     [chrome.accent, chrome.success, chrome.warning, chrome.info, chrome.danger, chrome.gitRenamed]
   }
 
+  private var refs: [RefDecoration] {
+    entry.refs.map { RefDecoration.parse($0, remotes: model.context.remotes) }
+  }
+
+  /// HEAD is on this commit.
+  private var isHead: Bool {
+    refs.contains { if case .head = $0 { return true }; return $0 == .detachedHead }
+  }
+
   @ViewBuilder
   private var menu: some View {
+    let current = model.context.branch ?? "HEAD"
     Button("Check Out (Detached)") { model.onAction?(.checkout, entry) }
     Button("Create Branch Here…") { model.onAction?(.branchHere, entry) }
+    Button("Create Tag Here…") { model.onAction?(.tagHere, entry) }
     Divider()
+    Button("Merge into \(current)") { model.onAction?(.mergeIntoCurrent, entry) }
+      .disabled(isHead)
+    Button("Rebase \(current) onto Here") { model.onAction?(.rebaseCurrentOnto, entry) }
+      .disabled(isHead || model.context.branch == nil)
     Button("Cherry-Pick") { model.onAction?(.cherryPick, entry) }
     Button("Revert") { model.onAction?(.revert, entry) }
-    Menu("Reset Current Branch Here") {
+    Menu("Reset \(current) Here") {
       Button("Soft (keep changes staged)") { model.onAction?(.resetSoft, entry) }
       Button("Mixed (keep changes)") { model.onAction?(.resetMixed, entry) }
       Button("Hard (discard changes)…") { model.onAction?(.resetHard, entry) }
+    }
+    let named = refs.filter { if case .detachedHead = $0 { return false }; return true }
+    if !named.isEmpty {
+      Divider()
+      ForEach(named.indices, id: \.self) { index in
+        Menu(Self.menuTitle(named[index])) {
+          RefMenuItems(ref: named[index], model: model, entry: entry)
+        }
+      }
     }
     Divider()
     Button("Compare with Working Tree") { model.onAction?(.compareWithWorkingTree, entry) }
@@ -628,8 +777,70 @@ private struct HistoryRowView: View {
     Button(model.compareBase?.sha == entry.sha ? "Clear Compare Selection" : "Select for Compare") {
       model.onAction?(.selectForCompare, entry)
     }
+    Divider()
     Button("Copy SHA") { model.onAction?(.copySha, entry) }
     Button("Copy Subject") { model.onAction?(.copySubject, entry) }
+    if let host = model.context.webHost {
+      Button("Open Commit on \(host)") { model.onAction?(.openOnRemote, entry) }
+    }
+  }
+
+  static func menuTitle(_ ref: RefDecoration) -> String {
+    switch ref {
+    case .tag(let name): return "Tag \(name)"
+    case .remoteBranch: return "Remote Branch \(ref.label)"
+    default: return "Branch \(ref.label)"
+    }
+  }
+}
+
+/// The actions for one branch or tag on a commit (its chip's menu, and a
+/// submenu of the commit's menu).
+private struct RefMenuItems: View {
+  let ref: RefDecoration
+  var model: HistoryModel
+  let entry: LogEntry
+
+  var body: some View {
+    let current = model.context.branch ?? "HEAD"
+    let remote = model.context.remotes.contains("origin") ? "origin" : model.context.remotes.first ?? "origin"
+    switch ref {
+    case .tag(let name):
+      if !model.context.remotes.isEmpty {
+        Button("Push to \(remote)") { model.onAction?(.pushTag(name), entry) }
+      }
+      if let host = model.context.webHost {
+        Button("Open on \(host)") { model.onAction?(.openTagOnRemote(name), entry) }
+      }
+      Button("Merge into \(current)") { model.onAction?(.mergeRef(name), entry) }
+      Button("Copy Name") { model.onAction?(.copyName(name), entry) }
+      Divider()
+      Button("Delete Tag") { model.onAction?(.deleteTag(name), entry) }
+      if !model.context.remotes.isEmpty {
+        Button("Delete from \(remote)…") { model.onAction?(.deleteRemoteTag(name), entry) }
+      }
+    case .localBranch(let name):
+      Button("Switch to \(name)") { model.onAction?(.switchToBranch(name), entry) }
+      Button("Merge into \(current)") { model.onAction?(.mergeRef(name), entry) }
+      Button("Rebase \(current) onto \(name)") { model.onAction?(.rebaseOntoRef(name), entry) }
+        .disabled(model.context.branch == nil)
+      Button("Copy Name") { model.onAction?(.copyName(name), entry) }
+      Divider()
+      Button("Delete Branch…") { model.onAction?(.deleteBranch(name), entry) }
+    case .head(let name):
+      Button("Copy Name") { model.onAction?(.copyName(name), entry) }
+    case .remoteBranch(_, let branch):
+      let full = ref.label
+      if branch != "HEAD" {
+        Button("Check Out \(branch)") { model.onAction?(.switchToBranch(branch), entry) }
+        Button("Merge into \(current)") { model.onAction?(.mergeRef(full), entry) }
+        Button("Rebase \(current) onto \(full)") { model.onAction?(.rebaseOntoRef(full), entry) }
+          .disabled(model.context.branch == nil)
+      }
+      Button("Copy Name") { model.onAction?(.copyName(full), entry) }
+    case .detachedHead:
+      EmptyView()
+    }
   }
 }
 
@@ -756,22 +967,44 @@ private struct GraphCell: View {
 
 private struct RefChip: View {
   @Environment(\.chrome) private var chrome
-  let ref: String
+  let ref: RefDecoration
 
   var body: some View {
-    let isHead = ref.hasPrefix("HEAD")
-    let isTag = ref.hasPrefix("tag: ")
-    let isRemote = !isHead && !isTag && ref.contains("/")
-    let label = isTag ? String(ref.dropFirst(5)) : ref.replacingOccurrences(of: "HEAD -> ", with: "")
+    let color: Color = {
+      switch ref {
+      case .tag: return chrome.warning
+      case .remoteBranch: return chrome.textSecondary
+      default: return chrome.accent
+      }
+    }()
+    let icon: LucideIcon = {
+      switch ref {
+      case .tag: return .tag
+      case .remoteBranch: return .globe
+      default: return .gitBranch
+      }
+    }()
     HStack(spacing: 3) {
-      Icon(isTag ? .tag : (isRemote ? .globe : .gitBranch), size: 9)
-      Text(label).font(ChromeFont.ui(10.5, weight: isHead ? .semibold : .medium)).lineLimit(1)
+      Icon(icon, size: 9)
+      Text(ref.label).font(ChromeFont.ui(10.5, weight: Self.isHead(ref) ? .semibold : .medium)).lineLimit(1)
     }
-    .foregroundStyle(isTag ? chrome.warning : isRemote ? chrome.textSecondary : chrome.accent)
+    .foregroundStyle(color)
     .padding(.horizontal, 5)
     .frame(height: 17)
     .background(
       RoundedRectangle(cornerRadius: 4).fill(
-        (isTag ? chrome.warning : isRemote ? chrome.textTertiary : chrome.accent).opacity(0.14)))
+        (ref.isRemote ? chrome.textTertiary : color).opacity(0.14)))
+  }
+
+  private static func isHead(_ ref: RefDecoration) -> Bool {
+    if case .head = ref { return true }
+    return ref == .detachedHead
+  }
+}
+
+private extension RefDecoration {
+  var isRemote: Bool {
+    if case .remoteBranch = self { return true }
+    return false
   }
 }

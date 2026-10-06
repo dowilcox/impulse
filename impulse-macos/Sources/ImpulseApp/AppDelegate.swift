@@ -177,6 +177,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     } else {
       NSApp.activate(ignoringOtherApps: true)
+      AutoFetch.shared.repositories = { [weak self] in
+        (self?.windowControllers ?? []).flatMap { controller in
+          controller.tabManager.workspaces.compactMap(\.repository) + [controller.windowModel.repository].compactMap { $0 }
+        }
+      }
+      AutoFetch.shared.start()
     }
 
     // Check for updates in background if enabled.

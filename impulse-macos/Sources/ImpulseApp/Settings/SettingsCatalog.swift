@@ -12,6 +12,7 @@ struct SettingItem: Identifiable {
     case editor = "Editor"
     case terminal = "Terminal"
     case appearance = "Appearance"
+    case git = "Git"
     case automation = "Automation"
     case languageServers = "Language Servers"
     case advanced = "Advanced"
@@ -23,6 +24,7 @@ struct SettingItem: Identifiable {
       case .editor: return .fileCode
       case .terminal: return .squareTerminal
       case .appearance: return .eye
+      case .git: return .gitBranch
       case .automation: return .zap
       case .languageServers: return .plug
       case .advanced: return .slidersHorizontal
@@ -64,7 +66,7 @@ struct SettingItem: Identifiable {
 enum SettingsCatalog {
   private static let defaults = Settings.default
 
-  static let items: [SettingItem] = general + editor + terminal + appearance
+  static let items: [SettingItem] = general + editor + terminal + appearance + git
 
   // MARK: Builders
 
@@ -277,6 +279,23 @@ enum SettingsCatalog {
     integer(
       "terminal_scrollback", "Scrollback lines", \.terminalScrollback, .terminal, "Scrollback",
       range: 100...1_000_000, step: 1000),
+  ]
+
+  private static let git: [SettingItem] = [
+    choice(
+      "git_pull_mode", "When pulling", \.gitPullMode, .git, "Remote",
+      [("ff-only", "Fast-forward only"), ("rebase", "Rebase local commits"), ("merge", "Merge")],
+      detail: "Fast-forward only never makes a merge commit; it stops when the branch has diverged."),
+    toggle(
+      "git_push_follow_tags", "Push annotated tags with commits", \.gitPushFollowTags, .git, "Remote",
+      detail: "Push uses --follow-tags: annotated tags on the commits being pushed go along."),
+    integer(
+      "git_auto_fetch_minutes", "Fetch in the background", \.gitAutoFetchMinutes, .git, "Remote",
+      range: 0...120, step: 5, zeroLabel: "Off",
+      detail: "Minutes between fetches of the repositories open in windows, so ahead/behind stays current. Never asks for credentials."),
+    toggle(
+      "git_push_tags_on_create", "Push new tags to the remote", \.gitPushTagsOnCreate, .git, "Tags",
+      detail: "Creating a tag pushes it right away. The Create Tag sheet's checkbox starts from this."),
   ]
 
   private static let appearance: [SettingItem] = [

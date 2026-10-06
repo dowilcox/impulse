@@ -5,7 +5,7 @@ import SwiftUI
 
 /// "Manage Branches…": every local branch with its upstream, how far it is
 /// ahead/behind, when it last changed and whether it's merged; switch,
-/// compare, rename, publish or delete from here.
+/// merge, rebase, compare, rename, publish or delete from here.
 @Observable
 final class BranchManagerModel {
   let repository: GitRepositoryState
@@ -32,6 +32,9 @@ final class BranchManagerModel {
       }
     }
   }
+
+  /// The checked-out branch.
+  var current: String? { branches.first(where: \.isCurrent)?.name }
 
   var visible: [GitOperations.BranchInfo] {
     let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
@@ -129,6 +132,10 @@ struct BranchManagerView: View {
       ChromeMenuButton(help: "More") {
         var items: [ChromeMenuItem] = []
         if !branch.isCurrent {
+          let current = model.current ?? "Current Branch"
+          items.append(ChromeMenuItem("Merge into \(current)") { onAction(.merge, branch) })
+          items.append(ChromeMenuItem("Rebase \(current) onto This") { onAction(.rebase, branch) })
+          items.append(.separator)
           items.append(ChromeMenuItem("Compare with Current Branch") { onAction(.compare, branch) })
         }
         items.append(ChromeMenuItem("Show History") { onAction(.history, branch) })
@@ -157,7 +164,7 @@ struct BranchManagerView: View {
   }
 }
 
-enum BranchAction { case switchTo, compare, history, rename, publish, delete }
+enum BranchAction { case switchTo, compare, history, rename, publish, delete, merge, rebase }
 
 extension MainWindowController {
   func presentBranchManager() {
@@ -176,7 +183,7 @@ extension MainWindowController {
         onAction: { [weak self, weak window, weak sheet] action, branch in
           guard let self else { return }
           // Actions that move elsewhere close the sheet first.
-          if [.switchTo, .compare, .history].contains(action), let sheet { window?.endSheet(sheet) }
+          if [.switchTo, .compare, .history, .merge, .rebase].contains(action), let sheet { window?.endSheet(sheet) }
           self.performBranchAction(action, branch: branch, model: model, sheet: sheet)
         },
         onClose: { [weak window, weak sheet] in
@@ -221,40 +228,11 @@ extension MainWindowController {
         }
       }
     case .delete:
-      deleteBranch(branch, repository: repository, model: model, force: false)
-    }
-  }
-
-  private func deleteBranch(
-    _ branch: GitOperations.BranchInfo, repository: GitRepositoryState, model: BranchManagerModel, force: Bool
-  ) {
-    let sha = GitClient.resolveCommit(repoPath: repository.root, revision: branch.name)
-    repository.run { GitOperations.deleteBranch(branch.name, force: force, root: $0) } completion: {
-      [weak self] result, _ in
-      guard let self else { return }
-      model.reload()
-      switch result {
-      case .success:
-        self.toasts.show(
-          Toast(
-            kind: .success, message: "Deleted \(branch.name)", actionTitle: sha == nil ? nil : "Undo",
-            action: sha.map { sha in
-              {
-                repository.run {
-                  GitOperations.createBranch(branch.name, startPoint: sha, checkout: false, root: $0)
-                } completion: { _, _ in model.reload() }
-              }
-            }, lifetime: 15))
-      case .failure:
-        // Not merged: say what would be lost, then force.
-        self.gitConfirm(
-          title: "\(branch.name) isn't merged",
-          message: "Its commits aren't in \(model.base ?? "the base branch") yet. Delete it anyway? Undo stays available for a few seconds.",
-          confirmTitle: "Delete", destructive: true
-        ) { confirmed in
-          if confirmed { self.deleteBranch(branch, repository: repository, model: model, force: true) }
-        }
-      }
+      actions.deleteBranch(branch.name, base: model.base) { model.reload() }
+    case .merge:
+      actions.merge(branch.name, label: branch.name)
+    case .rebase:
+      actions.rebase(onto: branch.name, label: branch.name)
     }
   }
 

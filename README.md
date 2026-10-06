@@ -58,6 +58,8 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 - Live change marks, inline blame, and an editable side-by-side diff view in the editor
 - History with a commit graph, compare, author/path/date filters and fork-point dimming
 - Branch switching and management, undoable stashes, merge-conflict resolution, and GitHub pull requests through `gh`
+- Fetch, pull (fast-forward, rebase or merge), push and force push with lease from the Git menu or palette, with optional background fetch
+- Tags from History or at HEAD (lightweight or annotated, optionally pushed right away); merge, rebase and "open on GitHub/GitLab" from History
 
 **Editor**
 

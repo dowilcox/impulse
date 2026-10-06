@@ -82,8 +82,9 @@
       #expect(Keybindings.getKeybinding(id: "review_changes", overrides: overrides)?.keyEquivalent == "")
       #expect(Keybindings.shortcutDisplay(forId: "review_changes", overrides: overrides) == nil)
       let menu = MenuBuilder.buildMainMenu(overrides: overrides)
-      let view = menu.items.first { $0.submenu?.title == "View" }?.submenu
-      #expect(view?.item(withTitle: "Review Changes")?.keyEquivalent == "")
+      let git = menu.items.first { $0.submenu?.title == "Git" }?.submenu
+      #expect(git?.item(withTitle: "Review Changes") != nil)
+      #expect(git?.item(withTitle: "Review Changes")?.keyEquivalent == "")
     }
 
     @Test func conflictsListSharedShortcuts() {

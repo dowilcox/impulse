@@ -68,6 +68,35 @@ extension MainWindowController: GitPanelHost {
     }
   }
 
+  // MARK: Git commands
+
+  /// Git actions for the active workspace's repository (or a note that
+  /// there isn't one).
+  func repositoryActions() -> GitActions? {
+    guard let repository = tabManager.activeWorkspace.repository ?? windowModel.repository else {
+      toasts.show(Toast(kind: .info, message: "Not in a git repository."))
+      return nil
+    }
+    return GitActions(repository: repository, host: self)
+  }
+
+  func createTagAtHead() {
+    guard let actions = repositoryActions(), let window else { return }
+    GitPrompts.askForTag(in: window, root: actions.repository.root, revision: "HEAD", subject: nil, host: self) {
+      tag in
+      actions.createTag(tag.name, message: tag.message, push: tag.push)
+    }
+  }
+
+  func popLatestStash() {
+    guard let actions = repositoryActions() else { return }
+    guard !GitOperations.stashList(root: actions.repository.root).isEmpty else {
+      toasts.show(Toast(kind: .info, message: "There are no stashes."))
+      return
+    }
+    actions.applyStash(0, pop: true)
+  }
+
   /// Show the Changes panel in the left dock (⌃⇧G).
   func showChangesPanel() {
     windowModel.resetSearch()

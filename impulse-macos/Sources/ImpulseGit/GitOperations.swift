@@ -405,31 +405,106 @@ public enum GitOperations {
 
   // MARK: - Remote
 
-  public static func fetch(root: String, onProgress: ((String) -> Void)? = nil) -> GitResult {
-    void(git(["fetch", "--prune", "--progress"], in: root, timeout: 600, onOutputLine: onProgress))
+  /// Fetch the default remote, or every remote. Deleted remote branches are
+  /// pruned. `timeout` is shorter for quiet background fetches.
+  public static func fetch(
+    allRemotes: Bool = false, root: String, timeout: TimeInterval = 600, onProgress: ((String) -> Void)? = nil
+  ) -> GitResult {
+    var args = ["fetch", "--prune", "--progress"]
+    if allRemotes { args.append("--all") }
+    return void(git(args, in: root, timeout: timeout, onOutputLine: onProgress))
+  }
+
+  /// How `pull` brings in upstream commits.
+  public enum PullMode: String, Sendable, CaseIterable {
+    /// Only when the branch hasn't diverged (never creates a merge commit).
+    case fastForwardOnly = "ff-only"
+    /// Replay local commits on top of the upstream.
+    case rebase
+    /// Merge the upstream in (a merge commit when they diverged).
+    case merge
+  }
+
+  public static func pull(mode: PullMode, root: String, onProgress: ((String) -> Void)? = nil) -> GitResult {
+    let flag: String
+    switch mode {
+    case .fastForwardOnly: flag = "--ff-only"
+    case .rebase: flag = "--rebase"
+    case .merge: flag = "--no-rebase"
+    }
+    return void(git(["pull", flag, "--no-edit", "--progress"], in: root, timeout: 600, onOutputLine: onProgress))
   }
 
   public static func pull(rebase: Bool, root: String, onProgress: ((String) -> Void)? = nil)
     -> GitResult
   {
-    void(
-      git(
-        ["pull", rebase ? "--rebase" : "--ff-only", "--progress"], in: root, timeout: 600,
-        onOutputLine: onProgress))
+    pull(mode: rebase ? .rebase : .fastForwardOnly, root: root, onProgress: onProgress)
   }
 
-  /// Push the current branch. `setUpstream` publishes it to `remote`.
+  /// Push the current branch. `setUpstream` publishes it to `remote`;
+  /// `followTags` also pushes annotated tags on the pushed commits.
   public static func push(
     setUpstream: Bool = false, remote: String = "origin", branch: String? = nil,
-    forceWithLease: Bool = false, root: String, onProgress: ((String) -> Void)? = nil
+    forceWithLease: Bool = false, followTags: Bool = false, root: String,
+    onProgress: ((String) -> Void)? = nil
   ) -> GitResult {
     var args = ["push", "--progress"]
     if forceWithLease { args.append("--force-with-lease") }
+    if followTags { args.append("--follow-tags") }
     if setUpstream {
       args += ["--set-upstream", remote]
       if let branch { args.append(branch) }
     }
     return void(git(args, in: root, timeout: 600, onOutputLine: onProgress))
+  }
+
+  public static func remotes(root: String) -> [String] {
+    guard case .success(let result) = git(["remote"], in: root) else { return [] }
+    return result.stdout.split(separator: "\n").map(String.init)
+  }
+
+  /// The checked-out branch's name (nil when detached or unborn-less).
+  public static func currentBranch(root: String) -> String? {
+    guard case .success(let result) = git(["symbolic-ref", "--quiet", "--short", "HEAD"], in: root) else { return nil }
+    let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? nil : name
+  }
+
+  /// The remote to push tags to and browse: the current branch's remote,
+  /// else `origin`, else the first one.
+  public static func defaultRemote(root: String) -> String? {
+    let remotes = remotes(root: root)
+    if case .success(let head) = git(["symbolic-ref", "--quiet", "--short", "HEAD"], in: root),
+      case .success(let config) = git(
+        ["config", "--get", "branch.\(head.stdout.trimmingCharacters(in: .whitespacesAndNewlines)).remote"],
+        in: root),
+      case let remote = config.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+      remotes.contains(remote)
+    {
+      return remote
+    }
+    return remotes.contains("origin") ? "origin" : remotes.first
+  }
+
+  /// The URL `remote` fetches from.
+  public static func remoteURL(_ remote: String, root: String) -> String? {
+    guard case .success(let result) = git(["remote", "get-url", remote], in: root) else { return nil }
+    let url = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return url.isEmpty ? nil : url
+  }
+
+  // MARK: - Tags
+
+  public struct TagInfo: Equatable, Sendable {
+    public let name: String
+    /// The commit it points at.
+    public let commit: String
+    /// Annotated tags carry a message, tagger and date of their own.
+    public let isAnnotated: Bool
+    /// Tagger date (annotated) or the commit's date (lightweight).
+    public let date: Date?
+    /// The annotation's first line, or the commit's subject.
+    public let subject: String
   }
 
   /// Tag names, newest first.
@@ -438,9 +513,80 @@ public enum GitOperations {
     return result.stdout.split(separator: "\n").map(String.init)
   }
 
-  public static func remotes(root: String) -> [String] {
-    guard case .success(let result) = git(["remote"], in: root) else { return [] }
-    return result.stdout.split(separator: "\n").map(String.init)
+  /// Every tag with what it points at, newest first.
+  public static func tagDetails(root: String) -> [TagInfo] {
+    let format = "%(refname:short)%1f%(objecttype)%1f%(objectname)%1f%(*objectname)%1f%(creatordate:unix)%1f%(contents:subject)%1e"
+    guard
+      case .success(let result) = git(
+        ["for-each-ref", "--sort=-creatordate", "--format=\(format)", "refs/tags"], in: root)
+    else { return [] }
+    return result.stdout.split(separator: "\u{1e}").compactMap { record in
+      let fields = record.trimmingCharacters(in: .newlines).split(separator: "\u{1f}", omittingEmptySubsequences: false)
+        .map(String.init)
+      guard fields.count >= 6, !fields[0].isEmpty else { return nil }
+      let annotated = fields[1] == "tag"
+      return TagInfo(
+        name: fields[0], commit: annotated && !fields[3].isEmpty ? fields[3] : fields[2], isAnnotated: annotated,
+        date: TimeInterval(fields[4]).map { Date(timeIntervalSince1970: $0) }, subject: fields[5])
+    }
+  }
+
+  /// Tag `revision`. With a message the tag is annotated (it records who
+  /// tagged it, when, and why); without one it is a lightweight name.
+  public static func createTag(
+    _ name: String, at revision: String = "HEAD", message: String? = nil, force: Bool = false, root: String
+  ) -> GitResult {
+    guard GitRefName.isValid(name) else { return .failure(.invalid("“\(name)” isn't a valid tag name.")) }
+    var args = ["tag"]
+    if force { args.append("--force") }
+    let message = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !message.isEmpty {
+      args += ["--annotate", "--file=-", name, revision]
+      return void(git(args, in: root, stdin: Data((message + "\n").utf8)))
+    }
+    return void(git(args + [name, revision], in: root))
+  }
+
+  public static func deleteTag(_ name: String, root: String) -> GitResult {
+    void(git(["tag", "--delete", name], in: root))
+  }
+
+  /// The object a ref points at, unpeeled (an annotated tag's tag object).
+  public static func resolveRef(_ ref: String, root: String) -> String? {
+    guard case .success(let result) = git(["rev-parse", "--verify", "--quiet", ref], in: root) else { return nil }
+    let sha = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return sha.isEmpty ? nil : sha
+  }
+
+  /// Point a ref at an object again (undoing a delete while the object is
+  /// still in the repository).
+  public static func restoreRef(_ ref: String, to object: String, root: String) -> GitResult {
+    void(git(["update-ref", ref, object], in: root))
+  }
+
+  /// Commits in `to` that aren't in `from` (`git rev-list --count from..to`).
+  public static func commitCount(from: String, to: String, root: String) -> Int? {
+    guard case .success(let result) = git(["rev-list", "--count", "\(from)..\(to)"], in: root) else { return nil }
+    return Int(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  /// Push one tag to `remote`.
+  public static func pushTag(
+    _ name: String, remote: String, root: String, onProgress: ((String) -> Void)? = nil
+  ) -> GitResult {
+    void(git(["push", "--progress", remote, "refs/tags/\(name)"], in: root, timeout: 600, onOutputLine: onProgress))
+  }
+
+  /// Push every local tag to `remote`.
+  public static func pushAllTags(
+    remote: String, root: String, onProgress: ((String) -> Void)? = nil
+  ) -> GitResult {
+    void(git(["push", "--progress", "--tags", remote], in: root, timeout: 600, onOutputLine: onProgress))
+  }
+
+  /// Delete a tag on `remote` (the local tag is left alone).
+  public static func deleteRemoteTag(_ name: String, remote: String, root: String) -> GitResult {
+    void(git(["push", remote, "--delete", "refs/tags/\(name)"], in: root, timeout: 600))
   }
 
   // MARK: - Operations in progress
@@ -491,6 +637,20 @@ public enum GitOperations {
 
   public static func reset(_ mode: ResetMode, to revision: String, root: String) -> GitResult {
     void(git(["reset", "--\(mode.rawValue)", revision], in: root))
+  }
+
+  /// Merge `revision` into the current branch (a fast-forward when
+  /// possible). Conflicts leave the merge open for Continue / Abort.
+  public static func merge(_ revision: String, noFastForward: Bool = false, root: String) -> GitResult {
+    var args = ["merge", "--no-edit"]
+    if noFastForward { args.append("--no-ff") }
+    return void(git(args + [revision], in: root, timeout: 600))
+  }
+
+  /// Replay the current branch's own commits on top of `revision`.
+  /// Conflicts leave the rebase open for Continue / Skip / Abort.
+  public static func rebase(onto revision: String, root: String) -> GitResult {
+    void(git(["rebase", revision], in: root, timeout: 600))
   }
 
   public static func cherryPick(_ revision: String, root: String) -> GitResult {

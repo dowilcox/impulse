@@ -22,6 +22,9 @@ final class GitRepositoryState {
   /// PullRequestMonitor).
   var pullRequest: PullRequestInfo?
 
+  /// When this repository last fetched (any fetch or pull from Impulse).
+  @ObservationIgnored var lastFetch: Date?
+  @ObservationIgnored private var refreshCallbacks: [(RepoSnapshot?) -> Void] = []
   @ObservationIgnored private var watcher: RepoWatcher?
   @ObservationIgnored private var refreshQueued = false
   @ObservationIgnored private var refreshInFlight = false
@@ -68,7 +71,33 @@ final class GitRepositoryState {
         if self.refreshQueued {
           self.refreshQueued = false
           self.refresh()
+        } else if !self.refreshCallbacks.isEmpty {
+          let callbacks = self.refreshCallbacks
+          self.refreshCallbacks = []
+          for callback in callbacks { callback(self.snapshot) }
         }
+      }
+    }
+  }
+
+  /// Run `callback` with the snapshot once the refresh in progress (or the
+  /// next one) finishes.
+  func afterNextRefresh(_ callback: @escaping (RepoSnapshot?) -> Void) {
+    refreshCallbacks.append(callback)
+    if !refreshInFlight { refresh() }
+  }
+
+  /// Fetch without telling anyone (background fetch): no activity bar, no
+  /// errors shown, no credential prompts. Skipped while another operation
+  /// runs or when there's no remote.
+  func fetchQuietly(timeout: TimeInterval = 120) {
+    guard activity == nil, snapshot?.upstream != nil else { return }
+    lastFetch = Date()
+    run { root in
+      GitOperations.fetch(root: root, timeout: timeout)
+    } completion: { result, _ in
+      if case .failure(let error) = result {
+        NSLog("Background fetch of %@ failed: %@", self.root, error.message)
       }
     }
   }

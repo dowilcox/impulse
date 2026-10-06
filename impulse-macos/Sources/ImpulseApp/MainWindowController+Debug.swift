@@ -47,6 +47,15 @@ extension MainWindowController {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("command=") {
+        runCommand(id: String(action.dropFirst(8)))
+      } else if action == "tag-sheet" {
+        createTagAtHead()
+      } else if action.hasPrefix("tag=") || action.hasPrefix("tag-push=") {
+        // Tag HEAD without the sheet (name[:message]); tag-push= pushes it too.
+        let push = action.hasPrefix("tag-push=")
+        let parts = action.drop { $0 != "=" }.dropFirst().split(separator: ":", maxSplits: 1).map(String.init)
+        repositoryActions()?.createTag(parts[0], message: parts.count > 1 ? parts[1] : nil, push: push)
       } else if action.hasPrefix("theme=") {
         // This window only; settings are left alone.
         handleThemeChange(ThemeManager.theme(forName: String(action.dropFirst(6))))
