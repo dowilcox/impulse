@@ -47,7 +47,7 @@ running in its terminals. Impulse itself never calls an AI service.
 
 **Editor and language servers**
 
-- Problems panel, outline, go to symbol in file or project, project-wide replace with a preview, and Markdown preview beside the editor with Run buttons on shell blocks.
+- Problems panel, go to symbol in file or project, project-wide replace with a preview, and Markdown preview beside the editor with Run buttons on shell blocks.
 - Language servers: cross-file renames and code actions applied across files with one Undo, commands and `codeAction/resolve`, `workspace/applyEdit`, document highlights, inlay hints (with a setting), type definition, implementation, server messages and progress. sourcekit-lsp serves Swift.
 - Requests no longer queue behind each other, and every server for a language sees opened documents.
 

@@ -111,6 +111,9 @@ extension Notification.Name {
     /// Posted by an EditorTab when the git peek widget asks to stage a hunk or
     /// open the review (userInfo: action, line).
     static let editorGitAction = Notification.Name("impulse.editorGitAction")
+    /// Run a palette command by id in the key window (menu items for
+    /// commands without a dedicated action; userInfo["id"]).
+    static let impulseRunCommand = Notification.Name("impulseRunCommand")
     static let editorCodeActionChosen = Notification.Name("impulse.editorCodeActionChosen")
     static let editorLspRequested = Notification.Name("impulse.editorLspRequested")
     /// Posted when a command block starts or ends in a terminal
@@ -140,7 +143,6 @@ extension Notification.Name {
     /// Requests showing the command palette.
     static let impulseShowCommandPalette = Notification.Name("impulseShowCommandPalette")
     /// Toggles the right dock in the frontmost window.
-    static let impulseToggleRightDock = Notification.Name("impulseToggleRightDock")
     /// A pane command (split, focus, zoom…); userInfo["command"] is its keybinding id.
     static let impulsePaneCommand = Notification.Name("impulsePaneCommand")
     /// The window switched workspaces (object: the TabManager).

@@ -12,6 +12,7 @@ extension MainWindowController {
   func performDebugAction(_ action: String) {
     switch action {
     case "sidebar": setSidebarVisible(true)
+    case "no-sidebar": setSidebarVisible(false)
     case "palette": showPalette(prefix: ">")
     case "quickopen": showPalette(prefix: "")
     case "quickopen-query": showPalette(prefix: "wbv")
@@ -79,8 +80,6 @@ extension MainWindowController {
             edits: [LSPTextEdit(startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 0, newText: "edited ")]),
         ])
         reportWorkspaceEdit(applyWorkspaceEdit(edit), verb: "Renamed")
-      } else if action == "outline" {
-        toggleRightDock()
       } else if action == "problems" {
         windowModel.problemsByPath = [
           (fileTreeRootPath as NSString).appendingPathComponent("search.swift"): [

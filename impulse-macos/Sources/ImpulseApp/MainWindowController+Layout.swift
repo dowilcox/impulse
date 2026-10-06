@@ -162,10 +162,6 @@ extension MainWindowController {
       }
     }
     windowModel.onRestoreAgentTurn = { [weak self] id, index in self?.restoreAgentTurn(terminalID: id, index: index) }
-    windowModel.onRefreshOutline = { [weak self] in self?.refreshOutline(force: true) }
-    windowModel.onOutlineSelect = { [weak self] symbol in
-      self?.paletteGoToLine(UInt32(symbol.line), column: UInt32(symbol.column))
-    }
     windowModel.onReplaceAll = { [weak self] in self?.replaceAllInProject() }
     windowModel.onOpenSettingsFile = { [weak self] in
       self?.openSettingsFile()
@@ -223,9 +219,6 @@ extension MainWindowController {
     }
     windowModel.onShowBranchSwitcher = { [weak self] in
       self?.showBranchSwitcher()
-    }
-    windowModel.onToggleRightDock = { [weak self] in
-      self?.toggleRightDock()
     }
     windowModel.onJoinTab = { [weak self] index, below in
       self?.tabManager.joinTab(at: index, axis: below ? .vertical : .horizontal)
@@ -295,7 +288,7 @@ extension MainWindowController {
       banner: WorkbenchHosting.make(WorkbenchBanner(model: windowModel), intrinsicHeight: true),
       statusBar: WorkbenchHosting.make(WorkbenchStatusBar(model: windowModel)),
       leftDockContent: WorkbenchHosting.make(LeftDockView(model: windowModel)),
-      rightDockContent: WorkbenchHosting.make(OutlineView(model: windowModel)),
+      rightDockContent: nil,
       bottomDockContent: nil
     )
     self.workbench = workbench

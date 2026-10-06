@@ -38,11 +38,6 @@ enum CommandRegistry {
 
     result += [
       AppCommand(
-        id: "toggle_right_dock", title: "Toggle Right Panel", category: "View",
-        keywords: ["dock", "panel", "review"], icon: .panelRight,
-        keybindingId: "toggle_right_dock"
-      ) { [weak controller] in controller?.toggleRightDock() },
-      AppCommand(
         id: "show_changes", title: "Show Changes", category: "Git",
         keywords: ["git", "stage", "commit", "status"], icon: .gitBranch,
         keybindingId: "show_changes"
@@ -79,18 +74,18 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.showPalette(prefix: "pr:") },
       AppCommand(
         id: "git_history", title: "Show Git History", category: "Git",
-        keywords: ["log", "commits", "graph", "blame"], icon: .history
+        keywords: ["log", "commits", "graph", "blame"], icon: .history, keybindingId: "git_history"
       ) { [weak controller] in controller?.showHistory() },
       AppCommand(
         id: "file_history", title: "Show History of This File", category: "Git",
-        keywords: ["log", "commits", "blame"], icon: .history
+        keywords: ["log", "commits", "blame"], icon: .history, keybindingId: "file_history"
       ) { [weak controller] in
         guard let controller else { return }
         controller.showHistory(path: controller.tabManager.selectedEditor?.filePath)
       },
       AppCommand(
         id: "new_task", title: "New Task…", category: "Workspaces",
-        keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus
+        keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus, keybindingId: "new_task"
       ) { [weak controller] in controller?.presentNewTaskSheet() },
       AppCommand(
         id: "archive_task", title: "Archive This Task…", category: "Workspaces",
@@ -101,7 +96,8 @@ enum CommandRegistry {
       },
       AppCommand(
         id: "review_agent_turn", title: "Review Last Agent Turn", category: "Agents",
-        keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff
+        keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff,
+        keybindingId: "review_agent_turn"
       ) { [weak controller] in controller?.reviewLastAgentTurn() },
       AppCommand(
         id: "send_selection_to_agent", title: "Send Selection to Agent", category: "Agents",
@@ -126,7 +122,8 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.togglePreviewBeside() },
       AppCommand(
         id: "diff_view", title: "Toggle Diff View", category: "Editor",
-        keywords: ["changes", "git", "compare", "staged", "side by side"], icon: .fileDiff
+        keywords: ["changes", "git", "compare", "staged", "side by side"], icon: .fileDiff,
+        keybindingId: "diff_view"
       ) { [weak controller] in controller?.toggleDiffView() },
       AppCommand(
         id: "go_to_symbol", title: "Go to Symbol in File…", category: "Editor",
@@ -134,11 +131,12 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.showPalette(prefix: "@") },
       AppCommand(
         id: "go_to_project_symbol", title: "Go to Symbol in Project…", category: "Editor",
-        keywords: ["workspace", "function", "class", "#"], icon: .code
+        keywords: ["workspace", "function", "class", "#"], icon: .code, keybindingId: "go_to_project_symbol"
       ) { [weak controller] in controller?.showPalette(prefix: "#") },
       AppCommand(
         id: "project_actions", title: "Run Project Action…", category: "Workspaces",
-        keywords: ["task", "script", "run", "project.toml", "a:"], icon: .play
+        keywords: ["task", "script", "run", "project.toml", "a:"], icon: .play,
+        keybindingId: "project_actions"
       ) { [weak controller] in controller?.showPalette(prefix: "a:") },
       AppCommand(
         id: "edit_project_config", title: "Edit Project Actions", category: "Workspaces",
@@ -146,7 +144,8 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.editProjectConfig() },
       AppCommand(
         id: "show_problems", title: "Show Problems", category: "Editor",
-        keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert
+        keywords: ["diagnostics", "errors", "warnings", "lint"], icon: .triangleAlert,
+        keybindingId: "show_problems"
       ) { [weak controller] in controller?.showProblems() },
       AppCommand(
         id: "quick_terminal", title: "Toggle Quick Terminal", category: "Terminal",
@@ -154,7 +153,8 @@ enum CommandRegistry {
       ) { QuickTerminal.shared.toggle() },
       AppCommand(
         id: "open_keybindings", title: "Keyboard Shortcuts", category: "Impulse",
-        keywords: ["keybindings", "shortcuts", "keys", "hotkeys"], icon: .keyboard
+        keywords: ["keybindings", "shortcuts", "keys", "hotkeys"], icon: .keyboard,
+        keybindingId: "open_keybindings"
       ) { [weak controller] in controller?.openKeybindings() },
       AppCommand(
         id: "open_settings_json", title: "Open settings.json", category: "Impulse",

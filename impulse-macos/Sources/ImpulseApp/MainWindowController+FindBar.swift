@@ -134,7 +134,6 @@ extension MainWindowController {
 
   /// Updates the status bar with information from the currently active tab.
   func updateStatusBar() {
-    refreshOutline()
     guard let tabInfo = tabManager.activeTabInfo else { return }
 
     if let shellName = tabInfo.shellName {

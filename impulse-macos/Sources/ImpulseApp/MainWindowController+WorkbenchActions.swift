@@ -14,6 +14,13 @@ extension MainWindowController {
 
   /// Open the palette with a mode prefix: "" files, ">" commands, ":" line,
   /// "%" text, "b:" branches, "t:" tabs.
+  /// Run the palette command `id` (menu items and keybindings that map to
+  /// a command rather than an action of their own).
+  func runCommand(id: String) {
+    CommandRegistry.commands(for: self, customKeybindings: settings.customKeybindings)
+      .first { $0.id == id }?.action()
+  }
+
   func showPalette(prefix: String) {
     guard let window else { return }
     let model = palette.model
@@ -25,8 +32,6 @@ extension MainWindowController {
     palette.show(in: window, prefix: prefix, palette: windowModel.palette)
   }
 
-  /// Show or hide the right dock. Until a panel is installed there it has
-  /// nothing to show, so this is a no-op beyond flipping the flag.
   /// Add the shells' own history files to Impulse's history.
   func importShellHistory() {
     CommandHistory.shared.importShellHistory { [weak self] count in
@@ -349,34 +354,6 @@ extension MainWindowController {
       {
         tabManager.resizeFocusedPane(toward: direction)
       }
-    }
-  }
-
-  func toggleRightDock() {
-    windowModel.rightDockVisible.toggle()
-    if windowModel.rightDockVisible { refreshOutline(force: true) }
-  }
-
-  /// Fetch the focused editor's symbols for the outline (when it shows).
-  /// Skips the request when the file hasn't changed unless forced.
-  func refreshOutline(force: Bool = false) {
-    guard windowModel.rightDockVisible else { return }
-    guard let editor = tabManager.selectedEditor, let path = editor.filePath else {
-      windowModel.outlineFile = nil
-      windowModel.outlineSymbols = []
-      windowModel.outlineState = .noEditor
-      return
-    }
-    guard force || path != windowModel.outlineFile || windowModel.outlineState != .ready else { return }
-    if path != windowModel.outlineFile {
-      windowModel.outlineSymbols = []
-      windowModel.outlineState = .loading
-    }
-    windowModel.outlineFile = path
-    documentSymbols(for: editor) { [weak self] symbols in
-      guard let self, self.windowModel.outlineFile == path else { return }
-      self.windowModel.outlineSymbols = symbols ?? []
-      self.windowModel.outlineState = symbols == nil ? .noServer : .ready
     }
   }
 }

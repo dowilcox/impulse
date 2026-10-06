@@ -272,19 +272,21 @@ extension MainWindowController {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .impulseRunCommand, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, self.window?.isKeyWindow == true,
+          let id = notification.userInfo?["id"] as? String
+        else { return }
+        self.runCommand(id: id)
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .impulsePaneCommand, object: nil, queue: .main) {
         [weak self] notification in
         guard let self, self.window?.isKeyWindow == true,
           let command = notification.userInfo?["command"] as? String
         else { return }
         self.performPaneCommand(command)
-      }
-    )
-    notificationObservers.append(
-      nc.addObserver(forName: .impulseToggleRightDock, object: nil, queue: .main) {
-        [weak self] _ in
-        guard let self, self.window?.isKeyWindow == true else { return }
-        self.toggleRightDock()
       }
     )
     notificationObservers.append(

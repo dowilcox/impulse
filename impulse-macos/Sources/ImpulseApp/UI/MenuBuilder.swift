@@ -23,6 +23,15 @@ enum MenuBuilder {
         return mainMenu
     }
 
+    /// A menu item that runs palette command `id`, with that keybinding.
+    private static func commandItem(_ title: String, id: String, overrides: [String: String]) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(MenuActions.menuRunCommand(_:)), keyEquivalent: "")
+        item.target = MenuActions.shared
+        item.representedObject = id
+        applyKeybinding(id, overrides: overrides, to: item)
+        return item
+    }
+
     private static func applyKeybinding(
         _ id: String,
         overrides: [String: String],
@@ -52,6 +61,7 @@ enum MenuBuilder {
                                    keyEquivalent: ",")
         applyKeybinding("open_settings", overrides: overrides, to: prefsItem)
         menu.addItem(prefsItem)
+        menu.addItem(commandItem("Keyboard Shortcuts…", id: "open_keybindings", overrides: overrides))
 
         menu.addItem(.separator())
 
@@ -127,6 +137,7 @@ enum MenuBuilder {
                                            keyEquivalent: "")
         openWorkspaceItem.target = MenuActions.shared
         menu.addItem(openWorkspaceItem)
+        menu.addItem(commandItem("New Task…", id: "new_task", overrides: overrides))
 
         let composerItem = NSMenuItem(title: "Compose Message to Agent",
                                       action: #selector(MenuActions.menuAgentComposer(_:)),
@@ -141,6 +152,7 @@ enum MenuBuilder {
         nextAgentItem.target = MenuActions.shared
         applyKeybinding("next_agent", overrides: overrides, to: nextAgentItem)
         menu.addItem(nextAgentItem)
+        menu.addItem(commandItem("Review Last Agent Turn", id: "review_agent_turn", overrides: overrides))
 
         let switchWorkspaceItem = NSMenuItem(title: "Switch Workspace…",
                                              action: #selector(MenuActions.menuSwitchWorkspace(_:)),
@@ -264,13 +276,6 @@ enum MenuBuilder {
         applyKeybinding("toggle_sidebar", overrides: overrides, to: sidebarItem)
         menu.addItem(sidebarItem)
 
-        let rightDockItem = NSMenuItem(title: "Toggle Right Panel",
-                                       action: #selector(MenuActions.menuToggleRightDock(_:)),
-                                       keyEquivalent: "b")
-        rightDockItem.target = MenuActions.shared
-        applyKeybinding("toggle_right_dock", overrides: overrides, to: rightDockItem)
-        menu.addItem(rightDockItem)
-
         menu.addItem(.separator())
 
         let commandPaletteItem = NSMenuItem(title: "Command Palette",
@@ -329,6 +334,15 @@ enum MenuBuilder {
         changesItem.target = MenuActions.shared
         applyKeybinding("show_changes", overrides: overrides, to: changesItem)
         menu.addItem(changesItem)
+        menu.addItem(commandItem("Show Git History", id: "git_history", overrides: overrides))
+        menu.addItem(commandItem("Show History of This File", id: "file_history", overrides: overrides))
+        menu.addItem(commandItem("Toggle Diff View", id: "diff_view", overrides: overrides))
+
+        menu.addItem(.separator())
+
+        menu.addItem(commandItem("Go to Symbol in Project…", id: "go_to_project_symbol", overrides: overrides))
+        menu.addItem(commandItem("Show Problems", id: "show_problems", overrides: overrides))
+        menu.addItem(commandItem("Run Project Action…", id: "project_actions", overrides: overrides))
 
         let markdownPreviewItem = NSMenuItem(title: "Toggle Markdown Preview",
                                              action: #selector(MenuActions.menuToggleMarkdownPreview(_:)),
@@ -613,14 +627,15 @@ final class MenuActions: NSObject {
         NotificationCenter.default.post(name: .impulseShowChanges, object: nil)
     }
 
-    @objc func menuToggleRightDock(_ sender: Any?) {
-        NotificationCenter.default.post(name: .impulseToggleRightDock, object: nil)
-    }
-
     @objc func menuBlockCommand(_ sender: NSMenuItem) {
         guard let command = sender.representedObject as? String else { return }
         NotificationCenter.default.post(
             name: .impulseBlockCommand, object: nil, userInfo: ["command": command])
+    }
+
+    @objc func menuRunCommand(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        NotificationCenter.default.post(name: .impulseRunCommand, object: nil, userInfo: ["id": id])
     }
 
     @objc func menuPaneCommand(_ sender: NSMenuItem) {

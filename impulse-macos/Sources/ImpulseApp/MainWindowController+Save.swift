@@ -73,7 +73,6 @@ extension MainWindowController {
   private func postSaveActions(editor: EditorTab, path: String) {
     tabManager.refreshSegmentLabels()
     lspDidSave(editor: editor)
-    if editor === tabManager.selectedEditor { refreshOutline(force: true) }
     applyGitDiffDecorations(editor: editor)
     // Direct git status refresh (skip the debounce — saves are explicit
     // user actions that warrant immediate feedback).

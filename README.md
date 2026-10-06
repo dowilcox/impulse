@@ -62,7 +62,7 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 **Editor**
 
 - Monaco with language servers: completions, hover, definitions, references, rename across files, code actions, inlay hints, highlights, formatting and diagnostics in a Problems panel
-- Outline, go to symbol, project-wide find and replace with a preview
+- Go to symbol in a file or the project, project-wide find and replace with a preview
 - Markdown and SVG preview beside the editor, with Run buttons on shell code blocks
 - Bundled JetBrains Mono for editor and terminal
 

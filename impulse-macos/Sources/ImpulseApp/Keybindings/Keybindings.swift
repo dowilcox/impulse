@@ -301,14 +301,6 @@ enum Keybindings {
             modifierFlags: [.command]
         ),
         BuiltinKeybinding(
-            id: "toggle_right_dock",
-            description: "Toggle Right Panel",
-            category: "Navigation",
-            defaultShortcut: "Cmd+Alt+B",
-            keyEquivalent: "b",
-            modifierFlags: [.command, .option]
-        ),
-        BuiltinKeybinding(
             id: "agent_composer",
             description: "Compose a Message to the Agent",
             category: "Terminal",
@@ -339,6 +331,78 @@ enum Keybindings {
             defaultShortcut: "Ctrl+Cmd+B",
             keyEquivalent: "b",
             modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "git_history",
+            description: "Show Git History",
+            category: "Git",
+            defaultShortcut: "Ctrl+Cmd+H",
+            keyEquivalent: "h",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "file_history",
+            description: "Show History of This File",
+            category: "Git",
+            defaultShortcut: "Ctrl+Shift+Cmd+H",
+            keyEquivalent: "H",
+            modifierFlags: [.control, .shift, .command]
+        ),
+        BuiltinKeybinding(
+            id: "diff_view",
+            description: "Toggle Diff View",
+            category: "Git",
+            defaultShortcut: "Alt+Cmd+G",
+            keyEquivalent: "g",
+            modifierFlags: [.option, .command]
+        ),
+        BuiltinKeybinding(
+            id: "show_problems",
+            description: "Show Problems",
+            category: "Editor",
+            defaultShortcut: "Ctrl+Cmd+M",
+            keyEquivalent: "m",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "go_to_project_symbol",
+            description: "Go to Symbol in Project",
+            category: "Navigation",
+            defaultShortcut: "Alt+Cmd+O",
+            keyEquivalent: "o",
+            modifierFlags: [.option, .command]
+        ),
+        BuiltinKeybinding(
+            id: "project_actions",
+            description: "Run Project Action",
+            category: "Navigation",
+            defaultShortcut: "Ctrl+Cmd+R",
+            keyEquivalent: "r",
+            modifierFlags: [.control, .command]
+        ),
+        BuiltinKeybinding(
+            id: "new_task",
+            description: "New Task",
+            category: "Navigation",
+            defaultShortcut: "Alt+Cmd+N",
+            keyEquivalent: "n",
+            modifierFlags: [.option, .command]
+        ),
+        BuiltinKeybinding(
+            id: "review_agent_turn",
+            description: "Review Last Agent Turn",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Shift+I",
+            keyEquivalent: "I",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
+            id: "open_keybindings",
+            description: "Keyboard Shortcuts",
+            category: "Navigation",
+            defaultShortcut: "Alt+Cmd+,",
+            keyEquivalent: ",",
+            modifierFlags: [.option, .command]
         ),
         BuiltinKeybinding(
             id: "manage_branches",

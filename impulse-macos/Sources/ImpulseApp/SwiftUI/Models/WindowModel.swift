@@ -351,13 +351,6 @@ final class WindowModel {
   var onSendInterrupt: (() -> Void)?
   /// Move keyboard focus into the terminal grid (Esc from the input bar).
   var onFocusTerminal: (() -> Void)?
-  /// The right dock's outline of the focused file.
-  enum OutlineState { case idle, noEditor, loading, noServer, ready }
-  var outlineState: OutlineState = .idle
-  var outlineSymbols: [OutlineSymbol] = []
-  var outlineFile: String?
-  var onOutlineSelect: ((OutlineSymbol) -> Void)?
-  var onRefreshOutline: (() -> Void)?
   /// Language-server diagnostics by file (Problems panel, status bar).
   var problemsByPath: [String: [Problem]] = [:] {
     didSet { problemCounts = Problems.counts(problemsByPath.values.flatMap { $0 }) }
@@ -396,7 +389,6 @@ final class WindowModel {
   var onShowCommandPalette: (() -> Void)?
   /// Open the branch switcher (palette in branch mode).
   var onShowBranchSwitcher: (() -> Void)?
-  var onToggleRightDock: (() -> Void)?
   /// Move tab `index`'s surfaces into the selected tab (below when true).
   var onJoinTab: ((Int, Bool) -> Void)?
   /// Run a pane command by keybinding id ("split_right", "zoom_pane", …).
