@@ -1,15 +1,25 @@
 # Impulse shell integration for bash
 __impulse_command_started=""
+# Set while PROMPT_COMMAND runs: the DEBUG trap fires for its entries
+# (history -a, direnv, starship…) too, and those aren't commands.
+__impulse_in_prompt=""
 __impulse_names_sent=""
 __impulse_path_sent=""
 __impulse_urlencode() {
-    local string="$1" i c
+    # Byte by byte in the C locale, so non-ASCII text is sent as its UTF-8
+    # bytes (bash 3.2 reports bytes above 0x7F as negative numbers).
+    local LC_ALL=C
+    local string="$1" i c v
     local encoded=""
     for (( i=0; i<${#string}; i++ )); do
         c="${string:$i:1}"
         case "$c" in
             [a-zA-Z0-9._~/-]) encoded+="$c" ;;
-            *) printf -v encoded "%s%%%02X" "$encoded" "'$c" ;;
+            *)
+                printf -v v '%d' "'$c"
+                (( v < 0 )) && (( v += 256 ))
+                printf -v encoded '%s%%%02X' "$encoded" "$v"
+                ;;
         esac
     done
     printf '%s' "$encoded"
@@ -32,6 +42,12 @@ __impulse_report_names() {
 }
 __impulse_prompt_command() {
     local exit_code=$?
+    __impulse_in_prompt=1
+    # Keep the end marker last, after anything added to PROMPT_COMMAND since.
+    case "$PROMPT_COMMAND" in
+        *__impulse_prompt_end) ;;
+        *) PROMPT_COMMAND="${PROMPT_COMMAND//;__impulse_prompt_end/};__impulse_prompt_end" ;;
+    esac
     if [ -n "$__impulse_command_started" ]; then
         printf '\e]133;D;%d\a' "$exit_code"
         __impulse_command_started=""
@@ -40,10 +56,14 @@ __impulse_prompt_command() {
     __impulse_report_names
     printf '\e]133;A\a'
 }
+__impulse_prompt_end() {
+    __impulse_in_prompt=""
+}
 __impulse_preexec() {
     local command="$1"
+    [ -n "$__impulse_in_prompt" ] && return
     case "$command" in
-        __impulse_prompt_command*|__impulse_preexec*) return ;;
+        __impulse_prompt_command*|__impulse_prompt_end*|__impulse_preexec*) return ;;
     esac
     if [ -n "$__impulse_command_started" ]; then
         return
@@ -56,7 +76,7 @@ __impulse_preexec() {
     printf '\e]133;C\a'
 }
 if [[ ! "$PROMPT_COMMAND" == *"__impulse_prompt_command"* ]]; then
-    PROMPT_COMMAND="__impulse_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+    PROMPT_COMMAND="__impulse_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND};__impulse_prompt_end"
 fi
 __impulse_orig_debug_trap=$(trap -p DEBUG | sed "s/trap -- '\\(.*\\)' DEBUG/\\1/")
 trap '__impulse_preexec "$BASH_COMMAND"; eval "$__impulse_orig_debug_trap"' DEBUG

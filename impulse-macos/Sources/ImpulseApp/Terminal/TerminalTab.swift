@@ -1207,6 +1207,17 @@ class TerminalTab: NSView {
     backend?.transcript(maxRows: maxRows)
   }
 
+  /// The system locale as a UTF-8 locale name ("en_GB.UTF-8"), if the C
+  /// library has it, else en_US.UTF-8.
+  static let utf8Locale: String = {
+    let locale = Locale.current
+    if let language = locale.language.languageCode?.identifier, let region = locale.region?.identifier {
+      let name = "\(language)_\(region).UTF-8"
+      if FileManager.default.fileExists(atPath: "/usr/share/locale/\(name)") { return name }
+    }
+    return "en_US.UTF-8"
+  }()
+
   /// The shell reports commands (OSC 133), so Impulse can see what ran.
   private(set) var hasShellIntegration = false
   /// Started with a previous session's output above the prompt.
@@ -1266,6 +1277,12 @@ class TerminalTab: NSView {
       // Impulse launched from another Impulse terminal: use our own.
       if key.hasPrefix("IMPULSE_") { continue }
       envDict[key] = value
+    }
+    // Apps launched from the Dock get no locale, so programs would run in
+    // the C locale (`ls` shows "Caf??", tmux draws "_" for wide characters).
+    // Like other terminals, set a UTF-8 one unless the user has.
+    if envDict["LANG"] == nil, envDict["LC_ALL"] == nil, envDict["LC_CTYPE"] == nil {
+      envDict["LANG"] = Self.utf8Locale
     }
     // `impulse` on PATH inside Impulse terminals.
     if let cli = Self.cliPath {
@@ -1334,13 +1351,19 @@ class TerminalTab: NSView {
       }
     } else if shellType == "bash" {
       if let script = shellIntegrationScript(forShell: shellType) {
-        let home = NSHomeDirectory()
         let rcPath = FileManager.default.temporaryDirectory
           .appendingPathComponent(
             "impulse-bash-rc-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
+        // `--rcfile` makes bash non-login, so read what a login shell would
+        // (as Terminal does): the system profile (path_helper, so Homebrew
+        // and /usr/local are on PATH), then the first of the user's login
+        // files — or .bashrc when there are none.
         let rcContent = """
-          if [ -f '\(home)/.bashrc' ]; then
-              source '\(home)/.bashrc'
+          [ -f /etc/profile ] && source /etc/profile
+          if [ -f "$HOME/.bash_profile" ]; then source "$HOME/.bash_profile"
+          elif [ -f "$HOME/.bash_login" ]; then source "$HOME/.bash_login"
+          elif [ -f "$HOME/.profile" ]; then source "$HOME/.profile"
+          elif [ -f "$HOME/.bashrc" ]; then source "$HOME/.bashrc"
           fi
           \(script)
           """

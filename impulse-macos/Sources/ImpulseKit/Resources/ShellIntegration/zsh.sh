@@ -4,13 +4,22 @@ __impulse_command_started=""
 __impulse_names_sig=""
 __impulse_path_sent=""
 __impulse_urlencode() {
-    local string="$1" i c
+    # Byte by byte, so non-ASCII text is sent as its UTF-8 bytes rather than
+    # as code points.
+    emulate -L zsh
+    setopt no_multibyte
+    local LC_ALL=C
+    local string="$1" i c v
     local encoded=""
     for (( i=0; i<${#string}; i++ )); do
         c="${string:$i:1}"
         case "$c" in
             [a-zA-Z0-9._~/-]) encoded+="$c" ;;
-            *) printf -v encoded "%s%%%02X" "$encoded" "'$c" ;;
+            *)
+                printf -v v '%d' "'$c"
+                (( v < 0 )) && (( v += 256 ))
+                printf -v encoded '%s%%%02X' "$encoded" "$v"
+                ;;
         esac
     done
     printf '%s' "$encoded"
