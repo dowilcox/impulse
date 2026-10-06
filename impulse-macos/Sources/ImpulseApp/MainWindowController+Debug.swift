@@ -68,6 +68,8 @@ extension MainWindowController {
         {
           view.model.filter = String(action.dropFirst(15))
         }
+      } else if action.hasPrefix("history-scroll="), let y = Double(action.dropFirst(15)) {
+        for case .history(_, let view) in tabManager.allSurfaces { view.debugScrollChanges(toY: y) }
       } else if action.hasPrefix("history="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self, reveal: String(action.dropFirst(8)))
       } else if action.hasPrefix("replace="), let colon = action.firstIndex(of: ":") {

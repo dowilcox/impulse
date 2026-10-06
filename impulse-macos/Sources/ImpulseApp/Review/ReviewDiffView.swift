@@ -151,7 +151,9 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     scrollView.backgroundColor = context.colors.page
     scrollView.scrollerStyle = .overlay
     scrollView.automaticallyAdjustsContentInsets = false
-    scrollView.contentInsets = NSEdgeInsets(top: 10, left: 0, bottom: 240, right: 0)
+    // No top inset: floating headers pin to the inset edge, and content
+    // would show through the gap above them (`.pageTop` pads instead).
+    scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 240, right: 0)
     scrollView.contentView.postsBoundsChangedNotifications = true
     NotificationCenter.default.addObserver(
       self, selector: #selector(boundsChanged), name: NSView.boundsDidChangeNotification,
@@ -175,7 +177,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   /// Show `newRows`, keeping the row at the top of the view where it was.
   func reload(_ newRows: [ReviewRow]) {
     let anchor = topAnchor()
-    rows = newRows
+    rows = newRows.isEmpty ? [] : [.pageTop] + newRows
     heights = []
     tableView.reloadData()
     if let anchor { restore(anchor) }
@@ -229,7 +231,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     scroll(toY: rect.minY - headerRoom - scrollView.contentView.contentInsets.top)
   }
 
-  private func scroll(toY y: CGFloat) {
+  func scroll(toY y: CGFloat) {
     let clip = scrollView.contentView
     let maxY = max(-clip.contentInsets.top, tableView.frame.height - clip.bounds.height + clip.contentInsets.bottom)
     let target = min(max(y, -clip.contentInsets.top), maxY)
@@ -241,7 +243,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     let visible = tableView.visibleRect
     let top = visible.minY + scrollView.contentView.contentInsets.top
     let index = tableView.row(at: NSPoint(x: 1, y: top + ReviewMetrics.fileHeaderHeight + 2))
-    let path = rows.indices.contains(index) ? rows[index].path : rows.first?.path
+    let path = rows.indices.contains(index) && rows[index] != .pageTop ? rows[index].path : rows.dropFirst().first?.path
     if path != lastTopPath {
       lastTopPath = path
       context.handler?.reviewTopFileChanged(path)
@@ -281,6 +283,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     switch row {
     case .fileHeader: return ReviewMetrics.fileHeaderHeight
     case .fileEnd: return ReviewMetrics.fileEndHeight
+    case .pageTop: return ReviewMetrics.pageTopHeight
     case .notice: return ReviewMetrics.noticeHeight
     case .outdatedTitle: return ReviewMetrics.outdatedTitleHeight
     case .hunkHeader: return ReviewMetrics.hunkHeaderHeight
@@ -338,7 +341,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
       view.identifier = DiffLineCellView.identifier
       view.configure(row: item, context: context)
       return view
-    case .fileEnd:
+    case .fileEnd, .pageTop:
       return nil
     default:
       if case .notice(let path, .loading) = item { context.handler?.reviewNeedsDiff(path) }
@@ -426,6 +429,8 @@ final class ReviewRowView: NSTableRowView {
         colors.border.setFill()
         NSRect(x: card.minX, y: isFlipped ? card.maxY - 1 : card.minY, width: card.width, height: 1).fill()
       }
+    case .pageTop:
+      return
     case .fileEnd(let path):
       guard context.files[path]?.expanded ?? false else { return }
       card.size.height = 6

@@ -89,6 +89,10 @@ enum ReviewRow: Hashable {
   case composer(String)
   /// The bottom edge of a file's card and the gap below it.
   case fileEnd(String)
+  /// Space above the first card. A row rather than a scroll inset, so a
+  /// file's floating header pins flush to the top and nothing scrolls by
+  /// above it.
+  case pageTop
 
   var path: String {
     switch self {
@@ -96,6 +100,8 @@ enum ReviewRow: Hashable {
       .hunkHeader(let p, _), .line(let p, _, _), .split(let p, _, _, _), .composer(let p),
       .fileEnd(let p):
       return p
+    case .pageTop:
+      return ""
     }
   }
 
@@ -234,6 +240,7 @@ struct ReviewMetrics {
   static let composerHeight: CGFloat = 136
   static let editingCommentHeight: CGFloat = 132
   static let fileEndHeight: CGFloat = 12
+  static let pageTopHeight: CGFloat = 10
   /// Comments sit indented under the gutters.
   static func commentIndent(_ layout: ReviewLayout) -> CGFloat { layout == .split ? 64 : 100 }
 

@@ -403,6 +403,11 @@ final class HistorySurface: NSView {
     window?.makeFirstResponder(listHost)
   }
 
+  /// Snapshot checks: scroll the selected commit's changes.
+  func debugScrollChanges(toY y: Double) {
+    review.debugAction("scroll=\(y)")
+  }
+
   /// Select a commit (e.g. from blame) and show its changes.
   func reveal(sha: String) {
     model.show(sha)

@@ -891,8 +891,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   /// `keys=<chars>` types review keys; `select=<path>:<hunk>:<from>-<to>`
   /// selects lines; `comment=<text>` comments on the focused hunk;
-  /// `reveal=<path>` scrolls to a file; `composer` opens one; `edit` edits
-  /// the first comment.
+  /// `reveal=<path>` scrolls to a file; `scroll=<y>` to a point; `composer`
+  /// opens one; `edit` edits the first comment.
   func debugAction(_ action: String) {
     if action.hasPrefix("keys=") {
       for char in action.dropFirst(5) {
@@ -915,6 +915,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     } else if action.hasPrefix("comment="), let focus = diffContext.focus {
       reviewOpenComposer(path: focus.path, hunk: focus.hunk, line: nil)
       reviewSaveComposer(path: focus.path, text: String(action.dropFirst(8)))
+    } else if action.hasPrefix("scroll="), let y = Double(action.dropFirst(7)) {
+      diffList.scroll(toY: y)
     } else if action.hasPrefix("reveal=") {
       revealFile(String(action.dropFirst(7)))
     } else if action == "edit", let comment = files.lazy.flatMap(\.comments).first {
