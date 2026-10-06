@@ -1058,11 +1058,28 @@ final class TabManager: NSObject {
       activateWorkspace(existing.id)
       return existing
     }
+    // The window's untouched starting terminal makes way for the folder.
+    let placeholder = pristineScratch
     let workspace = Workspace(kind: .folder, root: root)
     addWorkspace(workspace)
     RecentWorkspaces.note(root)
     activateWorkspace(workspace.id, initialCommand: initialCommand)
+    if let placeholder, activeWorkspaceID == workspace.id {
+      closeWorkspace(placeholder.id, recordForUndo: false)
+    }
     return workspace
+  }
+
+  /// The Scratch workspace when it's only the window's untouched starting
+  /// terminal: one tab, one pane, nothing run or running, not renamed. It
+  /// comes back on its own when the last folder workspace closes.
+  private var pristineScratch: Workspace? {
+    guard let scratch = scratchWorkspace, scratch.customName == nil else { return nil }
+    let indices = tabIndices(inWorkspace: scratch.id)
+    guard indices.count == 1, case .terminal(let container) = records[indices[0]].entry,
+      container.terminals.count == 1, container.terminals[0].isPristine
+    else { return nil }
+    return scratch
   }
 
   /// Add a workspace without showing it (session restore).
@@ -1072,13 +1089,17 @@ final class TabManager: NSObject {
     syncToWindowModel()
   }
 
-  /// Close a workspace and every tab in it (callers confirm first). The
-  /// last workspace stays, with a fresh terminal.
-  func closeWorkspace(_ id: UUID) {
+  /// Close a workspace and every tab in it (callers confirm first). Closing
+  /// the last folder workspace goes back to Scratch; the last Scratch stays,
+  /// with a fresh terminal. Without `recordForUndo` the tabs are dropped
+  /// quietly (no Undo Close).
+  func closeWorkspace(_ id: UUID, recordForUndo: Bool = true) {
     guard workspace(id) != nil else { return }
     for index in tabIndices(inWorkspace: id).reversed() {
       let record = records[index]
-      recordClosedTab(record.entry, pinned: record.pinned, workspaceID: record.workspaceID)
+      if recordForUndo {
+        recordClosedTab(record.entry, pinned: record.pinned, workspaceID: record.workspaceID)
+      }
       cleanupTab(record.entry)
       untrack(record.entry)
       if index == selectedIndex {
@@ -1088,6 +1109,9 @@ final class TabManager: NSObject {
         selectedIndex -= 1
       }
       records.remove(at: index)
+    }
+    if workspaces.count == 1, workspace(id)?.kind == .folder {
+      ensureScratchWorkspace()
     }
     if workspaces.count > 1 {
       removeWorkspace(id)

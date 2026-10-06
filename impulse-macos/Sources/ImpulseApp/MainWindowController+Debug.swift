@@ -43,6 +43,8 @@ extension MainWindowController {
         let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
         tabManager.openWorkspace(
           folder: relative.hasPrefix("/") ? relative : (base as NSString).appendingPathComponent(relative))
+      } else if action == "close-workspace" {
+        tabManager.closeWorkspace(tabManager.activeWorkspaceID)
       } else if action == "expand-workspaces" {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)

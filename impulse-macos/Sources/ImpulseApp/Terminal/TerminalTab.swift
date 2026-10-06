@@ -1195,6 +1195,23 @@ class TerminalTab: NSView {
     backend?.transcript(maxRows: maxRows)
   }
 
+  /// The shell reports commands (OSC 133), so Impulse can see what ran.
+  private(set) var hasShellIntegration = false
+  /// Started with a previous session's output above the prompt.
+  private(set) var startedWithRestoredOutput = false
+
+  /// Nothing has happened here yet: no command run (or running), nothing
+  /// typed in the input bar, no agent, no output from a previous session.
+  /// Without shell integration Impulse can't see commands, so it's never
+  /// pristine.
+  var isPristine: Bool {
+    guard hasShellIntegration, !startedWithRestoredOutput, agent == nil,
+      inputDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      let backend, !backend.isShutdown
+    else { return false }
+    return backend.commandBlocks().isEmpty
+  }
+
   /// Start the shell. `restoredTranscript` (a previous session's output) is
   /// shown first, under a dim "restored" rule.
   func spawnShell(
@@ -1254,6 +1271,9 @@ class TerminalTab: NSView {
 
     // Add shell integration (OSC 7 CWD tracking, OSC 133 command boundaries).
     let shellType = shellName.lowercased()
+    hasShellIntegration =
+      ["fish", "zsh", "bash"].contains(shellType) && shellIntegrationScript(forShell: shellType) != nil
+    startedWithRestoredOutput = !(restoredTranscript ?? "").isEmpty
     if shellType == "fish" {
       if let script = shellIntegrationScript(forShell: shellType) {
         args.append(contentsOf: ["--login", "--init-command", script])
