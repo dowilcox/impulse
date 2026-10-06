@@ -40,10 +40,13 @@ struct ChromeBarView: View {
         model.sidebarVisible.toggle()
       }
       WorkspaceBreadcrumb(model: model)
-      Spacer(minLength: 0)
+      // Over the sidebar, fill its width so tabs start at the content column;
+      // without it, hug the breadcrumb so the tabs follow right after it.
+      if model.sidebarVisible { Spacer(minLength: 0) }
     }
     .padding(.trailing, 8)
     .frame(width: leadingWidth, alignment: .leading)
+    .fixedSize(horizontal: !model.sidebarVisible, vertical: false)
   }
 
   private var leadingWidth: CGFloat? {
@@ -64,11 +67,6 @@ struct ChromeBarView: View {
           added: model.reviewAddedLines,
           removed: model.reviewRemovedLines
         ) { model.onOpenDiffReview?() }
-      }
-      ChromeIconButton(
-        icon: .panelRight, help: "Toggle Right Panel (⌥⌘B)", isActive: model.rightDockVisible
-      ) {
-        model.onToggleRightDock?()
       }
     }
     .padding(.horizontal, 8)
