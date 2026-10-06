@@ -29,6 +29,8 @@ final class ControlServer {
       : NSTemporaryDirectory() + "impulse-\(getpid()).sock"
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return }
+    // Shells started later mustn't inherit the listener (or clients).
+    _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
     var address = sockaddr_un()
     address.sun_family = sa_family_t(AF_UNIX)
     let bytes = Array(path.utf8)
@@ -76,6 +78,7 @@ final class ControlServer {
     while true {
       let client = accept(listener, nil, nil)
       guard client >= 0 else { return }
+      _ = fcntl(client, F_SETFD, FD_CLOEXEC)
       // Only the same user can connect (the socket is 0600), but check the
       // peer anyway.
       var uid: uid_t = 0

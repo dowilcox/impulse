@@ -72,6 +72,12 @@ extension MainWindowController {
         reply(ControlResponse(ok: true))
       }
 
+    case "split", "tab" where terminal == nil:
+      // These start commands, which then run as Impulse (with whatever
+      // privacy access it has), so only a pane's own token may ask — not
+      // any process that can reach the socket.
+      reply(ControlResponse(ok: false, message: "Run this inside an Impulse terminal."))
+
     case "split":
       if let terminal, let location = tabManager.location(ofTerminal: terminal) {
         tabManager.reveal(location)
