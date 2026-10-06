@@ -545,6 +545,8 @@ class TerminalRenderer: NSView {
     private var lastCursorRow: Int = -1
     private var colorCache: [UInt32: CGColor] = [:]
     private var textLineCache: [UInt64: CTLine] = [:]
+    /// Lines for grapheme clusters (a base with combining marks), by color, style and text.
+    private var clusterLineCache: [String: CTLine] = [:]
     private let activeRefreshInterval: TimeInterval = 1.0 / 60.0
     /// After this long without output, stop polling at display rate and wait
     /// for the backend's wakeup.
@@ -1205,6 +1207,7 @@ class TerminalRenderer: NSView {
         // 5. Draw text using run-based rendering.
         // In a flipped NSView, CoreGraphics text still renders Y-up.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        let cellExtras = grid.extras()
 
         for row in drawRows {
             if frameCollapsedRows.contains(row) { continue }
@@ -1254,6 +1257,9 @@ class TerminalRenderer: NSView {
                 let isBoxDrawing = codepoint >= 0x2500 && codepoint <= 0x257F
                 let isBlockElement = codepoint >= 0x2580 && codepoint <= 0x259F
                 let isWideChar = flags & GridBufferReader.flagWideChar != 0
+                // Combining accents and variation selectors draw with their
+                // base character, alone, so the run's positions stay put.
+                let zeroWidth = cellExtras.isEmpty ? nil : cellExtras[row * cols + col]?.zeroWidth
 
                 // Bold-is-bright: if bold and the foreground matches one of
                 // the 8 normal ANSI palette colors, substitute with the bright
@@ -1273,7 +1279,7 @@ class TerminalRenderer: NSView {
                 let styleChanged = hasRun && (fgR != runFgR || fgG != runFgG || fgB != runFgB
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
 
-                if (styleChanged || isBoxDrawing || isBlockElement || isWideChar)
+                if (styleChanged || isBoxDrawing || isBlockElement || isWideChar || zeroWidth != nil)
                     && hasRun && !runString.isEmpty {
                     drawTextRun(
                         context: context, text: runString, col: runStartCol, rowY: rowY,
@@ -1282,6 +1288,15 @@ class TerminalRenderer: NSView {
                     )
                     runString = ""
                     hasRun = false
+                }
+
+                if let zeroWidth {
+                    // A base character with combining marks: one cluster in
+                    // its own cell(s).
+                    drawCluster(
+                        context: context, text: String(scalar) + zeroWidth, col: col, cells: isWideChar ? 2 : 1,
+                        rowY: rowY, fgR: fgR, fgG: fgG, fgB: fgB, bold: isBold, italic: isItalic, dim: isDim)
+                    continue
                 }
 
                 if isWideChar {
@@ -1363,13 +1378,16 @@ class TerminalRenderer: NSView {
                 let cellX = padding + CGFloat(col) * cw
                 let cellWidth = (flags & GridBufferReader.flagWideChar != 0) ? cw * 2 : cw
 
-                if flags & GridBufferReader.flagUnderline != 0 {
-                    context.setStrokeColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha))
-                    context.setLineWidth(1)
-                    let underlineY = rowY + fontMetrics.ascent + fontMetrics.descent - 1
-                    context.move(to: CGPoint(x: cellX, y: underlineY))
-                    context.addLine(to: CGPoint(x: cellX + cellWidth, y: underlineY))
-                    context.strokePath()
+                if flags & GridBufferReader.anyUnderline != 0 {
+                    // SGR 58 colors the underline; otherwise it follows the text.
+                    if let color = cellExtras[row * cols + col]?.underlineColor {
+                        context.setStrokeColor(cachedColor(red: color.r, green: color.g, blue: color.b, alpha: alpha))
+                    } else {
+                        context.setStrokeColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha))
+                    }
+                    drawUnderline(
+                        context: context, flags: flags, x: cellX, width: cellWidth,
+                        y: rowY + fontMetrics.ascent + fontMetrics.descent - 1, rowBottom: rowY + ch)
                 }
 
                 if flags & GridBufferReader.flagStrikethrough != 0 {
@@ -2222,6 +2240,48 @@ class TerminalRenderer: NSView {
     /// Draw a run of text at the given grid position using CoreText.
     /// Each glyph is forced to advance by exactly cellWidth so text aligns
     /// perfectly with the grid (cursor, selection, background fills).
+    /// One cell's underline in its style (SGR 4:1–4:5); the stroke color is
+    /// already set.
+    private func drawUnderline(
+        context: CGContext, flags: UInt16, x: CGFloat, width: CGFloat, y: CGFloat, rowBottom: CGFloat
+    ) {
+        let y = min(y, rowBottom - 1.5)
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineWidth(1)
+        if flags & GridBufferReader.flagUndercurl != 0 {
+            // A wave a couple of points tall, continuous across cells.
+            let amplitude: CGFloat = 1.25
+            let wavelength: CGFloat = 4
+            let start = (x / wavelength).rounded(.down) * wavelength
+            context.clip(to: CGRect(x: x, y: y - amplitude - 1, width: width, height: amplitude * 2 + 2))
+            context.move(to: CGPoint(x: start, y: y))
+            var px = start
+            var up = true
+            while px < x + width {
+                context.addQuadCurve(
+                    to: CGPoint(x: px + wavelength / 2, y: y),
+                    control: CGPoint(x: px + wavelength / 4, y: up ? y - amplitude * 2 : y + amplitude * 2))
+                px += wavelength / 2
+                up.toggle()
+            }
+            context.strokePath()
+            return
+        }
+        if flags & GridBufferReader.flagDottedUnderline != 0 {
+            context.setLineDash(phase: x.truncatingRemainder(dividingBy: 3), lengths: [1, 2])
+        } else if flags & GridBufferReader.flagDashedUnderline != 0 {
+            context.setLineDash(phase: x.truncatingRemainder(dividingBy: 6), lengths: [4, 2])
+        }
+        context.move(to: CGPoint(x: x, y: y))
+        context.addLine(to: CGPoint(x: x + width, y: y))
+        if flags & GridBufferReader.flagDoubleUnderline != 0 {
+            context.move(to: CGPoint(x: x, y: y - 2))
+            context.addLine(to: CGPoint(x: x + width, y: y - 2))
+        }
+        context.strokePath()
+    }
+
     private func drawTextRun(
         context: CGContext, text: String, col: Int, rowY: CGFloat,
         fgR: UInt8, fgG: UInt8, fgB: UInt8,
@@ -2254,6 +2314,47 @@ class TerminalRenderer: NSView {
             CTLineDraw(line, context)
             charCol += 1
         }
+    }
+
+    /// A grapheme cluster (base + zero-width characters) laid out by
+    /// CoreText as one line, so marks attach to their base.
+    private func drawCluster(
+        context: CGContext, text: String, col: Int, cells: Int, rowY: CGFloat,
+        fgR: UInt8, fgG: UInt8, fgB: UInt8, bold: Bool, italic: Bool, dim: Bool
+    ) {
+        let alpha: CGFloat = dim ? 0.5 : 1.0
+        let alphaByte = UInt8(clamping: Int((alpha * 255).rounded()))
+        let key = "\(colorKey(red: fgR, green: fgG, blue: fgB, alphaByte: alphaByte))|\(fontStyleKey(bold: bold, italic: italic))|\(text)"
+        let line: CTLine
+        if let cached = clusterLineCache[key] {
+            line = cached
+        } else {
+            if clusterLineCache.count > 1024 { clusterLineCache.removeAll(keepingCapacity: true) }
+            let attrs: [CFString: Any] = [
+                kCTFontAttributeName: fontForStyle(bold: bold, italic: italic),
+                kCTForegroundColorAttributeName: cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha),
+            ]
+            line = CTLineCreateWithAttributedString(
+                CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!)
+            clusterLineCache[key] = line
+        }
+        let x = padding + CGFloat(col) * fontMetrics.cellWidth
+        let available = CGFloat(cells) * fontMetrics.cellWidth
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        if width > available + 0.5 {
+            // An emoji presentation (U+FE0F) the grid counts as one cell:
+            // shrink it into its cells rather than cover the next one.
+            let scale = available / width
+            context.saveGState()
+            context.translateBy(x: x, y: rowY + fontMetrics.ascent - (1 - scale) * fontMetrics.ascent / 2)
+            context.scaleBy(x: scale, y: scale)
+            context.textPosition = .zero
+            CTLineDraw(line, context)
+            context.restoreGState()
+            return
+        }
+        context.textPosition = CGPoint(x: x, y: rowY + fontMetrics.ascent)
+        CTLineDraw(line, context)
     }
 
     private func cachedTextLine(
@@ -2302,6 +2403,7 @@ class TerminalRenderer: NSView {
 
     private func cacheFontVariants() {
         textLineCache.removeAll(keepingCapacity: true)
+        clusterLineCache.removeAll(keepingCapacity: true)
 
         let base = fontMetrics.font
         let size = CTFontGetSize(base)

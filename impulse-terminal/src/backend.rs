@@ -1500,7 +1500,8 @@ impl TerminalBackend {
             );
         }
 
-        // Fill from display iterator.
+        // Fill from display iterator, collecting what doesn't fit a cell.
+        let mut extras: Vec<(u32, u8, Vec<u8>)> = Vec::new();
         for indexed in content.display_iter {
             let row_i32 = indexed.point.line.0 + display_offset;
             let col = indexed.point.column.0;
@@ -1518,10 +1519,24 @@ impl TerminalBackend {
                     flags |= CellFlags::HYPERLINK;
                 }
                 buffer::write_cell(buf, offset, indexed.cell.c, fg, bg, flags);
+                let index = (row * num_cols + col) as u32;
+                if let Some(chars) = indexed.cell.zerowidth() {
+                    let text: String = chars.iter().take(8).collect();
+                    extras.push((index, buffer::EXTRA_ZERO_WIDTH, text.into_bytes()));
+                }
+                if let Some(color) = indexed.cell.underline_color() {
+                    let rgb = self.colors.resolve(color, term_colors);
+                    extras.push((
+                        index,
+                        buffer::EXTRA_UNDERLINE_COLOR,
+                        vec![rgb.r, rgb.g, rgb.b],
+                    ));
+                }
             }
         }
 
-        required
+        let cells_end = cell_offset + num_cols * num_lines * buffer::CELL_STRIDE;
+        buffer::write_extras(buf, cells_end, &extras).max(required)
     }
 
     /// Calculate the buffer size needed for a grid snapshot.
@@ -1538,6 +1553,7 @@ impl TerminalBackend {
         // queries, so reserve the viewport worst case.
         let search_ranges = cols.saturating_mul(lines);
         buffer::buffer_size(cols, lines, lines, search_ranges)
+            + buffer::extras_capacity(cols, lines)
     }
 
     /// Take the damage accumulated since the last call and reset tracking.

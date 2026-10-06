@@ -386,6 +386,43 @@ struct GridBufferReader {
         )
     }
 
+    /// What a cell carries beyond its 12 bytes: zero-width characters drawn
+    /// with it (combining accents, variation selectors) and an underline
+    /// color (SGR 58).
+    struct CellExtras {
+        var zeroWidth: String?
+        var underlineColor: (r: UInt8, g: UInt8, b: UInt8)?
+    }
+
+    /// The extras table after the cells, by cell index (row * cols + col).
+    func extras() -> [Int: CellExtras] {
+        var offset = cellDataOffset + cols * lines * Self.cellStride
+        guard size >= offset + 4 else { return [:] }
+        let count = Int(readU32(at: offset))
+        offset += 4
+        var result: [Int: CellExtras] = [:]
+        for _ in 0..<count {
+            guard offset + 6 <= size else { break }
+            let index = Int(readU32(at: offset))
+            let kind = pointer[offset + 4]
+            let length = Int(pointer[offset + 5])
+            offset += 6
+            guard offset + length <= size else { break }
+            switch kind {
+            case 1:
+                let bytes = UnsafeBufferPointer(start: pointer + offset, count: length)
+                result[index, default: CellExtras()].zeroWidth = String(decoding: bytes, as: UTF8.self)
+            case 2 where length >= 3:
+                result[index, default: CellExtras()].underlineColor =
+                    (pointer[offset], pointer[offset + 1], pointer[offset + 2])
+            default:
+                break
+            }
+            offset += length
+        }
+        return result
+    }
+
     // Cell flag constants (matching CellFlags in grid.rs)
     static let flagBold: UInt16 = 1 << 0
     static let flagItalic: UInt16 = 1 << 1
@@ -396,6 +433,12 @@ struct GridBufferReader {
     static let flagHidden: UInt16 = 1 << 6
     static let flagWideChar: UInt16 = 1 << 7
     static let flagWideCharSpacer: UInt16 = 1 << 8
+    static let flagDoubleUnderline: UInt16 = 1 << 9
+    static let flagUndercurl: UInt16 = 1 << 10
+    static let flagDottedUnderline: UInt16 = 1 << 11
+    static let flagDashedUnderline: UInt16 = 1 << 12
+    static let anyUnderline: UInt16 =
+        flagUnderline | flagDoubleUnderline | flagUndercurl | flagDottedUnderline | flagDashedUnderline
     static let flagHyperlink: UInt16 = 1 << 13
 
     // MARK: - Private helpers

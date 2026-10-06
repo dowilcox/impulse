@@ -19,6 +19,12 @@
 //!     [4..7)   fg RGB
 //!     [7..10)  bg RGB
 //!     [10..12) flags (u16 LE, CellFlags)
+//!   Extras (after the cells, present when the snapshot is longer):
+//!     [0..4)   entry count E (u32 LE)
+//!     E entries: cell index (u32 LE) | kind (u8) | length L (u8) | L bytes
+//!       kind 1: zero-width characters drawn with the cell (UTF-8)
+//!       kind 2: underline color (RGB)
+//!     Entries that don't fit the buffer are dropped.
 
 #[cfg(test)]
 use crate::grid::CursorShape;
@@ -32,6 +38,39 @@ pub const FIXED_HEADER_SIZE: usize = 16;
 
 /// Bytes per range entry (row u16 + start_col u16 + inclusive end_col u16).
 pub const RANGE_ENTRY_SIZE: usize = 6;
+
+/// Extras entry kinds.
+pub const EXTRA_ZERO_WIDTH: u8 = 1;
+pub const EXTRA_UNDERLINE_COLOR: u8 = 2;
+
+/// Room reserved for extras: the count plus 8 bytes per cell, enough for a
+/// combining mark on every cell; past that, entries are dropped.
+pub fn extras_capacity(cols: u16, lines: u16) -> usize {
+    4 + cols as usize * lines as usize * 8
+}
+
+/// Write the extras after the cells at `offset`. Returns the end offset.
+pub fn write_extras(buf: &mut [u8], offset: usize, extras: &[(u32, u8, Vec<u8>)]) -> usize {
+    if buf.len() < offset + 4 {
+        return offset;
+    }
+    let mut pos = offset + 4;
+    let mut count: u32 = 0;
+    for (index, kind, payload) in extras {
+        let len = payload.len().min(255);
+        if pos + 6 + len > buf.len() {
+            break;
+        }
+        buf[pos..pos + 4].copy_from_slice(&index.to_le_bytes());
+        buf[pos + 4] = *kind;
+        buf[pos + 5] = len as u8;
+        buf[pos + 6..pos + 6 + len].copy_from_slice(&payload[..len]);
+        pos += 6 + len;
+        count += 1;
+    }
+    buf[offset..offset + 4].copy_from_slice(&count.to_le_bytes());
+    pos
+}
 
 /// A range highlight (selection or search match). `end_col` is inclusive.
 #[derive(Clone, Copy, Debug)]
@@ -161,6 +200,33 @@ mod tests {
         assert_eq!(u16::from_le_bytes([buf[20], buf[21]]), 20); // end_col
 
         assert_eq!(cell_offset, FIXED_HEADER_SIZE + RANGE_ENTRY_SIZE);
+    }
+
+    #[test]
+    fn test_extras_roundtrip_and_truncation() {
+        let extras = vec![
+            (3u32, EXTRA_ZERO_WIDTH, "\u{301}".as_bytes().to_vec()),
+            (7u32, EXTRA_UNDERLINE_COLOR, vec![255, 0, 128]),
+        ];
+        let mut buf = vec![0u8; 64];
+        let end = write_extras(&mut buf, 10, &extras);
+        assert_eq!(u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]), 2);
+        assert_eq!(u32::from_le_bytes([buf[14], buf[15], buf[16], buf[17]]), 3);
+        assert_eq!(buf[18], EXTRA_ZERO_WIDTH);
+        assert_eq!(buf[19], 2);
+        assert_eq!(&buf[20..22], "\u{301}".as_bytes());
+        assert_eq!(buf[26], EXTRA_UNDERLINE_COLOR);
+        assert_eq!(&buf[28..31], &[255, 0, 128]);
+        assert_eq!(end, 31);
+
+        // Only the first entry fits: the count says so.
+        let mut small = vec![0u8; 10 + 4 + 8];
+        let end = write_extras(&mut small, 10, &extras);
+        assert_eq!(
+            u32::from_le_bytes([small[10], small[11], small[12], small[13]]),
+            1
+        );
+        assert_eq!(end, 22);
     }
 
     #[test]
