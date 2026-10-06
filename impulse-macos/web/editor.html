@@ -190,6 +190,32 @@
         flex: 1;
         min-height: 0;
       }
+      .vim-status {
+        position: absolute;
+        right: 14px;
+        bottom: 6px;
+        z-index: 20;
+        display: none;
+        padding: 1px 8px;
+        border-radius: 5px;
+        background: var(--git-peek-bg);
+        color: var(--git-peek-fg);
+        font-family: "JetBrains Mono", Menlo, monospace;
+        font-size: 11px;
+        opacity: 0.85;
+        pointer-events: none;
+      }
+      .vim-status:empty {
+        display: none !important;
+      }
+      .vim-status input {
+        background: transparent;
+        color: inherit;
+        border: none;
+        outline: none;
+        font: inherit;
+        pointer-events: auto;
+      }
       /* Default diff gutter colors (overridden by theme) */
       .diff-gutter-added {
         background: #9ece6a;

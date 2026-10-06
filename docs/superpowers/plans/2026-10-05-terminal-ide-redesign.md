@@ -620,7 +620,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - `showMessage` and `$/progress` go to toasts and the status bar.
   - Move LSP off the single global serial `lspQueue` (`AppDelegate.swift:24`) to per-server queues.
 - [x] **Project-wide find & replace** with preview.
-- [ ] **Optional vim mode** (monaco-vim, vendored).
+- [x] **Optional vim mode** (monaco-vim, vendored). *(monaco-vim 0.4.4 via `scripts/vendor-monaco-vim.sh`, loaded on demand behind "Vim keybindings"; it was built against an older Monaco, so it needs some real typing to confirm nothing's off)*
 - [x] **Side-by-side Markdown preview**, with "Run in terminal" buttons on shell code blocks.
 - [x] **Quick terminal:** a global-hotkey dropdown `NSPanel` (Carbon `RegisterEventHotKey`, `.canJoinAllSpaces`, `.fullScreenAuxiliary`) bound to a workspace. (starts in the front window's folder; off by default; the hotkey itself needs a manual check)
 - [ ] **Accessibility pass:** (partly: terminal text area and agent announcements done; VoiceOver walkthrough and Full Keyboard Access need a person at the Mac)

@@ -440,6 +440,7 @@ struct EditorOptions: Codable {
     var occurrencesHighlight: Bool?
     var wordBasedSuggestions: String?
     var inlayHints: String?
+    var vimMode: Bool?
 
     enum CodingKeys: String, CodingKey {
         case fontSize = "font_size"
@@ -468,6 +469,7 @@ struct EditorOptions: Codable {
         case occurrencesHighlight = "occurrences_highlight"
         case wordBasedSuggestions = "word_based_suggestions"
         case inlayHints = "inlay_hints"
+        case vimMode = "vim_mode"
     }
 }
 

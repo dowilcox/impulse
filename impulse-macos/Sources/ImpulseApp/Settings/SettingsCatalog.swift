@@ -199,6 +199,9 @@ enum SettingsCatalog {
     toggle("folding", "Code folding", \.folding, .editor, "Behavior"),
     toggle("auto_save", "Save when focus leaves the editor", \.autoSave, .editor, "Behavior"),
     toggle(
+      "editor_vim_mode", "Vim keybindings", \.editorVimMode, .editor, "Behavior",
+      detail: "Normal, insert and visual modes in the editor (monaco-vim); the mode shows at the bottom right."),
+    toggle(
       "editor_preview_tabs", "Preview files from the file tree", \.editorPreviewTabs, .editor, "Behavior",
       detail: "A click shows a file in an italic tab the next click reuses; double-click or edit it to keep it."),
     toggle(

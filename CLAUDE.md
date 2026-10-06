@@ -105,6 +105,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/release.sh <version> [--push]** — the ONLY way to release: writes VERSION, syncs crate versions, commits, tags, builds signed+notarized .app/.dmg, checksums, and (with --push) pushes and creates the GitHub release. Never run `gh release create`, `git tag`, or manual version edits.
 - **scripts/build-libgit2.sh** — pinned libgit2 static build into `impulse-macos/.libgit2/` (checksum-verified; idempotent).
 - **scripts/vendor-monaco.sh** — refreshes `vendor/monaco`.
+- **scripts/vendor-monaco-vim.sh** — refreshes `vendor/monaco-vim` (the editor's optional Vim mode; pinned version and checksum).
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 
 ## History

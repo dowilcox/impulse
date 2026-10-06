@@ -1941,7 +1941,8 @@ final class TabManager: NSObject {
       selectionHighlight: settings.editorSelectionHighlight,
       occurrencesHighlight: settings.editorOccurrencesHighlight,
       wordBasedSuggestions: settings.editorWordBasedSuggestions,
-      inlayHints: settings.editorInlayHints
+      inlayHints: settings.editorInlayHints,
+      vimMode: settings.editorVimMode
     )
   }
 

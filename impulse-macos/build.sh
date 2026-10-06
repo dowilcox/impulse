@@ -202,6 +202,12 @@ cp "${WEB_SRC}/review.html" "${WEB_SRC}/review.js" "${MONACO_DST}/"
 mkdir -p "${MONACO_DST}/fonts" "${MONACO_DST}/highlight"
 cp -r "${FONTS_SRC}"/* "${MONACO_DST}/fonts/"
 cp -r "${HIGHLIGHT_SRC}"/* "${MONACO_DST}/highlight/"
+# Vim mode for the editor (optional; vendored by scripts/vendor-monaco-vim.sh).
+VIM_SRC="$(dirname "${MONACO_SRC}")/monaco-vim"
+if [[ -f "${VIM_SRC}/monaco-vim.umd.js" ]]; then
+    mkdir -p "${MONACO_DST}/vim"
+    cp "${VIM_SRC}/monaco-vim.umd.js" "${MONACO_DST}/vim/"
+fi
 echo "    OK: Monaco assets copied to ${MONACO_DST}"
 
 # ── Step 2b: Copy file icons ─────────────────────────────────────

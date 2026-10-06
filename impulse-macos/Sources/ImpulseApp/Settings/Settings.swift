@@ -119,6 +119,8 @@ struct Settings: Codable {
     var terminalShellCompletions: Bool = false
     /// A single click in the file tree shows the file in a preview tab.
     var editorPreviewTabs: Bool = true
+    /// Vim keybindings in the editor (monaco-vim).
+    var editorVimMode: Bool = false
     var lastDirectory: String
     var openFiles: [String]
 
@@ -222,6 +224,7 @@ struct Settings: Codable {
         case editorInlayHints = "editor_inlay_hints"
         case terminalShellCompletions = "terminal_shell_completions"
         case editorPreviewTabs = "editor_preview_tabs"
+        case editorVimMode = "editor_vim_mode"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -374,6 +377,7 @@ struct Settings: Codable {
         terminalShellCompletions =
             (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
         editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
+        editorVimMode = (try? c.decode(Bool.self, forKey: .editorVimMode)) ?? d.editorVimMode
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

@@ -155,6 +155,10 @@ extension MainWindowController {
         tabManager.addEditorTab(
           path: (fileTreeRootPath as NSString).appendingPathComponent(String(action.dropFirst(8))),
           projectDirectory: fileTreeRootPath, preview: true)
+      } else if action == "vim" {
+        var options = EditorOptions()
+        options.vimMode = true
+        tabManager.selectedEditor?.applySettings(options)
       } else if action == "undo" {
         // What Edit ▸ Undo ends up sending (snapshot windows are never key,
         // so straight to the window).

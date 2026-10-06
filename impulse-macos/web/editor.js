@@ -860,6 +860,7 @@ function handleUpdateSettings(cmd) {
     update.wordBasedSuggestions = opts.word_based_suggestions;
   if (opts.inlay_hints != null) update.inlayHints = { enabled: opts.inlay_hints };
   editor.updateOptions(update);
+  if (opts.vim_mode != null) setVimMode(opts.vim_mode);
   Object.assign(diffEditorOptions, update);
   if (diffEditor) diffEditor.updateOptions(update);
 
@@ -2059,4 +2060,48 @@ function handleUndoEdits(cmd) {
   if (!currentModel || appliedEditVersions.get(cmd.token) !== currentModel.getAlternativeVersionId()) return;
   appliedEditVersions.delete(cmd.token);
   currentModel.undo();
+}
+
+
+// ===========================================================================
+// Vim mode (monaco-vim, vendored under vim/), loaded the first time it's on.
+// Its UMD build asks the AMD loader for Monaco's API module by its npm path.
+// ===========================================================================
+let vimMode = null;
+let vimWanted = false;
+let vimStatus = null;
+
+function setVimMode(enabled) {
+  vimWanted = enabled;
+  if (!enabled) {
+    if (vimMode) {
+      vimMode.dispose();
+      vimMode = null;
+    }
+    if (vimStatus) vimStatus.style.display = "none";
+    return;
+  }
+  if (vimMode) return;
+  if (!vimStatus) {
+    vimStatus = document.createElement("div");
+    vimStatus.className = "vim-status";
+    document.body.appendChild(vimStatus);
+  }
+  vimStatus.style.display = "block";
+  if (!window.__impulseVimApiDefined) {
+    define("monaco-editor/esm/vs/editor/editor.api", [], function () {
+      return monaco;
+    });
+    window.__impulseVimApiDefined = true;
+  }
+  require(["vim/monaco-vim.umd"], function (MonacoVim) {
+    if (vimMode || !vimWanted) return;
+    try {
+      vimMode = MonacoVim.initVimMode(editor, vimStatus);
+    } catch (e) {
+      console.error("Vim mode failed to start:", e);
+    }
+  }, function (error) {
+    console.error("Vim mode isn't available:", error);
+  });
 }
