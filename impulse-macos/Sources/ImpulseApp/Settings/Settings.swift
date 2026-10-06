@@ -309,7 +309,7 @@ struct Settings: Codable {
             windowWidth: 1200,
             windowHeight: 800,
             sidebarVisible: false,
-            sidebarWidth: 250,
+            sidebarWidth: Int(Metrics.leftDockDefaultWidth),
             confirmCloseWarnings: true,
             restoreSession: false,
             lastDirectory: "",

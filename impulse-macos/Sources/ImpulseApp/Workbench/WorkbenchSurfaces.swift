@@ -279,21 +279,36 @@ extension LeftDockView {
 }
 
 /// Text segments with an underline on the selected one (dock headers).
+/// When the dock is too narrow for every label, only the selected segment
+/// keeps its label, then none do (icons, with the label as help).
 struct DockSegmentedTabs: View {
   @Environment(\.chrome) private var chrome
   @Binding var selection: Int
   let items: [(String, LucideIcon)]
 
+  private enum Labels { case all, selected, none }
+
   var body: some View {
+    ViewThatFits(in: .horizontal) {
+      row(.all)
+      row(.selected)
+      row(.none)
+    }
+  }
+
+  private func row(_ labels: Labels) -> some View {
     HStack(spacing: 2) {
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         let selected = index == selection
+        let showsLabel = labels == .all || (labels == .selected && selected)
         Button {
           selection = index
         } label: {
           HStack(spacing: 5) {
             Icon(item.1, size: 12)
-            Text(item.0).font(ChromeFont.ui(11.5, weight: selected ? .semibold : .medium))
+            if showsLabel {
+              Text(item.0).font(ChromeFont.ui(11.5, weight: selected ? .semibold : .medium)).lineLimit(1)
+            }
           }
           .foregroundStyle(selected ? chrome.text : chrome.textTertiary)
           .padding(.horizontal, 7)
@@ -305,9 +320,12 @@ struct DockSegmentedTabs: View {
           .contentShape(Rectangle())
         }
         .buttonStyle(ChromePressStyle())
+        .help(showsLabel ? "" : item.0)
+        .accessibilityLabel(item.0)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
       }
     }
+    .fixedSize()
   }
 }
 
