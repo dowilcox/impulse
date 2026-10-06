@@ -305,7 +305,7 @@ foundations ├──────────── Track B: git ─────
 
 All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests that use the `git` CLI as the oracle.
 
-- [ ] **Scenario repos** (`Tests/ImpulseGitTests/ScenarioRepo.swift` variants):
+- [x] **Scenario repos** (`Tests/ImpulseGitTests/ScenarioRepo.swift` variants): *(in `GitScenarioTests.swift`, checked against `git status --porcelain -z`; a non-UTF-8 path can't exist on APFS, so Unicode and spaces stand in)*
   - staged-only; mixed staged and unstaged in the same file;
   - rename plus edit; binary; too-large;
   - merge conflict; rebase conflict (stopped at step 2/3);

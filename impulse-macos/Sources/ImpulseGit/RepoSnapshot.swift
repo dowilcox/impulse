@@ -268,6 +268,8 @@ extension GitClient {
     guard let diff = try? makeDiff(repo: repo, scope: scope, pathspec: paths, options: DiffOptions())
     else { return changes }
     defer { git_diff_free(diff) }
+    // Pair renames, or a renamed file counts as all-new lines.
+    _ = git_diff_find_similar(diff, nil)
     let stats = lineStats(diff: diff)
     return changes.map { change in
       guard let stat = stats[change.path] else { return change }
