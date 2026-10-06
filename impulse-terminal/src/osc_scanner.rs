@@ -4,6 +4,21 @@
 //! Does NOT modify or buffer the byte stream — all bytes pass through
 //! unchanged. alacritty_terminal ignores unsupported OSCs harmlessly.
 
+/// This machine's host name. Read each time: macOS can rename the host
+/// (network changes) while the app runs, and shells report the new name.
+fn local_hostname() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is valid for its length; gethostname writes a
+    // NUL-terminated name into it (or fails, leaving it zeroed).
+    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
+    if ok {
+        String::from_utf8_lossy(&buf[..len]).into_owned()
+    } else {
+        String::new()
+    }
+}
+
 /// Cap on an assembled kitty notification's title or body (OSC 99 chunks).
 const KITTY_NOTIFICATION_MAX_BYTES: usize = 8 * 1024;
 
@@ -442,8 +457,13 @@ impl OscScanner {
         // Strip "file://" prefix.
         let rest = s.strip_prefix("file://")?;
 
-        // Skip hostname (everything up to the first '/').
+        // The host is everything up to the first '/'. A directory on another
+        // machine (a shell over ssh reporting its own cwd) isn't a local
+        // folder, even when a folder of that name exists here.
         let path_start = rest.find('/')?;
+        if !Self::is_local_host(&rest[..path_start]) {
+            return None;
+        }
         let encoded_path = &rest[path_start..];
 
         // URL-decode the path.
@@ -459,6 +479,16 @@ impl OscScanner {
         } else {
             None
         }
+    }
+
+    /// An OSC 7 host that means this Mac: none, `localhost`, or its name
+    /// (compared without the domain: `Mac` and `Mac.local`).
+    fn is_local_host(host: &str) -> bool {
+        if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+            return true;
+        }
+        let short = |name: &str| name.split('.').next().unwrap_or("").to_ascii_lowercase();
+        short(host) == short(&local_hostname())
     }
 
     /// Decode percent-encoded UTF-8 string.
@@ -524,10 +554,23 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().to_string_lossy();
         let mut scanner = OscScanner::new();
-        let seq = format!("\x1b]7;file://myhost{cwd}\x07");
+        let seq = format!("\x1b]7;file://{}{cwd}\x07", local_hostname());
         scanner.scan(seq.as_bytes());
         let events = scanner.drain_events();
         assert_eq!(events, vec![OscEvent::CwdChanged(cwd.to_string())]);
+    }
+
+    #[test]
+    fn test_osc7_ignores_other_hosts() {
+        // An ssh session's shell reports its own cwd under its own name.
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().to_string_lossy();
+        let mut scanner = OscScanner::new();
+        scanner.scan(format!("\x1b]7;file://build-server.example.com{cwd}\x07").as_bytes());
+        assert!(scanner.drain_events().is_empty());
+        scanner.scan(format!("\x1b]7;file://localhost{cwd}\x07").as_bytes());
+        scanner.scan(format!("\x1b]7;file://{cwd}\x07").as_bytes());
+        assert_eq!(scanner.drain_events().len(), 2);
     }
 
     #[test]
@@ -537,7 +580,7 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let encoded = cwd.to_string_lossy().replace(' ', "%20");
         let mut scanner = OscScanner::new();
-        let seq = format!("\x1b]7;file://host{encoded}\x07");
+        let seq = format!("\x1b]7;file://localhost{encoded}\x07");
         scanner.scan(seq.as_bytes());
         let events = scanner.drain_events();
         assert_eq!(
@@ -551,7 +594,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("missing");
         let mut scanner = OscScanner::new();
-        let seq = format!("\x1b]7;file://host{}\x07", missing.to_string_lossy());
+        let seq = format!("\x1b]7;file://localhost{}\x07", missing.to_string_lossy());
         scanner.scan(seq.as_bytes());
 
         assert!(scanner.drain_events().is_empty());
@@ -562,7 +605,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut scanner = OscScanner::new();
         let seq = format!(
-            "\x1b]7;file://host{}%00suffix\x07",
+            "\x1b]7;file://localhost{}%00suffix\x07",
             temp.path().to_string_lossy()
         );
         scanner.scan(seq.as_bytes());
@@ -665,7 +708,7 @@ mod tests {
     #[test]
     fn test_mixed_bytes_and_osc() {
         let mut scanner = OscScanner::new();
-        let data = b"hello\x1b]133;A\x07world\x1b]7;file://h/tmp\x07";
+        let data = b"hello\x1b]133;A\x07world\x1b]7;file://localhost/tmp\x07";
         scanner.scan(data);
         let events = scanner.drain_events();
         assert_eq!(
