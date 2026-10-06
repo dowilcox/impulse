@@ -222,8 +222,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         didReceive message: WKScriptMessage
     ) {
         if message.name == "impulseRun" {
-            // A Run button in the markdown preview.
-            guard let command = message.body as? String, !command.isEmpty else { return }
+            // A Run button in the markdown preview — only from the preview
+            // page Impulse rendered, never from anything a link loaded.
+            guard message.frameInfo.isMainFrame,
+                previewNavigationDelegate.isPreviewPage(message.frameInfo.request.url),
+                let command = message.body as? String, !command.isEmpty
+            else { return }
             let directory = filePath.map { ($0 as NSString).deletingLastPathComponent }
             NotificationCenter.default.post(
                 name: .impulseRunInTerminal, object: self,
@@ -1068,6 +1072,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// to a temp file outside that read context.
     private func loadPreviewHTML(_ html: String, filePath fp: String) {
         let parentDir = URL(fileURLWithPath: (fp as NSString).deletingLastPathComponent, isDirectory: true)
+        previewNavigationDelegate.pageURL = parentDir
+        previewNavigationDelegate.openFile = { path in
+            NotificationCenter.default.post(name: .impulseOpenFile, object: nil, userInfo: ["path": path])
+        }
         previewWebView?.loadHTMLString(html, baseURL: parentDir)
     }
 
@@ -1153,6 +1161,23 @@ private class PreviewNavigationDelegate: NSObject, WKNavigationDelegate {
         webView.evaluateJavaScript("window.scrollTo(0, \(y))")
     }
 
+    /// The rendered page's base URL (the file's folder).
+    var pageURL: URL?
+    /// Opens a linked local file in an editor tab.
+    var openFile: ((String) -> Void)?
+
+    /// `url` is the preview page itself (any #anchor aside).
+    func isPreviewPage(_ url: URL?) -> Bool {
+        guard let url, let pageURL else { return false }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
+        components?.fragment = nil
+        return components?.url?.standardizedFileURL == pageURL.standardizedFileURL
+    }
+
+    /// The preview only ever shows the page Impulse rendered. Links open
+    /// elsewhere — web pages in the browser, local files in an editor tab —
+    /// so nothing a repository links to can run in this web view (which can
+    /// post Run commands to a terminal).
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -1162,21 +1187,21 @@ private class PreviewNavigationDelegate: NSObject, WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        let scheme = url.scheme ?? ""
-        if scheme == "file" || scheme == "about" {
+        // Our own load (loadHTMLString), and jumps to #anchors in it.
+        if isPreviewPage(url), navigationAction.navigationType == .other || url.fragment != nil {
             decisionHandler(.allow)
-        } else if scheme == "data" {
-            // Only allow data: URIs for images (block data:text/html, etc.)
-            let urlString = url.absoluteString
-            if urlString.hasPrefix("data:image/") {
-                decisionHandler(.allow)
-            } else {
-                decisionHandler(.cancel)
-            }
-        } else {
-            // Open in the default browser
-            NSWorkspace.shared.open(url)
-            decisionHandler(.cancel)
+            return
         }
+        if navigationAction.navigationType == .linkActivated {
+            switch url.scheme?.lowercased() {
+            case "http", "https", "mailto":
+                NSWorkspace.shared.open(url)
+            case "file":
+                openFile?(url.path)
+            default:
+                break
+            }
+        }
+        decisionHandler(.cancel)
     }
 }
