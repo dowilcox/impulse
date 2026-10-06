@@ -39,6 +39,7 @@ enum ReviewRowContent {
       content = AnyView(
         ReviewCommentRow(
           comment: comment, outdated: file.outdated.contains(id), editing: file.editingComment == id,
+          editingDraft: file.editingComment == id ? file.editingDraft : nil,
           indent: file.outdated.contains(id) ? 12 : ReviewMetrics.commentIndent(context.layout),
           handler: context.handler))
     case .composer(let path):
@@ -265,6 +266,8 @@ struct ReviewCommentRow: View {
   let comment: ReviewComment
   let outdated: Bool
   let editing: Bool
+  /// The inline edit's text so far, when the row was rebuilt mid-edit.
+  var editingDraft: String? = nil
   let indent: CGFloat
   weak var handler: ReviewDiffHandler?
   @State private var draft = ""
@@ -309,9 +312,10 @@ struct ReviewCommentRow: View {
           .focused($focused)
           .frame(maxHeight: .infinity)
           .onAppear {
-            draft = comment.text
+            draft = editingDraft ?? comment.text
             focused = true
           }
+          .onChange(of: draft) { _, new in handler?.reviewDraftChanged(path: comment.path, text: new, editing: true) }
           .onKeyPress(phases: .down) { press in
             if press.key == .return, press.modifiers.contains(.command) {
               save()
@@ -403,7 +407,12 @@ struct ReviewComposerRow: View {
       }
       return .ignored
     }
-    .onAppear { focused = true }
+    .onAppear {
+      // A rebuilt row picks up what was typed.
+      if text.isEmpty { text = composer.draft }
+      focused = true
+    }
+    .onChange(of: text) { _, new in handler?.reviewDraftChanged(path: path, text: new, editing: false) }
     .padding(.vertical, 8)
     .padding(.horizontal, 10)
     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(chrome.panel))

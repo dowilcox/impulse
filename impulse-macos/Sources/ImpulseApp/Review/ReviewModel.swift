@@ -25,6 +25,8 @@ final class ReviewFile {
   var composer: Composer?
   /// The comment being edited inline.
   var editingComment: String?
+  /// The inline edit's text so far.
+  var editingDraft: String?
   /// Syntax token spans per hunk and line (nil until highlighted).
   var syntax: [[[SyntaxHighlighter.Span]]]?
 
@@ -45,6 +47,8 @@ final class ReviewFile {
     var line: Int
     var endLine: Int
     var snippet: String
+    /// What's typed so far (kept here so a rebuilt row keeps it).
+    var draft = ""
   }
 
   init(change: FileChange) {

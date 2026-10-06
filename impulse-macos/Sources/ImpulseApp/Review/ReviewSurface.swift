@@ -77,6 +77,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   private let queue = DispatchQueue(label: "impulse.review", qos: .userInitiated)
 
   private static let log = OSLog(subsystem: "dev.impulse.Impulse", category: "Review")
+  /// Stored for a file marked viewed before its diff loaded.
+  private static let unknownHash = "unknown"
 
   init(
     repository: GitRepositoryState, scope: DiffScope?, focusPath: String?, theme: Theme,
@@ -381,7 +383,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       if let diff = viewedDiffs[change.path] { apply(diff, to: file) }
       if let hash = viewed[change.path] {
         let current = file.diff?.contentHash
-        let changed = current != nil && current != hash
+        // Marked viewed before its diff had loaded: what's here now is
+        // what was viewed, so adopt its hash rather than calling it changed.
+        if hash == Self.unknownHash, let current {
+          ReviewViewedStore.set(path: change.path, hash: current, root: repoRoot, scope: scopeKey)
+        }
+        let changed = hash != Self.unknownHash && current != nil && current != hash
         file.viewed = !changed
         file.changedSinceViewed = changed
       } else {
@@ -400,7 +407,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     for file in files where file.diff != nil && file.expanded {
       loadDiff(file.path)
     }
-    scheduleRows()
+    scheduleRows(background: true)
     if let focus = pendingFocus, byPath[focus] != nil {
       pendingFocus = nil
       DispatchQueue.main.async { [weak self] in self?.revealFile(focus) }
@@ -443,7 +450,9 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
           self.apply(diff, to: file)
           // A viewed file whose diff changed is unviewed again.
           let viewed = ReviewViewedStore.viewed(root: root, scope: self.scopeKey)
-          if let hash = viewed[path], hash != diff.contentHash, file.viewed {
+          if viewed[path] == Self.unknownHash {
+            ReviewViewedStore.set(path: path, hash: diff.contentHash, root: root, scope: self.scopeKey)
+          } else if let hash = viewed[path], hash != diff.contentHash, file.viewed {
             file.viewed = false
             file.changedSinceViewed = true
             file.expanded = true
@@ -452,7 +461,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
           file.error = "\(error)"
           file.stale = false
         }
-        self.scheduleRows()
+        self.scheduleRows(background: true)
       }
     }
   }
@@ -547,8 +556,22 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   // MARK: - Rows
 
+  /// A comment is being written or edited.
+  private var isComposing: Bool {
+    files.contains { $0.composer != nil || $0.editingComment != nil }
+  }
+  /// A background refresh waited for the comment to be finished.
+  private var deferredRows = false
+
   /// Rebuild the list on the next turn of the run loop (changes batch up).
-  private func scheduleRows() {
+  /// `background` refreshes (files changing on disk, diffs arriving) wait
+  /// while a comment is being typed, so its row isn't rebuilt under it.
+  private func scheduleRows(background: Bool = false) {
+    if background && isComposing {
+      deferredRows = true
+      return
+    }
+    deferredRows = false
     guard !rowsScheduled else { return }
     rowsScheduled = true
     DispatchQueue.main.async { [weak self] in
@@ -605,7 +628,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   func reviewSetViewed(_ path: String, viewed: Bool) {
     guard let file = filesByPath[path] else { return }
-    let hash = viewed ? (file.diff?.contentHash ?? "unknown") : nil
+    let hash = viewed ? (file.diff?.contentHash ?? Self.unknownHash) : nil
     ReviewViewedStore.set(path: path, hash: hash, root: repoRoot, scope: scopeKey)
     let wasComplete = !files.isEmpty && files.allSatisfy(\.viewed)
     file.viewed = viewed
@@ -707,6 +730,15 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     focus()
   }
 
+  func reviewDraftChanged(path: String, text: String, editing: Bool) {
+    guard let file = filesByPath[path] else { return }
+    if editing {
+      file.editingDraft = text
+    } else {
+      file.composer?.draft = text
+    }
+  }
+
   func reviewCancelComposer(path: String) {
     filesByPath[path]?.composer = nil
     scheduleRows()
@@ -715,6 +747,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   func reviewEditComment(_ id: String?, path: String) {
     filesByPath[path]?.editingComment = id
+    filesByPath[path]?.editingDraft = nil
     scheduleRows()
     if id == nil { focus() }
   }
@@ -722,7 +755,10 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   func reviewSaveComment(id: String, text: String) {
     comments.update(id: id, text: text)
     let path = comments.comments.first { $0.id == id }?.path
-    if let path { filesByPath[path]?.editingComment = nil }
+    if let path {
+      filesByPath[path]?.editingComment = nil
+      filesByPath[path]?.editingDraft = nil
+    }
     reloadComments(path.map { [$0] })
     focus()
   }

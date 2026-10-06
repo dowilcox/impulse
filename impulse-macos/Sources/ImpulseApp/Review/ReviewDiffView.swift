@@ -14,6 +14,8 @@ protocol ReviewDiffHandler: AnyObject {
   func reviewOpenComposer(path: String, hunk: Int, line: Int?)
   func reviewSaveComposer(path: String, text: String)
   func reviewCancelComposer(path: String)
+  /// The composer's or an inline edit's text changed (kept in the model).
+  func reviewDraftChanged(path: String, text: String, editing: Bool)
   /// Start (id) or stop (nil) editing a comment inline.
   func reviewEditComment(_ id: String?, path: String)
   func reviewSaveComment(id: String, text: String)
@@ -185,13 +187,23 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   }
 
   /// Redraw rows in place (selection, focus, busy) without re-measuring.
+  /// Rows being typed in are left alone: reloading them would take their
+  /// text field's focus.
   func redrawVisibleRows() {
     let visible = tableView.rows(in: tableView.visibleRect)
     guard visible.length > 0 else { return }
-    tableView.reloadData(
-      forRowIndexes: IndexSet(integersIn: visible.location..<(visible.location + visible.length)),
-      columnIndexes: IndexSet(integer: 0))
+    let indexes = IndexSet(
+      (visible.location..<(visible.location + visible.length)).filter { !isBeingTypedIn(rows[$0]) })
+    tableView.reloadData(forRowIndexes: indexes, columnIndexes: IndexSet(integer: 0))
     tableView.enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
+  }
+
+  private func isBeingTypedIn(_ row: ReviewRow) -> Bool {
+    switch row {
+    case .composer: return true
+    case .comment(let path, let id): return context.files[path]?.editingComment == id
+    default: return false
+    }
   }
 
   private func topAnchor() -> (row: ReviewRow, offset: CGFloat)? {

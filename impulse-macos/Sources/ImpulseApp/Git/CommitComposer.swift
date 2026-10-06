@@ -16,6 +16,8 @@ struct CommitComposer: View {
   @State private var signOff = false
   @State private var skipHooks = false
   @State private var historyIndex = -1
+  /// The message ↑ last put in the field.
+  @State private var recalledMessage = ""
   @State private var isCommitting = false
   @FocusState private var focused: Bool
 
@@ -39,6 +41,11 @@ struct CommitComposer: View {
           .foregroundStyle(chrome.text)
           .scrollContentBackground(.hidden)
           .focused($focused)
+          .onChange(of: message) { _, new in
+            // Editing a recalled message makes it the user's own: ↑/↓
+            // move the caret again instead of swapping it out.
+            if historyIndex >= 0, new != recalledMessage { historyIndex = -1 }
+          }
           .frame(minHeight: 40, maxHeight: 120)
           .fixedSize(horizontal: false, vertical: true)
           .onKeyPress(.return, phases: .down) { press in
@@ -173,6 +180,7 @@ struct CommitComposer: View {
       message = ""
     } else if next < history.count {
       historyIndex = next
+      recalledMessage = history[next]
       message = history[next]
     }
   }

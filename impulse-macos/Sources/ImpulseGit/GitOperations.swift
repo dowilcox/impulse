@@ -459,7 +459,10 @@ public enum GitOperations {
     onProgress: ((String) -> Void)? = nil
   ) -> GitResult {
     var args = ["push", "--progress"]
-    if forceWithLease { args.append("--force-with-lease") }
+    // --force-if-includes: the lease alone checks the remote-tracking ref,
+    // which a background fetch keeps current — this also requires the
+    // remote's tip to have been integrated locally.
+    if forceWithLease { args += ["--force-with-lease", "--force-if-includes"] }
     if followTags { args.append("--follow-tags") }
     if setUpstream {
       args += ["--set-upstream", remote]
@@ -581,10 +584,12 @@ public enum GitOperations {
   }
 
   /// Push one tag to `remote`.
+  /// Push one tag to `remote` (`force`: a tag that was moved).
   public static func pushTag(
-    _ name: String, remote: String, root: String, onProgress: ((String) -> Void)? = nil
+    _ name: String, remote: String, force: Bool = false, root: String, onProgress: ((String) -> Void)? = nil
   ) -> GitResult {
-    void(git(["push", "--progress", remote, "refs/tags/\(name)"], in: root, timeout: 600, onOutputLine: onProgress))
+    let refspec = (force ? "+" : "") + "refs/tags/\(name)"
+    return void(git(["push", "--progress", remote, refspec], in: root, timeout: 600, onOutputLine: onProgress))
   }
 
   /// Push every local tag to `remote`.

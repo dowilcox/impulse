@@ -424,18 +424,26 @@ struct GitActions {
   /// it to the branch's remote straight away.
   func createTag(_ name: String, at sha: String = "HEAD", message: String?, push: Bool, force: Bool = false) {
     let repository = self.repository
-    repository.run("Tagging \(name)…") {
-      GitOperations.createTag(name, at: sha, message: message, force: force, root: $0)
+    // A moved tag's old target, so Undo can put it back.
+    var previous: String?
+    repository.run("Tagging \(name)…") { root in
+      if force { previous = GitOperations.resolveRef("refs/tags/\(name)", root: root) }
+      return GitOperations.createTag(name, at: sha, message: message, force: force, root: root)
     } completion: { result, _ in
       switch result {
       case .success:
         if push {
-          pushTag(name, created: true)
+          pushTag(name, created: true, force: force)
         } else {
           host?.toasts.show(
             Toast(
-              kind: .success, message: "Tagged \(name)", actionTitle: "Undo",
-              action: { repository.run { GitOperations.deleteTag(name, root: $0) } }, lifetime: 10))
+              kind: .success, message: force ? "Moved \(name)" : "Tagged \(name)", actionTitle: "Undo",
+              action: {
+                repository.run { root in
+                  if let previous { return GitOperations.restoreRef("refs/tags/\(name)", to: previous, root: root) }
+                  return GitOperations.deleteTag(name, root: root)
+                }
+              }, lifetime: 10))
         }
       case .failure(.cli(let error)) where error.kind == .tagAlreadyExists && !force:
         host?.gitConfirm(
@@ -451,12 +459,12 @@ struct GitActions {
     }
   }
 
-  func pushTag(_ name: String, created: Bool = false) {
+  func pushTag(_ name: String, created: Bool = false, force: Bool = false) {
     let repository = self.repository
     var remote = "origin"
     repository.run("Pushing \(name)…") { root in
       remote = GitOperations.defaultRemote(root: root) ?? "origin"
-      return GitOperations.pushTag(name, remote: remote, root: root) { repository.reportProgress($0) }
+      return GitOperations.pushTag(name, remote: remote, force: force, root: root) { repository.reportProgress($0) }
     } completion: { result, _ in
       switch result {
       case .success:
