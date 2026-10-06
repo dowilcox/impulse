@@ -35,7 +35,7 @@ impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
                           OSC 133/7/6973 scanning, command blocks, history
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
 vendor/                   Monaco editor, fonts, highlight.js (committed)
-scripts/                  build-libgit2.sh, vendor-monaco.sh, release.sh
+scripts/                  build-libgit2.sh, vendor-*.sh, release.sh
 ```
 
 Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` only, and the FFI surface is terminal-only (~37 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
@@ -108,6 +108,8 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/build-libgit2.sh** — pinned libgit2 static build into `impulse-macos/.libgit2/` (checksum-verified; idempotent).
 - **scripts/vendor-monaco.sh** — refreshes `vendor/monaco`.
 - **scripts/vendor-monaco-vim.sh** — refreshes `vendor/monaco-vim` (the editor's optional Vim mode; pinned version and checksum).
+- **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
+- **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon).
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 
 ## History
