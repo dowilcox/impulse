@@ -95,12 +95,14 @@ public struct ContentChange: Equatable {
 }
 
 public enum DocumentCache {
-  /// Port of `apply_lsp_content_changes_to_string`: changes are applied in
-  /// reverse order; a change without a range replaces the whole content; a
-  /// ranged change replaces the UTF-8 byte span when `start <= end` and
-  /// `end` is within bounds.
+  /// Apply changes in order, each to the text the previous one produced (the
+  /// LSP's own semantics, and how Monaco orders an edit's changes: from the
+  /// end of the document backwards). The Rust original applied them in
+  /// reverse, which turned multi-cursor edits into the wrong text. A change
+  /// without a range replaces the whole content; a ranged change replaces
+  /// the UTF-8 byte span when `start <= end` and `end` is within bounds.
   public static func applyContentChanges(to content: inout String, changes: [ContentChange]) {
-    for change in changes.reversed() {
+    for change in changes {
       guard let range = change.range else {
         content = change.text
         continue

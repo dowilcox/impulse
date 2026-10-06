@@ -111,14 +111,19 @@
       #expect(content == "ab!\ncd")
     }
 
-    @Test func multipleChangesAppliedInReverseOrder() {
-      // The FFI applies changes back-to-front so earlier changes' offsets
-      // stay valid.
+    @Test func multipleChangesAppliedInOrder() {
+      // Monaco lists an edit's changes from the end of the document back,
+      // and each applies to the result of the one before (LSP semantics).
       var content = "abcdef"
       DocumentCache.applyContentChanges(
         to: &content,
-        changes: [change(0, 0, 0, 1, "X"), change(0, 2, 0, 3, "Y")])
+        changes: [change(0, 2, 0, 3, "Y"), change(0, 0, 0, 1, "X")])
       #expect(content == "XbYdef")
+      // Two cursors typing X in "ab".
+      var typed = "ab"
+      DocumentCache.applyContentChanges(
+        to: &typed, changes: [change(0, 1, 0, 1, "X"), change(0, 0, 0, 0, "X")])
+      #expect(typed == "XaXb")
     }
 
     @Test func fullDocumentReplacement() {
@@ -130,14 +135,13 @@
     }
 
     @Test func fullReplacementThenRangedEdit() {
-      // Reverse application: the last array element (full replace) is
-      // applied first, then the first element edits the new text.
+      // In order: the full replace first, then the ranged edit on its text.
       var content = "irrelevant"
       DocumentCache.applyContentChanges(
         to: &content,
         changes: [
-          change(0, 0, 0, 1, "Z"),
           ContentChange(range: nil, rangeLength: nil, text: "abc"),
+          change(0, 0, 0, 1, "Z"),
         ])
       #expect(content == "Zbc")
     }
