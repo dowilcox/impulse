@@ -615,38 +615,14 @@ extension Settings {
         }
     }
 
-    /// Migrates `format_on_save` entries from `FileTypeOverride` into
-    /// `CommandOnSave` entries with `reloadFile: true`, then clears the
-    /// originals. Matches the Linux `migrate_format_on_save` behavior.
-    mutating func migrateFormatOnSave() {
-        var migrated = false
-        for i in fileTypeOverrides.indices {
-            if let fmt = fileTypeOverrides[i].formatOnSave, !fmt.command.isEmpty {
-                commandsOnSave.append(CommandOnSave(
-                    name: "Format (\(fileTypeOverrides[i].pattern))",
-                    command: fmt.command,
-                    args: fmt.args,
-                    filePattern: fileTypeOverrides[i].pattern,
-                    reloadFile: true
-                ))
-                fileTypeOverrides[i].formatOnSave = nil
-                migrated = true
-            }
-        }
-        if migrated {
-            save()
-        }
-    }
-
-    /// Loads settings from disk, falling back to defaults for any missing or
-    /// corrupt data.
     /// settings.json changed since Impulse last loaded or saved it.
     static func fileChangedOnDisk() -> Bool {
         settingsFileChangedSinceLoad(url: settingsPath()) != nil
     }
 
-    /// `backupInvalid`: copy a file that doesn't parse aside (at launch, not
-    /// on every reload while it's being edited).
+    /// Loads settings from disk, falling back to defaults for any missing or
+    /// corrupt data. `backupInvalid`: copy a file that doesn't parse aside
+    /// (at launch, not on every reload while it's being edited).
     static func load(backupInvalid: Bool = true) -> Settings {
         let url = settingsPath()
         let data: Data
@@ -679,7 +655,6 @@ extension Settings {
                 path: url.path,
                 contentHash: stableContentHash(data)
             )
-            settings.migrateFormatOnSave()
             settings.migrateDefaultFont()
             settings.validate()
             return settings

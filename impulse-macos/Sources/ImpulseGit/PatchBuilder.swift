@@ -32,6 +32,7 @@ public enum PatchBuilder {
   public enum BuildError: Error, Equatable, CustomStringConvertible {
     case nothingSelected
     case partialAddOrDelete
+    case partialRename
     case malformedPatch
     /// The file isn't UTF-8 text, so it can't be split byte-exactly.
     case notUTF8
@@ -41,6 +42,8 @@ public enum PatchBuilder {
       case .nothingSelected: return "No changes selected."
       case .partialAddOrDelete:
         return "Part of a new or deleted file can't be staged on its own; select the whole file."
+      case .partialRename:
+        return "Part of a renamed file can't be staged or unstaged on its own (it would undo the rename); select the whole file."
       case .malformedPatch: return "The diff couldn't be read."
       case .notUTF8:
         return "This file isn't UTF-8 text, so its hunks can't be staged, unstaged or reverted separately. Use the whole file instead."
@@ -72,6 +75,9 @@ public enum PatchBuilder {
     var isDeletedFile: Bool {
       header.contains { $0.hasPrefix("deleted file mode") || $0 == "+++ /dev/null" }
     }
+    var isRenameOrCopy: Bool {
+      header.contains { $0.hasPrefix("rename from ") || $0.hasPrefix("copy from ") }
+    }
   }
 
   /// Build a patch containing only the selected changes.
@@ -85,6 +91,18 @@ public enum PatchBuilder {
   {
     guard let parsed = parse(patch) else { throw BuildError.malformedPatch }
     guard !selection.hunks.isEmpty else { throw BuildError.nothingSelected }
+
+    // A patch with only some of a renamed file's changes keeps the rename
+    // header, so applying it would move the rest back to the old path and
+    // leave the new one untracked: such a file is taken whole or not at all.
+    if parsed.isRenameOrCopy {
+      let whole = parsed.hunks.indices.allSatisfy { index in
+        guard let chosen = selection.hunks[index] else { return false }
+        guard let lines = chosen else { return true }
+        return parsed.hunks[index].lines.indices.allSatisfy { parsed.hunks[index].lines[$0].kind == " " || lines.contains($0) }
+      }
+      if !whole { throw BuildError.partialRename }
+    }
 
     var output = parsed.header
     var offset = 0
@@ -101,6 +119,7 @@ public enum PatchBuilder {
       if partial && (parsed.isNewFile || parsed.isDeletedFile) {
         throw BuildError.partialAddOrDelete
       }
+
 
       var lines: [Line] = []
       for (lineIndex, line) in hunk.lines.enumerated() {

@@ -252,6 +252,29 @@
       #expect(try repo.git("diff", "--cached", "--name-only") == "", "nothing reached the index")
     }
 
+    @Test func partOfARenameIsRefusedNotUndone() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let lines = (1...40).map { "line \($0)" }
+      try repo.commit(["old.txt": lines.joined(separator: "\n") + "\n"])
+      try repo.git("mv", "old.txt", "new.txt")
+      var edited = lines
+      edited[1] = "line 2 changed"
+      edited[35] = "line 36 changed"
+      try repo.write("new.txt", edited.joined(separator: "\n") + "\n")
+      try repo.git("add", "-A")
+      let staged = try GitClient.fileDiff(repoPath: repo.root, path: "new.txt", oldPath: "old.txt", scope: .staged)
+      try #require(staged.hunks.count == 2)
+
+      let result = GitOperations.apply(
+        .unstage, selection: .wholeHunks([1]), path: "new.txt", oldPath: "old.txt", root: repo.root)
+      guard case .failure(.invalid) = result else {
+        Issue.record("expected a partial unstage of a rename to be refused, got \(result)")
+        return
+      }
+      #expect(try repo.git("status", "--porcelain") == "R  old.txt -> new.txt", "the rename is intact")
+    }
+
     @Test func staleHunkIdIsRejected() throws {
       let repo = try twoHunkRepo()
       defer { repo.destroy() }
