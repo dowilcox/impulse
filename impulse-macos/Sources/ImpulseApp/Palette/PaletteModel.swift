@@ -111,7 +111,10 @@ final class PaletteModel {
   }
 
   var query: String = "" {
-    didSet { refresh() }
+    // Return in the field writes the same text back to the binding; a
+    // refresh then would reset the selection to the top row before the
+    // submit runs.
+    didSet { if query != oldValue { refresh() } }
   }
   private(set) var rows: [PaletteRow] = []
   var selectedIndex: Int = 0
