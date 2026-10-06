@@ -236,6 +236,14 @@ enum CommandRegistry {
         ) { [weak controller] in controller?.performPaneCommand(id) })
     }
 
+    if AppState.isDev {
+      result.append(
+        AppCommand(
+          id: "component_gallery", title: "Component Gallery", category: "Developer",
+          keywords: ["themes", "design", "debug"], icon: .eye
+        ) { ComponentGalleryWindowController.show() })
+    }
+
     for custom in customKeybindings where !custom.name.isEmpty {
       let command = custom.command
       let args = custom.args

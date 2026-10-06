@@ -195,7 +195,7 @@ foundations ├──────────── Track B: git ─────
   - Vendor a Lucide subset (ISC) as template PDFs or SVGs with a `scripts/vendor-icons.sh`.
   - Add `Icon` enum mapping.
   - Material file icons stay for the tree.
-- [ ] **Component Gallery:** a debug-only window (Debug menu in Dev builds) showing every component × every built-in theme × light/dark.
+- [x] **Component Gallery:** a debug-only window (Debug menu in Dev builds) showing every component × every built-in theme × light/dark. *("Component Gallery" in the palette of Dev builds; filter dark/light, toggle Increase Contrast; `gallery=light+contrast` for snapshots)*
 - [x] **Accessibility baseline:** focus rings, `accessibilityLabel` on all icon-only buttons, Reduce Motion / Contrast / Transparency honored. (icon buttons labeled; Reduce Motion honored; Increase Contrast firms up the chrome palette live; the chrome has no translucent materials for Reduce Transparency; keyboard-focused lists ring their selected row)
 
 ### 1.2 Window and layout

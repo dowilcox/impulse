@@ -155,6 +155,12 @@ extension MainWindowController {
         tabManager.addEditorTab(
           path: (fileTreeRootPath as NSString).appendingPathComponent(String(action.dropFirst(8))),
           projectDirectory: fileTreeRootPath, preview: true)
+      } else if action.hasPrefix("gallery") {
+        // gallery, gallery=light, gallery=dark, gallery=light+contrast …
+        let options = action.split(separator: "=").dropFirst().first.map(String.init) ?? ""
+        ComponentGalleryWindowController.show(
+          light: options.contains("light") ? true : options.contains("dark") ? false : nil,
+          increaseContrast: options.contains("contrast"))
       } else if action == "vim" {
         var options = EditorOptions()
         options.vimMode = true

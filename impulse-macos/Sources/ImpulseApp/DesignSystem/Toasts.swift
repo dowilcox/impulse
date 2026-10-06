@@ -140,7 +140,7 @@ private struct ToastStack: View {
   }
 }
 
-private struct ToastView: View {
+struct ToastView: View {
   let toast: Toast
   let palette: ChromePalette
   let dismiss: () -> Void
