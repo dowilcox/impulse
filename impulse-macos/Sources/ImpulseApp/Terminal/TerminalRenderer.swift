@@ -2928,6 +2928,7 @@ class TerminalRenderer: NSView {
         // Check if the cell under the cursor is a hyperlink.
         let wasLink = hoverIsLink
         hoverIsLink = false
+        if let link = hoverLinkUri, toolTip == "⌘-click to open \(link)" { toolTip = nil }
         hoverLinkUri = nil
         hoverLinkPath = nil
         hoverLinkStartCol = 0
@@ -2956,6 +2957,8 @@ class TerminalRenderer: NSView {
                 hoverLinkStartCol = s
                 hoverLinkEndCol = e + 1
                 hoverLinkUri = backend?.hyperlinkAt(col: colI, row: rowI)
+                // The text needn't match where it goes: show the target.
+                toolTip = hoverLinkUri.map { "⌘-click to open \($0)" }
             } else if let (uri, s, e) = detectUrlAt(col: colI, row: rowI, grid: grid) {
                 // 2. Auto-detected plain URL in the row text.
                 hoverIsLink = true
@@ -3172,19 +3175,12 @@ class TerminalRenderer: NSView {
                     path = (found.path, found.line, found.column)
                 }
             }
-            // file:// links (OSC 8 or plain) open in the editor too.
-            if let uri, let url = URL(string: uri), url.isFileURL,
-                let onOpenPath, !url.hasDirectoryPath
-            {
-                onOpenPath(url.path, nil, nil)
-                return
-            }
             if let path, let onOpenPath {
                 onOpenPath(path.path, path.line, path.column)
                 return
             }
             if let uri, let url = URL(string: uri) {
-                NSWorkspace.shared.open(url)
+                openLink(url)
                 return
             }
         }
@@ -3476,6 +3472,36 @@ class TerminalRenderer: NSView {
         backend.scroll(delta: Int32(lines))
         isScrolledBack = true
         needsDisplay = true
+    }
+
+    /// Open a link from terminal output. Program output decides a link's
+    /// target (OSC 8) independently of its text, so only web and mail links
+    /// open directly; files open in the editor (folders and bundles are
+    /// revealed in Finder, never launched), and anything else asks first,
+    /// showing the real target.
+    private func openLink(_ url: URL) {
+        switch url.scheme?.lowercased() {
+        case "http", "https", "mailto":
+            NSWorkspace.shared.open(url)
+        case "file":
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            if exists, !isDirectory.boolValue, let onOpenPath {
+                onOpenPath(url.path, nil, nil)
+            } else if exists {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        default:
+            guard let window else { return }
+            let alert = NSAlert()
+            alert.messageText = "Open this link?"
+            alert.informativeText = "A program in this terminal linked to:\n\n\(url.absoluteString)"
+            alert.addButton(withTitle: "Open")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
+            }
+        }
     }
 
     /// View point -> grid cell, accounting for the bottom-anchor offset and the
