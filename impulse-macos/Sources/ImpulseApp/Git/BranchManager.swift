@@ -214,8 +214,8 @@ extension MainWindowController {
     case .publish:
       repository.run("Publishing \(branch.name)…") {
         GitOperations.push(setUpstream: true, branch: branch.name, root: $0)
-      } completion: { [weak self] result, _ in
-        if case .failure(let error) = result { self?.presentGitError(error, title: "Couldn't publish") }
+      } completion: { result, _ in
+        if case .failure(let error) = result { host.gitPresentError(error, title: "Couldn't publish") }
         model.reload()
       }
     case .rename:
@@ -226,8 +226,8 @@ extension MainWindowController {
           return
         }
         repository.run { GitOperations.renameBranch(branch.name, to: name, root: $0) } completion: {
-          [weak self] result, _ in
-          if case .failure(let error) = result { self?.presentGitError(error, title: "Couldn't rename") }
+          result, _ in
+          if case .failure(let error) = result { host.gitPresentError(error, title: "Couldn't rename") }
           model.reload()
         }
       }
@@ -265,11 +265,19 @@ extension MainWindowController {
 /// Everything else goes to the window.
 final class SheetGitHost: GitPanelHost {
   private weak var base: MainWindowController?
+  private weak var sheet: NSWindow?
   let toasts = ToastCenter()
 
   init(base: MainWindowController, sheet: NSWindow, palette: ChromePalette) {
     self.base = base
+    self.sheet = sheet
     toasts.attach(to: sheet) { palette }
+  }
+
+  /// The sheet, while it's still up (alerts go on top of it).
+  private var openSheet: NSWindow? {
+    guard let sheet, sheet.sheetParent != nil, sheet.isVisible else { return nil }
+    return sheet
   }
 
   var agentTargets: [AgentSummary] { base?.agentTargets ?? [] }
@@ -277,13 +285,16 @@ final class SheetGitHost: GitPanelHost {
   func gitOpenFile(_ absolutePath: String) { base?.gitOpenFile(absolutePath) }
   func gitOpenDiffEditor(_ absolutePath: String) { base?.gitOpenDiffEditor(absolutePath) }
   func gitOpenReview(scope: DiffScope, focusPath: String?) { base?.gitOpenReview(scope: scope, focusPath: focusPath) }
-  func gitPresentError(_ error: GitOperationError, title: String) { base?.gitPresentError(error, title: title) }
+  func gitPresentError(_ error: GitOperationError, title: String) {
+    base?.presentGitError(error, title: title, on: openSheet)
+  }
   func gitConfirm(
     title: String, message: String, confirmTitle: String, destructive: Bool,
     completion: @escaping (Bool) -> Void
   ) {
     guard let base else { return completion(false) }
     base.gitConfirm(
-      title: title, message: message, confirmTitle: confirmTitle, destructive: destructive, completion: completion)
+      title: title, message: message, confirmTitle: confirmTitle, destructive: destructive, on: openSheet,
+      completion: completion)
   }
 }

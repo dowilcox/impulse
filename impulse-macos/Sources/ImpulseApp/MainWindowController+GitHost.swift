@@ -60,8 +60,17 @@ extension MainWindowController: GitPanelHost {
     title: String, message: String, confirmTitle: String, destructive: Bool,
     completion: @escaping (Bool) -> Void
   ) {
-    // On top of an open sheet (the Branch Manager), not queued behind it.
-    guard let window = window?.attachedSheet ?? window else { return completion(false) }
+    gitConfirm(
+      title: title, message: message, confirmTitle: confirmTitle, destructive: destructive, on: nil,
+      completion: completion)
+  }
+
+  /// `sheet`: an open sheet to ask on top of (the Branch Manager); nil asks
+  /// on the window once no sheet is attached.
+  func gitConfirm(
+    title: String, message: String, confirmTitle: String, destructive: Bool, on sheet: NSWindow?,
+    completion: @escaping (Bool) -> Void
+  ) {
     let alert = NSAlert()
     alert.alertStyle = destructive ? .warning : .informational
     alert.messageText = title
@@ -69,8 +78,28 @@ extension MainWindowController: GitPanelHost {
     alert.addButton(withTitle: confirmTitle)
     alert.addButton(withTitle: "Cancel")
     alert.buttons.first?.hasDestructiveAction = destructive
-    alert.beginSheetModal(for: window) { response in
-      completion(response == .alertFirstButtonReturn)
+    let present: (NSWindow) -> Void = { target in
+      alert.beginSheetModal(for: target) { response in
+        completion(response == .alertFirstButtonReturn)
+      }
+    }
+    if let sheet { present(sheet) } else { presentWhenNoSheet(present) }
+  }
+
+  /// Show a sheet on the window once no other sheet is attached. A sheet put
+  /// on another sheet that's closing (the Open panel that just picked a
+  /// folder, a dialog dismissed by its own button) goes away with it while
+  /// its modal session stays: the window is left dimmed and unusable.
+  func presentWhenNoSheet(_ present: @escaping (NSWindow) -> Void) {
+    guard let window else { return }
+    guard window.attachedSheet != nil else { return present(window) }
+    var observer: NSObjectProtocol?
+    observer = NotificationCenter.default.addObserver(
+      forName: NSWindow.didEndSheetNotification, object: window, queue: .main
+    ) { [weak self] _ in
+      if let observer { NotificationCenter.default.removeObserver(observer) }
+      // The ended sheet is detached by the next turn of the run loop.
+      DispatchQueue.main.async { self?.presentWhenNoSheet(present) }
     }
   }
 

@@ -40,7 +40,7 @@ extension MainWindowController {
 
   func presentTrustPrompt(for folder: String) {
     let folder = WorkspaceTrust.normalize(folder)
-    guard let window, Trust.prompting.insert(folder).inserted else { return }
+    guard window != nil, Trust.prompting.insert(folder).inserted else { return }
     updateRestrictedIndicator()
     let name = (folder as NSString).lastPathComponent
     let parent = (folder as NSString).deletingLastPathComponent
@@ -65,16 +65,25 @@ extension MainWindowController {
       alert.accessoryView = box
       parentBox = box
     }
-    alert.beginSheetModal(for: window.attachedSheet ?? window) { [weak self] response in
-      Trust.prompting.remove(folder)
-      if response == .alertFirstButtonReturn {
-        Trust.shared.trust(parentBox?.state == .on ? parent : folder)
-        Trust.declined.remove(folder)
-        Self.trustDidChange()
-      } else {
-        Trust.declined.insert(folder)
-        self?.updateRestrictedIndicator()
+    // Not on the Open panel that picked the folder: it's still closing.
+    presentWhenNoSheet { [weak self] window in
+      alert.beginSheetModal(for: window) { response in
+        self?.trustPromptAnswered(response, folder: folder, parent: parent, parentBox: parentBox)
       }
+    }
+  }
+
+  private func trustPromptAnswered(
+    _ response: NSApplication.ModalResponse, folder: String, parent: String, parentBox: NSButton?
+  ) {
+    Trust.prompting.remove(folder)
+    if response == .alertFirstButtonReturn {
+      Trust.shared.trust(parentBox?.state == .on ? parent : folder)
+      Trust.declined.remove(folder)
+      Self.trustDidChange()
+    } else {
+      Trust.declined.insert(folder)
+      updateRestrictedIndicator()
     }
   }
 

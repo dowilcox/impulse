@@ -47,11 +47,35 @@ extension MainWindowController {
         tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
+      } else if action.hasPrefix("key="), let window {
+        // A key press to whatever has the keyboard (snapshot checks).
+        let keys: [String: (code: UInt16, chars: String)] = [
+          "down": (125, String(UnicodeScalar(NSDownArrowFunctionKey)!)),
+          "up": (126, String(UnicodeScalar(NSUpArrowFunctionKey)!)),
+        ]
+        if let key = keys[String(action.dropFirst(4))],
+          let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: key.chars,
+            charactersIgnoringModifiers: key.chars, isARepeat: false, keyCode: key.code)
+        {
+          window.sendEvent(event)
+        }
       } else if action == "trust-on" {
         // Workspace trust is off in snapshots; turn it on to see restricted mode.
         Trust.enabledForSnapshot = true
         Trust.shared.isEnabled = true
         MainWindowController.trustDidChange()
+      } else if action == "trust-after-sheet", let window {
+        // What the Open panel does: its completion opens the folder while
+        // the panel sheet is still closing.
+        Trust.enabledForSnapshot = true
+        Trust.shared.isEnabled = true
+        let folder = trustFolderForActiveContext() ?? DebugSnapshot.initialDirectory ?? fileTreeRootPath
+        let placeholder = NSAlert()
+        placeholder.messageText = "Choose a folder"
+        placeholder.beginSheetModal(for: window) { [weak self] _ in self?.presentTrustPrompt(for: folder) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { window.endSheet(placeholder.window) }
       } else if action == "trust-prompt" {
         Trust.enabledForSnapshot = true
         Trust.shared.isEnabled = true

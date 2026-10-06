@@ -318,9 +318,9 @@ extension MainWindowController {
 
   /// Shows a git failure as a window-modal sheet: the plain-English message,
   /// with git's own output as detail.
-  func presentGitError(_ error: GitOperationError, title: String) {
-    // On top of an open sheet (the Branch Manager), not queued behind it.
-    guard let window = window?.attachedSheet ?? window else { return }
+  /// `sheet`: an open sheet to show it on (the Branch Manager); nil shows
+  /// it on the window once no sheet is attached.
+  func presentGitError(_ error: GitOperationError, title: String, on sheet: NSWindow? = nil) {
     let alert = NSAlert()
     alert.alertStyle = .warning
     alert.messageText = title
@@ -332,6 +332,10 @@ extension MainWindowController {
     alert.informativeText =
       detail.isEmpty || isGeneric ? error.message : "\(error.message)\n\n\(detail)"
     alert.addButton(withTitle: "OK")
-    alert.beginSheetModal(for: window)
+    if let sheet {
+      alert.beginSheetModal(for: sheet)
+    } else {
+      presentWhenNoSheet { alert.beginSheetModal(for: $0) }
+    }
   }
 }
