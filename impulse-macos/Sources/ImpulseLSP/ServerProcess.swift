@@ -166,6 +166,13 @@ final class ServerProcess {
   private var serverCapabilitiesStorage: [String: Any]?
   private var changeSyncKindStorage: Int?
 
+  /// Whether the process has ended.
+  var hasExited: Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return exited
+  }
+
   /// Server capabilities from the initialize response (JSON object), if the
   /// handshake succeeded.
   var serverCapabilities: [String: Any]? {
@@ -208,8 +215,7 @@ final class ServerProcess {
 
   /// Port of `LspClient::start`: spawn, wire up reader/stderr/exit handling,
   /// then run the initialize handshake (blocking, 30s timeout). On handshake
-  /// failure the child is not killed (matching Rust); its eventual exit still
-  /// produces a `serverExited` event.
+  /// failure the child is stopped.
   static func start(
     command: String,
     args: [String],
@@ -231,6 +237,8 @@ final class ServerProcess {
     }
 
     if case .failure(let error) = client.initialize(initializationOptions: initializationOptions) {
+      // Don't leave it running: the next attempt would start another.
+      client.terminate()
       return .failure(error)
     }
     lspLog("LSP: server '\(command)' initialized successfully for key=\(clientKey)")
@@ -685,6 +693,18 @@ final class ServerProcess {
         "textDocument": ["uri": uri, "version": version] as [String: Any],
         "contentChanges": contentChanges,
       ])
+  }
+
+  /// Stop the process: close its input, SIGTERM, and SIGKILL if it's still
+  /// there two seconds later.
+  func terminate() {
+    try? stdinHandle.close()
+    guard process.isRunning else { return }
+    process.terminate()
+    let pid = process.processIdentifier
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [process] in
+      if process.isRunning { kill(pid, SIGKILL) }
+    }
   }
 
   /// Port of `LspClient::shutdown`: shutdown request (5s timeout), drain

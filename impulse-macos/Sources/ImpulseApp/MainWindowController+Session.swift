@@ -326,6 +326,9 @@ extension MainWindowController {
     repositoryObservation?.cancel()
     repositoryObservation = nil
 
+    // The language servers are shared: let go of this window's documents.
+    for case .editor(let editor) in tabManager.allSurfaces { lspDidClose(editor: editor) }
+
     // Clean up all remaining tabs (kill terminal processes, tear down
     // editor WebViews) so resources are freed immediately.
     tabManager.cleanupAllTabs()

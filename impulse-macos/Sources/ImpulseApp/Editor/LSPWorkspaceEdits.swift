@@ -40,6 +40,15 @@ extension MainWindowController {
     }
     func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
+    // Edits for a document that changed since the server computed them
+    // would land in the wrong places.
+    for (uri, version) in edit.versions {
+      if let current = LSPDocuments.shared.version(uri), current != version {
+        return outcome(
+          "\(name(uriToFilePath(uri))) changed while the language server was working on it. Try again.")
+      }
+    }
+
     // Moving or trashing a file that's open would strand its tab.
     for operation in edit.operations {
       switch operation {

@@ -54,15 +54,22 @@ public enum WorkspaceEditOperation: Equatable, Sendable {
 
 public struct WorkspaceEdit: Equatable, Sendable {
   public var operations: [WorkspaceEditOperation]
+  /// The document versions the server computed its edits against, by URI
+  /// (`documentChanges` only; none means any version). An open document at
+  /// another version has changed since: the edits would land in the wrong
+  /// places.
+  public var versions: [String: Int32]
 
-  public init(operations: [WorkspaceEditOperation]) {
+  public init(operations: [WorkspaceEditOperation], versions: [String: Int32] = [:]) {
     self.operations = operations
+    self.versions = versions
   }
 
   /// `documentChanges` (in order) when present, else `changes`.
   public static func parse(_ json: Any?) -> WorkspaceEdit? {
     guard let object = json as? [String: Any] else { return nil }
     var operations: [WorkspaceEditOperation] = []
+    var versions: [String: Int32] = [:]
     if let documentChanges = object["documentChanges"] as? [Any] {
       for case let change as [String: Any] in documentChanges {
         let options = change["options"] as? [String: Any]
@@ -90,6 +97,7 @@ public struct WorkspaceEdit: Equatable, Sendable {
             let edits = change["edits"] as? [Any]
           else { continue }
           operations.append(.edit(uri: uri, edits: edits.compactMap(LSPTextEdit.init(json:))))
+          if let version = (document["version"] as? NSNumber)?.int32Value { versions[uri] = version }
         }
       }
     } else if let changes = object["changes"] as? [String: Any] {
@@ -101,7 +109,7 @@ public struct WorkspaceEdit: Equatable, Sendable {
     } else {
       return WorkspaceEdit(operations: [])
     }
-    return WorkspaceEdit(operations: operations)
+    return WorkspaceEdit(operations: operations, versions: versions)
   }
 
   /// Every file the edit touches, in order, without repeats.

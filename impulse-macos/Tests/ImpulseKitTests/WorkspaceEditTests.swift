@@ -76,6 +76,40 @@
         ])
       #expect(parsed.uris == ["file:///new.swift", "file:///old.swift", "file:///renamed.swift", "file:///gone"])
       #expect(parsed.hasResourceOperations)
+      #expect(parsed.versions.isEmpty, "a null version is any version")
+    }
+
+    @Test func keepsTheVersionsEditsWereComputedFor() throws {
+      let parsed = try #require(
+        WorkspaceEdit.parse(
+          json(
+            """
+            {"documentChanges": [
+              {"textDocument": {"uri": "file:///a.ts", "version": 7}, "edits": []},
+              {"textDocument": {"uri": "file:///b.ts"}, "edits": []}
+            ]}
+            """)))
+      #expect(parsed.versions == ["file:///a.ts": 7])
+    }
+
+    @Test func openDocumentsAreSharedAcrossWindows() {
+      var documents = LSPOpenDocuments()
+      let uri = "file:///a.ts"
+      let first = documents.open(uri)
+      let second = documents.open(uri)
+      #expect(first && !second, "only the first window sends didOpen")
+      #expect(documents.holders(uri) == 2)
+      let versions = [documents.nextVersion(uri), documents.nextVersion(uri)]
+      #expect(versions == [2, 3], "one sequence for both windows")
+      let closedOne = documents.close(uri)
+      #expect(!closedOne, "the other window still shows it")
+      #expect(documents.version(uri) == 3)
+      let closedLast = documents.close(uri)
+      #expect(closedLast, "the last window sends didClose")
+      let afterClose = documents.nextVersion(uri)
+      #expect(documents.version(uri) == nil && afterClose == nil)
+      let reopened = documents.open(uri)
+      #expect(reopened && documents.version(uri) == 1, "reopened from the start")
     }
 
     @Test func emptyAndMalformedEdits() {

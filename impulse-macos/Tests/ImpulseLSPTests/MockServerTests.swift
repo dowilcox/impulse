@@ -260,6 +260,111 @@
       #expect(answered.object["message"] as? String == "answered")
     }
 
+    /// Reads one message body into $body (after the prelude's read_msg).
+    private static let readBody = #"""
+      read_body() {
+        len=0
+        while IFS= read -r line; do
+          line=$(printf '%s' "$line" | tr -d '\r')
+          case "$line" in
+            "Content-Length: "*) len=${line#Content-Length: } ;;
+            "") break ;;
+          esac
+        done
+        body=$(dd bs=1 count="$len" 2>/dev/null)
+      }
+
+      """#
+
+    private func didOpen(_ workspace: MockWorkspace) -> String {
+      "{\"textDocument\":{\"uri\":\"\(workspace.fileUri)\",\"languageId\":\"mocklang\",\"version\":1,\"text\":\"hello\"}}"
+    }
+
+    @Test func aServerThatStartsLateGetsTheOpenDocuments() throws {
+      let body = Self.readBody + #"""
+        read_msg
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        read_msg
+        read_msg
+        read_body
+        case "$body" in
+          *textDocument/didOpen*main.mock*|*main.mock*textDocument/didOpen*) send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":3,"message":"opened"}}' ;;
+          *) send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":3,"message":"missed"}}' ;;
+        esac
+        sleep 2
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      let events = EventCollector(registry)
+
+      // Nothing is running yet: the notification doesn't wait for a start.
+      let started = Date()
+      #expect(
+        registry.notify(
+          languageId: "mocklang", fileUri: workspace.fileUri, method: "textDocument/didOpen",
+          paramsJSON: didOpen(workspace)) == false)
+      #expect(Date().timeIntervalSince(started) < 1)
+
+      let message = try #require(events.waitFor(type: "showMessage"))
+      #expect(message.object["message"] as? String == "opened")
+      registry.shutdownAll()
+    }
+
+    @Test func aCrashedServerComesBackWithItsDocuments() throws {
+      let body = Self.readBody + #"""
+        marker="$(dirname "$0")/crashed-once"
+        read_msg
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        read_msg
+        read_msg
+        read_body
+        if [ -f "$marker" ]; then
+          case "$body" in
+            *textDocument/didOpen*) send '{"jsonrpc":"2.0","method":"window/showMessage","params":{"type":3,"message":"back"}}' ;;
+          esac
+          sleep 2
+          exit 0
+        fi
+        touch "$marker"
+        exit 1
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      let events = EventCollector(registry)
+
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+      registry.notify(
+        languageId: "mocklang", fileUri: workspace.fileUri, method: "textDocument/didOpen",
+        paramsJSON: didOpen(workspace))
+
+      let error = try #require(events.waitFor(type: "serverError"))
+      #expect((error.object["message"] as? String)?.contains("stopped unexpectedly") == true)
+      let back = try #require(events.waitFor(type: "showMessage", timeout: 20))
+      #expect(back.object["message"] as? String == "back")
+      registry.shutdownAll()
+    }
+
+    @Test func aFailedHandshakeLeavesNoProcessBehind() throws {
+      let body = #"""
+        echo $$ > "$(dirname "$0")/pid"
+        read_msg
+        send '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"cannot start"}}'
+        exec sleep 30
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 0)
+      let pidText = try String(contentsOfFile: workspace.root + "/pid", encoding: .utf8)
+      let pid = try #require(pid_t(pidText.trimmingCharacters(in: .whitespacesAndNewlines)))
+      let deadline = Date().addingTimeInterval(5)
+      while Date() < deadline, kill(pid, 0) == 0 { Thread.sleep(forTimeInterval: 0.05) }
+      #expect(kill(pid, 0) == -1, "the server process is gone")
+    }
+
     @Test func unknownLanguageHasNoClients() throws {
       let workspace = try makeWorkspace(scriptBody: "exit 0\n")
       defer { workspace.cleanup() }

@@ -130,7 +130,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   // MARK: LSP State (internal for MainWindowController+LSP extension)
 
   /// Per-URI document version counter for LSP.
-  var lspDocVersions: [String: Int32] = [:]
 
   /// Tracks the latest completion request ID per URI for deduplication.
   var latestCompletionReq: [String: UInt64] = [:]

@@ -21,6 +21,12 @@ private func encodeLspJSON(_ value: Any) -> String {
 
 // MARK: - LSP Integration
 
+/// What the (app-wide) language servers have open, across windows. Main
+/// thread only.
+enum LSPDocuments {
+  static var shared = LSPOpenDocuments()
+}
+
 extension MainWindowController {
 
   func applyLspDiagnostics(uri: String, diagnosticsArray: [[String: Any]]) {
@@ -40,12 +46,15 @@ extension MainWindowController {
         let endColumn = (d["endColumn"] as? NSNumber)?.uint32Value,
         let message = d["message"] as? String
       else { return nil }
+      // LSP's zero-based positions: editor.js converts them, as it does for
+      // every command (adding one here too drew each mark a line and a
+      // column late).
       return MonacoDiagnostic(
         severity: diagnosticSeverityToMonaco(severity),
-        startLine: startLine + 1,  // LSP 0-based -> Monaco 1-based
-        startColumn: startColumn + 1,
-        endLine: endLine + 1,
-        endColumn: endColumn + 1,
+        startLine: startLine,
+        startColumn: startColumn,
+        endLine: endLine,
+        endColumn: endColumn,
         message: message,
         source: d["source"] as? String
       )
@@ -125,14 +134,16 @@ extension MainWindowController {
       return
     }
     lspOpenFiles.insert(uri)
-    lspDocVersions[uri] = 1
+    // Another window has it open already: the servers know it.
+    guard LSPDocuments.shared.open(uri) else { return }
 
     let language = editorTab.lspLanguage
     let content = editorTab.content
 
+    // Servers that aren't running yet start in the background and get the
+    // document once they're up; this doesn't wait for them.
     lspQueue.async { [weak self] in
       guard let self else { return }
-      self.core.lspEnsureServers(languageId: language, fileUri: uri)
       let params = encodeLspJSON([
         "textDocument": [
           "uri": uri,
@@ -150,10 +161,10 @@ extension MainWindowController {
   func lspDidChange(editor: EditorTab, changes: [MonacoContentChange] = []) {
     guard let path = editor.filePath else { return }
     let uri = filePathToUri(path)
-    guard lspOpenFiles.contains(uri) else { return }
-
-    let version = (lspDocVersions[uri] ?? 1) + 1
-    lspDocVersions[uri] = version
+    guard lspOpenFiles.contains(uri), let version = LSPDocuments.shared.nextVersion(uri) else { return }
+    // Shown in two windows, each with its own buffer: incremental changes
+    // from one wouldn't apply to the other's text, so send it whole.
+    let whole = LSPDocuments.shared.holders(uri) > 1
 
     let language = editor.lspLanguage
     let content = editor.content
@@ -179,8 +190,8 @@ extension MainWindowController {
       self.core.lspDidChange(
         languageId: language,
         fileUri: uri,
-        version: Int32(version),
-        fullText: incrementalChanges.isEmpty ? content : nil,
+        version: version,
+        fullText: incrementalChanges.isEmpty || whole ? content : nil,
         changesJson: encodeLspJSON(incrementalChanges)
       )
     }
@@ -192,14 +203,16 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     guard lspOpenFiles.contains(uri) else { return }
     lspOpenFiles.remove(uri)
-    lspDocVersions.removeValue(forKey: uri)
     clearPendingLSPRequests(for: uri)
+    // Another window still shows it.
+    guard LSPDocuments.shared.close(uri) else { return }
 
     let language = editor.lspLanguage
-    lspQueue.async { [weak self] in
-      guard let self else { return }
+    // The app-wide core, not this window: it may be closing.
+    let core = self.core
+    lspQueue.async {
       let params = encodeLspJSON(["textDocument": ["uri": uri]])
-      self.core.lspNotify(
+      core.lspNotify(
         languageId: language, fileUri: uri, method: "textDocument/didClose", paramsJson: params)
     }
   }
