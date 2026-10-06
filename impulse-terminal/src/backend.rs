@@ -1,7 +1,6 @@
 //! Terminal backend — owns the alacritty_terminal::Term and PTY event loop.
 
 use std::collections::VecDeque;
-use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -36,10 +35,6 @@ use crate::history::{
     CommandHistorySearchResult, CommandHistoryStore,
 };
 use crate::search::{SearchResult, SearchStats, TerminalSearch};
-
-const FILTERED_CHILD_ENV_VARS: &[&str] = &["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"];
-
-static CHILD_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Event proxy — bridges alacritty events to our channel
@@ -171,6 +166,21 @@ fn send_wakeup(event_tx: &EventSink, wakeup_pending: &AtomicBool) {
 
 /// Absolute grid row of the cursor: eviction estimate + history depth +
 /// on-screen line. Stable across scrolling, exact under line wrapping.
+/// Where the shell integration finds its nonce (and unsets it, so programs
+/// the shell runs don't inherit it).
+const SHELL_NONCE_VAR: &str = "IMPULSE_SHELL_NONCE";
+
+/// 128 random bits, hex.
+fn random_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    unsafe { libc::arc4random_buf(bytes.as_mut_ptr().cast(), bytes.len()) };
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Most bytes read from the PTY before the loop handles queued input,
+/// resizes and shutdown again.
+const MAX_READ_PER_PASS: usize = 256 * 1024;
+
 fn absolute_cursor_row<T: EventListener>(term: &Term<T>, row_base: i64) -> i64 {
     let grid = term.grid();
     row_base + grid.history_size() as i64 + i64::from(grid.cursor.point.line.0)
@@ -543,39 +553,9 @@ fn pty_password_input(fd: std::os::unix::io::RawFd) -> bool {
 }
 
 fn spawn_pty(pty_options: &PtyOptions, window_size: WindowSize) -> io::Result<tty::Pty> {
-    let _guard = CHILD_ENV_LOCK
-        .lock()
-        .expect("child environment lock poisoned");
-    let saved_env = save_and_remove_child_env();
-    let result = tty::new(pty_options, window_size, 0);
-    restore_child_env(saved_env);
-    result
-}
-
-fn save_and_remove_child_env() -> Vec<(&'static str, Option<OsString>)> {
-    let mut saved_env = Vec::with_capacity(FILTERED_CHILD_ENV_VARS.len());
-    for key in FILTERED_CHILD_ENV_VARS {
-        saved_env.push((*key, std::env::var_os(key)));
-        // alacritty_terminal merges `PtyOptions.env` with the parent process
-        // environment, so omitted keys must be removed before spawning.
-        unsafe {
-            std::env::remove_var(key);
-        }
-    }
-    saved_env
-}
-
-fn restore_child_env(saved_env: Vec<(&'static str, Option<OsString>)>) {
-    for (key, value) in saved_env {
-        match value {
-            Some(value) => unsafe {
-                std::env::set_var(key, value);
-            },
-            None => unsafe {
-                std::env::remove_var(key);
-            },
-        }
-    }
+    // The shell's environment is trimmed by `env -u` (see to_pty_options),
+    // not by changing this process's environment.
+    tty::new(pty_options, window_size, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -686,7 +666,13 @@ impl TerminalBackend {
         };
 
         let alac_config = config.to_alacritty_config();
-        let pty_options = config.to_pty_options();
+        let mut pty_options = config.to_pty_options();
+        // The shell integration adds this to the command text it reports;
+        // see OscScanner::with_nonce.
+        let shell_nonce = random_nonce();
+        pty_options
+            .env
+            .insert(SHELL_NONCE_VAR.to_string(), shell_nonce.clone());
 
         let size = TermSize {
             columns: cols as usize,
@@ -748,6 +734,7 @@ impl TerminalBackend {
                     wakeup_pending_clone,
                     password_input_clone,
                     max_scrollback,
+                    shell_nonce,
                 );
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
@@ -795,6 +782,7 @@ impl TerminalBackend {
         wakeup_pending: Arc<AtomicBool>,
         password_input: Arc<AtomicBool>,
         max_scrollback: usize,
+        shell_nonce: String,
     ) {
         // Invalidate the shared master fd before `pty` (a parameter, dropped
         // after every local) closes it, so it's never queried once reused.
@@ -808,7 +796,7 @@ impl TerminalBackend {
 
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut processor: Processor = Processor::new();
-        let mut scanner = crate::osc_scanner::OscScanner::new();
+        let mut scanner = crate::osc_scanner::OscScanner::with_nonce(Some(shell_nonce));
 
         #[cfg(unix)]
         let master_fd = {
@@ -945,15 +933,23 @@ impl TerminalBackend {
             }
 
             if readable {
+                let mut read_this_pass = 0usize;
                 loop {
-                    // Read from PTY until it would block, then wait for the
-                    // next readiness notification from the OS.
+                    // Read from PTY until it would block, or until a pass's
+                    // budget is spent: under a flood (`yes`, `cat` of a big
+                    // file) input like Ctrl+C, resizes and shutdown would
+                    // otherwise wait behind it. Polling is level-triggered,
+                    // so the rest is read on the next pass.
+                    if read_this_pass >= MAX_READ_PER_PASS {
+                        break;
+                    }
                     match pty.reader().read(&mut buf) {
                         Ok(0) => {
                             let _ = event_tx.send(TerminalEvent::Exit);
                             break 'event_loop;
                         }
                         Ok(n) => {
+                            read_this_pass += n;
                             // Scan for OSC sequences, then use their offsets to capture
                             // command output without including shell prompt markers.
                             scanner.scan(&buf[..n]);
@@ -1022,7 +1018,9 @@ impl TerminalBackend {
                                                 );
                                                 let block = blocks.command_started(Some(row));
                                                 let _ = event_tx.send(
-                                                    TerminalEvent::CommandBlockStarted(block),
+                                                    TerminalEvent::CommandBlockStarted(
+                                                        (&block).into(),
+                                                    ),
                                                 );
                                             }
                                             let _ = event_tx.send(TerminalEvent::CommandStart);
@@ -1043,7 +1041,9 @@ impl TerminalBackend {
                                                         );
                                                     }
                                                     let _ = event_tx.send(
-                                                        TerminalEvent::CommandBlockEnded(block),
+                                                        TerminalEvent::CommandBlockEnded(
+                                                            (&block).into(),
+                                                        ),
                                                     );
                                                 }
                                             }

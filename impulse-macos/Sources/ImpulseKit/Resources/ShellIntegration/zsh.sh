@@ -1,5 +1,10 @@
 # Impulse shell integration for zsh
 zmodload zsh/parameter 2>/dev/null
+# The terminal's secret for the command text this reports, so what programs
+# print can't pass for a command. A shell variable, not exported: programs
+# run here don't see it.
+__impulse_nonce="${__impulse_nonce:-${IMPULSE_SHELL_NONCE:-}}"
+unset IMPULSE_SHELL_NONCE
 __impulse_command_started=""
 __impulse_names_sig=""
 __impulse_path_sent=""
@@ -53,7 +58,7 @@ __impulse_precmd() {
 __impulse_preexec() {
     local command="$1"
     __impulse_command_started=1
-    printf '\e]6973;Command=%s\a' "$(__impulse_urlencode "$command")"
+    printf '\e]6973;Command=%s;Nonce=%s\a' "$(__impulse_urlencode "$command")" "$__impulse_nonce"
     printf '\e]133;C\a'
 }
 autoload -Uz add-zsh-hook

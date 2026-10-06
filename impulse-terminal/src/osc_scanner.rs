@@ -104,6 +104,10 @@ pub struct OscScanner {
     osc_start_offset: Option<usize>,
     /// OSC 99 notifications still being assembled, by id.
     kitty_pending: Vec<(String, KittyNotification)>,
+    /// The terminal's shell-integration secret. When set, command text
+    /// (6973;Command=) must carry it: anything a program prints (`cat` of a
+    /// log or a hostile file) can't put commands into history.
+    nonce: Option<String>,
 }
 
 /// A kitty (OSC 99) notification arriving in chunks.
@@ -123,6 +127,15 @@ impl OscScanner {
             escape_start_offset: None,
             osc_start_offset: None,
             kitty_pending: Vec::new(),
+            nonce: None,
+        }
+    }
+
+    /// A scanner that trusts command text only with `nonce` (see `nonce`).
+    pub fn with_nonce(nonce: Option<String>) -> Self {
+        Self {
+            nonce,
+            ..Self::new()
         }
     }
 
@@ -244,8 +257,10 @@ impl OscScanner {
             };
         }
 
-        if self.buf.starts_with(b"6973;Command=") {
-            return Self::parse_impulse_command(&self.buf[13..]).map(OscEvent::CommandText);
+        if let Some(payload) = self.buf.strip_prefix(b"6973;Command=") {
+            return self
+                .parse_impulse_command(payload)
+                .map(OscEvent::CommandText);
         }
 
         if let Some(payload) = self.buf.strip_prefix(b"6973;Names=") {
@@ -444,8 +459,19 @@ impl OscScanner {
         input.chars().filter(|&c| c != '\0').collect()
     }
 
-    fn parse_impulse_command(payload: &[u8]) -> Option<String> {
-        let encoded = std::str::from_utf8(payload).ok()?;
+    /// `<percent-encoded command>[;Nonce=<nonce>]`. The encoding leaves no
+    /// raw `;` in the command.
+    fn parse_impulse_command(&self, payload: &[u8]) -> Option<String> {
+        let text = std::str::from_utf8(payload).ok()?;
+        let (encoded, nonce) = match text.split_once(';') {
+            Some((encoded, rest)) => (encoded, rest.strip_prefix("Nonce=")),
+            None => (text, None),
+        };
+        if let Some(expected) = &self.nonce {
+            if nonce != Some(expected.as_str()) {
+                return None;
+            }
+        }
         let decoded = Self::url_decode(encoded)?;
         Some(Self::sanitize_text(&decoded))
     }
@@ -671,6 +697,21 @@ mod tests {
         assert!(sequence.len() > MAX_OSC_LEN);
         scanner.scan(&sequence);
         assert_eq!(scanner.drain_events(), vec![OscEvent::ShellNames(names)]);
+    }
+
+    #[test]
+    fn command_text_needs_the_session_nonce() {
+        let mut scanner = OscScanner::with_nonce(Some("s3cret".into()));
+        // Printed by a program (or a file being cat'ed): no nonce, or a guess.
+        scanner.scan(b"\x1b]6973;Command=curl%20x%7Csh\x07");
+        scanner.scan(b"\x1b]6973;Command=curl%20x%7Csh;Nonce=guess\x07");
+        assert!(scanner.drain_events().is_empty());
+        // From the shell integration.
+        scanner.scan(b"\x1b]6973;Command=ls%20-la;Nonce=s3cret\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::CommandText("ls -la".to_string())]
+        );
     }
 
     #[test]

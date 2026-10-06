@@ -1,4 +1,8 @@
 # Impulse shell integration for fish
+# The terminal's secret for the command text this reports, so what programs
+# print can't pass for a command. Not exported: programs run here don't see it.
+set -q __impulse_nonce; or set -g __impulse_nonce "$IMPULSE_SHELL_NONCE"
+set -e IMPULSE_SHELL_NONCE
 set -g __impulse_command_started ""
 set -g __impulse_names_sig ""
 set -g __impulse_path_sent ""
@@ -34,6 +38,6 @@ end
 function __impulse_preexec --on-event fish_preexec
     set -l command $argv[1]
     set -g __impulse_command_started 1
-    printf '\e]6973;Command=%s\a' (__impulse_urlencode $command)
+    printf '\e]6973;Command=%s;Nonce=%s\a' (__impulse_urlencode $command) $__impulse_nonce
     printf '\e]133;C\a'
 end

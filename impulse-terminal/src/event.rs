@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::blocks::TerminalCommandBlock;
+use crate::blocks::TerminalCommandBlockSummary;
 use crate::osc_scanner::ProgressState;
 
 /// Events emitted by the terminal backend.
@@ -36,9 +36,10 @@ pub enum TerminalEvent {
     /// Command execution ended with exit code (OSC 133;D).
     CommandEnd(i32),
     /// Command block metadata was created.
-    CommandBlockStarted(TerminalCommandBlock),
-    /// Command block metadata was completed.
-    CommandBlockEnded(TerminalCommandBlock),
+    CommandBlockStarted(TerminalCommandBlockSummary),
+    /// Command block metadata was completed. Without the captured output
+    /// (up to 1 MB per block): fetch the block by id when it's needed.
+    CommandBlockEnded(TerminalCommandBlockSummary),
     /// Terminal requested user attention (iTerm2 OSC 1337;RequestAttention).
     AttentionRequest(String),
     /// Terminal requested a user notification (OSC 9 or OSC 777 notify).

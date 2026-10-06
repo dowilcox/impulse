@@ -1,4 +1,9 @@
 # Impulse shell integration for bash
+# The terminal's secret for the command text this reports, so what programs
+# print can't pass for a command. A shell variable, not exported: programs
+# run here don't see it.
+__impulse_nonce="${__impulse_nonce:-${IMPULSE_SHELL_NONCE:-}}"
+unset IMPULSE_SHELL_NONCE
 __impulse_command_started=""
 # Set while PROMPT_COMMAND runs: the DEBUG trap fires for its entries
 # (history -a, direnv, starship…) too, and those aren't commands.
@@ -72,7 +77,7 @@ __impulse_preexec() {
     case "$command" in
         alias*|unalias*|source*|". "*|function*|*"()"*|unset*|eval*) __impulse_names_sent="" ;;
     esac
-    printf '\e]6973;Command=%s\a' "$(__impulse_urlencode "$command")"
+    printf '\e]6973;Command=%s;Nonce=%s\a' "$(__impulse_urlencode "$command")" "$__impulse_nonce"
     printf '\e]133;C\a'
 }
 if [[ ! "$PROMPT_COMMAND" == *"__impulse_prompt_command"* ]]; then

@@ -5,12 +5,26 @@ use std::path::PathBuf;
 
 use alacritty_terminal::term::{Config as AlacrittyConfig, Osc52};
 use alacritty_terminal::tty::{Options as PtyOptions, Shell};
+
 use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use serde::Deserialize;
 
 use crate::grid::{CursorShape, RgbColor};
+
+/// Variables a terminal's shell doesn't inherit from the app: color
+/// overrides from wherever Impulse was launched, and the window ids
+/// alacritty_terminal always adds, which make every shell look like it runs
+/// in Alacritty.
+const UNSET_IN_CHILD: &[&str] = &[
+    "NO_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    "ALACRITTY_WINDOW_ID",
+    "WINDOWID",
+];
 
 /// Terminal configuration provided by the frontend (deserialized from JSON).
 #[derive(Deserialize)]
@@ -133,11 +147,28 @@ impl TerminalConfig {
     }
 
     /// Convert to alacritty's PTY Options.
+    ///
+    /// The shell starts through `env -u`, which removes `UNSET_IN_CHILD` and
+    /// then execs it (same process). alacritty_terminal can only add
+    /// variables to the child, and changing the app's own environment around
+    /// the spawn isn't safe while other threads read it.
     pub(crate) fn to_pty_options(&self) -> PtyOptions {
         let shell = if self.shell_path.is_empty() {
             None
-        } else {
+        } else if self.shell_path.contains('=') {
+            // `env` would take it for an assignment.
             Some(Shell::new(self.shell_path.clone(), self.shell_args.clone()))
+        } else {
+            let mut args = Vec::new();
+            for key in UNSET_IN_CHILD {
+                if !self.env_vars.contains_key(*key) {
+                    args.push("-u".to_string());
+                    args.push(key.to_string());
+                }
+            }
+            args.push(self.shell_path.clone());
+            args.extend(self.shell_args.iter().cloned());
+            Some(Shell::new("/usr/bin/env".to_string(), args))
         };
         PtyOptions {
             shell,
@@ -145,5 +176,42 @@ impl TerminalConfig {
             drain_on_exit: false,
             env: self.env_vars.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shell_starts_without_inherited_overrides() {
+        let mut config = TerminalConfig {
+            shell_path: "/bin/zsh".into(),
+            shell_args: vec!["-l".into()],
+            ..TerminalConfig::default()
+        };
+        config.env_vars.insert("FORCE_COLOR".into(), "1".into());
+        // FORCE_COLOR is set on purpose, so it stays.
+        let args = [
+            "-u",
+            "NO_COLOR",
+            "-u",
+            "CLICOLOR",
+            "-u",
+            "CLICOLOR_FORCE",
+            "-u",
+            "ALACRITTY_WINDOW_ID",
+            "-u",
+            "WINDOWID",
+            "/bin/zsh",
+            "-l",
+        ];
+        assert_eq!(
+            config.to_pty_options().shell,
+            Some(Shell::new(
+                "/usr/bin/env".into(),
+                args.iter().map(|arg| arg.to_string()).collect()
+            ))
+        );
     }
 }
