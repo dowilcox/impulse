@@ -7,9 +7,10 @@ let package = Package(
         .macOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
-        // Pinned to an exact gfm-branch revision (Package.resolved is not
-        // committed in this repo, so a bare branch ref would drift).
+        // 0.x minors may break; Package.resolved (committed) pins the
+        // exact version, and release builds use it as is.
+        .package(url: "https://github.com/LebJe/TOMLKit.git", .upToNextMinor(from: "0.6.0")),
+        // Pinned to an exact gfm-branch revision (a branch ref would drift).
         .package(
             url: "https://github.com/apple/swift-cmark.git",
             revision: "7898f1b3e4befeecee56cb4a3bc8eebd2cb63219"),

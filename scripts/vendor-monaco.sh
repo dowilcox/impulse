@@ -5,9 +5,10 @@
 set -euo pipefail
 
 MONACO_VERSION="0.55.1"
-# SHA256 hash of the npm tarball for integrity verification.
-# To update: download the tarball manually and run `sha256sum monaco.tgz`.
-MONACO_SHA256=""
+# SHA256 of the npm tarball (checked against the registry's sha512
+# integrity). To update: download the new tarball, compare it with
+# `npm view monaco-editor@<version> dist.integrity`, then `shasum -a 256` it.
+MONACO_SHA256="eec3721fb6b1dc5a0bd1a73e38a5eb5d0c3791af684f7d2571efb90ad8634871"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENDOR_DIR="$PROJECT_ROOT/vendor/monaco"
@@ -20,32 +21,15 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Download the npm tarball
 echo "Downloading monaco-editor@${MONACO_VERSION}..."
-curl -sL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" \
+curl -fsSL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" \
     -o "$WORK_DIR/monaco.tgz"
 
-# Verify download integrity
-if [ -n "$MONACO_SHA256" ]; then
-    echo "Verifying download integrity..."
-    if command -v sha256sum >/dev/null 2>&1; then
-        echo "${MONACO_SHA256}  ${WORK_DIR}/monaco.tgz" | sha256sum -c - || {
-            echo "ERROR: Monaco download checksum verification failed!"
-            echo "The downloaded file may be corrupted or tampered with."
-            exit 1
-        }
-    elif command -v shasum >/dev/null 2>&1; then
-        echo "${MONACO_SHA256}  ${WORK_DIR}/monaco.tgz" | shasum -a 256 -c - || {
-            echo "ERROR: Monaco download checksum verification failed!"
-            echo "The downloaded file may be corrupted or tampered with."
-            exit 1
-        }
-    else
-        echo "ERROR: Neither sha256sum nor shasum found. Cannot verify checksum."
-        exit 1
-    fi
-else
-    echo "WARNING: No SHA256 checksum configured. Skipping integrity verification."
-    echo "To enable, set MONACO_SHA256 at the top of this script."
-fi
+echo "Verifying download integrity..."
+echo "${MONACO_SHA256}  ${WORK_DIR}/monaco.tgz" | shasum -a 256 -c - >/dev/null || {
+    echo "ERROR: Monaco download checksum verification failed!" >&2
+    echo "The downloaded file may be corrupted or tampered with." >&2
+    exit 1
+}
 
 # Extract tarball
 echo "Extracting..."

@@ -56,6 +56,13 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
+# Apple silicon only. A shell running under Rosetta reports x86_64, and
+# would otherwise quietly produce an Intel build.
+if [[ "$(uname -m)" != "arm64" ]]; then
+    echo "ERROR: Impulse builds for Apple silicon only (this shell runs as $(uname -m))." >&2
+    exit 1
+fi
+
 if [[ ! -f Cargo.toml ]]; then
     echo "ERROR: Must be run from the workspace root (expected Cargo.toml)." >&2
     exit 1
@@ -238,12 +245,17 @@ fi
 
 echo "==> Building ImpulseApp (Swift)..."
 cd impulse-macos
-./swiftw build -c release
+# Dependencies come exactly from the committed Package.resolved.
+./swiftw build -c release --force-resolved-versions
 cd "${WORKSPACE_ROOT}"
 
 SWIFT_BIN="impulse-macos/.build/release/ImpulseApp"
 if [[ ! -f "${SWIFT_BIN}" ]]; then
     echo "ERROR: Swift binary not found at ${SWIFT_BIN}." >&2
+    exit 1
+fi
+if [[ "$(lipo -archs "${SWIFT_BIN}")" != "arm64" ]]; then
+    echo "ERROR: ${SWIFT_BIN} is $(lipo -archs "${SWIFT_BIN}"), expected arm64 only." >&2
     exit 1
 fi
 echo "    OK: ${SWIFT_BIN}"
@@ -311,6 +323,10 @@ cat > "${CONTENTS}/Info.plist" << PLIST
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <!-- Shown when a program run in an Impulse terminal asks for access. -->
