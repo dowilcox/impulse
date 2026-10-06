@@ -36,10 +36,10 @@ let package = Package(
             path: "Sources/ImpulseGit",
             swiftSettings: [
                 .swiftLanguageMode(.v5),
-                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.7/include"]),
             ],
             linkerSettings: [
-                .unsafeFlags(["-L", ".libgit2/1.9.1/lib"]),
+                .unsafeFlags(["-L", ".libgit2/1.9.7/lib"]),
             ]
         ),
         // Pure logic ported from the Rust backend (impulse-core / impulse-editor).
@@ -102,7 +102,7 @@ let package = Package(
                 // in existing AppKit delegate code (nonisolated deinit
                 // touching non-Sendable stored properties, etc.).
                 .swiftLanguageMode(.v5),
-                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.7/include"]),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L", "../target/release"]),
@@ -135,7 +135,7 @@ let package = Package(
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
-                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.1/include"]),
+                .unsafeFlags(["-Xcc", "-I.libgit2/1.9.7/include"]),
             ]
         ),
         .testTarget(

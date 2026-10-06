@@ -10,8 +10,8 @@
 # Requires: cmake (brew install cmake), curl, Xcode command line tools.
 set -euo pipefail
 
-LIBGIT2_VERSION="1.9.1"
-LIBGIT2_SHA256="14cab3014b2b7ad75970ff4548e83615f74d719afe00aa479b4a889c1e13fc00"
+LIBGIT2_VERSION="1.9.7"
+LIBGIT2_SHA256="1a4fbe7589e814777ae76b64734ad80f4ecad22cd33a22682a2aaea4ae5375e7"
 DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,7 +34,7 @@ TARBALL="${WORK_DIR}/libgit2-${LIBGIT2_VERSION}.tar.gz"
 
 if [[ ! -f "${TARBALL}" ]]; then
     echo "==> Downloading libgit2 ${LIBGIT2_VERSION}..."
-    curl -sL -o "${TARBALL}" \
+    curl -fsSL -o "${TARBALL}" \
         "https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz"
 fi
 
