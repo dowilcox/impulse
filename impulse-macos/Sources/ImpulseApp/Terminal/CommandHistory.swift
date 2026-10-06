@@ -20,6 +20,8 @@ final class CommandHistory {
 
   /// Distinct commands, newest first. Main thread only.
   private(set) var recentCommands: [String] = []
+  /// Bumped whenever `recentCommands` changes (cheap check for caches).
+  private(set) var revision = 0
 
   private init() {
     let path =
@@ -111,5 +113,6 @@ final class CommandHistory {
     if recentCommands.count > Self.cacheSize {
       recentCommands.removeLast(recentCommands.count - Self.cacheSize)
     }
+    revision += 1
   }
 }

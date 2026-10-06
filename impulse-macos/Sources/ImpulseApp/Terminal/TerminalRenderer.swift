@@ -572,6 +572,13 @@ class TerminalRenderer: NSView {
     // Hyperlink hover state.
     private var hoverCol: Int = -1
     private var hoverRow: Int = -1
+    /// Bumped by every draw: cached row text is stale after one.
+    private var frameGeneration = 0
+    /// The hovered row's text, read from the grid once per row per frame
+    /// instead of a full snapshot for every cell the pointer crosses.
+    private var hoverRowCache: RowText?
+    /// Paths on the hovered row already checked on disk this frame.
+    private var hoverPathCache: [String: String?] = [:]
     private var hoverIsLink: Bool = false
     /// When hovering a link, the cell-range [startCol, endCol) on hoverRow
     /// that forms the link. Used to draw the hover underline and to resolve
@@ -939,6 +946,7 @@ class TerminalRenderer: NSView {
         context.clip(to: bounds)
         let dirtyRect = dirtyRect.intersection(bounds)
         guard !dirtyRect.isEmpty else { return }
+        frameGeneration &+= 1
         guard let backend, !backend.isShutdown else {
             // Draw default background when no backend is available.
             context.setFillColor(defaultBackgroundColor)
@@ -2934,38 +2942,27 @@ class TerminalRenderer: NSView {
         hoverLinkStartCol = 0
         hoverLinkEndCol = 0
 
-        if let grid = backend?.gridSnapshot(),
-           rowI < grid.lines && colI < grid.cols {
-            let cell = grid.cell(row: rowI, col: colI)
-
+        if let rowText = hoverRowText(rowI), colI < rowText.hyperlink.count {
             // 1. OSC 8 hyperlink takes priority.
-            if cell.flags & GridBufferReader.flagHyperlink != 0 {
+            if rowText.hyperlink[colI] {
                 hoverIsLink = true
                 // Expand to full contiguous hyperlink run on this row.
                 var s = colI
-                while s > 0 {
-                    let c = grid.cell(row: rowI, col: s - 1)
-                    if c.flags & GridBufferReader.flagHyperlink == 0 { break }
-                    s -= 1
-                }
+                while s > 0, rowText.hyperlink[s - 1] { s -= 1 }
                 var e = colI
-                while e < grid.cols - 1 {
-                    let c = grid.cell(row: rowI, col: e + 1)
-                    if c.flags & GridBufferReader.flagHyperlink == 0 { break }
-                    e += 1
-                }
+                while e < rowText.hyperlink.count - 1, rowText.hyperlink[e + 1] { e += 1 }
                 hoverLinkStartCol = s
                 hoverLinkEndCol = e + 1
                 hoverLinkUri = backend?.hyperlinkAt(col: colI, row: rowI)
                 // The text needn't match where it goes: show the target.
                 toolTip = hoverLinkUri.map { "⌘-click to open \($0)" }
-            } else if let (uri, s, e) = detectUrlAt(col: colI, row: rowI, grid: grid) {
+            } else if let (uri, s, e) = detectUrlAt(col: colI, in: rowText) {
                 // 2. Auto-detected plain URL in the row text.
                 hoverIsLink = true
                 hoverLinkUri = uri
                 hoverLinkStartCol = s
                 hoverLinkEndCol = e
-            } else if let found = detectPathAt(col: colI, row: rowI, grid: grid) {
+            } else if let found = detectPathAt(col: colI, in: rowText) {
                 // 3. A file reference (`src/x.rs:12:5`) that exists on disk.
                 hoverIsLink = true
                 hoverLinkPath = (found.path, found.line, found.column)
@@ -3029,59 +3026,80 @@ class TerminalRenderer: NSView {
         hoverLinkEndCol = 0
     }
 
-    /// The existing file referenced at a column (see `TerminalPathDetector`),
-    /// with its column range on the row.
-    private func detectPathAt(
-        col: Int, row: Int, grid: GridBufferReader
-    ) -> (path: String, line: Int?, column: Int?, startCol: Int, endCol: Int)? {
-        guard let resolvePath else { return nil }
-        // Row text in UTF-16 units, with the grid column of each unit.
+    /// A viewport row's text in UTF-16 units (what the regexes count: an
+    /// emoji is two), with each unit's grid column and each column's OSC 8
+    /// flag. Wide-char spacers are skipped; NUL reads as a space.
+    struct RowText {
+        let row: Int
+        let generation: Int
+        let text: String
+        let colForUnit: [Int]
+        /// First unit of each column (nil for a wide character's spacer).
+        let unitForCol: [Int?]
+        let hyperlink: [Bool]
+    }
+
+    private func hoverRowText(_ row: Int) -> RowText? {
+        if let cache = hoverRowCache, cache.row == row, cache.generation == frameGeneration { return cache }
+        guard let grid = backend?.gridSnapshot(), row >= 0, row < grid.lines else { return nil }
         var units: [UInt16] = []
         var colForUnit: [Int] = []
-        var hovered: Int?
+        var unitForCol: [Int?] = []
+        var hyperlink: [Bool] = []
         for c in 0..<grid.cols {
             let cell = grid.cell(row: row, col: c)
-            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
+            hyperlink.append(cell.flags & GridBufferReader.flagHyperlink != 0)
+            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 {
+                unitForCol.append(nil)
+                continue
+            }
+            unitForCol.append(units.count)
             let scalar = cell.character.value == 0 ? UnicodeScalar(0x20)! : cell.character
-            if c == col { hovered = units.count }
             for unit in String(Character(scalar)).utf16 {
                 units.append(unit)
                 colForUnit.append(c)
             }
         }
-        guard let hovered,
-            let match = TerminalPathDetector.match(
-                in: String(decoding: units, as: UTF16.self), at: hovered),
-            let absolute = resolvePath(match.path),
-            match.range.upperBound <= colForUnit.count
+        let rowText = RowText(
+            row: row, generation: frameGeneration, text: String(decoding: units, as: UTF16.self),
+            colForUnit: colForUnit, unitForCol: unitForCol, hyperlink: hyperlink)
+        if hoverRowCache?.generation != frameGeneration { hoverPathCache = [:] }
+        hoverRowCache = rowText
+        return rowText
+    }
+
+    /// The existing file referenced at a column (see `TerminalPathDetector`),
+    /// with its column range on the row. Only a match under the pointer is
+    /// checked on disk (once per frame).
+    private func detectPathAt(
+        col: Int, in row: RowText
+    ) -> (path: String, line: Int?, column: Int?, startCol: Int, endCol: Int)? {
+        guard let resolvePath, col < row.unitForCol.count, let hovered = row.unitForCol[col],
+            let match = TerminalPathDetector.match(in: row.text, at: hovered),
+            match.range.upperBound <= row.colForUnit.count
         else { return nil }
+        let absolute: String?
+        if let known = hoverPathCache[match.path] {
+            absolute = known
+        } else {
+            absolute = resolvePath(match.path)
+            hoverPathCache[match.path] = absolute
+        }
+        guard let absolute else { return nil }
         return (
             absolute, match.line, match.column,
-            colForUnit[match.range.lowerBound], colForUnit[match.range.upperBound - 1] + 1
+            row.colForUnit[match.range.lowerBound], row.colForUnit[match.range.upperBound - 1] + 1
         )
     }
 
     /// Scan the row's text for a URL pattern and return the match that
     /// contains the given column, along with the start/end column range.
     private func detectUrlAt(
-        col: Int, row: Int, grid: GridBufferReader
+        col: Int, in row: RowText
     ) -> (uri: String, startCol: Int, endCol: Int)? {
         guard let regex = Self.urlRegex else { return nil }
-
-        // Build the row's text, tracking the column of each UTF-16 unit (the
-        // regex's ranges count those: an emoji is two). Wide-char spacers are
-        // skipped.
-        var text = ""
-        var colForIndex: [Int] = []  // UTF-16 offset in `text` → grid column
-        for c in 0..<grid.cols {
-            let cell = grid.cell(row: row, col: c)
-            if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
-            let ch = cell.character.value
-            // Treat NUL as space for the scan.
-            let scalar = (ch == 0) ? UnicodeScalar(0x20)! : cell.character
-            colForIndex.append(contentsOf: repeatElement(c, count: String(scalar).utf16.count))
-            text.append(Character(scalar))
-        }
+        let text = row.text
+        let colForIndex = row.colForUnit  // UTF-16 offset in `text` → grid column
 
         let nsText = text as NSString
         let matches = regex.matches(
@@ -3169,10 +3187,10 @@ class TerminalRenderer: NSView {
             let rowI = Int(row)
             var uri: String? = backend?.hyperlinkAt(col: colI, row: rowI)
             var path: (path: String, line: Int?, column: Int?)?
-            if uri == nil, let grid = backend?.gridSnapshot() {
-                if let detected = detectUrlAt(col: colI, row: rowI, grid: grid) {
+            if uri == nil, let rowText = hoverRowText(rowI) {
+                if let detected = detectUrlAt(col: colI, in: rowText) {
                     uri = detected.uri
-                } else if let found = detectPathAt(col: colI, row: rowI, grid: grid) {
+                } else if let found = detectPathAt(col: colI, in: rowText) {
                     path = (found.path, found.line, found.column)
                 }
             }

@@ -335,6 +335,8 @@ final class WindowModel {
   var onSendSecureInput: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
+  /// The slower part of the ghost suggestion, to run off the main thread.
+  var onSuggestionResolver: (() -> ((String) -> String?)?)?
   /// Show a file from a single click in a preview tab.
   @ObservationIgnored var onPreviewFile: ((String) -> Void)?
   /// Keep the preview tab at this index (double-click on it).

@@ -41,6 +41,8 @@ struct TerminalContextBarView: View {
   @State private var selectedIndex: Int? = nil
   /// Bumped on each request so stale off-main results can be discarded.
   @State private var completionGeneration: Int = 0
+  /// Drops ghost suggestions computed for text that has since changed.
+  @State private var suggestionGeneration: Int = 0
   /// The typed basename prefix for the active token (matched-prefix emphasis).
   @State private var completionPrefix: String = ""
 
@@ -310,15 +312,13 @@ struct TerminalContextBarView: View {
             onKey: handleEditorKey,
             onFocusChange: { editorFocused = $0 }
           )
-          .onChange(of: model.completionRequestToken) { _, _ in _ = openCompletionsFromTab() }
+          .onChange(of: model.completionRequestToken) { _, _ in requestCompletionsFromTab() }
           .onChange(of: text) { _, newValue in
             model.inputDraft = newValue
             if historyIndex == nil || newValue != currentHistoryEntry() {
               historyIndex = nil
             }
-            suggestion =
-              (newValue.isEmpty || model.commandRunning)
-              ? nil : model.onInputSuggestion?(newValue)
+            updateSuggestion(for: newValue)
             // Tab-only dropdown: typing never opens it. While it's already
             // open, re-fetch so the list narrows/widens to the new prefix.
             if isDropdownOpen {
@@ -427,35 +427,78 @@ struct TerminalContextBarView: View {
     refreshPanel()
   }
 
-  /// Tab trigger: synchronously fetch candidates for the current input and open
-  /// the dropdown when there are two or more. Returns true when the dropdown
-  /// opened (so the caller swallows the keypress instead of accepting the
-  /// inline suggestion). A single/zero-candidate result leaves the dropdown
-  /// closed and returns false.
-  private func openCompletionsFromTab() -> Bool {
-    guard !text.isEmpty, !model.commandRunning,
-      let resolve = model.onCompletionResolver?()
-    else { return false }
-
-    // Invalidate any pending async fetch — this synchronous result wins.
+  /// Tab with the dropdown closed. Candidates are fetched off the main thread
+  /// (branch values run git; fish completions run fish), then: two or more
+  /// open the dropdown, a lone one is inserted like a shell's Tab, and with
+  /// none (or a visible ghost suggestion and one candidate) the suggestion is
+  /// accepted.
+  private func requestCompletionsFromTab() {
+    guard !text.isEmpty, !model.commandRunning, let resolve = model.onCompletionResolver?() else {
+      _ = acceptSuggestion()
+      return
+    }
     completionGeneration &+= 1
-    guard let result = resolve(text), !result.candidates.isEmpty else { return false }
+    let generation = completionGeneration
+    let input = text
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = resolve(input)
+      DispatchQueue.main.async {
+        // Typing (or another Tab) since makes this answer stale.
+        guard generation == completionGeneration, text == input else { return }
+        applyTabCompletions(result)
+      }
+    }
+  }
+
+  private func applyTabCompletions(_ result: CompletionResult?) {
+    guard let result, !result.candidates.isEmpty else {
+      _ = acceptSuggestion()
+      return
+    }
     if result.candidates.count == 1 {
-      // A visible history suggestion keeps Tab (the caller accepts it).
-      if let suggestion, suggestion.hasPrefix(text), suggestion != text { return false }
-      // Otherwise one way to go: insert it, like a shell's Tab.
+      // A visible history suggestion keeps Tab.
+      if let suggestion, suggestion.hasPrefix(text), suggestion != text {
+        _ = acceptSuggestion()
+        return
+      }
       completions = result.candidates
       completionSpan = result.span
       selectedIndex = 0
       acceptCompletion()
-      return true
+      return
     }
     completions = result.candidates
     completionSpan = result.span
     completionPrefix = matchedPrefix(in: text, span: result.span)
     selectedIndex = 0
     refreshPanel()
-    return true
+  }
+
+  /// The ghost suggestion: a history continuation right away; otherwise
+  /// word and path completion, which read the filesystem, off the main
+  /// thread. Meanwhile a suggestion the typing still follows stays up.
+  private func updateSuggestion(for input: String) {
+    suggestionGeneration &+= 1
+    guard !input.isEmpty, !model.commandRunning else {
+      suggestion = nil
+      return
+    }
+    if let fromHistory = model.onInputSuggestion?(input) {
+      suggestion = fromHistory
+      return
+    }
+    if let current = suggestion, !(current.hasPrefix(input) && current != input) {
+      suggestion = nil
+    }
+    guard let resolve = model.onSuggestionResolver?() else { return }
+    let generation = suggestionGeneration
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = resolve(input)
+      DispatchQueue.main.async {
+        guard generation == suggestionGeneration, text == input else { return }
+        suggestion = result
+      }
+    }
   }
 
   /// Shows or updates the floating panel to reflect the current dropdown state.
@@ -613,8 +656,8 @@ struct TerminalContextBarView: View {
       // candidates); otherwise accept the inline ghost suggestion.
       if isDropdownOpen {
         acceptCompletion()
-      } else if !openCompletionsFromTab() {
-        _ = acceptSuggestion()
+      } else {
+        requestCompletionsFromTab()
       }
       return true
     case .right:

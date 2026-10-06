@@ -43,6 +43,9 @@ extension MainWindowController {
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
     }
+    windowModel.onSuggestionResolver = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.suggestionResolver()
+    }
     windowModel.onIsKnownCommand = { [weak self] word in
       guard let terminal = self?.tabManager.selectedTerminal?.activeTerminal else { return nil }
       return terminal.commandLookup.isKnown(word, cwd: terminal.currentWorkingDirectory)

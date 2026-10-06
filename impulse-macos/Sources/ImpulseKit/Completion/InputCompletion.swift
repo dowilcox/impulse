@@ -32,9 +32,7 @@ public enum InputCompletion {
 
     // 1. History continuation — autosuggest the most recent command that
     //    extends the full input verbatim.
-    if let found = history.first(where: {
-      $0.utf8.count > input.utf8.count && utf8HasPrefix($0, input)
-    }) {
+    if let found = historyContinuation(input: input, history: history) {
       return found
     }
 
@@ -69,6 +67,14 @@ public enum InputCompletion {
     guard let candidate else { return nil }
 
     return splice(input, span: comp.span, candidate: candidate)
+  }
+
+  /// The most recent command in `history` (newest first) that extends
+  /// `input`. Only compares strings, so it's cheap enough per keystroke on
+  /// the main thread; the rest of `complete` reads the filesystem.
+  public static func historyContinuation(input: String, history: [String]) -> String? {
+    guard !input.isEmpty else { return nil }
+    return history.first { $0.utf8.count > input.utf8.count && utf8HasPrefix($0, input) }
   }
 
   /// Eagerly populate the `PATH` executable cache off the hot path, so the

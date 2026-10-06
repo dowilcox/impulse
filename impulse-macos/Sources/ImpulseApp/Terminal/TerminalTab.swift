@@ -364,6 +364,7 @@ class TerminalTab: NSView {
       )
     case .commandBlockEnded(let block):
       isCommandRunning = false
+      sessionHistoryRevision += 1
       if !sessionStatus.isEmpty {
         // The program that set it is gone.
         sessionStatus = TerminalSessionStatus()
@@ -869,11 +870,36 @@ class TerminalTab: NSView {
   /// continuation, then PATH executables / subcommands / flags / filesystem
   /// paths. Returns the full completed line.
   func historySuggestion(for text: String) -> String? {
-    guard !text.isEmpty, let backend else { return nil }
-    let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
-    return backend.completeInput(
-      text, cwd: cwd, globalHistory: CommandHistory.shared.recentCommands)
+    guard !text.isEmpty, backend != nil else { return nil }
+    return InputCompletion.historyContinuation(input: text, history: suggestionHistory())
   }
+
+  /// The rest of the ghost suggestion (commands, options, paths), which
+  /// reads the filesystem: state is taken here, on the main thread, and the
+  /// returned function runs on a background queue.
+  func suggestionResolver() -> ((String) -> String?)? {
+    guard backend != nil else { return nil }
+    let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
+    let history = suggestionHistory()
+    return { text in InputCompletion.complete(input: text, cwd: cwd, history: history) }
+  }
+
+  /// This session's commands, then everything else Impulse has seen, newest
+  /// first. Rebuilt when either changes, not on every keystroke.
+  private func suggestionHistory() -> [String] {
+    let global = CommandHistory.shared.revision
+    if let cache = suggestionHistoryCache, cache.session == sessionHistoryRevision, cache.global == global {
+      return cache.commands
+    }
+    let session = backend?.recentCommandHistory() ?? []
+    let inSession = Set(session)
+    let commands = session + CommandHistory.shared.recentCommands.filter { !inSession.contains($0) }
+    suggestionHistoryCache = (sessionHistoryRevision, global, commands)
+    return commands
+  }
+  private var suggestionHistoryCache: (session: Int, global: Int, commands: [String])?
+  /// Bumped when a command finishes (this session's history changed).
+  private var sessionHistoryRevision = 0
 
   /// Completion-menu candidates for the token at the end of `text`:
   /// commands, subcommands, options and spec'd values (branches, scripts,

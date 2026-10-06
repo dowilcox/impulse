@@ -751,32 +751,10 @@ final class TerminalBackend {
 
     /// Recent command strings (newest first) from the Rust terminal's block
     /// history, feeding the Swift-side completion engine.
-    private func recentCommandHistory() -> [String] {
+    /// This session's commands, newest first.
+    func recentCommandHistory() -> [String] {
         guard let handle, !isShutdown else { return [] }
         return ImpulseCore.terminalRecentCommands(handle: handle, limit: 500)
-    }
-
-    /// Best inline completion for the input bar (history continuation, then
-    /// PATH executables / subcommands / flags / filesystem paths), or nil.
-    /// `globalHistory` (newest first) extends this session's history.
-    func completeInput(_ input: String, cwd: String?, globalHistory: [String] = []) -> String? {
-        guard handle != nil, !isShutdown, !input.isEmpty else { return nil }
-        var history = recentCommandHistory()
-        if !globalHistory.isEmpty {
-            let session = Set(history)
-            history += globalHistory.filter { !session.contains($0) }
-        }
-        return InputCompletion.complete(input: input, cwd: cwd, history: history)
-    }
-
-    /// Path-completion candidates for the active argument token of `input`,
-    /// capped at `limit`. Returns `nil` on error or when the active token is
-    /// not a path argument. Performs filesystem work — call off the main
-    /// thread.
-    func completionCandidates(input: String, cwd: String?, limit: Int = 50) -> CompletionResult? {
-        guard handle != nil, !isShutdown, !input.isEmpty else { return nil }
-        return InputCompletion.completeCandidates(
-            input: input, cwd: cwd, history: recentCommandHistory(), limit: limit)
     }
 
     private static func decodeCommandBlock(_ payload: [String: Any]) -> TerminalCommandBlock? {
