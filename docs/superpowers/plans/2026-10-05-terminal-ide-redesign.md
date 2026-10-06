@@ -424,7 +424,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - an Outdated section;
   - "Copy as prompt" and "Export markdown" (agent delivery arrives in M6).
   - The anchoring model lives in ImpulseKit with tests.
-- [ ] **Placement:** docked in the right dock (live) or opened as a tab or pane; ⌘⇧G toggles. Today's tab is one per repo root, isn't persisted and can't be reopened; v2 is persisted and per workspace.
+- [ ] **Placement:** docked in the right dock (live) or opened as a tab or pane; ⌘⇧G toggles. Today's tab is one per repo root, isn't persisted and can't be reopened; v2 is persisted and per workspace. *(Review and History tabs now persist with the session, scope included, and come back with Reopen Closed Tab / ⌘Z; the right-dock placement is still to do)*
 - [x] **"Open in diff editor":** Monaco `createDiffEditor` single-file surface, side-by-side or inline, `hideUnchangedRegions`, modified side editable and saving to disk. *(A diff view inside the editor tab, index ↔ working copy, sharing the live model: Toggle Diff View, the peek's Diff button, Changes panel ⌥⏎ / context menu, the review's Edit Diff.)*
 
 ### 4.3 Editor git integration (§7.4)

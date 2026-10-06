@@ -772,9 +772,7 @@ final class TabManager: NSObject {
     if closedTabs.count > maxClosedTabs {
       closedTabs.removeFirst()
     }
-    let first = tab.panes.first
-    let title = first?.title ?? first?.path.map { ($0 as NSString).lastPathComponent } ?? "terminal"
-    onClosedTabRecorded?(title, fromTabUID != nil)
+    onClosedTabRecorded?(entry.title, fromTabUID != nil)
   }
 
   /// Closes the tab at the given index. If it is the active tab, the tab that
@@ -1249,6 +1247,24 @@ final class TabManager: NSObject {
         goToColumn: surface.column.map { UInt32(max(1, $0)) })
       openFilePaths.insert(path)
       return .editor(editor)
+    case "review", "history":
+      // A repository that's still there, and not already showing.
+      guard let root = surface.path, FileManager.default.fileExists(atPath: root),
+        GitClient.repoRoot(forPath: root) == root
+      else { return nil }
+      let repository = GitRepositoryStore.shared.state(forRoot: root)
+      if surface.kind == "review" {
+        guard locate(where: { if case .diffReview(let r, _) = $0 { return r == root } else { return false } }) == nil
+        else { return nil }
+        return .diffReview(
+          repoRoot: root,
+          view: ReviewSurface(
+            repository: repository, scope: surface.scope, focusPath: nil, theme: theme,
+            host: windowModel?.gitHost))
+      }
+      return .history(
+        repoRoot: root,
+        view: HistorySurface(repository: repository, path: surface.subpath, theme: theme, host: windowModel?.gitHost))
     default:
       return nil
     }
@@ -1334,7 +1350,11 @@ final class TabManager: NSObject {
           column: editor.cursorPosition.map { Int($0.column) })
       case .imagePreview(let path, _):
         return FileManager.default.fileExists(atPath: path) ? .file(path: path) : nil
-      case .diffReview, .history, .tool, .split:
+      case .diffReview(let root, let view):
+        return .review(root: root, scope: view.scope)
+      case .history(let root, let view):
+        return .history(root: root, path: view.model.path)
+      case .tool, .split:
         return nil
       }
     }

@@ -57,6 +57,9 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
   private weak var host: GitPanelHost?
 
   private let model: ReviewSurfaceModel
+
+  /// What the review is showing (saved with the session).
+  var scope: DiffScope { model.scope }
   private var theme: Theme
   private var isReady = false
   private var pendingFocus: String?

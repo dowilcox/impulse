@@ -214,9 +214,10 @@ struct SessionTab: Codable {
   }
 }
 
-/// A restorable surface. Review tabs aren't saved.
+/// A restorable surface.
 struct SessionSurface: Codable {
-  /// "terminal" or "file" (editor or image preview, by extension).
+  /// "terminal", "file" (editor or image preview, by extension), "review" or
+  /// "history" (`path` is the repository root).
   var kind: String
   var path: String?
   var cwd: String?
@@ -232,9 +233,13 @@ struct SessionSurface: Codable {
   /// Terminal output carried in memory (closed tabs, or loaded from
   /// `scrollback` on restore). Not written to the session file.
   var transcript: String?
+  /// Review: the scope it showed.
+  var scope: DiffScope?
+  /// History: the file or folder it followed (repository-relative).
+  var subpath: String?
 
   enum CodingKeys: String, CodingKey {
-    case kind, path, cwd, title, shell, line, column, scrollback, resume
+    case kind, path, cwd, title, shell, line, column, scrollback, resume, scope, subpath
   }
 
   static func terminal(cwd: String, title: String?, shell: String?, transcript: String? = nil)
@@ -245,6 +250,14 @@ struct SessionSurface: Codable {
 
   static func file(path: String, line: Int? = nil, column: Int? = nil) -> SessionSurface {
     SessionSurface(kind: "file", path: path, line: line, column: column)
+  }
+
+  static func review(root: String, scope: DiffScope) -> SessionSurface {
+    SessionSurface(kind: "review", path: root, scope: scope)
+  }
+
+  static func history(root: String, path: String?) -> SessionSurface {
+    SessionSurface(kind: "history", path: root, subpath: path)
   }
 }
 
