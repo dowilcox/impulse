@@ -189,7 +189,14 @@ extension MainWindowController {
           // Send LSP didOpen now that the tab and Monaco model are ready.
           if let path = editor.filePath {
             self.trackEditorTab(editor, forPath: path)
-            self.lspDidOpenIfNeeded(path: path)
+            if self.lspOpenFiles.contains(self.filePathToUri(path)) {
+              // A new model for a file the server already has (reloaded
+              // from disk): send it the whole text again, or its copy and
+              // every later edit would drift.
+              self.lspDidChange(editor: editor)
+            } else {
+              self.lspDidOpenIfNeeded(path: path)
+            }
           }
           self.applyGitDiffDecorations(editor: editor)
         }
@@ -202,22 +209,23 @@ extension MainWindowController {
         // with it open must reload.
         guard let self else { return }
         if let path = notification.userInfo?["path"] as? String {
-          // Find the open editor tab for this file and reload from disk.
-          // Reading a single source file is fast enough to do synchronously
-          // on the main thread, and avoids the delayed repaint caused by
-          // dispatching back from a background queue.
-          if let editor = self.findEditorTab(forPath: path) {
-            do {
-              let content = try String(contentsOfFile: path, encoding: .utf8)
-              editor.openFile(path: path, content: content, language: editor.language)
-              editor.webView?.setNeedsDisplay(editor.webView?.bounds ?? .zero)
-            } catch {
-              os_log(
-                .error, "Failed to reload file '%{public}@': %{public}@",
-                path, error.localizedDescription)
-            }
-          }
+          // Reload the open editor from disk. One with unsaved edits keeps
+          // them and gets a "changed on disk" notice instead.
+          self.findEditorTab(forPath: path)?.reloadFromDisk(force: false)
         }
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .editorChangedOnDisk, object: nil, queue: .main) { [weak self] notification in
+        guard let self, let editor = notification.object as? EditorTab, self.tabManager.ownsEditor(editor),
+          let path = editor.filePath
+        else { return }
+        self.toasts.show(
+          Toast(
+            kind: .warning,
+            message: "\((path as NSString).lastPathComponent) changed on disk while you have unsaved edits.",
+            actionTitle: "Reload",
+            action: { [weak editor] in editor?.reloadFromDisk(force: true) }, lifetime: 20))
       }
     )
     notificationObservers.append(

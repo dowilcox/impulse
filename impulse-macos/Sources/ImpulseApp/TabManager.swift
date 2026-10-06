@@ -445,19 +445,31 @@ final class TabManager: NSObject {
     }
 
     // Read file content off the main thread, then create the editor tab on main.
+    let exists = FileManager.default.fileExists(atPath: path)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let fileContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+      // A file that isn't UTF-8 stays closed: it would open empty, and a
+      // save would overwrite it. (A path that doesn't exist yet opens empty.)
+      let file = exists ? TextFile.read(path) : TextFile.Contents(text: "", bom: false)
       let largeFile =
         (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap({ $0 })
         ?? 0 > 5 * 1024 * 1024
 
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
+        guard let file else {
+          self.windowModel?.toasts.show(
+            Toast(
+              kind: .info,
+              message: "\((path as NSString).lastPathComponent) isn't UTF-8 text, so the editor won't open it.",
+              actionTitle: "Open in Default App",
+              action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
+          return
+        }
 
         // Re-check deduplication in case a tab was opened while reading.
         if self.openFilePaths.contains(path) { return }
         self.insertLoadedEditorTab(
-          path: path, content: fileContent, largeFile: largeFile,
+          path: path, content: file.text, bom: file.bom, largeFile: largeFile,
           projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn,
           beside: beside, preview: preview)
       }
@@ -468,13 +480,13 @@ final class TabManager: NSObject {
   /// read (off the main thread). Used by `addEditorTab` and by session restore,
   /// which preloads every file first so tabs can be inserted in saved order.
   func insertLoadedEditorTab(
-    path: String, content fileContent: String, largeFile: Bool,
+    path: String, content fileContent: String, bom: Bool = false, largeFile: Bool,
     projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil,
     beside: Bool = false, preview: Bool = false
   ) {
     guard !openFilePaths.contains(path) else { return }
     let editorTab = makeEditorTab(
-      path: path, content: fileContent, largeFile: largeFile, projectDirectory: projectDirectory,
+      path: path, content: fileContent, bom: bom, largeFile: largeFile, projectDirectory: projectDirectory,
       goToLine: goToLine, goToColumn: goToColumn)
     if beside {
       splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
@@ -532,7 +544,7 @@ final class TabManager: NSObject {
 
   /// A new editor surface for a file whose content was already read.
   func makeEditorTab(
-    path: String, content fileContent: String, largeFile: Bool, projectDirectory: String?,
+    path: String, content fileContent: String, bom: Bool = false, largeFile: Bool, projectDirectory: String?,
     goToLine: UInt32? = nil, goToColumn: UInt32? = nil
   ) -> EditorTab {
     let editorOptions = editorOptionsFromSettings()
@@ -543,7 +555,7 @@ final class TabManager: NSObject {
     editorTab.projectDirectory =
       projectDirectory
       ?? (path as NSString).deletingLastPathComponent
-    editorTab.openFile(path: path, content: fileContent, language: language)
+    editorTab.openFile(path: path, content: fileContent, language: language, bom: bom)
     editorTab.loadEditor()
 
     // Apply editor settings (font, tab size, etc.) from the current settings.
@@ -868,7 +880,7 @@ final class TabManager: NSObject {
   }
 
   private func insertReopened(
-    _ info: ClosedTabInfo, contents: [String: (text: String, large: Bool)]
+    _ info: ClosedTabInfo, contents: [String: (text: String, large: Bool, bom: Bool)]
   ) {
     let target = workspace(info.workspaceID) ?? activeWorkspace
     if target.id != activeWorkspaceID { activateWorkspace(target.id) }
@@ -903,15 +915,16 @@ final class TabManager: NSObject {
 
   /// Read files for restored editors (off the main thread): text and
   /// whether it's large enough to open read-only. Skips images and binaries.
-  static func preloadFileContents(_ paths: [String]) -> [String: (text: String, large: Bool)] {
-    var contents: [String: (text: String, large: Bool)] = [:]
+  static func preloadFileContents(_ paths: [String]) -> [String: (text: String, large: Bool, bom: Bool)] {
+    var contents: [String: (text: String, large: Bool, bom: Bool)] = [:]
     for path in paths where !isImageFile(path) {
       guard FileManager.default.fileExists(atPath: path), !isBinaryFile(path) else { continue }
       let size =
         (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap { $0 }
         ?? 0
-      let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-      contents[path] = (text, size > 5 * 1024 * 1024)
+      // Not UTF-8: left closed rather than restored empty.
+      guard let file = TextFile.read(path) else { continue }
+      contents[path] = (file.text, size > 5 * 1024 * 1024, file.bom)
     }
     return contents
   }
@@ -1238,7 +1251,7 @@ final class TabManager: NSObject {
   /// A surface restored from a session, or nil if it can't be (a missing
   /// file, a file whose content wasn't preloaded).
   func makeRestoredSurface(
-    _ surface: SessionSurface, contents: [String: (text: String, large: Bool)],
+    _ surface: SessionSurface, contents: [String: (text: String, large: Bool, bom: Bool)],
     projectDirectory: String?
   ) -> TabEntry? {
     switch surface.kind {
@@ -1265,7 +1278,7 @@ final class TabManager: NSObject {
       if Self.isImageFile(path) { return makeImagePreview(path: path) }
       guard let loaded = contents[path] else { return nil }
       let editor = makeEditorTab(
-        path: path, content: loaded.text, largeFile: loaded.large,
+        path: path, content: loaded.text, bom: loaded.bom, largeFile: loaded.large,
         projectDirectory: projectDirectory,
         goToLine: surface.line.map { UInt32(max(1, $0)) },
         goToColumn: surface.column.map { UInt32(max(1, $0)) })

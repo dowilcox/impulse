@@ -1007,7 +1007,7 @@ extension MainWindowController {
   }
 
   /// Converts an absolute file path to a file:// URI.
-  private func filePathToUri(_ path: String) -> String {
+  func filePathToUri(_ path: String) -> String {
     return URL(fileURLWithPath: path).absoluteString
   }
 

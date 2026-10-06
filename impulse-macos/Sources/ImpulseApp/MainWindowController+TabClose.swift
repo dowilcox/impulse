@@ -130,8 +130,20 @@ extension MainWindowController {
       guard let self else { return }
       switch response {
       case .alertFirstButtonReturn:
-        self.saveEditorTab(editor)
-        completion(true)
+        // Close only once the save has landed: the save is asynchronous
+        // (the buffer comes from Monaco, or a save panel), and closing first
+        // tears down the editor before anything is written.
+        let finish: (Bool) -> Void = { [weak self] saved in
+          if !saved, editor.filePath != nil {
+            self?.toasts.show(Toast(kind: .warning, message: "Couldn't save \(filename); it stays open."))
+          }
+          completion(saved)
+        }
+        if editor.filePath != nil {
+          editor.fetchContentAndSave(completion: finish)
+        } else {
+          self.showSaveAsDialog(for: editor, completion: finish)
+        }
       case .alertSecondButtonReturn:
         completion(true)
       default:

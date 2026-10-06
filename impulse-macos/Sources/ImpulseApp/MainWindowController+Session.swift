@@ -59,7 +59,7 @@ extension MainWindowController {
 
   private func insertRestoredWorkspaces(
     _ saved: [SessionWorkspaceState], activeIndex: Int?,
-    contents: [String: (text: String, large: Bool)]
+    contents: [String: (text: String, large: Bool, bom: Bool)]
   ) {
     var activeWorkspaceID: UUID?
     var activeTabIndex: Int?

@@ -91,8 +91,21 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var fileWatchDescriptor: Int32 = -1
     private var fileWatchSource: DispatchSourceFileSystemObject?
     private var fileWatchDebounce: DispatchWorkItem?
-    /// When true, the next ContentChanged event will not mark the file as modified.
-    private var suppressNextModify: Bool = false
+
+    /// The file starts with a UTF-8 byte-order mark (written back on save).
+    private(set) var hasBOM = false
+    /// What was on disk when the buffer was last loaded or saved, to tell
+    /// someone else's change (an agent, git) from our own.
+    private var diskStamp: TextFile.Stamp?
+    private var diskTextHash: Int?
+    /// The disk text a "changed on disk" notice was already shown for.
+    private var noticedDiskHash: Int?
+    /// The text the last successful save wrote.
+    private(set) var lastWrittenText: String?
+    /// Asked before a save would overwrite changes made on disk since the
+    /// buffer was loaded; `proceed(true)` overwrites. Without it, saves
+    /// overwrite.
+    var resolveSaveConflict: ((EditorTab, _ proceed: @escaping (Bool) -> Void) -> Void)?
 
     /// Debounce work item for cursor move notifications.
     private var cursorDebounceWork: DispatchWorkItem?
@@ -278,11 +291,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             } else {
                 applyMonacoContentChanges(changes)
             }
-            if suppressNextModify {
-                suppressNextModify = false
-            } else {
-                isModified = true
-            }
+            isModified = true
             if isPreviewing, isPreviewBeside { schedulePreviewRefresh() }
             NotificationCenter.default.post(
                 name: .editorContentChanged,
@@ -550,16 +559,25 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: Public API
 
-    /// Open a file in the editor.
-    func openFile(path: String, content: String, language: String) {
+    /// Open a file in the editor (`content` as read from disk).
+    func openFile(path: String, content: String, language: String, bom: Bool = false) {
         self.filePath = path
         self.content = content
         self.language = language
         self.lspLanguage = Self.lspLanguageForPath(path, monacoLanguage: language)
         self.isModified = false
+        self.hasBOM = bom
+        recordDiskState(text: content)
 
         sendCommand(.openFile(filePath: path, content: content, language: language))
         startFileWatching()
+    }
+
+    /// Remember `text` as what's on disk now (after a load or save).
+    private func recordDiskState(text: String) {
+        diskTextHash = text.hashValue
+        diskStamp = filePath.flatMap(TextFile.stamp)
+        noticedDiskHash = nil
     }
 
     /// Open a blank untitled editor (no file on disk).
@@ -597,7 +615,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
         let contentToSave = content
         do {
-            try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
+            try TextFile.write(contentToSave, bom: hasBOM, to: path)
+            recordDiskState(text: contentToSave)
             isModified = false
             return true
         } catch {
@@ -636,18 +655,68 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                     path, error?.localizedDescription ?? "non-string result")
             }
             let contentToSave = self.content
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                do {
-                    try contentToSave.write(toFile: path, atomically: true, encoding: .utf8)
-                    DispatchQueue.main.async {
-                        self?.isModified = false
-                        completion(true)
+            self.writeCheckingDisk(contentToSave, to: path, completion: completion)
+        }
+    }
+
+    /// Write the buffer, first asking (via `resolveSaveConflict`) when the
+    /// file changed on disk since it was loaded or last saved.
+    private func writeCheckingDisk(_ text: String, to path: String, completion: @escaping (Bool) -> Void) {
+        let expectedHash = diskTextHash
+        let expectedStamp = diskStamp
+        let bom = hasBOM
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Changed elsewhere: the stamp moved and the text isn't what we
+            // last saw (or what we're about to write).
+            var conflict = false
+            if let expectedHash, TextFile.stamp(path) != expectedStamp, let disk = TextFile.read(path),
+                disk.text.hashValue != expectedHash, disk.text != text
+            {
+                conflict = true
+            }
+            let write = {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    do {
+                        try TextFile.write(text, bom: bom, to: path)
+                        DispatchQueue.main.async {
+                            guard let self else { return completion(true) }
+                            self.recordDiskState(text: text)
+                            self.lastWrittenText = text
+                            // Typing that arrived while writing stays unsaved.
+                            if self.content == text { self.isModified = false }
+                            completion(true)
+                        }
+                    } catch {
+                        os_log(
+                            .error, log: Self.log, "Failed to save file %{public}@: %{public}@", path,
+                            error.localizedDescription)
+                        DispatchQueue.main.async { completion(false) }
                     }
-                } catch {
-                    os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
-                    DispatchQueue.main.async {
-                        completion(false)
-                    }
+                }
+            }
+            DispatchQueue.main.async {
+                guard conflict, let self, let resolve = self.resolveSaveConflict else { return write() }
+                resolve(self) { overwrite in
+                    if overwrite { write() } else { completion(false) }
+                }
+            }
+        }
+    }
+
+    /// After something rewrote the file we just saved (a formatter, a
+    /// command on save): show its result if the buffer still holds what was
+    /// saved; otherwise keep the newer typing and just note the disk state.
+    func adoptDiskChanges(afterSaving saved: String, completion: (() -> Void)? = nil) {
+        guard let path = filePath else { completion?(); return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let disk = TextFile.read(path)
+            DispatchQueue.main.async {
+                defer { completion?() }
+                guard let self, let disk else { return }
+                if self.content == saved, disk.text != saved {
+                    self.replaceContent(with: disk)
+                } else {
+                    self.recordDiskState(text: disk.text)
                 }
             }
         }
@@ -812,39 +881,49 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private func handleFileChangeEvent() {
         fileWatchDebounce?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.reloadIfUnmodified()
+            self?.reloadFromDisk(force: false)
         }
         fileWatchDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
-    /// Reload the file content if the editor has no unsaved changes.
-    private func reloadIfUnmodified() {
-        guard !isModified, let path = filePath else { return }
-
-        let newContent: String
-        do {
-            newContent = try String(contentsOfFile: path, encoding: .utf8)
-        } catch {
-            os_log(.error, log: Self.log, "Failed to reload file '%{public}@': %{public}@", path, error.localizedDescription)
+    /// Bring in what's on disk. A clean buffer reloads; a buffer with unsaved
+    /// edits is left alone and a "changed on disk" notice goes up instead
+    /// (unless `force`, which discards the edits).
+    func reloadFromDisk(force: Bool) {
+        guard let path = filePath else { return }
+        // Re-arm the watcher whatever happens: after an atomic write
+        // (temp → rename) the old descriptor watches a deleted inode.
+        defer { startFileWatching() }
+        guard let disk = TextFile.read(path) else { return }
+        if disk.text == content {
+            recordDiskState(text: disk.text)
+            if force { isModified = false }
             return
         }
-        guard newContent != content else {
-            // Content unchanged but the inode may have been replaced (atomic write).
-            // Restart the watcher so the fd tracks the current inode.
-            startFileWatching()
+        // Unchanged since we last saw it (a touch, or our own save).
+        if !force, disk.text.hashValue == diskTextHash { return }
+        if isModified && !force {
+            guard noticedDiskHash != disk.text.hashValue else { return }
+            noticedDiskHash = disk.text.hashValue
+            NotificationCenter.default.post(name: .editorChangedOnDisk, object: self)
             return
         }
+        replaceContent(with: disk)
+    }
 
-        suppressNextModify = true
-        content = newContent
-        sendCommand(.openFile(filePath: path, content: newContent, language: language))
+    /// Show `disk` as the buffer (a fresh Monaco model; the window resyncs
+    /// the language server when it reports FileOpened).
+    private func replaceContent(with disk: TextFile.Contents) {
+        guard let path = filePath else { return }
+        content = disk.text
+        hasBOM = disk.bom
+        isModified = false
+        recordDiskState(text: disk.text)
+        sendCommand(.openFile(filePath: path, content: disk.text, language: language))
         // Force WebView repaint immediately — WKWebView may defer visual updates
         // when the view isn't first responder (e.g. user is focused elsewhere).
         if let wv = webView { wv.setNeedsDisplay(wv.bounds) }
-        // Restart the watcher: after an atomic write (temp → rename) the old fd
-        // points to a stale inode.  Re-opening gives us the new one.
-        startFileWatching()
     }
 
     // MARK: Cleanup

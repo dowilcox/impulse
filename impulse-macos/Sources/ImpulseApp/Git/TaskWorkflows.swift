@@ -374,6 +374,9 @@ extension MainWindowController {
       let mainRoot =
         GitClient.commonGitDirectory(forPath: root).map { ($0 as NSString).deletingLastPathComponent }
         ?? root
+      // Look again: closing the workspace may have just saved files
+      // ("Save & Close"), which then belong in the snapshot too.
+      let dirty = dirty || (GitClient.snapshot(forPath: root)?.changedFileCount ?? 0) > 0
       var saved: SafetySnapshot?
       if dirty, case .success(let snapshot) = SafetySnapshots.create(reason: "archive \(branch)", root: root) {
         saved = snapshot

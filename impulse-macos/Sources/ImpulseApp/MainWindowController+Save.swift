@@ -23,7 +23,13 @@ extension MainWindowController {
     // Fetch the latest content from Monaco (content changes are debounced
     // in JS, so the Swift property may be stale when saving via menu Cmd+S).
     editor.fetchContentAndSave { [weak self, weak editor] success in
-      guard let self, let editor, success else { return }
+      guard let self, let editor else { return }
+      guard success else {
+        self.toasts.show(
+          Toast(kind: .warning, message: "Couldn't save \((path as NSString).lastPathComponent)."))
+        return
+      }
+      let saved = editor.lastWrittenText ?? editor.content
 
       // Format on save — find applicable formatter
       let formatter = self.resolveFormatOnSave(forPath: path)
@@ -31,40 +37,42 @@ extension MainWindowController {
         self.runExternalCommand(
           command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent
         ) { [weak self, weak editor] in
-          guard let self, let editor else { return }
-          // Reload the file after formatting off the main thread.
-          let language = editor.language
-          let currentContent = editor.content
-          DispatchQueue.global(qos: .userInitiated).async {
-            let newContent: String
-            do {
-              newContent = try String(contentsOfFile: path, encoding: .utf8)
-            } catch {
-              os_log(
-                .error, "Failed to reload file after formatting '%{public}@': %{public}@",
-                path, error.localizedDescription)
-              DispatchQueue.main.async { [weak self, weak editor] in
-                guard let self, let editor else { return }
-                self.postSaveActions(editor: editor, path: path)
-              }
-              return
-            }
-            guard newContent != currentContent else {
-              DispatchQueue.main.async { [weak self, weak editor] in
-                guard let self, let editor else { return }
-                self.postSaveActions(editor: editor, path: path)
-              }
-              return
-            }
-            DispatchQueue.main.async { [weak self, weak editor] in
-              guard let self, let editor else { return }
-              editor.openFile(path: path, content: newContent, language: language)
-              self.postSaveActions(editor: editor, path: path)
-            }
+          guard let editor else { return }
+          // The formatter rewrote the file: show its result, unless typing
+          // has moved on since the save (then it's kept, unsaved).
+          editor.adoptDiskChanges(afterSaving: saved) { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.postSaveActions(editor: editor, path: path)
           }
         }
       } else {
         self.postSaveActions(editor: editor, path: path)
+      }
+    }
+  }
+
+  /// The file changed on disk since the editor loaded or saved it: save
+  /// over it, take the disk version instead, or don't save.
+  func confirmOverwrite(_ editor: EditorTab, proceed: @escaping (Bool) -> Void) {
+    guard let window, let path = editor.filePath else { return proceed(true) }
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "“\((path as NSString).lastPathComponent)” changed on disk"
+    alert.informativeText =
+      "It was changed outside this editor (by an agent, git or another app) since you opened it. Saving replaces those changes with your version."
+    alert.addButton(withTitle: "Save Anyway")
+    alert.addButton(withTitle: "Reload from Disk")
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.hasDestructiveAction = true
+    alert.beginSheetModal(for: window) { [weak editor] response in
+      switch response {
+      case .alertFirstButtonReturn:
+        proceed(true)
+      case .alertSecondButtonReturn:
+        editor?.reloadFromDisk(force: true)
+        proceed(false)
+      default:
+        proceed(false)
       }
     }
   }
@@ -90,26 +98,10 @@ extension MainWindowController {
       guard Settings.matchesFilePattern(path, pattern: cmd.filePattern) else { continue }
       let cwd = (path as NSString).deletingLastPathComponent
       if cmd.reloadFile {
-        let language = editor.language
+        let saved = editor.lastWrittenText ?? editor.content
         runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd) { [weak editor] in
-          guard let editor else { return }
-          let currentContent = editor.content
-          DispatchQueue.global(qos: .userInitiated).async {
-            let newContent: String
-            do {
-              newContent = try String(contentsOfFile: path, encoding: .utf8)
-            } catch {
-              os_log(
-                .error, "Failed to reload file after command-on-save '%{public}@': %{public}@",
-                path, error.localizedDescription)
-              return
-            }
-            guard newContent != currentContent else { return }
-            DispatchQueue.main.async { [weak editor] in
-              guard let editor else { return }
-              editor.openFile(path: path, content: newContent, language: language)
-            }
-          }
+          // Show what the command wrote, unless typing has moved on.
+          editor?.adoptDiskChanges(afterSaving: saved)
         }
       } else {
         runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd, completion: nil)

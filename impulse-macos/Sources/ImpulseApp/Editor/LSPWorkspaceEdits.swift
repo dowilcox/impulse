@@ -65,20 +65,22 @@ extension MainWindowController {
           editor.applyEdits(token: token, edits: edits.map(Self.monacoEdit))
           undoSteps.append { [weak editor] in editor?.undoEdits(token: token) }
         } else {
-          guard let original = try? String(contentsOfFile: path, encoding: .utf8) else {
-            return outcome("Couldn't read \(name(path)).")
+          // Through symlinks, keeping a byte-order mark; not UTF-8: skipped.
+          guard let file = TextFile.read(path) else {
+            return outcome("Couldn't read \(name(path)) as UTF-8 text.")
           }
+          let original = file.text
           guard let updated = TextEditApplier.apply(edits, to: original) else {
             return outcome("The changes to \(name(path)) overlap.")
           }
           do {
-            try updated.write(toFile: path, atomically: true, encoding: .utf8)
+            try TextFile.write(updated, bom: file.bom, to: path)
           } catch {
             return outcome("Couldn't write \(name(path)): \(error.localizedDescription)")
           }
           undoSteps.append {
-            guard (try? String(contentsOfFile: path, encoding: .utf8)) == updated else { return }
-            try? original.write(toFile: path, atomically: true, encoding: .utf8)
+            guard TextFile.read(path)?.text == updated else { return }
+            try? TextFile.write(original, bom: file.bom, to: path)
           }
         }
 

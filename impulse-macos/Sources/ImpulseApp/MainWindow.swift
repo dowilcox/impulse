@@ -557,6 +557,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Registers an editor tab in the path-to-tab dictionary.
   func trackEditorTab(_ editor: EditorTab, forPath path: String) {
     editorTabsByPath[path] = editor
+    if editor.resolveSaveConflict == nil {
+      editor.resolveSaveConflict = { [weak self] editor, proceed in
+        guard let self else { return proceed(true) }
+        self.confirmOverwrite(editor, proceed: proceed)
+      }
+    }
   }
 
   /// Removes an editor tab from the path-to-tab dictionary.
