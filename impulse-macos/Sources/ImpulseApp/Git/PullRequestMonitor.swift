@@ -10,7 +10,9 @@ final class PullRequestMonitor {
   private let queue = DispatchQueue(label: "impulse.pr", qos: .utility)
   private var lastFetch: [String: (branch: String?, at: Date)] = [:]
   private var inFlight: Set<String> = []
-  private lazy var ghPath: String? = LoginShell.which("gh")
+  /// Looked up once, whichever thread asks first.
+  private static let gh: String? = LoginShell.which("gh")
+  private var ghPath: String? { Self.gh }
   /// While checks run, poll again after a growing delay (30 s … 5 min).
   private var pollDelay: [String: TimeInterval] = [:]
   private var pollWork: [String: DispatchWorkItem] = [:]
@@ -110,28 +112,26 @@ final class PullRequestMonitor {
 
   /// Run gh in `root` and return its stdout when it succeeds.
   private func run(_ arguments: [String], root: String) -> Data? {
-    guard let gh = ghPath else { return nil }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: gh)
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: root)
+    guard case .success(let output) = execute(arguments, root: root, timeout: 20), output.status == 0 else {
+      return nil
+    }
+    return output.stdout
+  }
+
+  /// Run gh in `root`; nil when it isn't installed, or failed to start.
+  /// A gh that hangs is stopped at `timeout`, so it can't hold up the queue.
+  private func execute(_ arguments: [String], root: String, timeout: TimeInterval) -> Result<ChildProcess.Output, String> {
+    guard let gh = ghPath else { return .failure("The GitHub CLI (gh) isn't installed.") }
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = LoginShell.loginPath()
     environment["GH_PROMPT_DISABLED"] = "1"
     environment["NO_COLOR"] = "1"
-    process.environment = environment
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = Pipe()
-    let done = DispatchSemaphore(value: 0)
-    process.terminationHandler = { _ in done.signal() }
-    do { try process.run() } catch { return nil }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    if done.wait(timeout: .now() + 20) == .timedOut {
-      process.terminate()
-      return nil
+    do {
+      let output = try ChildProcess.run(gh, arguments, in: root, environment: environment, timeout: timeout)
+      return output.timedOut ? .failure("gh didn't answer in time.") : .success(output)
+    } catch {
+      return .failure(error.localizedDescription)
     }
-    return process.terminationStatus == 0 ? data : nil
   }
 
   /// `gh pr create --draft --fill`: a draft PR titled and described from the
@@ -181,50 +181,23 @@ final class PullRequestMonitor {
 
   /// Run gh and return stdout, or stderr's last line as the failure.
   private func runCapturingErrors(_ arguments: [String], root: String) -> Result<String, String> {
-    guard let gh = ghPath else { return .failure("The GitHub CLI (gh) isn't installed.") }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: gh)
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: root)
-    var environment = ProcessInfo.processInfo.environment
-    environment["PATH"] = LoginShell.loginPath()
-    environment["GH_PROMPT_DISABLED"] = "1"
-    environment["NO_COLOR"] = "1"
-    process.environment = environment
-    let output = Pipe()
-    let errors = Pipe()
-    process.standardOutput = output
-    process.standardError = errors
-    do { try process.run() } catch { return .failure(error.localizedDescription) }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    let errorData = errors.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    let stdout = String(decoding: data, as: UTF8.self)
-    guard process.terminationStatus == 0 else {
-      let message = String(decoding: errorData, as: UTF8.self)
-        .split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-      return .failure(message.map(String.init) ?? "gh exited with status \(process.terminationStatus).")
+    execute(arguments, root: root, timeout: 120).flatMap { output in
+      guard output.status == 0 else {
+        let message = String(decoding: output.stderr, as: UTF8.self)
+          .split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return .failure(message.map(String.init) ?? "gh exited with status \(output.status).")
+      }
+      return .success(String(decoding: output.stdout, as: UTF8.self))
     }
-    return .success(stdout)
   }
 
   /// `gh pr create --web` (fills in the branch; opens the browser).
   func createInBrowser(root: String, completion: @escaping (Bool) -> Void) {
-    guard let gh = ghPath else { return completion(false) }
-    queue.async {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: gh)
-      process.arguments = ["pr", "create", "--web"]
-      process.currentDirectoryURL = URL(fileURLWithPath: root)
-      var environment = ProcessInfo.processInfo.environment
-      environment["PATH"] = LoginShell.loginPath()
-      environment["GH_PROMPT_DISABLED"] = "1"
-      process.environment = environment
-      process.standardOutput = Pipe()
-      process.standardError = Pipe()
-      let ok = (try? process.run()) != nil
-      if ok { process.waitUntilExit() }
-      DispatchQueue.main.async { completion(ok && process.terminationStatus == 0) }
+    guard ghPath != nil else { return completion(false) }
+    queue.async { [weak self] in
+      let result = self?.execute(["pr", "create", "--web"], root: root, timeout: 60)
+      let ok = (try? result?.get())?.status == 0
+      DispatchQueue.main.async { completion(ok) }
     }
   }
 

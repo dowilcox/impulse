@@ -24,22 +24,11 @@ public enum LoginShell {
       return nil
     }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/dscl")
-    process.arguments = [".", "-read", "/Users/\(username)", "UserShell"]
-    let stdout = Pipe()
-    process.standardOutput = stdout
-    process.standardError = Pipe()
-    do {
-      try process.run()
-    } catch {
-      return nil
-    }
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else { return nil }
-
-    let data = stdout.fileHandleForReading.readDataToEndOfFile()
-    guard let output = String(data: data, encoding: .utf8),
+    guard
+      let result = try? ChildProcess.run(
+        "/usr/bin/dscl", [".", "-read", "/Users/\(username)", "UserShell"], timeout: 5),
+      result.status == 0, !result.timedOut,
+      let output = String(data: result.stdout, encoding: .utf8),
       output.hasPrefix("UserShell:")
     else { return nil }
     let shell = String(output.dropFirst("UserShell:".count))
@@ -70,13 +59,14 @@ public enum LoginShell {
   /// inherit launchd's minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which
   /// misses Homebrew, mise/asdf shims, `~/.local/bin` and so on — so tools like
   /// `git`, `gh` and language servers must be resolved against the user's real
-  /// login environment. Captured once (blocking, with a timeout) and cached.
-  /// Falls back to the process `PATH` plus common install prefixes.
+  /// login environment. Captured once (blocking, with a timeout; the app
+  /// warms it at launch) and cached. Falls back to the process `PATH` plus
+  /// common install prefixes.
   public static func loginPath() -> String {
     pathLock.lock()
     defer { pathLock.unlock() }
     if let cachedPath { return cachedPath }
-    let captured = captureLoginPath(timeout: 3) ?? ""
+    let captured = captureLoginPath() ?? ""
     let fallback = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
     let path = mergePaths(captured, fallback, "/opt/homebrew/bin:/usr/local/bin")
     cachedPath = path
@@ -108,30 +98,28 @@ public enum LoginShell {
     return nil
   }
 
-  private static func captureLoginPath(timeout: TimeInterval) -> String? {
+  /// The PATH of an interactive login shell, like a terminal's, so entries
+  /// added in `.zshrc` or `.bashrc` (nvm, pyenv, cargo, …) count too. An rc
+  /// file that never finishes (one that execs tmux, say) falls back to a
+  /// login-only shell. `IMPULSE_RESOLVING_ENVIRONMENT=1` lets rc files skip
+  /// slow or interactive setup.
+  private static func captureLoginPath() -> String? {
     let shell = defaultShellPath()
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: shell)
     // `printf '%s' "$PATH"` works in bash, zsh and fish (fish joins PATH
     // variables with ':' when quoted). Markers isolate it from rc-file noise.
-    process.arguments = ["-l", "-c", "printf '__IMPULSE_PATH__%s__IMPULSE_PATH__' \"$PATH\""]
-    process.standardInput = FileHandle.nullDevice
-    let stdout = Pipe()
-    process.standardOutput = stdout
-    process.standardError = FileHandle.nullDevice
-    let done = DispatchSemaphore(value: 0)
-    process.terminationHandler = { _ in done.signal() }
-    do {
-      try process.run()
-    } catch {
-      return nil
-    }
-    if done.wait(timeout: .now() + timeout) == .timedOut {
-      process.terminate()
-      return nil
-    }
-    let data = stdout.fileHandleForReading.readDataToEndOfFile()
-    guard let output = String(data: data, encoding: .utf8) else { return nil }
+    let script = "printf '__IMPULSE_PATH__%s__IMPULSE_PATH__' \"$PATH\""
+    return capturePath(shell, ["-i", "-l", "-c", script], timeout: 5)
+      ?? capturePath(shell, ["-l", "-c", script], timeout: 3)
+  }
+
+  private static func capturePath(_ shell: String, _ arguments: [String], timeout: TimeInterval) -> String? {
+    var environment = ProcessInfo.processInfo.environment
+    environment["IMPULSE_RESOLVING_ENVIRONMENT"] = "1"
+    guard
+      let result = try? ChildProcess.run(shell, arguments, environment: environment, timeout: timeout),
+      !result.timedOut
+    else { return nil }
+    let output = String(decoding: result.stdout, as: UTF8.self)
     let parts = output.components(separatedBy: "__IMPULSE_PATH__")
     guard parts.count >= 3 else { return nil }
     let path = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)

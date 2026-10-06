@@ -143,7 +143,8 @@ public enum GitCLI {
   ///   - stdin: bytes written to git's standard input (e.g. a commit message
   ///     for `commit -F -`, or a patch for `apply --cached`).
   ///   - environment: extra variables layered over the inherited environment.
-  ///   - timeout: wall-clock limit; the process is terminated when exceeded.
+  ///   - timeout: wall-clock limit (nil: none); when exceeded, git and
+  ///     everything it started are terminated.
   ///   - onOutputLine: called (on a background queue) for each stderr line as
   ///     it arrives — git writes progress for fetch/push there.
   /// - Returns: the result on exit status 0, otherwise a classified error.
@@ -153,7 +154,7 @@ public enum GitCLI {
     in directory: String,
     stdin: Data? = nil,
     environment: [String: String] = [:],
-    timeout: TimeInterval = 120,
+    timeout: TimeInterval? = 120,
     onOutputLine: ((String) -> Void)? = nil
   ) -> Result<GitCLIResult, GitCLIError> {
     guard let git = gitPath() else {
@@ -164,86 +165,27 @@ public enum GitCLI {
         GitCLIError(kind: .commandLineToolsMissing, arguments: arguments, status: -1, output: ""))
     }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: git)
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: directory)
-    process.environment = mergedEnvironment(extra: environment)
-
-    let outPipe = Pipe()
-    let errPipe = Pipe()
-    process.standardOutput = outPipe
-    process.standardError = errPipe
-    let inPipe: Pipe? = stdin == nil ? nil : Pipe()
-    process.standardInput = inPipe ?? FileHandle.nullDevice
-
-    // Drain both pipes concurrently so a chatty command can't fill a pipe
-    // buffer and deadlock against waitUntilExit.
-    let group = DispatchGroup()
-    var outData = Data()
-    var errData = Data()
     let errLines = LineSplitter(onLine: onOutputLine)
-
-    // Signal exit from the termination handler rather than waitUntilExit():
-    // waitUntilExit on a background thread can miss the exit of a child that
-    // finished quickly and then block forever.
-    let exited = DispatchSemaphore(value: 0)
-    process.terminationHandler = { _ in exited.signal() }
-
+    let result: ChildProcess.Output
     do {
-      try process.run()
+      // In its own process group, so a timeout also stops hooks, ssh and
+      // LFS processes the command started.
+      result = try ChildProcess.run(
+        git, arguments, in: directory, environment: mergedEnvironment(extra: environment),
+        stdin: stdin, timeout: timeout, onStderr: onOutputLine == nil ? nil : { errLines.feed($0) })
     } catch {
       return .failure(
         GitCLIError(
           kind: .gitNotFound, arguments: arguments, status: -1,
           output: error.localizedDescription))
     }
+    errLines.flush()
 
-    group.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-      group.leave()
-    }
-    group.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      let handle = errPipe.fileHandleForReading
-      while true {
-        let chunk = handle.availableData
-        if chunk.isEmpty { break }
-        errData.append(chunk)
-        errLines.feed(chunk)
-      }
-      errLines.flush()
-      group.leave()
-    }
+    let stdout = String(decoding: result.stdout, as: UTF8.self)
+    let stderr = String(decoding: result.stderr, as: UTF8.self)
+    let status = result.status
 
-    if let inPipe, let stdin {
-      // git can exit before reading its input (a failing hook, a held
-      // index.lock); the write must fail, not raise SIGPIPE and kill the app.
-      _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-      DispatchQueue.global(qos: .userInitiated).async {
-        try? inPipe.fileHandleForWriting.write(contentsOf: stdin)
-        try? inPipe.fileHandleForWriting.close()
-      }
-    }
-
-    var timedOut = false
-    if exited.wait(timeout: .now() + timeout) == .timedOut {
-      timedOut = true
-      process.terminate()
-      if exited.wait(timeout: .now() + 5) == .timedOut {
-        kill(process.processIdentifier, SIGKILL)
-        _ = exited.wait(timeout: .now() + 5)
-      }
-    }
-    // Pipes close when the process (and any children holding them) exit.
-    _ = group.wait(timeout: .now() + 5)
-
-    let stdout = String(decoding: outData, as: UTF8.self)
-    let stderr = String(decoding: errData, as: UTF8.self)
-    let status = process.terminationStatus
-
-    if timedOut {
+    if result.timedOut {
       return .failure(
         GitCLIError(kind: .timedOut, arguments: arguments, status: status, output: stderr))
     }

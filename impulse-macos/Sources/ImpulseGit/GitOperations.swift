@@ -54,9 +54,12 @@ public enum GitOperations {
   /// Extra environment for every git invocation (tests pin identity/config).
   nonisolated(unsafe) public static var environment: [String: String] = [:]
 
+  /// Local commands can legitimately take a long time (an LFS smudge during
+  /// a switch, a slow hook), and stopping one partway leaves a half-updated
+  /// working tree; the default limit only ends a command that hangs.
   @discardableResult
   static func git(
-    _ arguments: [String], in root: String, stdin: Data? = nil, timeout: TimeInterval = 120,
+    _ arguments: [String], in root: String, stdin: Data? = nil, timeout: TimeInterval = 1800,
     onOutputLine: ((String) -> Void)? = nil
   ) -> Result<GitCLIResult, GitOperationError> {
     GitCLI.run(

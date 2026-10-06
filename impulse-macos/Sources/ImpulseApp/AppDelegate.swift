@@ -62,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var shownLspErrors = Set<String>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Git, gh and language servers resolve tools against the login PATH;
+    // capture it now, off the main thread, rather than on first use.
+    DispatchQueue.global(qos: .userInitiated).async { _ = LoginShell.loginPath() }
     SettingsStore.shared.load()
     SettingsStore.shared.watchFile()
     NSApp.servicesProvider = serviceProvider
