@@ -196,7 +196,7 @@
       #expect(
         ManagedServers.missingCommandMessage(
           serverId: "typescript-language-server", command: "typescript-language-server")
-          == "LSP server 'typescript-language-server' requires 'typescript-language-server' but it is not installed. Run `impulse --install-lsp-servers` (or `cargo run -p impulse-linux -- --install-lsp-servers`) to install managed web LSP servers."
+          == "LSP server 'typescript-language-server' requires 'typescript-language-server' but it is not installed. Install them with \"Install Web LSP Servers\" in the command palette or Settings → Language Servers."
       )
       #expect(
         ManagedServers.missingCommandMessage(serverId: "rust-analyzer", command: "rust-analyzer")

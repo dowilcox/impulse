@@ -254,6 +254,9 @@ final class ServerProcess {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: command)
     process.arguments = args
+    // Servers start with `#!/usr/bin/env node` and run other tools: give
+    // them the login shell's PATH, not launchd's.
+    process.environment = ManagedServers.toolEnvironment()
     let stdinPipe = Pipe()
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()

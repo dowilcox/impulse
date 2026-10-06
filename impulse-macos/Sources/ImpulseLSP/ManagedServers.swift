@@ -4,6 +4,7 @@
 // (`impulse_lsp_check_status` / `impulse_system_lsp_status`).
 
 import Foundation
+import ImpulseKit
 
 public enum ManagedServers {
   public static let recommendedWebLspPackages: [String] = [
@@ -39,7 +40,7 @@ public enum ManagedServers {
   ]
 
   static let installHint =
-    "Run `impulse --install-lsp-servers` (or `cargo run -p impulse-linux -- --install-lsp-servers`) to install managed web LSP servers."
+    "Install them with \"Install Web LSP Servers\" in the command palette or Settings → Language Servers."
 
   static let systemLspServers: [(id: String, command: String)] = [
     ("rust-analyzer", "rust-analyzer"),
@@ -94,7 +95,9 @@ public enum ManagedServers {
     if commandLooksLikePath(command) {
       return isExecutableFile(command) ? command : nil
     }
-    guard let pathEnv = ProcessInfo.processInfo.environment["PATH"] else { return nil }
+    // The login shell's PATH: launched from the Dock, the app's own is
+    // launchd's /usr/bin:/bin:/usr/sbin:/sbin, without Homebrew, ~/.cargo/bin…
+    let pathEnv = LoginShell.loginPath()
     for dir in pathEnv.split(separator: ":", omittingEmptySubsequences: false) {
       let candidate = (String(dir) as NSString).appendingPathComponent(command)
       if isExecutableFile(candidate) {
@@ -131,6 +134,15 @@ public enum ManagedServers {
     }
   }
 
+  /// The environment for language servers and npm: the app's, with the
+  /// login shell's PATH (plus the managed bin folder) so `node`, `npm` and
+  /// servers installed with Homebrew, cargo or nvm are found.
+  public static func toolEnvironment() -> [String: String] {
+    var environment = ProcessInfo.processInfo.environment
+    environment["PATH"] = LoginShell.mergePaths(managedLspBinDir() ?? "", LoginShell.loginPath())
+    return environment
+  }
+
   // MARK: npm
 
   /// Port of `npm_is_available`: `npm --version` succeeds.
@@ -138,6 +150,7 @@ public enum ManagedServers {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = ["npm", "--version"]
+    process.environment = toolEnvironment()
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     do {
@@ -193,6 +206,7 @@ public enum ManagedServers {
     process.arguments =
       ["npm", "install", "--prefix", root, "--no-audit", "--no-fund"]
       + recommendedWebLspPackages
+    process.environment = toolEnvironment()
     do {
       try process.run()
     } catch {

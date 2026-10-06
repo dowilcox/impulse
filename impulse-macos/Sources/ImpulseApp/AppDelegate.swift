@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// Events other than diagnostics, handled on the main thread in order.
   private enum LspEvent {
     case message(server: String, type: Int, text: String)
+    /// A server couldn't start (not installed, not on PATH, crashed early).
+    case serverError(server: String, text: String)
     case progress(key: String, server: String, kind: String, title: String?, message: String?, percentage: Int?)
     case applyEdit(clientKey: String, id: Any, label: String?, edit: Any)
   }
@@ -56,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// All open main windows. We keep strong references so they survive the
   /// run loop.
   private var windowControllers: [MainWindowController] = []
+  /// Language-server start failures already shown.
+  private var shownLspErrors = Set<String>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
@@ -582,6 +586,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .message(
               server: event["serverId"] as? String ?? "Language server",
               type: (event["messageType"] as? NSNumber)?.intValue ?? 3, text: text))
+        case "serverError":
+          guard let text = event["message"] as? String else { continue }
+          others.append(.serverError(server: event["serverId"] as? String ?? "Language server", text: text))
         case "progress":
           guard let clientKey = event["clientKey"] as? String, let token = event["token"] as? String,
             let kind = event["kind"] as? String
@@ -624,6 +631,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let front =
       windowControllers.first { $0.window?.isKeyWindow == true } ?? windowControllers.first
     switch event {
+    case .serverError(_, let text):
+      // Said once: the registry retries a failed server every 15 seconds.
+      guard shownLspErrors.insert(text).inserted, let front else { return }
+      front.toasts.show(Toast(kind: .warning, message: text, lifetime: 12))
     case .message(let server, let type, let text):
       // 4 is a log message: not worth interrupting for.
       guard type <= 3, let front else { return }
