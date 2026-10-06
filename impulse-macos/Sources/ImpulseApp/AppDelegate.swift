@@ -62,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var shownLspErrors = Set<String>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Tooltips after half a second (AppKit waits about 1.5 s): icon-only
+    // buttons are explained by theirs.
+    UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 500])
     // Git, gh and language servers resolve tools against the login PATH;
     // capture it now, off the main thread, rather than on first use.
     DispatchQueue.global(qos: .userInitiated).async { _ = LoginShell.loginPath() }
