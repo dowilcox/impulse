@@ -188,7 +188,7 @@ public enum ThemeStore {
     }
 
     guard
-      let url = Bundle.module.url(
+      let url = Bundle.kitResources.url(
         forResource: normalized, withExtension: "toml", subdirectory: "Resources/Themes"),
       let contents = try? String(contentsOf: url, encoding: .utf8)
     else {

@@ -270,12 +270,21 @@ if [[ -f "${CLI_BIN}" ]]; then
     cp "${CLI_BIN}" "${RESOURCES}/bin/impulse"
 fi
 
-# Copy SwiftPM bundle resources (Monaco assets, icons, etc.)
-# Place in Contents/Resources/ — the standard macOS location for app resources.
-BUNDLE_RESOURCES="impulse-macos/.build/release/ImpulseApp_ImpulseApp.bundle"
-if [[ -d "${BUNDLE_RESOURCES}" ]]; then
-    cp -r "${BUNDLE_RESOURCES}" "${RESOURCES}/"
-fi
+# Copy the SwiftPM resource bundles into Contents/Resources/ — the standard
+# macOS location (codesign rejects bundles beside the executable):
+#   ImpulseApp_ImpulseApp.bundle — Monaco, web assets, icons
+#   ImpulseApp_ImpulseKit.bundle — themes and shell integration scripts
+# Both are required: without them the app can't find its themes or shell
+# integration and crashes on any Mac other than the one that built it.
+RESOURCE_BUNDLES=(ImpulseApp_ImpulseApp ImpulseApp_ImpulseKit)
+for bundle in "${RESOURCE_BUNDLES[@]}"; do
+    BUNDLE_SRC="impulse-macos/.build/release/${bundle}.bundle"
+    if [[ ! -d "${BUNDLE_SRC}" ]]; then
+        echo "ERROR: resource bundle ${BUNDLE_SRC} not found." >&2
+        exit 1
+    fi
+    cp -r "${BUNDLE_SRC}" "${RESOURCES}/"
+done
 
 # Generate Info.plist
 cat > "${CONTENTS}/Info.plist" << PLIST
@@ -712,19 +721,22 @@ if [[ "${SIGN}" == true ]]; then
 
     ENTITLEMENTS="impulse-macos/Impulse.entitlements"
 
-    # The SwiftPM resource bundle is a flat directory with a .bundle extension.
-    # codesign treats it as a nested bundle but rejects it because it lacks an
-    # Info.plist. Add a minimal one so it can be signed properly inside-out.
-    if [[ -d "${RESOURCES}/ImpulseApp_ImpulseApp.bundle" ]]; then
-        cat > "${RESOURCES}/ImpulseApp_ImpulseApp.bundle/Info.plist" << 'RPLIST'
+    # The SwiftPM resource bundles are flat directories with a .bundle
+    # extension. codesign treats them as nested bundles but rejects them
+    # without an Info.plist, so add a minimal one and sign them inside-out.
+    for bundle in "${RESOURCE_BUNDLES[@]}"; do
+        BUNDLE_DIR="${RESOURCES}/${bundle}.bundle"
+        [[ -d "${BUNDLE_DIR}" ]] || continue
+        BUNDLE_ID="dev.impulse.Impulse.resources.${bundle#ImpulseApp_}"
+        cat > "${BUNDLE_DIR}/Info.plist" << RPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>dev.impulse.Impulse.resources</string>
+    <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
-    <string>ImpulseApp Resources</string>
+    <string>${bundle#ImpulseApp_} Resources</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundlePackageType</key>
@@ -733,12 +745,12 @@ if [[ "${SIGN}" == true ]]; then
 </plist>
 RPLIST
 
-        echo "    Signing resource bundle..."
+        echo "    Signing ${bundle}.bundle..."
         codesign --force \
             --sign "${IMPULSE_SIGN_IDENTITY}" \
             --timestamp \
-            "${RESOURCES}/ImpulseApp_ImpulseApp.bundle"
-    fi
+            "${BUNDLE_DIR}"
+    done
 
     if [[ -f "${RESOURCES}/bin/impulse" ]]; then
         echo "    Signing command-line tool..."
@@ -748,7 +760,7 @@ RPLIST
             "${RESOURCES}/bin/impulse"
     fi
 
-    # Sign the app bundle (inside-out: resource bundle first, then the .app)
+    # Sign the app bundle (inside-out: resource bundles first, then the .app)
     echo "    Signing app bundle..."
     codesign --force --options runtime \
         --entitlements "${ENTITLEMENTS}" \

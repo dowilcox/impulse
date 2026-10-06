@@ -13,7 +13,7 @@ public enum ShellIntegration {
     case .fish: name = "fish"
     }
     guard
-      let url = Bundle.module.url(
+      let url = Bundle.kitResources.url(
         forResource: name, withExtension: "sh", subdirectory: "Resources/ShellIntegration"),
       let script = try? String(contentsOf: url, encoding: .utf8)
     else {
