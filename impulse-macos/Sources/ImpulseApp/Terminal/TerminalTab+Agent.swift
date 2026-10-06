@@ -62,7 +62,7 @@ extension TerminalTab {
   private func pasteToAgent(_ text: String) {
     guard let backend else { return }
     if backend.mode()?.bracketedPaste == true {
-      backend.write("\u{1b}[200~" + text + "\u{1b}[201~")
+      backend.write("\u{1b}[200~" + TerminalTab.bracketedPasteBody(text) + "\u{1b}[201~")
     } else {
       backend.write(text)
     }

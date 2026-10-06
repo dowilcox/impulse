@@ -438,6 +438,14 @@ class TerminalRenderer: NSView {
     /// Latest display offset reported by the overlay; used by the scroll clamp.
     private var currentDisplayOffset: Int32 = 0
 
+    /// Scrolled up from the live bottom (a tucked prompt's floor counts as
+    /// the bottom). Read from the offset, not just the scroll gesture, so
+    /// scrolling back down — or a command scrolling to the bottom — resumes
+    /// following output without a keystroke in the grid.
+    private var isViewingHistory: Bool {
+        isScrolledBack && Int(currentDisplayOffset) > (scrollFloorOffset ?? 0)
+    }
+
     /// Vertical gap (a "tad" of padding) each collapsed blank prompt-padding row
     /// reserves between command blocks, in points. A normal row is `cellHeight`.
     private let blockPadPixels: CGFloat = 6
@@ -783,16 +791,23 @@ class TerminalRenderer: NSView {
             }
         }
         if wakeup { onOutput?() }
-        if wakeup && !isScrolledBack {
+        if wakeup {
+            let viewingHistory = isViewingHistory
             // Auto-scroll to bottom on output when enabled and the user
-            // hasn't manually scrolled back.
-            if scrollOnOutput {
-                backend.scrollToBottom()
+            // isn't reading back through history.
+            if !viewingHistory {
+                isScrolledBack = false
+                if scrollOnOutput {
+                    backend.scrollToBottom()
+                }
             }
-            // Invalidate only the damaged rows. Each row rect is expanded by
-            // one cell height on both sides so glyphs that overshoot their
-            // cell (emoji, tall scripts) repaint cleanly in neighbours.
-            switch backend.takeDamage() {
+            // Invalidate only the damaged rows (everything while scrolled
+            // back, where rows shift under a fixed viewport). Each row rect is
+            // expanded by one cell height on both sides so glyphs that
+            // overshoot their cell (emoji, tall scripts) repaint cleanly in
+            // neighbours.
+            let damage = backend.takeDamage()
+            switch viewingHistory ? .full : damage {
             case .full:
                 needsDisplay = true
             case .rows(let rows):

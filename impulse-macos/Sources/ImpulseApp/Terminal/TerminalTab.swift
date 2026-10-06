@@ -715,13 +715,23 @@ class TerminalTab: NSView {
       return
     }
 
-    // Drop embedded paste-mode markers so a poisoned clipboard cannot break
-    // out of bracketed paste and inject commands into the shell.
-    let sanitized =
-      payload
-      .replacingOccurrences(of: "\u{1b}[201~", with: "")
-      .replacingOccurrences(of: "\u{1b}[200~", with: "")
-    backend.write("\u{1b}[200~\(sanitized)\u{1b}[201~")
+    backend.write("\u{1b}[200~" + Self.bracketedPasteBody(payload) + "\u{1b}[201~")
+  }
+
+  /// Text for inside a bracketed paste, with no escape or other control
+  /// characters (tab and newlines stay), so nothing in a poisoned clipboard
+  /// can end the paste early and run what follows. Removing only the end
+  /// marker isn't enough: "ESC[2" + "ESC[200~" + "01~" rejoins into one.
+  static func bracketedPasteBody(_ text: String) -> String {
+    String(
+      String.UnicodeScalarView(
+        text.unicodeScalars.filter { scalar in
+          switch scalar.value {
+          case 0x09, 0x0A, 0x0D: return true
+          case 0x00...0x1F, 0x7F...0x9F: return false
+          default: return true
+          }
+        }))
   }
 
   /// Copy the current selection to the system clipboard.
@@ -827,7 +837,7 @@ class TerminalTab: NSView {
     if trimmed.contains("\n"), backend?.mode()?.bracketedPaste == true {
       // A multi-line command reaches the shell's line editor as one paste,
       // then runs as a whole (instead of line by line).
-      backend?.write("\u{1b}[200~" + trimmed + "\u{1b}[201~\r")
+      backend?.write("\u{1b}[200~" + Self.bracketedPasteBody(trimmed) + "\u{1b}[201~\r")
     } else {
       backend?.write(trimmed + "\n")
     }

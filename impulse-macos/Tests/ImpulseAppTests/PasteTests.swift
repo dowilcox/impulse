@@ -4,6 +4,16 @@
   import Testing
 
   struct PasteTests {
+    @Test func bracketedPasteCannotBeEndedEarly() {
+      // Removing only the end marker would rejoin these into ESC[201~.
+      let poisoned = "\u{1b}[2\u{1b}[200~01~\nrm -rf ~\n"
+      let body = TerminalTab.bracketedPasteBody(poisoned)
+      #expect(!body.contains("\u{1b}"))
+      #expect(body == "[2[200~01~\nrm -rf ~\n")
+      #expect(TerminalTab.bracketedPasteBody("a\tb\r\nc\u{9b}201~\u{7}") == "a\tb\r\nc201~")
+      #expect(TerminalTab.bracketedPasteBody("naïve 日本 🚀") == "naïve 日本 🚀")
+    }
+
     @Test func pastedImagesBecomePNGFiles() throws {
       let pasteboard = NSPasteboard(name: NSPasteboard.Name("impulse-test-\(UUID().uuidString)"))
       defer { pasteboard.releaseGlobally() }
