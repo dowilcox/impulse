@@ -292,6 +292,13 @@ fi
 #   ImpulseApp_ImpulseKit.bundle — themes and shell integration scripts
 # Both are required: without them the app can't find its themes or shell
 # integration and crashes on any Mac other than the one that built it.
+#
+# SwiftPM's bundles are plain folders. codesign treats a .bundle as a nested
+# bundle and needs an Info.plist in it; and one whose files sit in a
+# top-level Resources/ folder (ImpulseKit's) reads to it as a malformed
+# macOS bundle, so that one gets the real layout: Contents/Info.plist and
+# Contents/Resources/. Lookups relative to a bundle's resources (like
+# "Resources/Themes") match either way.
 RESOURCE_BUNDLES=(ImpulseApp_ImpulseApp ImpulseApp_ImpulseKit)
 for bundle in "${RESOURCE_BUNDLES[@]}"; do
     BUNDLE_SRC="impulse-macos/.build/release/${bundle}.bundle"
@@ -300,6 +307,29 @@ for bundle in "${RESOURCE_BUNDLES[@]}"; do
         exit 1
     fi
     cp -r "${BUNDLE_SRC}" "${RESOURCES}/"
+    BUNDLE_DIR="${RESOURCES}/${bundle}.bundle"
+    INFO_DIR="${BUNDLE_DIR}"
+    if [[ -d "${BUNDLE_DIR}/Resources" ]]; then
+        mkdir -p "${BUNDLE_DIR}/Contents/Resources"
+        mv "${BUNDLE_DIR}/Resources" "${BUNDLE_DIR}/Contents/Resources/Resources"
+        INFO_DIR="${BUNDLE_DIR}/Contents"
+    fi
+    cat > "${INFO_DIR}/Info.plist" << RPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.impulse.Impulse.resources.${bundle#ImpulseApp_}</string>
+    <key>CFBundleName</key>
+    <string>${bundle#ImpulseApp_} Resources</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+</dict>
+</plist>
+RPLIST
 done
 
 # Generate Info.plist
@@ -768,30 +798,11 @@ if [[ "${SIGN}" == true ]]; then
 
     ENTITLEMENTS="impulse-macos/Impulse.entitlements"
 
-    # The SwiftPM resource bundles are flat directories with a .bundle
-    # extension. codesign treats them as nested bundles but rejects them
-    # without an Info.plist, so add a minimal one and sign them inside-out.
+    # Resource bundles first (their Info.plist and layout come from the
+    # copy step above).
     for bundle in "${RESOURCE_BUNDLES[@]}"; do
         BUNDLE_DIR="${RESOURCES}/${bundle}.bundle"
         [[ -d "${BUNDLE_DIR}" ]] || continue
-        BUNDLE_ID="dev.impulse.Impulse.resources.${bundle#ImpulseApp_}"
-        cat > "${BUNDLE_DIR}/Info.plist" << RPLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}</string>
-    <key>CFBundleName</key>
-    <string>${bundle#ImpulseApp_} Resources</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-</dict>
-</plist>
-RPLIST
-
         echo "    Signing ${bundle}.bundle..."
         codesign --force \
             --sign "${IMPULSE_SIGN_IDENTITY}" \
