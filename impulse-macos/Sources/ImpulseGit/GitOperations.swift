@@ -349,8 +349,16 @@ public enum GitOperations {
     return void(git(args, in: root))
   }
 
+  /// Apply or pop a stash, restoring what was staged as staged. When the
+  /// staged part no longer applies ("Conflicts in index"), apply it all as
+  /// working-tree changes instead of failing.
   public static func stashApply(_ index: Int, pop: Bool, root: String) -> GitResult {
-    void(git(["stash", pop ? "pop" : "apply", "--index", "stash@{\(index)}"], in: root))
+    let command = pop ? "pop" : "apply"
+    let result = void(git(["stash", command, "--index", "stash@{\(index)}"], in: root))
+    if case .failure(let error) = result, error.output?.contains("Try without --index") == true {
+      return void(git(["stash", command, "stash@{\(index)}"], in: root))
+    }
+    return result
   }
 
   public static func stashDrop(_ index: Int, root: String) -> GitResult {

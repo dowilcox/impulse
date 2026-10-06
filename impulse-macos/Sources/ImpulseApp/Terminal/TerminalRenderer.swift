@@ -3068,17 +3068,18 @@ class TerminalRenderer: NSView {
     ) -> (uri: String, startCol: Int, endCol: Int)? {
         guard let regex = Self.urlRegex else { return nil }
 
-        // Build the row's text, tracking column for each character.
-        // Wide-char spacers are skipped so indices map 1:1 with cell columns.
+        // Build the row's text, tracking the column of each UTF-16 unit (the
+        // regex's ranges count those: an emoji is two). Wide-char spacers are
+        // skipped.
         var text = ""
-        var colForIndex: [Int] = []  // index in `text` → grid column
+        var colForIndex: [Int] = []  // UTF-16 offset in `text` → grid column
         for c in 0..<grid.cols {
             let cell = grid.cell(row: row, col: c)
             if cell.flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
             let ch = cell.character.value
             // Treat NUL as space for the scan.
             let scalar = (ch == 0) ? UnicodeScalar(0x20)! : cell.character
-            colForIndex.append(c)
+            colForIndex.append(contentsOf: repeatElement(c, count: String(scalar).utf16.count))
             text.append(Character(scalar))
         }
 
