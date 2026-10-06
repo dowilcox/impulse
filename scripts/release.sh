@@ -91,8 +91,14 @@ cargo check -p impulse-ffi --quiet 2>/dev/null || true
 # ── Build ──────────────────────────────────────────────────────────────
 
 # Clean dist/ so stale artifacts from previous releases are never uploaded.
-rm -rf "$DIST_DIR"
+# Emptied rather than removed: a Finder window showing it writes a new
+# .DS_Store meanwhile, and removing the folder itself then fails.
 mkdir -p "$DIST_DIR"
+find "$DIST_DIR" -mindepth 1 -delete 2>/dev/null || true
+if [[ -n "$(find "$DIST_DIR" -mindepth 1 ! -name .DS_Store -print -quit)" ]]; then
+    echo "Error: couldn't empty $DIST_DIR." >&2
+    exit 1
+fi
 DIST_FILES=()
 
 echo ""
