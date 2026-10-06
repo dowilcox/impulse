@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::grid::Dimensions;
@@ -805,14 +805,28 @@ impl TerminalBackend {
                 writable_registered = needs_write;
             }
 
+            // A synchronized update (DEC 2026) is buffered until it ends. If
+            // the program dies mid-frame it never does, so wake at its
+            // deadline and flush, as alacritty's own event loop does.
+            let sync_deadline = processor.sync_timeout().sync_timeout();
+            let timeout =
+                sync_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+
             events.clear();
-            if let Err(err) = poller.wait(&mut events, None) {
+            if let Err(err) = poller.wait(&mut events, timeout) {
                 if err.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
                 log::error!("PTY poll failed: {err}");
                 let _ = event_tx.send(TerminalEvent::Exit);
                 break 'event_loop;
+            }
+
+            if events.is_empty() && sync_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                processor.stop_sync(&mut *term.lock());
+                send_wakeup(&event_tx, &wakeup_pending);
+                continue;
             }
 
             // A command-channel notify wakes the poller with no events. Drain

@@ -4,6 +4,9 @@
 //! Does NOT modify or buffer the byte stream — all bytes pass through
 //! unchanged. alacritty_terminal ignores unsupported OSCs harmlessly.
 
+/// Cap on an assembled kitty notification's title or body (OSC 99 chunks).
+const KITTY_NOTIFICATION_MAX_BYTES: usize = 8 * 1024;
+
 /// Progress state reported via ConEmu-style OSC 9;4 (also used by Ghostty,
 /// kitty, Windows Terminal and agent CLIs such as Claude Code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -376,10 +379,22 @@ impl OscScanner {
         };
         let text = Self::sanitize_text(text);
         let entry = &mut self.kitty_pending[index].1;
-        if kind == "body" {
-            entry.body.push_str(&text);
+        let part = if kind == "body" {
+            &mut entry.body
         } else {
-            entry.title.push_str(&text);
+            &mut entry.title
+        };
+        // A notification is a few lines; endless `d=0` chunks would grow
+        // without bound, so anything past the cap is dropped.
+        let room = KITTY_NOTIFICATION_MAX_BYTES.saturating_sub(part.len());
+        if text.len() <= room {
+            part.push_str(&text);
+        } else {
+            let mut end = room;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            part.push_str(&text[..end]);
         }
         if !done {
             return None;
@@ -828,6 +843,22 @@ mod tests {
                 body: "All tests passed".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn test_osc99_chunks_are_capped() {
+        let mut scanner = OscScanner::new();
+        let chunk = format!("\x1b]99;i=x:d=0:p=body;{}\x07", "a".repeat(1000));
+        for _ in 0..100 {
+            scanner.scan(chunk.as_bytes());
+        }
+        scanner.scan(b"\x1b]99;i=x:p=body;end\x07");
+        match scanner.drain_events().as_slice() {
+            [OscEvent::Notification { body, .. }] => {
+                assert_eq!(body.len(), KITTY_NOTIFICATION_MAX_BYTES)
+            }
+            other => panic!("expected one capped notification, got {other:?}"),
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use alacritty_terminal::term::Config as AlacrittyConfig;
+use alacritty_terminal::term::{Config as AlacrittyConfig, Osc52};
 use alacritty_terminal::tty::{Options as PtyOptions, Shell};
 use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
@@ -34,6 +34,16 @@ pub struct TerminalConfig {
     /// grid before the shell starts so its scrollback comes back.
     #[serde(default)]
     pub restored_transcript: Option<String>,
+    /// Programs may set the clipboard (OSC 52 store).
+    #[serde(default = "default_true")]
+    pub allow_clipboard_write: bool,
+    /// Programs may read the clipboard (OSC 52 load). Off unless asked for.
+    #[serde(default)]
+    pub allow_clipboard_read: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_minimum_contrast() -> f32 {
@@ -53,6 +63,8 @@ impl Default for TerminalConfig {
             colors: TerminalColors::default(),
             minimum_contrast: 1.0,
             restored_transcript: None,
+            allow_clipboard_write: true,
+            allow_clipboard_read: false,
         }
     }
 }
@@ -110,6 +122,12 @@ impl TerminalConfig {
             },
             // Programs can ask for the kitty keyboard protocol (CSI > u).
             kitty_keyboard: true,
+            osc52: match (self.allow_clipboard_write, self.allow_clipboard_read) {
+                (true, true) => Osc52::CopyPaste,
+                (true, false) => Osc52::OnlyCopy,
+                (false, true) => Osc52::OnlyPaste,
+                (false, false) => Osc52::Disabled,
+            },
             ..Default::default()
         }
     }

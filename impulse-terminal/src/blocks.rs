@@ -79,6 +79,9 @@ pub(crate) struct CommandBlockTracker {
     /// Bumped whenever block boundaries or prompt marks change, so callers
     /// can cache anything derived from them (the viewport overlay).
     version: u64,
+    /// Plain-text conversion of the running block's output, which arrives in
+    /// reads that can split escape sequences and characters.
+    stripper: PlainTextStripper,
 }
 
 impl CommandBlockTracker {
@@ -105,7 +108,7 @@ impl CommandBlockTracker {
     pub(crate) fn observe_output(&mut self, bytes: &[u8]) {
         self.output_line += bytes.iter().filter(|b| **b == b'\n').count() as u64;
         if let Some(block) = &mut self.current {
-            append_plain_text_output(block, bytes);
+            append_plain_text_output(block, &mut self.stripper, bytes);
         }
     }
 
@@ -183,6 +186,7 @@ impl CommandBlockTracker {
             end_row: None,
         };
         self.current = Some(block.clone());
+        self.stripper = PlainTextStripper::default();
         block
     }
 
@@ -316,12 +320,16 @@ fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn append_plain_text_output(block: &mut TerminalCommandBlock, bytes: &[u8]) {
+fn append_plain_text_output(
+    block: &mut TerminalCommandBlock,
+    stripper: &mut PlainTextStripper,
+    bytes: &[u8],
+) {
     if block.output.len() >= MAX_BLOCK_OUTPUT_BYTES {
         return;
     }
 
-    let text = plain_text_from_terminal_bytes(bytes);
+    let text = stripper.push(bytes);
     if text.is_empty() {
         return;
     }
@@ -339,60 +347,104 @@ fn append_plain_text_output(block: &mut TerminalCommandBlock, bytes: &[u8]) {
     block.output.push_str(&text[..end]);
 }
 
-fn plain_text_from_terminal_bytes(bytes: &[u8]) -> String {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum State {
-        Normal,
-        Escape,
-        Csi,
-        Osc,
-        OscEscape,
-        SkipOne,
-    }
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum StripState {
+    #[default]
+    Normal,
+    Escape,
+    Csi,
+    Osc,
+    OscEscape,
+    SkipOne,
+}
 
-    let mut state = State::Normal;
-    let mut out = Vec::with_capacity(bytes.len());
+/// Terminal output → plain text, across reads: an escape sequence or a
+/// UTF-8 character split between two reads carries over to the next one
+/// instead of leaking its tail (`08mfoo`) or turning into U+FFFD.
+#[derive(Debug, Default)]
+pub(crate) struct PlainTextStripper {
+    state: StripState,
+    /// The start of a UTF-8 character the last read cut off.
+    pending: Vec<u8>,
+}
 
-    for &byte in bytes {
-        match state {
-            State::Normal => match byte {
-                0x1b => state = State::Escape,
-                b'\n' | b'\t' => out.push(byte),
-                b'\r' | 0x08 | 0x00..=0x07 | 0x0b..=0x1f | 0x7f => {}
-                _ => out.push(byte),
-            },
-            State::Escape => match byte {
-                b'[' => state = State::Csi,
-                b']' => state = State::Osc,
-                b'P' | b'^' | b'_' => state = State::Osc,
-                b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => state = State::SkipOne,
-                _ => state = State::Normal,
-            },
-            State::Csi => {
-                if (0x40..=0x7e).contains(&byte) {
-                    state = State::Normal;
-                }
-            }
-            State::Osc => match byte {
-                0x07 => state = State::Normal,
-                0x1b => state = State::OscEscape,
-                _ => {}
-            },
-            State::OscEscape => {
-                state = State::Normal;
-            }
-            State::SkipOne => {
-                state = State::Normal;
-            }
+impl PlainTextStripper {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
+        let mut out = std::mem::take(&mut self.pending);
+        out.reserve(bytes.len());
+        for &byte in bytes {
+            self.state = match self.state {
+                StripState::Normal => match byte {
+                    0x1b => StripState::Escape,
+                    b'\n' | b'\t' => {
+                        out.push(byte);
+                        StripState::Normal
+                    }
+                    b'\r' | 0x08 | 0x00..=0x07 | 0x0b..=0x1f | 0x7f => StripState::Normal,
+                    _ => {
+                        out.push(byte);
+                        StripState::Normal
+                    }
+                },
+                StripState::Escape => match byte {
+                    b'[' => StripState::Csi,
+                    b']' | b'P' | b'^' | b'_' => StripState::Osc,
+                    b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => StripState::SkipOne,
+                    _ => StripState::Normal,
+                },
+                StripState::Csi if (0x40..=0x7e).contains(&byte) => StripState::Normal,
+                StripState::Csi => StripState::Csi,
+                StripState::Osc => match byte {
+                    0x07 => StripState::Normal,
+                    0x1b => StripState::OscEscape,
+                    _ => StripState::Osc,
+                },
+                StripState::OscEscape | StripState::SkipOne => StripState::Normal,
+            };
         }
+        let keep = incomplete_utf8_tail(&out);
+        self.pending = out.split_off(out.len() - keep);
+        String::from_utf8_lossy(&out).into_owned()
     }
+}
 
-    String::from_utf8_lossy(&out).into_owned()
+/// Length of a UTF-8 character cut off at the end of `bytes` (0 if none).
+fn incomplete_utf8_tail(bytes: &[u8]) -> usize {
+    for back in 1..=bytes.len().min(3) {
+        let byte = bytes[bytes.len() - back];
+        if byte & 0xC0 == 0x80 {
+            continue; // a continuation byte: keep looking for the lead
+        }
+        let needed = match byte {
+            0xC0..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF7 => 4,
+            _ => return 0,
+        };
+        return if back < needed { back } else { 0 };
+    }
+    0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_text_survives_reads_that_split_sequences_and_characters() {
+        let mut stripper = PlainTextStripper::default();
+        let mut text = String::new();
+        // An SGR sequence and "日本" (3 bytes each) cut across four reads.
+        for chunk in [
+            &b"ok \x1b[38;5;2"[..],
+            b"08mfoo \xE6\x97",
+            b"\xA5\xE6",
+            b"\x9C\xAC\n",
+        ] {
+            text.push_str(&stripper.push(chunk));
+        }
+        assert_eq!(text, "ok foo 日本\n");
+    }
 
     #[test]
     fn summaries_leave_output_out() {

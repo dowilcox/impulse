@@ -18,6 +18,9 @@ struct TerminalBackendConfig: Codable {
     var minimumContrast: Double = 1.0
     /// Output from a previous session, replayed before the shell starts.
     var restoredTranscript: String?
+    /// OSC 52: programs may set / read the clipboard.
+    var allowClipboardWrite = true
+    var allowClipboardRead = false
 
     enum CodingKeys: String, CodingKey {
         case scrollbackLines = "scrollback_lines"
@@ -30,6 +33,8 @@ struct TerminalBackendConfig: Codable {
         case colors
         case minimumContrast = "minimum_contrast"
         case restoredTranscript = "restored_transcript"
+        case allowClipboardWrite = "allow_clipboard_write"
+        case allowClipboardRead = "allow_clipboard_read"
     }
 }
 
@@ -972,6 +977,8 @@ extension TerminalBackendConfig {
         config.colors.background = hexToRgb(theme.bg)
         config.colors.palette = theme.terminalPalette.map { hexToRgb($0) }
         config.minimumContrast = settings.terminalMinimumContrast
+        config.allowClipboardWrite = settings.terminalAllowOsc52Write
+        config.allowClipboardRead = settings.terminalAllowOsc52Read
         return config
     }
 }

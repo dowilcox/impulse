@@ -304,10 +304,12 @@ class TerminalTab: NSView {
         NSPasteboard.general.setString(text, forType: .string)
       }
     case .clipboardLoad:
+      // Answer with an OSC 52 reply, never the raw text: written as-is it
+      // would be typed into the shell (and run at its first newline).
       if currentSettings?.terminalAllowOsc52Read ?? false,
         let text = NSPasteboard.general.string(forType: .string)
       {
-        backend?.write(text)
+        backend?.write("\u{1b}]52;c;\(Data(text.utf8).base64EncodedString())\u{07}")
       }
     case .cursorBlinkingChange:
       break
