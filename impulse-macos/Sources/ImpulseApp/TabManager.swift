@@ -329,7 +329,7 @@ final class TabManager: NSObject {
   init(theme: Theme, core: ImpulseCore) {
     self.theme = theme
     self.core = core
-    let scratch = Workspace(kind: .scratch, root: NSHomeDirectory())
+    let scratch = Workspace(kind: .scratch, root: Workspace.scratchRoot)
     workspaces = [scratch]
     activeWorkspaceID = scratch.id
 
@@ -1147,7 +1147,7 @@ final class TabManager: NSObject {
     workspaces.removeAll { $0.id == id }
     workspaceHistory.removeAll { $0 == id }
     if workspaces.isEmpty {
-      workspaces = [Workspace(kind: .scratch, root: NSHomeDirectory())]
+      workspaces = [Workspace(kind: .scratch, root: Workspace.scratchRoot)]
     }
     guard activeWorkspaceID == id else {
       syncToWindowModel()
@@ -1226,7 +1226,7 @@ final class TabManager: NSObject {
   /// workspace leaves somewhere to land).
   func ensureScratchWorkspace() {
     guard scratchWorkspace == nil else { return }
-    workspaces.append(Workspace(kind: .scratch, root: NSHomeDirectory()))
+    workspaces.append(Workspace(kind: .scratch, root: Workspace.scratchRoot))
     syncToWindowModel()
   }
 

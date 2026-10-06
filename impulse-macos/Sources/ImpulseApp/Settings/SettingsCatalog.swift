@@ -37,6 +37,8 @@ struct SettingItem: Identifiable {
     case integer(WritableKeyPath<Settings, Int>, range: ClosedRange<Int>, step: Int, zeroLabel: String?)
     case decimal(WritableKeyPath<Settings, Double>, range: ClosedRange<Double>, step: Double)
     case text(WritableKeyPath<Settings, String>, placeholder: String)
+    /// A folder path, typed or chosen; empty means the placeholder's default.
+    case folder(WritableKeyPath<Settings, String>, placeholder: String)
     case font(WritableKeyPath<Settings, String>)
     case choice(WritableKeyPath<Settings, String>, options: [(value: String, label: String)])
     case theme(WritableKeyPath<Settings, String>)
@@ -157,6 +159,13 @@ enum SettingsCatalog {
       "confirm_close_warnings", "Warn before closing active work", \.confirmCloseWarnings, .general, "Window",
       detail: "Ask before closing unsaved files or terminals with running commands."),
     toggle("sidebar_show_hidden", "Show hidden files", \.sidebarShowHidden, .general, "Sidebar"),
+    SettingItem(
+      key: "scratch_directory", title: "Scratch folder",
+      detail: "Where terminals in the Scratch workspace start, and where a new window's file tree begins. Empty: your home folder.",
+      category: .general, section: "Workspaces", control: .folder(\.scratchDirectory, placeholder: "~"),
+      isModified: { $0.scratchDirectory != defaults.scratchDirectory },
+      reset: { $0.scratchDirectory = defaults.scratchDirectory },
+      schema: ["type": "string", "default": defaults.scratchDirectory]),
   ]
 
   private static let editor: [SettingItem] = [

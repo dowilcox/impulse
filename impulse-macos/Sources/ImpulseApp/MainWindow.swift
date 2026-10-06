@@ -251,10 +251,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     setupNotificationObservers()
     setupCustomKeybindingMonitor()
 
-    // Set initial root path for the file tree.
-    // Always start at home; the sidebar will update once the terminal's CWD
-    // is detected via OSC 7.
-    let rootPath = NSHomeDirectory()
+    // Set initial root path for the file tree: where Scratch starts. The
+    // sidebar follows once the terminal's CWD is detected via OSC 7.
+    let rootPath = Workspace.scratchRoot
     // Dispatch the initial tree build off the main thread to avoid blocking
     // startup with heavy filesystem + git status work.
     let showHidden = settings.sidebarShowHidden

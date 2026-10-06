@@ -12,7 +12,7 @@ final class Workspace {
 
   let id: UUID
   let kind: Kind
-  /// The folder (scratch: home, used for new terminals).
+  /// The folder (scratch: the Scratch folder setting, else home).
   let root: String
   /// Name set by the user, replacing the folder name.
   var customName: String?
@@ -30,8 +30,21 @@ final class Workspace {
   init(id: UUID = UUID(), kind: Kind, root: String, customName: String? = nil) {
     self.id = id
     self.kind = kind
-    self.root = kind == .scratch ? NSHomeDirectory() : Self.normalize(root)
+    self.root = kind == .scratch ? Self.scratchRoot : Self.normalize(root)
     self.customName = customName
+  }
+
+  /// Where Scratch starts: the "Scratch folder" setting when it names an
+  /// existing folder, else home.
+  static var scratchRoot: String {
+    let setting = SettingsStore.shared.settings.scratchDirectory.trimmingCharacters(in: .whitespaces)
+    guard !setting.isEmpty else { return NSHomeDirectory() }
+    let path = normalize(setting)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+      return NSHomeDirectory()
+    }
+    return path
   }
 
   var name: String {
@@ -44,8 +57,9 @@ final class Workspace {
     }
   }
 
-  /// Where new terminals in this workspace start.
-  var defaultDirectory: String { root }
+  /// Where new terminals in this workspace start (Scratch follows the
+  /// setting as it changes).
+  var defaultDirectory: String { kind == .scratch ? Self.scratchRoot : root }
 
   static func normalize(_ path: String) -> String {
     let standardized = ((path as NSString).expandingTildeInPath as NSString).standardizingPath

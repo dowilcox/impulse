@@ -43,6 +43,8 @@ extension MainWindowController {
         let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
         tabManager.openWorkspace(
           folder: relative.hasPrefix("/") ? relative : (base as NSString).appendingPathComponent(relative))
+      } else if action == "new-terminal" {
+        tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
       } else if action == "expand-workspaces" {
@@ -55,6 +57,15 @@ extension MainWindowController {
       {
         // In memory only: snapshot runs never save settings.
         SettingsStore.shared.settings[keyPath: keyPath] = true
+      } else if action.hasPrefix("setting="), let eq = action.dropFirst(8).firstIndex(of: "="),
+        let item = SettingsCatalog.items.first(where: { $0.key == String(action[action.index(action.startIndex, offsetBy: 8)..<eq]) })
+      {
+        // Text and folder settings, in memory only.
+        let value = String(action[action.index(after: eq)...])
+        switch item.control {
+        case .text(let keyPath, _), .folder(let keyPath, _): SettingsStore.shared.settings[keyPath: keyPath] = value
+        default: break
+        }
       } else if action.hasPrefix("command=") {
         runCommand(id: String(action.dropFirst(8)))
       } else if action == "tag-sheet" {

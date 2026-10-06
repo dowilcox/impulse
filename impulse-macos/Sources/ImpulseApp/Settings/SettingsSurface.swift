@@ -290,6 +290,8 @@ private struct SettingControl: View {
       }
     case .text(let kp, let placeholder):
       CommitTextField(value: binding(kp), placeholder: placeholder)
+    case .folder(let kp, let placeholder):
+      FolderField(value: binding(kp), placeholder: placeholder)
     case .font(let kp):
       FontPicker(value: binding(kp))
     case .choice(let kp, let options):
@@ -367,16 +369,41 @@ private struct IntegerField: View {
 }
 
 /// Text applied on Return or focus loss (not per keystroke).
+/// A folder path: type it, or choose it in an open panel (stored with ~).
+private struct FolderField: View {
+  @Binding var value: String
+  let placeholder: String
+
+  var body: some View {
+    HStack(spacing: 6) {
+      CommitTextField(value: $value, placeholder: placeholder, width: 150)
+      Button("Choose…") {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(
+          fileURLWithPath: ((value.isEmpty ? NSHomeDirectory() : value) as NSString).expandingTildeInPath)
+        if panel.runModal() == .OK, let url = panel.url {
+          value = (url.path as NSString).abbreviatingWithTildeInPath
+        }
+      }
+      .controlSize(.small)
+    }
+  }
+}
+
 private struct CommitTextField: View {
   @Binding var value: String
   let placeholder: String
+  var width: CGFloat = 210
   @State private var text = ""
   @FocusState private var focused: Bool
 
   var body: some View {
     TextField(placeholder, text: $text)
       .textFieldStyle(.roundedBorder)
-      .frame(width: 210)
+      .frame(width: width)
       .focused($focused)
       .onSubmit { value = text }
       .onChange(of: focused) { _, isFocused in if !isFocused, text != value { value = text } }
