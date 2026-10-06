@@ -34,6 +34,17 @@ extension MainWindowController {
       }
       window?.makeKeyAndOrderFront(nil)
       NSApp.activate(ignoringOtherApps: true)
+      // `impulse open .`: a folder opens as a workspace.
+      var isDirectory: ObjCBool = false
+      if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+        tabManager.openWorkspace(folder: path)
+        return reply(ControlResponse(ok: true))
+      }
+      // Images and binaries never get an editor tab to close: don't wait.
+      if request.wait, TabManager.isImageFile(path) || TabManager.isBinaryFile(path) {
+        openFile(path: path)
+        return reply(ControlResponse(ok: true))
+      }
       let line = args["line"].flatMap(UInt32.init)
       let column = args["column"].flatMap(UInt32.init)
       tabManager.addEditorTab(

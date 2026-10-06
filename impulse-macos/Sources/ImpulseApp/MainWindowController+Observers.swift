@@ -869,6 +869,8 @@ extension MainWindowController {
         [weak self] notification in
         guard let self else { return }
         self.applyAllSettings()
+        // settings.json may have been fixed (or broken) by hand.
+        self.windowModel.settingsLoadWarning = Settings.loadWarning
         // Rebuild custom keybinding monitor so new/changed bindings take effect.
         self.setupCustomKeybindingMonitor()
       }

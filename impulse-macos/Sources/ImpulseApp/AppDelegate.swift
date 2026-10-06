@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     SettingsStore.shared.load()
+    SettingsStore.shared.watchFile()
     NSApp.servicesProvider = serviceProvider
     NSApp.registerServicesMenuSendTypes([.string], returnTypes: [])
     QuickTerminal.shared.configure(

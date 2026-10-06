@@ -44,6 +44,11 @@
       #expect(WorktreeTasks.matchingFiles(patterns: [".env*"], root: root).sorted() == [".env", ".env.test"])
       #expect(WorktreeTasks.matchingFiles(patterns: ["config/*.local.json"], root: root) == ["config/a.local.json"])
       #expect(WorktreeTasks.matchingFiles(patterns: [".env", "missing.txt", "config"], root: root) == [".env"])
+      // Nothing outside the repository.
+      let outside = (root as NSString).lastPathComponent
+      #expect(
+        WorktreeTasks.matchingFiles(patterns: ["../\(outside)/.env", "/etc/hosts", "config/../.env"], root: root)
+          .isEmpty)
     }
   }
 #endif

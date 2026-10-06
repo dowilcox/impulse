@@ -89,7 +89,15 @@ final class AgentHooksModel {
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-      try Data(after.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+      // The agent's own config: write through a symlink (dotfile managers
+      // link these) rather than replacing it, and keep the previous version.
+      let target = TextFile.target(of: path)
+      if FileManager.default.fileExists(atPath: target) {
+        let backup = target + ".impulse-backup"
+        try? FileManager.default.removeItem(atPath: backup)
+        try FileManager.default.copyItem(atPath: target, toPath: backup)
+      }
+      try Data(after.utf8).write(to: URL(fileURLWithPath: target), options: .atomic)
       return nil
     } catch {
       return error.localizedDescription

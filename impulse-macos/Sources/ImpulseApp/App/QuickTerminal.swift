@@ -57,6 +57,12 @@ final class QuickTerminal {
     let frame = NSRect(x: visible.minX, y: visible.maxY - height, width: visible.width, height: height)
 
     let panel = self.panel ?? makePanel()
+    // The shell exited (exit, ⌃D): start a fresh one rather than show a
+    // dead terminal.
+    if let current = container, current.activeTerminal?.isShellAlive != true {
+      current.terminateAllProcesses()
+      container = nil
+    }
     if container == nil {
       let delegate = NSApp.delegate as? AppDelegate
       let theme = delegate?.theme ?? ThemeManager.theme(forName: "nord")

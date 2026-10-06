@@ -640,7 +640,14 @@ extension Settings {
 
     /// Loads settings from disk, falling back to defaults for any missing or
     /// corrupt data.
-    static func load() -> Settings {
+    /// settings.json changed since Impulse last loaded or saved it.
+    static func fileChangedOnDisk() -> Bool {
+        settingsFileChangedSinceLoad(url: settingsPath()) != nil
+    }
+
+    /// `backupInvalid`: copy a file that doesn't parse aside (at launch, not
+    /// on every reload while it's being edited).
+    static func load(backupInvalid: Bool = true) -> Settings {
         let url = settingsPath()
         let data: Data
         do {
@@ -677,7 +684,7 @@ extension Settings {
             settings.validate()
             return settings
         } catch {
-            let backupURL = backupInvalidSettingsFile(url: url, data: data)
+            let backupURL = backupInvalid ? backupInvalidSettingsFile(url: url, data: data) : nil
             if let backupURL {
                 os_log(.error,
                        "Backed up invalid settings file to '%{public}@'",
@@ -699,7 +706,7 @@ extension Settings {
     /// Persists the current settings to disk as pretty-printed JSON.
     /// Encoding and writing happen on a background queue to avoid blocking the
     /// main thread. File permissions are set to 0600 (owner read/write only).
-    func save() {
+    func save(synchronously: Bool = false) {
         if Settings.saveBlockedByLoadError {
             let path = Settings.loadWarning?.settingsPath.path ?? Settings.settingsPath().path
             let message = Settings.loadWarning?.message ?? "settings load failed"
@@ -726,7 +733,7 @@ extension Settings {
             return
         }
         let writtenHash = Settings.stableContentHash(data)
-        DispatchQueue.global(qos: .utility).async {
+        let write = {
             if let message = Settings.settingsFileChangedSinceLoad(url: url) {
                 os_log(.error,
                        "Skipping settings save because %{public}@. Open settings.json and reload Impulse before saving settings.",
@@ -734,10 +741,12 @@ extension Settings {
                 return
             }
             do {
-                try data.write(to: url, options: .atomic)
+                // Through a symlink (dotfile managers), not over it.
+                let target = TextFile.target(of: url.path)
+                try data.write(to: URL(fileURLWithPath: target), options: .atomic)
                 // Restrict permissions to owner-only (0600).
                 try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: url.path)
+                    [.posixPermissions: 0o600], ofItemAtPath: target)
                 Settings.fileSnapshot = SettingsFileSnapshot(
                     path: url.path,
                     contentHash: writtenHash
@@ -747,7 +756,16 @@ extension Settings {
                        url.path, error.localizedDescription)
             }
         }
+        // Writes go one at a time, in order (two racing saves made the second
+        // see the first as an outside change); at quit, wait for the write.
+        if synchronously {
+            Settings.writeQueue.sync(execute: write)
+        } else {
+            Settings.writeQueue.async(execute: write)
+        }
     }
+
+    private static let writeQueue = DispatchQueue(label: "impulse.settings.write", qos: .utility)
 
     /// Static variant for callers that don't hold an instance.
     static func save(_ settings: Settings) {

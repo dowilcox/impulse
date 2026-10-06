@@ -293,6 +293,7 @@ class TerminalTab: NSView {
         postDesktopNotification(title: tabTitle, body: "Bell")
       }
     case .childExited(let code):
+      hasExited = true
       NotificationCenter.default.post(
         name: .terminalProcessTerminated,
         object: self,
@@ -314,6 +315,7 @@ class TerminalTab: NSView {
     case .cursorBlinkingChange:
       break
     case .exit:
+      hasExited = true
       NotificationCenter.default.post(
         name: .terminalProcessTerminated,
         object: self,
@@ -1237,6 +1239,15 @@ class TerminalTab: NSView {
     }
     return "en_US.UTF-8"
   }()
+
+  /// The shell process exited.
+  private(set) var hasExited = false
+
+  /// The shell is still running (it hasn't exited and been torn down).
+  var isShellAlive: Bool {
+    guard let backend, !backend.isShutdown else { return false }
+    return !hasExited
+  }
 
   /// The shell reports commands (OSC 133), so Impulse can see what ran.
   private(set) var hasShellIntegration = false

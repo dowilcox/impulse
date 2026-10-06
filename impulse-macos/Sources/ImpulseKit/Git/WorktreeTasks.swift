@@ -58,7 +58,12 @@ public enum WorktreeTasks {
   public static func matchingFiles(patterns: [String], root: String) -> [String] {
     let fm = FileManager.default
     var found: [String] = []
-    for pattern in patterns {
+    // Only files inside the repository: a pattern from a cloned repo's
+    // project.toml mustn't copy `../../.ssh/id_ed25519` into a task.
+    for pattern in patterns
+    where !pattern.hasPrefix("/") && !pattern.hasPrefix("~")
+      && !pattern.split(separator: "/").contains("..")
+    {
       let folder = (pattern as NSString).deletingLastPathComponent
       let leaf = (pattern as NSString).lastPathComponent
       let base = folder.isEmpty ? root : (root as NSString).appendingPathComponent(folder)
