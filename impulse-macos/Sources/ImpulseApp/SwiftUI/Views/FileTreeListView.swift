@@ -193,8 +193,11 @@ private struct FlatFileRowView: View {
         handleDirectoryTap()
       } else if NSEvent.modifierFlags.contains(.option) {
         model.onOpenFileBeside?(node.path)
-      } else {
+      } else if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+        // The second click of a double-click keeps the preview.
         model.onOpenFile?(node.path, nil)
+      } else {
+        model.onPreviewFile?(node.path)
       }
     }
     .contextMenu { nodeContextMenu(for: node) }

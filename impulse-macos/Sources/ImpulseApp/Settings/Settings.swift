@@ -117,6 +117,8 @@ struct Settings: Codable {
     var editorInlayHints: String = "on"
     /// Merge the shell's own completions (fish) into the input bar's menu.
     var terminalShellCompletions: Bool = false
+    /// A single click in the file tree shows the file in a preview tab.
+    var editorPreviewTabs: Bool = true
     var lastDirectory: String
     var openFiles: [String]
 
@@ -219,6 +221,7 @@ struct Settings: Codable {
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
         case terminalShellCompletions = "terminal_shell_completions"
+        case editorPreviewTabs = "editor_preview_tabs"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -370,6 +373,7 @@ struct Settings: Codable {
         editorInlayHints = (try? c.decode(String.self, forKey: .editorInlayHints)) ?? d.editorInlayHints
         terminalShellCompletions =
             (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
+        editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

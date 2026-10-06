@@ -71,6 +71,11 @@ extension MainWindowController {
     windowModel.onPreviewToggle = { [weak self] in
       self?.previewButtonClicked(nil)
     }
+    windowModel.onPreviewFile = { path in
+      NotificationCenter.default.post(
+        name: .impulseOpenFile, object: nil, userInfo: ["path": path, "preview": true])
+    }
+    windowModel.onKeepTab = { [weak self] index in self?.tabManager.keepPreview(at: index) }
     windowModel.onOpenFile = { path, line in
       NotificationCenter.default.post(
         name: .impulseOpenFile,

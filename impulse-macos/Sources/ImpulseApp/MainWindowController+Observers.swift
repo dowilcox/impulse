@@ -163,7 +163,8 @@ extension MainWindowController {
             projectDirectory: self.fileTreeRootPath,
             goToLine: line,
             goToColumn: line == nil ? nil : (column ?? 1),
-            beside: notification.userInfo?["beside"] as? Bool ?? false
+            beside: notification.userInfo?["beside"] as? Bool ?? false,
+            preview: notification.userInfo?["preview"] as? Bool ?? false
           )
           // Navigate to specific line if provided (e.g. from search results).
           if let editor = self.findEditorTab(forPath: path) {
@@ -666,6 +667,8 @@ extension MainWindowController {
         guard let self, let editor = notification.object as? EditorTab,
           self.tabManager.ownsEditor(editor)
         else { return }
+        // An edit keeps a preview tab.
+        if editor.isModified { self.tabManager.keepPreview(showing: editor) }
         self.tabManager.refreshSegmentLabels()
       }
     )

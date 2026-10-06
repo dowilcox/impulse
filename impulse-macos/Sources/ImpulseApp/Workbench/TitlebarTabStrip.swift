@@ -74,6 +74,7 @@ struct TitlebarTabStrip: View {
       if !compact {
         Text(tab.title)
           .font(ChromeFont.ui(12, weight: selected ? .medium : .regular))
+          .italic(tab.isPreview)
           .foregroundStyle(selected || dragging ? chrome.text : chrome.textSecondary)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -104,6 +105,7 @@ struct TitlebarTabStrip: View {
     }
     .contentShape(Rectangle())
     .simultaneousGesture(TapGesture().onEnded { model.onTabSelected?(tab.index) })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { model.onKeepTab?(tab.index) })
     .onHover { hoveredId = $0 ? tab.id : (hoveredId == tab.id ? nil : hoveredId) }
     .contextMenu { contextMenu(tab) }
     .help(tabHelp(tab))
@@ -169,6 +171,7 @@ struct TitlebarTabStrip: View {
 
   private func tabHelp(_ tab: TabDisplayInfo) -> String {
     var parts = [tab.title]
+    if tab.isPreview { parts.append("Preview: double-click to keep") }
     if let status = tab.sessionStatus, !status.status.isEmpty {
       parts.append(status.detail.isEmpty ? status.status : "\(status.status): \(status.detail)")
     }

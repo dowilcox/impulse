@@ -256,6 +256,9 @@ final class TabManager: NSObject {
     /// The tab this one was opened from, selected again when it closes.
     var closeReturnUID: Int?
     var workspaceID: UUID
+    /// A file shown from a single click: the next one replaces it until it's
+    /// kept (double-click, edit, pin, split).
+    var isPreview = false
   }
 
   private var records: [TabRecord] = []
@@ -398,8 +401,9 @@ final class TabManager: NSObject {
   /// files (>10 MB or containing null bytes) are skipped with an alert.
   func addEditorTab(
     path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil,
-    goToColumn: UInt32? = nil, beside: Bool = false
+    goToColumn: UInt32? = nil, beside: Bool = false, preview: Bool = false
   ) {
+    let preview = preview && !beside && SettingsStore.shared.settings.editorPreviewTabs
     // O(1) deduplication using the openFilePaths set.
     if openFilePaths.contains(path) {
       let location = locate {
@@ -410,6 +414,8 @@ final class TabManager: NSObject {
         }
       }
       if let location {
+        // Opening it for real keeps a preview.
+        if !preview { keepPreview(at: location.tabIndex) }
         updateCloseReturnTarget(forTabAt: location.tabIndex, sourceIndex: selectedIndex)
         reveal(location)
         // Navigate to position in the already-open editor.
@@ -453,7 +459,7 @@ final class TabManager: NSObject {
         self.insertLoadedEditorTab(
           path: path, content: fileContent, largeFile: largeFile,
           projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn,
-          beside: beside)
+          beside: beside, preview: preview)
       }
     }
   }
@@ -464,7 +470,7 @@ final class TabManager: NSObject {
   func insertLoadedEditorTab(
     path: String, content fileContent: String, largeFile: Bool,
     projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil,
-    beside: Bool = false
+    beside: Bool = false, preview: Bool = false
   ) {
     guard !openFilePaths.contains(path) else { return }
     let editorTab = makeEditorTab(
@@ -472,9 +478,56 @@ final class TabManager: NSObject {
       goToLine: goToLine, goToColumn: goToColumn)
     if beside {
       splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
+    } else if preview, let index = replaceablePreviewIndex() {
+      // The workspace's preview tab shows this file instead.
+      let old = records[index].entry
+      if index == selectedIndex { old.view.removeFromSuperview() }
+      cleanupTab(old)
+      untrack(old)
+      records[index].entry = .editor(editorTab)
+      track(.editor(editorTab))
+      if index == selectedIndex { selectedIndex = -1 }
+      selectTab(index: index)
     } else {
       insertTab(.editor(editorTab))
+      if preview, records.indices.contains(selectedIndex) {
+        records[selectedIndex].isPreview = true
+        syncToWindowModel()
+      }
     }
+  }
+
+  /// The active workspace's preview tab, if it can be replaced (one clean
+  /// editor, not split).
+  private func replaceablePreviewIndex() -> Int? {
+    guard
+      let index = records.indices.first(where: {
+        records[$0].isPreview && records[$0].workspaceID == activeWorkspaceID
+      })
+    else { return nil }
+    guard case .editor(let editor) = records[index].entry, !editor.isModified else {
+      records[index].isPreview = false
+      return nil
+    }
+    return index
+  }
+
+  /// Turn a preview tab into a normal one.
+  func keepPreview(at index: Int) {
+    guard records.indices.contains(index), records[index].isPreview else { return }
+    records[index].isPreview = false
+    syncToWindowModel()
+  }
+
+  /// Keep the preview tab showing `editor` (it was edited).
+  func keepPreview(showing editor: EditorTab) {
+    guard
+      let index = records.indices.first(where: {
+        guard records[$0].isPreview, case .editor(let shown) = records[$0].entry else { return false }
+        return shown === editor
+      })
+    else { return }
+    keepPreview(at: index)
   }
 
   /// A new editor surface for a file whose content was already read.
@@ -784,6 +837,7 @@ final class TabManager: NSObject {
   /// Toggles the pinned state of the tab at the given index.
   func togglePin(index: Int) {
     guard records.indices.contains(index) else { return }
+    records[index].isPreview = false
     records[index].pinned.toggle()
     refreshSegmentLabels()
   }
@@ -1394,6 +1448,7 @@ final class TabManager: NSObject {
       return
     }
     let index = selectedIndex
+    records[index].isPreview = false
     track(entry)
     let split: SplitTab
     if case .split(let existing) = tabs[index] {
@@ -1677,6 +1732,7 @@ final class TabManager: NSObject {
         title: tab.title,
         icon: tabIcon(for: surface),
         isPinned: record.pinned,
+        isPreview: record.isPreview,
         isTerminal: { if case .terminal = surface { return true } else { return false } }(),
         needsAttention: tab.needsAttention,
         gitBranch: directory.flatMap { cachedGitBranch(forDirectory: $0) },

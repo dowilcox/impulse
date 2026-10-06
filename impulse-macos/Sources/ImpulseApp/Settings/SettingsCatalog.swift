@@ -199,6 +199,9 @@ enum SettingsCatalog {
     toggle("folding", "Code folding", \.folding, .editor, "Behavior"),
     toggle("auto_save", "Save when focus leaves the editor", \.autoSave, .editor, "Behavior"),
     toggle(
+      "editor_preview_tabs", "Preview files from the file tree", \.editorPreviewTabs, .editor, "Behavior",
+      detail: "A click shows a file in an italic tab the next click reuses; double-click or edit it to keep it."),
+    toggle(
       "editor_selection_highlight", "Highlight matches of the selection", \.editorSelectionHighlight, .editor,
       "Behavior"),
     toggle(

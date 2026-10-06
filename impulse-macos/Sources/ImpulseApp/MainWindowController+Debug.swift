@@ -150,6 +150,11 @@ extension MainWindowController {
         requestCloseFocusedPane()
       } else if action == "reopen" {
         tabManager.reopenLastClosedTab()
+      } else if action.hasPrefix("preview=") {
+        // What a single click in the file tree does (snapshot windows aren't key).
+        tabManager.addEditorTab(
+          path: (fileTreeRootPath as NSString).appendingPathComponent(String(action.dropFirst(8))),
+          projectDirectory: fileTreeRootPath, preview: true)
       } else if action == "undo" {
         // What Edit ▸ Undo ends up sending (snapshot windows are never key,
         // so straight to the window).

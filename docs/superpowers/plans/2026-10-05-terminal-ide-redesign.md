@@ -276,7 +276,7 @@ foundations ├──────────── Track B: git ─────
   - inactive-pane dimming setting;
   - accent focus marker.
 - [x] **Move the terminal input into each terminal pane** (`TerminalPaneView` = grid + chips row + input). `TerminalContextBarView`'s chip logic moves to the pane, and `WindowModel`'s window-level input fields become per-pane state. Preserve `inputBarFocusToken`, `terminalDirectInteraction`, `passwordInputActive` and completion anchoring through `FocusCoordinator`.
-- [ ] **Editor panes:**
+- [ ] **Editor panes:** *(preview tabs done: a single click in the file tree shows the file in an italic tab the next click reuses, kept by double-click, edit, pin or split; stacked editors with a mini tab header per pane still to do)*
   - stack multiple editor surfaces with a mini tab header (preview-mode italic tab for single-click opens, Nova/VS Code style);
   - opening a file targets the focused tab's editor pane, or creates one to the right (setting: right split / new tab).
 - [x] **⌘Z restores** a closed pane or tab within 10 s (keep surface state alive; PTYs are not kept alive). After that, "Reopen closed tab" stays (existing `closedTabs` stack).

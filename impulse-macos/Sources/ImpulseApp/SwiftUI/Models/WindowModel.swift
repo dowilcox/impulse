@@ -19,6 +19,8 @@ struct TabDisplayInfo: Identifiable {
   let title: String
   let icon: NSImage?
   let isPinned: Bool
+  /// Shown from a single click; replaced by the next one until it's kept.
+  var isPreview: Bool = false
   let isTerminal: Bool
   let needsAttention: Bool
   /// Git branch of the tab's working directory (vertical tab subtitle).
@@ -333,6 +335,10 @@ final class WindowModel {
   var onSendSecureInput: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
+  /// Show a file from a single click in a preview tab.
+  @ObservationIgnored var onPreviewFile: ((String) -> Void)?
+  /// Keep the preview tab at this index (double-click on it).
+  @ObservationIgnored var onKeepTab: ((Int) -> Void)?
   /// Whether the focused terminal's shell can run a command word (nil: can't
   /// tell).
   @ObservationIgnored var onIsKnownCommand: ((String) -> Bool?)?
