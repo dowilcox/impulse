@@ -250,8 +250,8 @@ extension MainWindowController {
     windowModel.onReviewAgentTurn = { [weak self] id in
       self?.reviewLastAgentTurn(terminalID: id)
     }
-    windowModel.onNewTask = { [weak self] in
-      self?.presentNewTaskSheet()
+    windowModel.onNewTask = { [weak self] workspaceID in
+      self?.presentNewTaskSheet(from: workspaceID)
     }
     windowModel.onShowAgentHooks = { [weak self] in
       self?.presentAgentHooksSheet()

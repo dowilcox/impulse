@@ -140,15 +140,17 @@ struct TaskSheetView: View {
 }
 
 extension MainWindowController {
-  /// The repository tasks are made from: the active workspace's, else the
-  /// window's.
-  private var taskRepository: GitRepositoryState? {
-    tabManager.activeWorkspace.repository ?? windowModel.repository
+  /// The repository tasks are made from: the given workspace's, else the
+  /// active workspace's, else the window's.
+  private func taskRepository(from workspaceID: UUID?) -> GitRepositoryState? {
+    workspaceID.flatMap { tabManager.workspace($0)?.repository } ?? tabManager.activeWorkspace.repository
+      ?? windowModel.repository
   }
 
-  /// "New Task…": ask for a title and what to start, then create it.
-  func presentNewTaskSheet() {
-    guard let window, let repository = taskRepository else {
+  /// "New Task…": ask for a title and what to start, then create it (from
+  /// `workspaceID`'s repository, or the active workspace's).
+  func presentNewTaskSheet(from workspaceID: UUID? = nil) {
+    guard let window, let repository = taskRepository(from: workspaceID) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository to start a task."))
       return
     }
@@ -196,7 +198,7 @@ extension MainWindowController {
 
   /// Snapshot runs: create a task without the sheet.
   func debugCreateTask(title: String, command: String) {
-    guard let repository = taskRepository else {
+    guard let repository = taskRepository(from: nil) else {
       NSLog("DebugSnapshot: no repository for a task")
       return
     }
@@ -261,7 +263,7 @@ extension MainWindowController {
   /// PR checked out by gh (which also sets up fork remotes), opened as a
   /// workspace.
   func checkOutPullRequestAsTask(_ pullRequest: PullRequestSummary) {
-    guard let repository = taskRepository else {
+    guard let repository = taskRepository(from: nil) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository first."))
       return
     }

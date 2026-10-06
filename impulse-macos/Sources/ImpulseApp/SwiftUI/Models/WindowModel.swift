@@ -404,7 +404,8 @@ final class WindowModel {
   var onRevealTerminal: ((UUID) -> Void)?
   /// Review a terminal's agent's last turn.
   var onReviewAgentTurn: ((UUID) -> Void)?
-  var onNewTask: (() -> Void)?
+  /// New Task from a workspace's repository (nil: the active one's).
+  var onNewTask: ((UUID?) -> Void)?
   var onShowAgentHooks: (() -> Void)?
   var onArchiveTask: ((UUID) -> Void)?
 

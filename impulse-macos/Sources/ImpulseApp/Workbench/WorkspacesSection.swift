@@ -2,13 +2,14 @@ import AppKit
 import ImpulseGit
 import SwiftUI
 
-/// The top of the left dock: the window's workspaces, with worktrees of the
-/// same repository grouped under it. Each row shows the branch, pending
-/// changes and tabs that need attention; expanding a row lists its tabs.
+/// The top of the left dock: the window's workspaces as top-level rows
+/// (no section header), with worktrees of the same repository grouped under
+/// it. Each row shows the branch, pending changes and tabs that need
+/// attention; expanding a row lists its tabs, and its + makes a new
+/// workspace (a task from that repository, or another folder).
 struct WorkspacesSection: View {
   @Environment(\.chrome) private var chrome
   var model: WindowModel
-  @AppStorage("workspacesSectionExpanded") private var isExpanded = true
 
   private static let rowHeight: CGFloat = 26
   private static let tabRowHeight: CGFloat = 24
@@ -16,41 +17,26 @@ struct WorkspacesSection: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      SectionHeader(
-        title: "Workspaces", count: model.workspaces.count > 1 ? model.workspaces.count : nil,
-        isExpanded: $isExpanded
-      ) {
-        ChromeMenuButton(help: "New workspace") {
-          [
-            ChromeMenuItem("Open Folder as Workspace…") { model.onOpenWorkspace?() },
-            ChromeMenuItem("New Task…", isEnabled: model.repository != nil) { model.onNewTask?() },
-          ]
-        } label: {
-          Icon(.plus, size: 12).foregroundStyle(chrome.textSecondary).frame(width: 20, height: 20)
-        }
-      }
-      if isExpanded {
-        ScrollView(.vertical) {
-          VStack(spacing: 1) {
-            ForEach(groups, id: \.id) { group in
-              if let name = group.name {
-                RepoGroupHeader(name: name)
-              }
-              ForEach(group.workspaces) { workspace in
-                WorkspaceRow(model: model, workspace: workspace, indented: group.name != nil)
-                if workspace.isExpanded {
-                  ForEach(workspace.tabs) { tab in
-                    WorkspaceTabRow(model: model, tab: tab)
-                  }
+      ScrollView(.vertical) {
+        VStack(spacing: 1) {
+          ForEach(groups, id: \.id) { group in
+            if let name = group.name {
+              RepoGroupHeader(name: name)
+            }
+            ForEach(group.workspaces) { workspace in
+              WorkspaceRow(model: model, workspace: workspace, indented: group.name != nil)
+              if workspace.isExpanded {
+                ForEach(workspace.tabs) { tab in
+                  WorkspaceTabRow(model: model, tab: tab)
                 }
               }
             }
           }
-          .padding(.bottom, 6)
         }
-        .scrollIndicators(.never)
-        .frame(height: min(contentHeight, Self.maxHeight))
+        .padding(.vertical, 6)
       }
+      .scrollIndicators(.never)
+      .frame(height: min(contentHeight, Self.maxHeight))
       Hairline()
     }
   }
@@ -88,7 +74,7 @@ struct WorkspacesSection: View {
     let rows = model.workspaces.count
     let tabRows = model.workspaces.filter(\.isExpanded).reduce(0) { $0 + $1.tabs.count }
     return CGFloat(groupHeaders) * 22 + CGFloat(rows) * (Self.rowHeight + 1)
-      + CGFloat(tabRows) * (Self.tabRowHeight + 1) + 6
+      + CGFloat(tabRows) * (Self.tabRowHeight + 1) + 12
   }
 }
 
@@ -158,9 +144,14 @@ private struct WorkspaceRow: View {
       }
       Spacer(minLength: 4)
       trailing(snapshot: snapshot)
+      ChromeMenuButton(help: "New workspace") { newWorkspaceItems } label: {
+        Icon(.plus, size: 12).foregroundStyle(chrome.textSecondary)
+      }
+      .opacity(hovering ? 1 : 0)
+      .allowsHitTesting(hovering)
     }
     .padding(.leading, indented ? 16 : 8)
-    .padding(.trailing, 12)
+    .padding(.trailing, 6)
     .frame(height: 26)
     // When its tabs are listed, the selected tab carries the highlight.
     .rowBackground(selected: workspace.isActive && !workspace.isExpanded, hovered: hovering)
@@ -226,8 +217,25 @@ private struct WorkspaceRow: View {
     }
   }
 
+  /// What the row's + makes: a task (a worktree workspace) from this
+  /// repository, or a workspace for another folder.
+  private var newWorkspaceItems: [ChromeMenuItem] {
+    var items: [ChromeMenuItem] = []
+    if workspace.repository != nil {
+      let repo = workspace.repository?.snapshot.map { ($0.root as NSString).lastPathComponent } ?? workspace.name
+      items.append(ChromeMenuItem("New Task from \(repo)…") { model.onNewTask?(workspace.id) })
+    }
+    items.append(ChromeMenuItem("Open Folder as Workspace…") { model.onOpenWorkspace?() })
+    return items
+  }
+
   @ViewBuilder
   private var contextMenu: some View {
+    if workspace.repository != nil {
+      Button("New Task…") { model.onNewTask?(workspace.id) }
+    }
+    Button("Open Folder as Workspace…") { model.onOpenWorkspace?() }
+    Divider()
     Button("Rename…") { model.onRenameWorkspace?(workspace.id) }
     if !workspace.isScratch {
       Button("Reveal in Finder") {
