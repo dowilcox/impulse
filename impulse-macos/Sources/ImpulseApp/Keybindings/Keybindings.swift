@@ -454,6 +454,14 @@ enum Keybindings {
             modifierFlags: [.command]
         ),
         BuiltinKeybinding(
+            id: "show_files",
+            description: "Show Files",
+            category: "Navigation",
+            defaultShortcut: "Cmd+Shift+E",
+            keyEquivalent: "E",
+            modifierFlags: [.command, .shift]
+        ),
+        BuiltinKeybinding(
             id: "project_search",
             description: "Find in Project",
             category: "Navigation",

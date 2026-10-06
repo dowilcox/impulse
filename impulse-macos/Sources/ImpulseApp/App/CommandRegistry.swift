@@ -41,7 +41,12 @@ enum CommandRegistry {
         id: "show_changes", title: "Show Changes", category: "Git",
         keywords: ["git", "stage", "commit", "status"], icon: .gitBranch,
         keybindingId: "show_changes"
-      ) { [weak controller] in controller?.showChangesPanel() },
+      ) { [weak controller] in controller?.toggleSidebarPanel(.changes) },
+      AppCommand(
+        id: "show_files", title: "Show Files", category: "Navigation",
+        keywords: ["explorer", "file tree", "sidebar", "folders"], icon: .folderTree,
+        keybindingId: "show_files"
+      ) { [weak controller] in controller?.toggleSidebarPanel(.files) },
       AppCommand(
         id: "switch_branch", title: "Switch Branch…", category: "Git",
         keywords: ["checkout", "git", "create branch"], icon: .gitBranch,

@@ -276,6 +276,7 @@ enum MenuBuilder {
         sidebarItem.target = MenuActions.shared
         applyKeybinding("toggle_sidebar", overrides: overrides, to: sidebarItem)
         menu.addItem(sidebarItem)
+        menu.addItem(commandItem("Show Files", id: "show_files", overrides: overrides))
 
         menu.addItem(.separator())
 

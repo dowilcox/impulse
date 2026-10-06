@@ -68,6 +68,7 @@ private struct ChangesPanelContent: View {
           return handleKey(press, snapshot: snapshot, proxy: proxy)
         }
         .onChange(of: model.changesFocusToken) { _, _ in focusList(snapshot) }
+        .onChange(of: listFocused) { _, focused in model.noteSidebarFocus(.changes, focused: focused) }
         .onAppear { if model.changesFocusToken > 0 { focusList(snapshot) } }
       }
       .overlay {

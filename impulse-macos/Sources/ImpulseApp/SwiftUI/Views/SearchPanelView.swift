@@ -116,6 +116,7 @@ struct SidebarSearchBar: View {
     // NSHostingView, and the focus is silently dropped.
     .onAppear { focusField() }
     .onChange(of: model.searchFocusToken) { _, _ in focusField() }
+    .onChange(of: fieldFocused) { _, focused in model.noteSidebarFocus(.search, focused: focused) }
   }
 
   private func focusField() {

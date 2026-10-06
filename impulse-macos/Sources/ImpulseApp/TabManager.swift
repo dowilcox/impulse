@@ -1685,6 +1685,12 @@ final class TabManager: NSObject {
 
   // MARK: - Selected Tab Helpers
 
+  /// Give the selected tab the keyboard (a terminal: its input bar).
+  func focusSelectedTab() {
+    guard let tab = selectedTab else { return }
+    activateKeyboardFocus(tab)
+  }
+
   /// The currently selected tab entry, or `nil` if no tabs are open.
   var selectedTab: TabEntry? {
     guard records.indices.contains(selectedIndex) else { return nil }

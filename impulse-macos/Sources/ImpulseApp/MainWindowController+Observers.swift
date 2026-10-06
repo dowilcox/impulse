@@ -243,7 +243,7 @@ extension MainWindowController {
     notificationObservers.append(
       nc.addObserver(forName: .impulseFindInProject, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        self.showPalette(prefix: "")
+        self.toggleSidebarPanel(.search)
       }
     )
     notificationObservers.append(
@@ -313,7 +313,7 @@ extension MainWindowController {
     notificationObservers.append(
       nc.addObserver(forName: .impulseShowChanges, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        self.showChangesPanel()
+        self.toggleSidebarPanel(.changes)
       }
     )
     notificationObservers.append(

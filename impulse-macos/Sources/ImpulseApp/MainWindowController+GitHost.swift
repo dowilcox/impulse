@@ -133,6 +133,34 @@ extension MainWindowController: GitPanelHost {
   }
 
   /// Show the Changes panel in the left dock (⌃⇧G).
+  /// The sidebar panel shortcuts, as in VS Code (⇧⌘E Files, ⇧⌘F Search,
+  /// ⌃⇧G Changes): show the panel and give it the keyboard; pressed while
+  /// that panel has the keyboard, go back to the active tab.
+  func toggleSidebarPanel(_ panel: SidebarPanel) {
+    if windowModel.sidebarVisible, windowModel.sidebarPanel == panel,
+      windowModel.focusedSidebarPanel == panel, !activeTabHasKeyboard
+    {
+      tabManager.focusSelectedTab()
+      return
+    }
+    switch panel {
+    case .files:
+      windowModel.resetSearch()
+      windowModel.sidebarVisible = true
+      windowModel.filesFocusToken += 1
+    case .changes:
+      showChangesPanel()
+    case .search:
+      windowModel.beginSearch()
+    }
+  }
+
+  /// The keyboard is in the active tab (an editor, a terminal's input bar).
+  private var activeTabHasKeyboard: Bool {
+    guard let responder = window?.firstResponder as? NSView else { return false }
+    return responder.isDescendant(of: tabManager.contentView)
+  }
+
   func showChangesPanel() {
     windowModel.resetSearch()
     windowModel.sidebarPanel = .changes

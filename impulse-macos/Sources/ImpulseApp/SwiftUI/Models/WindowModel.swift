@@ -365,6 +365,22 @@ final class WindowModel {
   var onShowProblems: (() -> Void)?
   /// Bumped to put keyboard focus in the Changes panel's list.
   var changesFocusToken = 0
+  /// Bumped to give the file tree the keyboard (Show Files, ⇧⌘E).
+  var filesFocusToken = 0
+  /// The last request the tree acted on: it's rebuilt when panels switch,
+  /// and must not take the keyboard again each time it reappears.
+  @ObservationIgnored var filesFocusHandled = 0
+  /// The sidebar panel that has the keyboard, if any: its shortcut pressed
+  /// again goes back to the active tab.
+  var focusedSidebarPanel: SidebarPanel?
+
+  func noteSidebarFocus(_ panel: SidebarPanel, focused: Bool) {
+    if focused {
+      if focusedSidebarPanel != panel { focusedSidebarPanel = panel }
+    } else if focusedSidebarPanel == panel {
+      focusedSidebarPanel = nil
+    }
+  }
   /// Bumped to open the input's completion menu (as Tab does).
   var completionRequestToken = 0
   /// ⌘↑ in the input: select the latest command block (false: none).

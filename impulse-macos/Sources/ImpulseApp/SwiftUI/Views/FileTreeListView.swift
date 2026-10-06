@@ -10,6 +10,7 @@ import SwiftUI
 struct FileTreeListView: View {
   var model: WindowModel
   @State private var isRootDropTarget = false
+  @FocusState private var treeFocused: Bool
 
   var body: some View {
     ScrollViewReader { proxy in
@@ -23,10 +24,14 @@ struct FileTreeListView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .focusable()
+      .focused($treeFocused)
       // Keyboard focus is needed for arrow-key navigation, but the system
       // focus ring around the whole tree is not standard sidebar behavior
       // (Finder/Xcode draw none).
       .focusEffectDisabled()
+      .onChange(of: model.filesFocusToken) { _, _ in focusTree(proxy) }
+      .onAppear { focusTree(proxy) }
+      .onChange(of: treeFocused) { _, focused in model.noteSidebarFocus(.files, focused: focused) }
       .onMoveCommand { direction in
         handleMoveCommand(direction, proxy: proxy)
       }
@@ -49,6 +54,23 @@ struct FileTreeListView: View {
   }
 
   // MARK: - Keyboard Navigation
+
+  /// Take the keyboard when asked (once per request), with a selection to
+  /// move from: the first entry when nothing is selected.
+  private func focusTree(_ proxy: ScrollViewProxy) {
+    guard model.filesFocusToken != model.filesFocusHandled else { return }
+    model.filesFocusHandled = model.filesFocusToken
+    if selectedIndex == nil, let first = model.flatFileTree.first {
+      model.selectedFileTreePath = first.node.path
+    }
+    if let selected = model.selectedFileTreePath,
+      let entry = model.flatFileTree.first(where: { $0.node.path == selected })
+    {
+      proxy.scrollTo(entry.id)
+    }
+    // Setting focus in the same pass as the view update doesn't stick.
+    DispatchQueue.main.async { treeFocused = true }
+  }
 
   private var selectedIndex: Int? {
     guard let selected = model.selectedFileTreePath else { return nil }
