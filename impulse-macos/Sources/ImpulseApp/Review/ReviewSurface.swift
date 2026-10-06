@@ -3,7 +3,6 @@ import ImpulseGit
 import ImpulseKit
 import Observation
 import SwiftUI
-import WebKit
 import os.log
 
 /// Observable header state for the review surface.
@@ -46,35 +45,38 @@ final class ReviewSurfaceModel {
   }
 }
 
-/// Multi-file change review: a native header (scope, layout, whitespace,
-/// progress, comments) over a WebView renderer (web/review.js) with a file
-/// navigator, virtualized diff cards, hunk/line staging and reverting, viewed
-/// marks and inline comments. Follows the repository live.
-final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate {
+/// Multi-file change review, all native: a header (scope, layout,
+/// whitespace, progress, comments), a file navigator, and a diff list with
+/// syntax-colored hunks, hunk/line staging and reverting, viewed marks and
+/// inline comments. Follows the repository live.
+final class ReviewSurface: NSView, ReviewDiffHandler {
   let repository: GitRepositoryState
   var repoRoot: String { repository.root }
-  private(set) var webView: WKWebView?
   private weak var host: GitPanelHost?
 
   private let model: ReviewSurfaceModel
+  private let navigator: ReviewNavigatorModel
+  private let diffContext: ReviewDiffContext
+  private let diffList: ReviewDiffController
+  private var emptyHost: NSView!
 
   /// What the review is showing (saved with the session).
   var scope: DiffScope { model.scope }
   private var theme: Theme
-  private var isReady = false
   private var pendingFocus: String?
   private var generation = 0
-  private var files: [FileChange] = []
-  /// Latest diff per path (for viewed hashes and comment anchoring).
-  private var diffs: [String: FileDiff] = [:]
+  /// Files in display order, and by path.
+  private var files: [ReviewFile] = []
+  private var filesByPath: [String: ReviewFile] = [:]
+  private var emptyMessage = ""
   private var changeListener: UUID?
   private var checkpointObserver: NSObjectProtocol?
   private var refreshWork: DispatchWorkItem?
+  private var rowsScheduled = false
   private let comments: ReviewCommentStore
   private let queue = DispatchQueue(label: "impulse.review", qos: .userInitiated)
 
   private static let log = OSLog(subsystem: "dev.impulse.Impulse", category: "Review")
-  private static let handlerName = "impulseReview"
 
   init(
     repository: GitRepositoryState, scope: DiffScope?, focusPath: String?, theme: Theme,
@@ -84,16 +86,21 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     self.theme = theme
     self.host = host
     self.comments = ReviewCommentStore.forRepository(repository.root)
-    self.model = ReviewSurfaceModel(
-      scope: scope ?? Self.defaultScope(repository.snapshot),
-      palette: ChromePalette(theme: theme))
+    let palette = ChromePalette(theme: theme)
+    self.model = ReviewSurfaceModel(scope: scope ?? Self.defaultScope(repository.snapshot), palette: palette)
+    self.navigator = ReviewNavigatorModel(palette: palette)
+    let settings = SettingsStore.shared.settings
+    self.diffContext = ReviewDiffContext(theme: theme, metrics: ReviewMetrics(fontFamily: settings.fontFamily))
+    self.diffList = ReviewDiffController(context: diffContext)
     self.pendingFocus = focusPath
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     wantsLayer = true
     layer?.backgroundColor = NSColor(hex: theme.bg).cgColor
+    diffContext.handler = self
+    diffContext.capabilities = capabilities
     setupViews()
     wireModel()
-    loadPage()
+    refreshFiles()
     changeListener = repository.addChangeListener { [weak self] _ in
       self?.scheduleRefresh()
     }
@@ -139,47 +146,72 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
 
   // MARK: - Setup
 
+  private static let navigatorWidth: CGFloat = 250
+
   private func setupViews() {
     let header = WorkbenchHosting.make(ReviewHeaderBar(model: model), intrinsicHeight: true)
-    header.translatesAutoresizingMaskIntoConstraints = false
-
-    let config = WKWebViewConfiguration()
-    config.userContentController.add(WeakScriptHandler(self), name: Self.handlerName)
-    let prefs = WKWebpagePreferences()
-    prefs.allowsContentJavaScript = true
-    config.defaultWebpagePreferences = prefs
-    let web = WKWebView(frame: bounds, configuration: config)
-    web.navigationDelegate = self
-    web.translatesAutoresizingMaskIntoConstraints = false
-    web.allowsMagnification = false
-    web.underPageBackgroundColor = NSColor(hex: theme.bg)
-    webView = web
-
-    addSubview(header)
-    addSubview(web)
+    let nav = WorkbenchHosting.make(ReviewNavigatorView(model: navigator))
+    let divider = NSBox()
+    divider.boxType = .custom
+    divider.borderWidth = 0
+    divider.fillColor = ChromePalette(theme: theme).nsHairline
+    navigatorDivider = divider
+    let list = diffList.scrollView
+    let empty = WorkbenchHosting.make(ReviewEmptyView(message: ""))
+    emptyHost = empty
+    empty.isHidden = true
+    for view in [header, nav, divider, list, empty] as [NSView] {
+      view.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(view)
+    }
+    let navWidth = nav.widthAnchor.constraint(equalToConstant: Self.navigatorWidth)
+    navigatorWidth = navWidth
     NSLayoutConstraint.activate([
       header.topAnchor.constraint(equalTo: topAnchor),
       header.leadingAnchor.constraint(equalTo: leadingAnchor),
       header.trailingAnchor.constraint(equalTo: trailingAnchor),
-      web.topAnchor.constraint(equalTo: header.bottomAnchor),
-      web.leadingAnchor.constraint(equalTo: leadingAnchor),
-      web.trailingAnchor.constraint(equalTo: trailingAnchor),
-      web.bottomAnchor.constraint(equalTo: bottomAnchor),
+      nav.topAnchor.constraint(equalTo: header.bottomAnchor),
+      nav.bottomAnchor.constraint(equalTo: bottomAnchor),
+      nav.leadingAnchor.constraint(equalTo: leadingAnchor),
+      navWidth,
+      divider.topAnchor.constraint(equalTo: header.bottomAnchor),
+      divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+      divider.leadingAnchor.constraint(equalTo: nav.trailingAnchor),
+      divider.widthAnchor.constraint(equalToConstant: 1),
+      list.topAnchor.constraint(equalTo: header.bottomAnchor),
+      list.bottomAnchor.constraint(equalTo: bottomAnchor),
+      list.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+      list.trailingAnchor.constraint(equalTo: trailingAnchor),
+      empty.topAnchor.constraint(equalTo: list.topAnchor),
+      empty.bottomAnchor.constraint(equalTo: list.bottomAnchor),
+      empty.leadingAnchor.constraint(equalTo: leadingAnchor),
+      empty.trailingAnchor.constraint(equalTo: list.trailingAnchor),
     ])
+  }
+
+  private var navigatorDivider: NSBox?
+  private var navigatorWidth: NSLayoutConstraint?
+
+  override func layout() {
+    super.layout()
+    // Narrow (a split pane, History's lower half): give the diff the room.
+    let narrow = bounds.width < 620
+    navigatorWidth?.constant = narrow ? 0 : Self.navigatorWidth
+    navigatorDivider?.isHidden = narrow
   }
 
   private func wireModel() {
     model.onSelectScope = { [weak self] scope in self?.setScope(scope) }
-    model.onSetLayout = { [weak self] layout in
-      guard let self else { return }
-      self.model.options.layout = layout
-      self.sendConfigure()
-    }
+    model.onSetLayout = { [weak self] layout in self?.applyLayout(layout) }
     model.onToggleWhitespace = { [weak self] in
       guard let self else { return }
       self.model.options.ignoreWhitespace.toggle()
-      self.diffs.removeAll()
-      self.sendConfigure()
+      for file in self.files {
+        file.diff = nil
+        file.syntax = nil
+        file.stale = true
+      }
+      self.scheduleRows()
       self.refreshFiles()
     }
     model.onCopyPrompt = { [weak self] in self?.copyCommentsAsPrompt() }
@@ -192,11 +224,11 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     model.onShowChanges = { [weak self] in
       (self?.host as? MainWindowController)?.showChangesPanel()
     }
-  }
-
-  private func loadPage() {
-    guard let dir = EditorAssets.monacoDirectory else { return }
-    webView?.loadFileURL(dir.appendingPathComponent("review.html"), allowingReadAccessTo: dir)
+    navigator.onSelect = { [weak self] path in self?.revealFile(path) }
+    navigator.onToggleViewed = { [weak self] path in
+      guard let self, let file = self.filesByPath[path] else { return }
+      self.reviewSetViewed(path, viewed: !file.viewed)
+    }
   }
 
   func cleanup() {
@@ -204,19 +236,22 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     changeListener = nil
     if let checkpointObserver { NotificationCenter.default.removeObserver(checkpointObserver) }
     checkpointObserver = nil
-    webView?.configuration.userContentController.removeScriptMessageHandler(
-      forName: Self.handlerName)
-    webView?.navigationDelegate = nil
-    webView = nil
+    refreshWork?.cancel()
   }
 
   func focus() {
-    if let webView { window?.makeFirstResponder(webView) }
+    window?.makeFirstResponder(diffList.tableView)
   }
 
   /// Switch between "unified" and "split" rows.
   func setLayout(_ layout: String) {
     model.onSetLayout?(layout)
+  }
+
+  private func applyLayout(_ layout: String) {
+    model.options.layout = layout
+    diffContext.layout = ReviewLayout(rawValue: layout) ?? .unified
+    scheduleRows()
   }
 
   /// Re-read the file list (and loaded diffs) now.
@@ -230,16 +265,20 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       pendingFocus = focusPath
       setScope(scope)
     } else if let focusPath {
-      send(.focus(path: focusPath, line: nil))
+      revealFile(focusPath)
     }
   }
 
   func applyTheme(_ theme: Theme) {
     self.theme = theme
-    model.palette = ChromePalette(theme: theme)
+    let palette = ChromePalette(theme: theme)
+    model.palette = palette
+    navigator.palette = palette
+    navigatorDivider?.fillColor = palette.nsHairline
     layer?.backgroundColor = NSColor(hex: theme.bg).cgColor
-    webView?.underPageBackgroundColor = NSColor(hex: theme.bg)
-    sendTheme()
+    diffContext.colors = ReviewColors(theme: theme)
+    diffList.applyColors()
+    scheduleRows()
   }
 
   // MARK: - Scope
@@ -259,9 +298,12 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
 
   private func setScope(_ scope: DiffScope) {
     model.scope = scope
-    diffs.removeAll()
     files = []
-    sendConfigure()
+    filesByPath = [:]
+    diffContext.files = [:]
+    diffContext.focus = nil
+    diffContext.capabilities = capabilities
+    scheduleRows()
     refreshFiles()
   }
 
@@ -270,129 +312,6 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     case .unstaged: return ReviewCapabilities(stage: true, unstage: false, revert: true)
     case .staged: return ReviewCapabilities(stage: false, unstage: true, revert: false)
     default: return ReviewCapabilities(stage: false, unstage: false, revert: false)
-    }
-  }
-
-  // MARK: - Messaging
-
-  private func send(_ command: ReviewCommand) {
-    guard isReady, let webView,
-      let data = try? JSONEncoder().encode(command),
-      let json = String(data: data, encoding: .utf8)
-    else { return }
-    webView.evaluateJavaScript("window.__applyReviewCommand(\(json));") { _, error in
-      if let error {
-        os_log(.error, log: Self.log, "review command failed: %{public}@", "\(error)")
-      }
-    }
-  }
-
-  private func sendConfigure() {
-    send(
-      .configure(
-        capabilities: capabilities, options: model.options, scopeTitle: model.scope.title))
-  }
-
-  private func sendTheme() {
-    send(
-      .setTheme(
-        theme: ThemeManager.monacoTheme(forName: theme.id),
-        chrome: ReviewSurface.cssVariables(theme: theme)))
-  }
-
-  func userContentController(
-    _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
-  ) {
-    guard let body = message.body as? String, let data = body.data(using: .utf8),
-      let event = try? JSONDecoder().decode(ReviewEvent.self, from: data)
-    else { return }
-    handle(event)
-  }
-
-  func webView(
-    _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-  ) {
-    let scheme = navigationAction.request.url?.scheme
-    decisionHandler(scheme == "file" || scheme == "about" ? .allow : .cancel)
-  }
-
-  private func handle(_ event: ReviewEvent) {
-    switch event {
-    case .ready:
-      isReady = true
-      sendTheme()
-      sendConfigure()
-      refreshFiles()
-
-    case .requestDiff(let path):
-      loadDiff(path: path)
-
-    case let .hunkAction(action, path, hunkIndex, hunkId, lines):
-      guard let change = files.first(where: { $0.path == path }), let host else { return }
-      let target: PatchTarget = action == .stage ? .stage : action == .unstage ? .unstage : .discard
-      let selection: PatchSelection =
-        lines.map { .lines(Set($0), inHunk: hunkIndex) } ?? .wholeHunks([hunkIndex])
-      send(.setBusy(path: path, busy: true))
-      GitActions(repository: repository, host: host).apply(
-        target, selection: selection, change: change, expectedHunkIds: [hunkIndex: hunkId],
-        options: diffOptions
-      ) { [weak self] _ in
-        self?.send(.setBusy(path: path, busy: false))
-        self?.refreshFiles()
-      }
-
-    case let .fileAction(action, path):
-      guard let change = files.first(where: { $0.path == path }), let host else { return }
-      let actions = GitActions(repository: repository, host: host)
-      switch action {
-      case .stage: actions.stage([change])
-      case .unstage: actions.unstage([change])
-      case .revert: actions.discard([change])
-      }
-
-    case let .toggleViewed(path, viewed):
-      let hash = viewed ? (diffs[path]?.contentHash ?? "unknown") : nil
-      ReviewViewedStore.set(path: path, hash: hash, root: repoRoot, scope: scopeKey)
-      let wasComplete = model.fileCount > 0 && model.viewedCount == model.fileCount
-      updateCounts()
-      if viewed, !wasComplete, model.fileCount > 0, model.viewedCount == model.fileCount {
-        markReviewed()
-      }
-
-    case let .openFile(path, line, diff):
-      let absolute = (repoRoot as NSString).appendingPathComponent(path)
-      if diff {
-        host?.gitOpenDiffEditor(absolute)
-      } else if let controller = host as? MainWindowController {
-        controller.paletteOpenFile(absolute, line: line.map(UInt32.init), column: nil)
-      } else {
-        host?.gitOpenFile(absolute)
-      }
-
-    case let .addComment(path, side, line, endLine, text, snippet):
-      let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else { return }
-      comments.add(
-        ReviewComment(
-          path: path, side: side == "old" ? .old : .new, line: line, endLine: endLine,
-          snippet: snippet, text: trimmed))
-      resendDiff(path: path)
-
-    case let .editComment(id, text):
-      comments.update(id: id, text: text)
-      if let path = comments.comments.first(where: { $0.id == id })?.path { resendDiff(path: path) }
-
-    case .deleteComment(let id):
-      let path = comments.comments.first(where: { $0.id == id })?.path
-      comments.remove(id: id)
-      if let path { resendDiff(path: path) }
-
-    case .copyPath(let path):
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(path, forType: .string)
-    case .openURL(let url):
-      if let link = URL(string: url), link.scheme == "https" { NSWorkspace.shared.open(link) }
     }
   }
 
@@ -411,7 +330,6 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
   }
 
   private func refreshFiles() {
-    guard isReady else { return }
     generation += 1
     let generation = self.generation
     let root = repoRoot
@@ -421,13 +339,12 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     model.isLoading = true
     queue.async { [weak self] in
       let result = Result { try GitClient.changedFiles(repoPath: root, scope: scope) }
-      // Check viewed files' current diff so changed ones come back unviewed.
+      // Read viewed files' diffs now, so ones that changed come back unviewed.
       var viewedDiffs: [String: FileDiff] = [:]
       if case .success(let changes) = result {
         for change in changes where viewed[change.path] != nil {
           if let diff = try? GitClient.fileDiff(
-            repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope,
-            options: options)
+            repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope, options: options)
           {
             viewedDiffs[change.path] = diff
           }
@@ -438,49 +355,60 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         self.model.isLoading = false
         switch result {
         case .success(let changes):
-          self.files = changes
-          for (path, diff) in viewedDiffs { self.diffs[path] = diff }
-          self.sendFiles(generation: generation)
-          if let focus = self.pendingFocus {
-            self.pendingFocus = nil
-            self.send(.focus(path: focus, line: nil))
-          }
+          self.merge(changes, viewedDiffs: viewedDiffs, viewed: viewed)
         case .failure(let error):
           self.files = []
-          self.send(
-            .setFiles(
-              generation: generation, files: [],
-              emptyMessage: "Couldn't read changes: \(error)"))
-          self.updateCounts()
+          self.filesByPath = [:]
+          self.diffContext.files = [:]
+          self.emptyMessage = "Couldn't read changes: \(error)"
+          self.scheduleRows()
         }
       }
     }
   }
 
-  private func fileItems() -> [ReviewFileItem] {
-    let viewed = ReviewViewedStore.viewed(root: repoRoot, scope: scopeKey)
-    return files.map { change in
-      var isViewed = viewed[change.path] != nil
-      var changedSince = false
-      if let hash = viewed[change.path], let diff = diffs[change.path], hash != diff.contentHash {
-        isViewed = false
-        changedSince = true
+  /// Bring the file list in line with `changes`, keeping each file's view
+  /// state and showing its previous diff until the new one arrives.
+  private func merge(_ changes: [FileChange], viewedDiffs: [String: FileDiff], viewed: [String: String]) {
+    emptyMessage = Self.emptyMessage(for: model.scope)
+    var next: [ReviewFile] = []
+    var byPath: [String: ReviewFile] = [:]
+    for change in changes {
+      let file = filesByPath[change.path] ?? ReviewFile(change: change)
+      let isNew = filesByPath[change.path] == nil
+      file.change = change
+      file.stale = true
+      if let diff = viewedDiffs[change.path] { apply(diff, to: file) }
+      if let hash = viewed[change.path] {
+        let current = file.diff?.contentHash
+        let changed = current != nil && current != hash
+        file.viewed = !changed
+        file.changedSinceViewed = changed
+      } else {
+        file.viewed = false
       }
-      return ReviewFileItem(
-        path: change.path, oldPath: change.oldPath, status: change.status.letter,
-        added: change.added, removed: change.removed, binary: change.isBinary, viewed: isViewed,
-        changedSinceViewed: changedSince, commentCount: comments.comments(for: change.path).count)
+      if isNew { file.expanded = !file.viewed }
+      file.comments = comments.comments(for: change.path)
+      updateOutdated(file)
+      next.append(file)
+      byPath[change.path] = file
+    }
+    files = next
+    filesByPath = byPath
+    diffContext.files = byPath
+    // Diffs already on screen are read again; the rest load when shown.
+    for file in files where file.diff != nil && file.expanded {
+      loadDiff(file.path)
+    }
+    scheduleRows()
+    if let focus = pendingFocus, byPath[focus] != nil {
+      pendingFocus = nil
+      DispatchQueue.main.async { [weak self] in self?.revealFile(focus) }
     }
   }
 
-  private func sendFiles(generation: Int) {
-    let items = fileItems()
-    send(.setFiles(generation: generation, files: items, emptyMessage: emptyMessage))
-    updateCounts(items)
-  }
-
-  private var emptyMessage: String {
-    switch model.scope {
+  private static func emptyMessage(for scope: DiffScope) -> String {
+    switch scope {
     case .unstaged: return "No unstaged changes."
     case .staged: return "Nothing is staged."
     case .uncommitted: return "No uncommitted changes."
@@ -489,17 +417,10 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     }
   }
 
-  private func updateCounts(_ items: [ReviewFileItem]? = nil) {
-    let list = items ?? fileItems()
-    model.fileCount = list.count
-    model.viewedCount = list.filter(\.viewed).count
-    model.commentCount = comments.comments.count
-    model.totalAdded = files.compactMap(\.added).reduce(0, +)
-    model.totalRemoved = files.compactMap(\.removed).reduce(0, +)
-  }
-
-  private func loadDiff(path: String) {
-    guard let change = files.first(where: { $0.path == path }) else { return }
+  private func loadDiff(_ path: String) {
+    guard let file = filesByPath[path], !file.loading else { return }
+    file.loading = true
+    let change = file.change
     let root = repoRoot
     let scope = model.scope
     let options = diffOptions
@@ -507,38 +428,101 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
     queue.async { [weak self] in
       let result = Result {
         try GitClient.fileDiff(
-          repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope,
-          options: options)
+          repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope, options: options)
       }
       DispatchQueue.main.async {
-        guard let self, generation == self.generation else { return }
+        guard let self, let file = self.filesByPath[path] else { return }
+        file.loading = false
+        guard generation == self.generation || file.diff == nil else {
+          // A newer list arrived meanwhile: read it again for that one.
+          self.loadDiff(path)
+          return
+        }
         switch result {
         case .success(let diff):
-          let previousHash = self.diffs[path]?.contentHash
-          self.diffs[path] = diff
-          self.sendDiff(diff)
-          // A viewed file whose diff changed is now unviewed.
-          if previousHash != diff.contentHash {
-            let viewed = ReviewViewedStore.viewed(root: root, scope: self.scopeKey)
-            if let hash = viewed[path], hash != diff.contentHash {
-              self.send(.setViewed(path: path, viewed: false))
-              self.updateCounts()
-            }
+          self.apply(diff, to: file)
+          // A viewed file whose diff changed is unviewed again.
+          let viewed = ReviewViewedStore.viewed(root: root, scope: self.scopeKey)
+          if let hash = viewed[path], hash != diff.contentHash, file.viewed {
+            file.viewed = false
+            file.changedSinceViewed = true
+            file.expanded = true
           }
         case .failure(let error):
-          self.send(.diffError(path: path, message: "\(error)"))
+          file.error = "\(error)"
+          file.stale = false
         }
+        self.scheduleRows()
       }
     }
   }
 
-  private func resendDiff(path: String) {
-    if let diff = diffs[path] { sendDiff(diff) }
-    updateCounts()
-    sendFiles(generation: generation)
+  private func apply(_ diff: FileDiff, to file: ReviewFile) {
+    let previous = file.diff?.contentHash
+    file.diff = diff
+    file.error = nil
+    file.stale = false
+    if previous != diff.contentHash {
+      file.selection = nil
+      file.syntax = nil
+      highlight(file)
+    } else if file.syntax == nil {
+      highlight(file)
+    }
+    updateOutdated(file)
   }
 
-  private func sendDiff(_ diff: FileDiff) {
+  /// Color the file's lines in the background, old and new sides apart so
+  /// strings and comments don't run across them.
+  private func highlight(_ file: ReviewFile) {
+    guard let diff = file.diff, !diff.isBinary, !diff.tooLarge,
+      let language = SyntaxHighlighter.hljsLanguage(diff.language, path: diff.path)
+    else { return }
+    let hash = diff.contentHash
+    let path = file.path
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      var oldLines: [String] = []
+      var newLines: [String] = []
+      var positions: [[(old: Int?, new: Int?)]] = []
+      for hunk in diff.hunks {
+        positions.append(
+          hunk.lines.map { line in
+            var old: Int?
+            var new: Int?
+            if line.kind != .added {
+              old = oldLines.count
+              oldLines.append(line.content)
+            }
+            if line.kind != .removed {
+              new = newLines.count
+              newLines.append(line.content)
+            }
+            return (old, new)
+          })
+      }
+      let highlighter = SyntaxHighlighter.shared
+      guard let oldSpans = highlighter.highlight(lines: oldLines, language: language),
+        let newSpans = highlighter.highlight(lines: newLines, language: language)
+      else { return }
+      let syntax: [[[SyntaxHighlighter.Span]]] = zip(diff.hunks, positions).map { hunk, places in
+        zip(hunk.lines, places).map { line, place in
+          if line.kind == .removed { return place.old.flatMap { oldSpans[safe: $0] } ?? [] }
+          return place.new.flatMap { newSpans[safe: $0] } ?? []
+        }
+      }
+      DispatchQueue.main.async {
+        guard let self, let file = self.filesByPath[path], file.diff?.contentHash == hash else { return }
+        file.syntax = syntax
+        self.diffList.redrawVisibleRows()
+      }
+    }
+  }
+
+  private func updateOutdated(_ file: ReviewFile) {
+    guard let diff = file.diff else {
+      file.outdated = []
+      return
+    }
     var oldLines: [Int: String] = [:]
     var newLines: [Int: String] = [:]
     for hunk in diff.hunks {
@@ -547,15 +531,397 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
         if let new = line.newLineno, line.kind != .removed { newLines[Int(new)] = line.content }
       }
     }
-    let items = comments.comments(for: diff.path).map { comment in
-      ReviewCommentItem(
-        id: comment.id, side: comment.side.rawValue, line: comment.line, endLine: comment.endLine,
-        text: comment.text,
-        outdated: ReviewCommentAnchoring.isOutdated(
-          comment, lines: comment.side == .old ? oldLines : newLines),
-        author: comment.remote?.author, url: comment.remote?.url)
+    file.outdated = Set(
+      file.comments.filter {
+        ReviewCommentAnchoring.isOutdated($0, lines: $0.side == .old ? oldLines : newLines)
+      }.map(\.id))
+  }
+
+  private func reloadComments(_ paths: Set<String>? = nil) {
+    for file in files where paths?.contains(file.path) ?? true {
+      file.comments = comments.comments(for: file.path)
+      updateOutdated(file)
     }
-    send(.setFileDiff(ReviewFileDiff(diff, diffHash: diff.contentHash, comments: items)))
+    scheduleRows()
+  }
+
+  // MARK: - Rows
+
+  /// Rebuild the list on the next turn of the run loop (changes batch up).
+  private func scheduleRows() {
+    guard !rowsScheduled else { return }
+    rowsScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.rowsScheduled = false
+      self.rebuildRows()
+    }
+  }
+
+  private func rebuildRows() {
+    diffList.reload(ReviewRowBuilder.rows(files, layout: diffContext.layout))
+    navigator.items = files.map { file in
+      ReviewNavigatorModel.Item(
+        path: file.path, status: file.change.status, viewed: file.viewed,
+        changedSinceViewed: file.changedSinceViewed, commentCount: file.comments.count,
+        added: file.diff?.added ?? file.change.added, removed: file.diff?.removed ?? file.change.removed,
+        binary: file.diff?.isBinary ?? file.change.isBinary)
+    }
+    model.fileCount = files.count
+    model.viewedCount = files.filter(\.viewed).count
+    model.commentCount = comments.comments.count
+    model.totalAdded = files.compactMap { $0.change.added }.reduce(0, +)
+    model.totalRemoved = files.compactMap { $0.change.removed }.reduce(0, +)
+    let showEmpty = files.isEmpty && !model.isLoading && !emptyMessage.isEmpty
+    emptyHost.isHidden = !showEmpty
+    if showEmpty, let hosting = emptyHost as? NSHostingView<ReviewEmptyView> {
+      hosting.rootView = ReviewEmptyView(message: emptyMessage, palette: model.palette)
+    }
+  }
+
+  /// Scroll to a file (expanding it) and make it the keyboard focus.
+  private func revealFile(_ path: String) {
+    guard let file = filesByPath[path] else {
+      pendingFocus = path
+      return
+    }
+    if !file.expanded {
+      file.expanded = true
+      rebuildRows()
+    }
+    diffContext.focus = (path, 0)
+    diffList.reveal(path: path)
+    navigator.current = path
+    focus()
+  }
+
+  // MARK: - ReviewDiffHandler
+
+  func reviewToggleExpanded(_ path: String) {
+    guard let file = filesByPath[path] else { return }
+    file.expanded.toggle()
+    scheduleRows()
+  }
+
+  func reviewSetViewed(_ path: String, viewed: Bool) {
+    guard let file = filesByPath[path] else { return }
+    let hash = viewed ? (file.diff?.contentHash ?? "unknown") : nil
+    ReviewViewedStore.set(path: path, hash: hash, root: repoRoot, scope: scopeKey)
+    let wasComplete = !files.isEmpty && files.allSatisfy(\.viewed)
+    file.viewed = viewed
+    file.changedSinceViewed = false
+    // Viewing collapses; un-viewing expands.
+    file.expanded = !viewed
+    scheduleRows()
+    if viewed, !wasComplete, files.allSatisfy(\.viewed) {
+      markReviewed()
+    }
+  }
+
+  func reviewFileAction(_ action: ReviewAction, path: String) {
+    guard let file = filesByPath[path], let host else { return }
+    let actions = GitActions(repository: repository, host: host)
+    switch action {
+    case .stage: actions.stage([file.change])
+    case .unstage: actions.unstage([file.change])
+    case .revert: actions.discard([file.change])
+    }
+  }
+
+  func reviewHunkAction(_ action: ReviewAction, path: String, hunk: Int) {
+    guard let file = filesByPath[path], !file.busy, let diff = file.diff, diff.hunks.indices.contains(hunk),
+      let host
+    else { return }
+    switch action {
+    case .stage: guard capabilities.stage else { return }
+    case .unstage: guard capabilities.unstage else { return }
+    case .revert: guard capabilities.revert else { return }
+    }
+    let lines = file.selection.flatMap { $0.hunk == hunk ? $0.lines.sorted() : nil }
+    file.selection = nil
+    let target: PatchTarget = action == .stage ? .stage : action == .unstage ? .unstage : .discard
+    let selection: PatchSelection = lines.map { .lines(Set($0), inHunk: hunk) } ?? .wholeHunks([hunk])
+    file.busy = true
+    diffList.redrawVisibleRows()
+    GitActions(repository: repository, host: host).apply(
+      target, selection: selection, change: file.change, expectedHunkIds: [hunk: diff.hunkIds[hunk]],
+      options: diffOptions
+    ) { [weak self] _ in
+      file.busy = false
+      self?.refreshFiles()
+    }
+  }
+
+  func reviewToggleLine(path: String, hunk: Int, line: Int, extend: Bool) {
+    guard let file = filesByPath[path], let lines = file.diff?.hunks[safe: hunk]?.lines else { return }
+    var selection =
+      file.selection.flatMap { $0.hunk == hunk ? $0 : nil }
+      ?? ReviewFile.LineSelection(hunk: hunk, lines: [], anchor: line)
+    if extend {
+      for index in min(selection.anchor, line)...max(selection.anchor, line) where lines[index].kind != .context {
+        selection.lines.insert(index)
+      }
+    } else {
+      if selection.lines.contains(line) { selection.lines.remove(line) } else { selection.lines.insert(line) }
+      selection.anchor = line
+    }
+    file.selection = selection.lines.isEmpty ? nil : selection
+    diffContext.focus = (path, hunk)
+    diffList.redrawVisibleRows()
+  }
+
+  func reviewOpenComposer(path: String, hunk: Int, line lineIndex: Int?) {
+    guard let file = filesByPath[path], let lines = file.diff?.hunks[safe: hunk]?.lines, !lines.isEmpty else {
+      return
+    }
+    let selected = file.selection.flatMap { $0.hunk == hunk ? $0.lines : nil } ?? []
+    // For the hunk: the selection's last line, else its last changed line.
+    let target =
+      lineIndex
+      ?? selected.max()
+      ?? lines.lastIndex { $0.kind != .context }
+      ?? lines.count - 1
+    // A selection including the line widens the comment to the range.
+    let indices = selected.contains(target) ? selected.sorted() : [target]
+    let anchor = lines[target]
+    let side: ReviewComment.Side = anchor.kind == .removed ? .old : .new
+    let sideLines = indices.map { lines[$0] }.filter { side == .old ? $0.kind == .removed : $0.kind != .removed }
+    let numbers = sideLines.compactMap { Int((side == .old ? $0.oldLineno : $0.newLineno) ?? 0) }.filter { $0 > 0 }
+    let first = numbers.min() ?? Int((side == .old ? anchor.oldLineno : anchor.newLineno) ?? 1)
+    file.composer = ReviewFile.Composer(
+      hunk: hunk, lineIndex: indices.last ?? target, side: side, line: first, endLine: numbers.max() ?? first,
+      snippet: sideLines.map(\.content).joined(separator: "\n"))
+    file.editingComment = nil
+    rebuildRows()
+  }
+
+  func reviewSaveComposer(path: String, text: String) {
+    guard let file = filesByPath[path], let composer = file.composer else { return }
+    comments.add(
+      ReviewComment(
+        path: path, side: composer.side, line: composer.line, endLine: composer.endLine,
+        snippet: composer.snippet, text: text))
+    file.composer = nil
+    file.selection = nil
+    reloadComments([path])
+    focus()
+  }
+
+  func reviewCancelComposer(path: String) {
+    filesByPath[path]?.composer = nil
+    scheduleRows()
+    focus()
+  }
+
+  func reviewEditComment(_ id: String?, path: String) {
+    filesByPath[path]?.editingComment = id
+    scheduleRows()
+    if id == nil { focus() }
+  }
+
+  func reviewSaveComment(id: String, text: String) {
+    comments.update(id: id, text: text)
+    let path = comments.comments.first { $0.id == id }?.path
+    if let path { filesByPath[path]?.editingComment = nil }
+    reloadComments(path.map { [$0] })
+    focus()
+  }
+
+  func reviewDeleteComment(id: String) {
+    let path = comments.comments.first { $0.id == id }?.path
+    comments.remove(id: id)
+    reloadComments(path.map { [$0] })
+  }
+
+  func reviewOpenURL(_ url: String) {
+    if let link = URL(string: url), link.scheme == "https" { NSWorkspace.shared.open(link) }
+  }
+
+  func reviewOpenFile(path: String, line: Int?, diff: Bool) {
+    let absolute = (repoRoot as NSString).appendingPathComponent(path)
+    if diff {
+      host?.gitOpenDiffEditor(absolute)
+    } else if let controller = host as? MainWindowController {
+      controller.paletteOpenFile(absolute, line: line.map(UInt32.init), column: nil)
+    } else {
+      host?.gitOpenFile(absolute)
+    }
+  }
+
+  func reviewCopyPath(_ path: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(path, forType: .string)
+  }
+
+  func reviewNeedsDiff(_ path: String) {
+    guard let file = filesByPath[path], file.expanded, file.diff == nil || file.stale else { return }
+    loadDiff(path)
+  }
+
+  func reviewFocusHunk(path: String, hunk: Int) {
+    diffContext.focus = (path, hunk)
+    diffList.redrawVisibleRows()
+    focus()
+  }
+
+  func reviewTopFileChanged(_ path: String?) {
+    if navigator.current != path { navigator.current = path }
+  }
+
+  func reviewCopy() {
+    for file in files {
+      guard let selection = file.selection, let lines = file.diff?.hunks[safe: selection.hunk]?.lines else {
+        continue
+      }
+      let text = selection.lines.sorted().compactMap { lines[safe: $0]?.content }.joined(separator: "\n")
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+      return
+    }
+    NSSound.beep()
+  }
+
+  // MARK: Keyboard
+
+  /// j/k hunks, n/p files (N: next unviewed), s/u/x stage/unstage/revert
+  /// (also ⌘Y, ⌘⇧Y, ⌘⌥Z), v viewed, c comment, o open, ⏎/space expand,
+  /// Esc clear the selection, t or / filter.
+  func reviewKey(_ event: NSEvent) -> Bool {
+    let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+    let key = event.charactersIgnoringModifiers ?? ""
+    let focused = diffContext.focus.flatMap { focus in filesByPath[focus.path].map { ($0, focus.hunk) } }
+    if flags.contains(.command) {
+      guard let (file, hunk) = focused else { return false }
+      if key.lowercased() == "y" {
+        reviewHunkAction(flags.contains(.shift) ? .unstage : .stage, path: file.path, hunk: hunk)
+        return true
+      }
+      if flags.contains(.option), event.keyCode == 6 {  // Z
+        reviewHunkAction(.revert, path: file.path, hunk: hunk)
+        return true
+      }
+      return false
+    }
+    if flags.contains(.control) || flags.contains(.option) { return false }
+    switch key {
+    case "j": moveHunk(1)
+    case "k": moveHunk(-1)
+    case "n": moveFile(1, unviewedOnly: false)
+    case "p": moveFile(-1, unviewedOnly: false)
+    case "N": moveFile(1, unviewedOnly: true)
+    case "s", "u", "x":
+      guard let (file, hunk) = focused else { return true }
+      reviewHunkAction(key == "s" ? .stage : key == "u" ? .unstage : .revert, path: file.path, hunk: hunk)
+    case "v":
+      if let path = focused?.0.path ?? navigator.current, let file = filesByPath[path] {
+        reviewSetViewed(path, viewed: !file.viewed)
+      }
+    case "c":
+      if let (file, hunk) = focused, file.diff != nil { reviewOpenComposer(path: file.path, hunk: hunk, line: nil) }
+    case "o":
+      if let path = focused?.0.path ?? navigator.current, let file = filesByPath[path] {
+        let hunkIndex = focused?.1 ?? 0
+        let line = file.diff?.hunks[safe: hunkIndex].flatMap { hunk in
+          (hunk.lines.first { $0.kind != .context } ?? hunk.lines.first).map {
+            Int($0.newLineno ?? $0.oldLineno ?? 1)
+          }
+        }
+        reviewOpenFile(path: path, line: line, diff: false)
+      }
+    case "\r", " ":
+      if let path = focused?.0.path ?? navigator.current { reviewToggleExpanded(path) }
+    case "\u{1B}":
+      for file in files { file.selection = nil }
+      diffList.redrawVisibleRows()
+    case "t", "T", "/":
+      if bounds.width >= 620 { navigator.filterFocusRequest += 1 }
+    default:
+      return false
+    }
+    return true
+  }
+
+  private var visiblePaths: [String] {
+    navigator.visibleItems.map(\.path)
+  }
+
+  private func moveHunk(_ delta: Int) {
+    let paths = visiblePaths
+    guard !paths.isEmpty else { return }
+    var (path, hunk) = diffContext.focus.map { ($0.path, $0.hunk) } ?? (navigator.current ?? paths[0], -1)
+    var index = paths.firstIndex(of: path) ?? 0
+    for _ in 0..<(paths.count * 2 + 2) {
+      let file = filesByPath[paths[index]]
+      let count = file.flatMap { $0.expanded ? $0.diff?.hunks.count : 0 } ?? 0
+      let next = hunk + delta
+      if next >= 0, next < count {
+        diffContext.focus = (paths[index], next)
+        diffList.reveal(path: paths[index], hunk: next, onlyIfNeeded: true)
+        diffList.redrawVisibleRows()
+        return
+      }
+      index += delta
+      guard paths.indices.contains(index) else { return }
+      path = paths[index]
+      let nextFile = filesByPath[path]
+      if nextFile?.diff == nil || nextFile?.expanded == false {
+        // Not loaded (or collapsed): go to the file; it loads when shown.
+        revealFile(path)
+        return
+      }
+      hunk = delta > 0 ? -1 : nextFile?.diff?.hunks.count ?? 0
+    }
+  }
+
+  private func moveFile(_ delta: Int, unviewedOnly: Bool) {
+    let paths = visiblePaths
+    guard !paths.isEmpty else { return }
+    var index = paths.firstIndex(of: diffContext.focus?.path ?? navigator.current ?? "") ?? (delta > 0 ? -1 : paths.count)
+    for _ in paths.indices {
+      index += delta
+      guard paths.indices.contains(index) else { return }
+      if !unviewedOnly || filesByPath[paths[index]]?.viewed == false {
+        revealFile(paths[index])
+        return
+      }
+    }
+  }
+
+  // MARK: - Snapshot checks
+
+  /// `keys=<chars>` types review keys; `select=<path>:<hunk>:<from>-<to>`
+  /// selects lines; `comment=<text>` comments on the focused hunk;
+  /// `reveal=<path>` scrolls to a file; `composer` opens one; `edit` edits
+  /// the first comment.
+  func debugAction(_ action: String) {
+    if action.hasPrefix("keys=") {
+      for char in action.dropFirst(5) {
+        let text = String(char)
+        guard
+          let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: char.isUppercase ? .shift : [], timestamp: 0,
+            windowNumber: window?.windowNumber ?? 0, context: nil, characters: text,
+            charactersIgnoringModifiers: text, isARepeat: false, keyCode: 0)
+        else { continue }
+        _ = reviewKey(event)
+      }
+    } else if action.hasPrefix("select=") {
+      let parts = action.dropFirst(7).split(separator: ":")
+      guard parts.count == 3, let hunk = Int(parts[1]) else { return }
+      let range = parts[2].split(separator: "-").compactMap { Int($0) }
+      guard let from = range.first, let to = range.last else { return }
+      reviewToggleLine(path: String(parts[0]), hunk: hunk, line: from, extend: false)
+      reviewToggleLine(path: String(parts[0]), hunk: hunk, line: to, extend: true)
+    } else if action.hasPrefix("comment="), let focus = diffContext.focus {
+      reviewOpenComposer(path: focus.path, hunk: focus.hunk, line: nil)
+      reviewSaveComposer(path: focus.path, text: String(action.dropFirst(8)))
+    } else if action.hasPrefix("reveal=") {
+      revealFile(String(action.dropFirst(7)))
+    } else if action == "edit", let comment = files.lazy.flatMap(\.comments).first {
+      reviewEditComment(comment.id, path: comment.path)
+    } else if action == "composer", let focus = diffContext.focus {
+      reviewOpenComposer(path: focus.path, hunk: focus.hunk, line: nil)
+    }
   }
 
   // MARK: - Comments
@@ -617,8 +983,7 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       return
     }
     let paths = comments.replaceImported(with: imported)
-    for path in paths { resendDiff(path: path) }
-    updateCounts()
+    reloadComments(paths)
     host?.toasts.show(
       Toast(
         kind: .success,
@@ -638,68 +1003,28 @@ final class ReviewSurface: NSView, WKScriptMessageHandler, WKNavigationDelegate 
       confirmTitle: "Delete", destructive: true
     ) { [weak self] proceed in
       guard proceed, let self else { return }
-      let paths = Set(self.comments.comments.map(\.path))
       self.comments.removeAll()
-      for path in paths { self.resendDiff(path: path) }
+      self.reloadComments()
     }
-  }
-
-  // MARK: - Theme → CSS
-
-  /// CSS custom properties for the review page, derived like ChromePalette.
-  static func cssVariables(theme: Theme) -> [String: String] {
-    let bg = NSColor(hex: theme.bg)
-    let fg = NSColor(hex: theme.fg)
-    let accent = NSColor(hex: theme.accent)
-    let isLight = theme.isLight
-    func mix(_ a: NSColor, _ b: NSColor, _ t: CGFloat) -> String {
-      ChromePalette.mix(a, toward: b, amount: t).hexString
-    }
-    func rgba(_ hex: String, _ alpha: Double) -> String {
-      let c = NSColor(hex: hex).usingColorSpace(.sRGB) ?? .gray
-      return String(
-        format: "rgba(%d,%d,%d,%.3f)", Int(c.redComponent * 255), Int(c.greenComponent * 255),
-        Int(c.blueComponent * 255), alpha)
-    }
-    return [
-      "--bg": theme.bg,
-      "--panel": mix(bg, .black, isLight ? 0.02 : 0.14),
-      "--chrome": mix(bg, .black, isLight ? 0.035 : 0.22),
-      "--raised": mix(bg, fg, isLight ? 0.06 : 0.07),
-      "--hairline": mix(bg, fg, 0.12),
-      "--hairline-strong": mix(bg, fg, 0.2),
-      "--hover": rgba(theme.fg, isLight ? 0.06 : 0.07),
-      "--text": theme.fg,
-      "--text2": theme.fgMuted,
-      "--text3": theme.fgComment,
-      "--accent": theme.accent,
-      "--accent-soft": rgba(theme.accent, 0.16),
-      "--on-accent": ChromePalette.readableText(on: accent).hexString,
-      "--added": theme.gitAdded,
-      "--removed": theme.gitDeleted,
-      "--modified": theme.gitModified,
-      "--renamed": theme.gitRenamed,
-      "--conflict": theme.gitConflict,
-      "--added-bg": rgba(theme.gitAdded, isLight ? 0.12 : 0.1),
-      "--removed-bg": rgba(theme.gitDeleted, isLight ? 0.12 : 0.11),
-      "--added-word": rgba(theme.gitAdded, isLight ? 0.3 : 0.28),
-      "--removed-word": rgba(theme.gitDeleted, isLight ? 0.3 : 0.3),
-      "--selection": rgba(theme.accent, isLight ? 0.18 : 0.22),
-      "--warning": theme.yellow,
-      "--danger": theme.red,
-    ]
   }
 }
 
-/// Avoids a retain cycle through WKUserContentController.
-private final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
-  weak var target: WKScriptMessageHandler?
-  init(_ target: WKScriptMessageHandler) { self.target = target }
-  func userContentController(
-    _ controller: WKUserContentController, didReceive message: WKScriptMessage
-  ) {
-    target?.userContentController(controller, didReceive: message)
+/// Shown over the diff list when there's nothing to review.
+struct ReviewEmptyView: View {
+  let message: String
+  var palette: ChromePalette? = nil
+
+  var body: some View {
+    Text(message)
+      .font(ChromeFont.ui(13))
+      .foregroundStyle(palette?.textTertiary ?? .secondary)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(palette?.content ?? .clear)
   }
+}
+
+extension Array {
+  fileprivate subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 // MARK: - Header
@@ -759,17 +1084,9 @@ struct ReviewHeaderBar: View {
             model.viewedCount == model.fileCount ? chrome.success : chrome.textSecondary)
       }
 
-      HStack(spacing: 0) {
-        segment("Unified", selected: model.options.layout == "unified") {
-          model.onSetLayout?("unified")
-        }
-        segment("Split", selected: model.options.layout == "split") {
-          model.onSetLayout?("split")
-        }
-      }
-      .padding(2)
-      .background(
-        RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous).fill(chrome.raised))
+      ChromeSegmented(
+        options: [("unified", "Unified"), ("split", "Split")],
+        selection: Binding(get: { model.options.layout }, set: { model.onSetLayout?($0) }))
 
       ChromeIconButton(
         icon: .space,
@@ -823,22 +1140,5 @@ struct ReviewHeaderBar: View {
     .background(chrome.panel)
     .overlay(alignment: .bottom) { Hairline() }
     .environment(\.chrome, chrome)
-  }
-
-  private func segment(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View
-  {
-    let chrome = model.palette
-    return Button(action: action) {
-      Text(title)
-        .font(ChromeFont.ui(11, weight: selected ? .semibold : .regular))
-        .foregroundStyle(selected ? chrome.text : chrome.textTertiary)
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(
-          RoundedRectangle(cornerRadius: Metrics.radiusSmall, style: .continuous)
-            .fill(selected ? chrome.content : .clear))
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(ChromePressStyle())
   }
 }

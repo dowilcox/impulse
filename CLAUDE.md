@@ -30,7 +30,7 @@ impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
                           notify, status, checkpoint, review, task, send, hook
   Clibgit2/               module map for the vendored static libgit2
   CImpulseFFI/            C header for the Rust terminal FFI
-  web/                    editor.html/js + review.html/js (Monaco glue)
+  web/                    editor.html/js (Monaco glue)
 impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
                           OSC 133/7/6973 scanning, command blocks, history
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
@@ -93,6 +93,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **Shell integration:** `ImpulseKit/Resources/ShellIntegration/{bash,zsh,fish}.sh` emit OSC 133 (prompt/command marks), OSC 7 (cwd) and OSC 6973 (`Command=` the command text, `Names=` aliases/functions/builtins and `Path=` PATH, sent only on change). Keys: `KeyEncoder` encodes legacy sequences; when a program pushes kitty keyboard flags (mode bits 11–15) `ImpulseKit.KittyKeyboard` takes over.
 - **Editor:** Monaco in WKWebView, loaded from the app bundle (`EditorAssets.monacoDirectory`; build.sh copies vendor/ + impulse-macos/web/ into `Sources/ImpulseApp/Resources/monaco` — copy again and rebuild after editing `web/`). `EditorWebViewPool` pre-warms one WebView. Markdown preview renders with cmark-gfm in safe mode (raw HTML is elided by design — do not re-enable `CMARK_OPT_UNSAFE`).
 - **Language servers:** LSP requests go through `enqueueLspRequest` (sent after queued didOpen/didChange, answered off the queue); notifications reach every server for the language. Each editor tab is its own WebView, so Monaco can only edit its own file: workspace edits that reach further (rename, code actions, `workspace/applyEdit`) are applied in Swift by `Editor/LSPWorkspaceEdits.swift` on top of `ImpulseKit.WorkspaceEdit`.
+- **Review:** native, not web. `ReviewSurface` (header + `ReviewNavigatorView` + `ReviewDiffController`) builds flat rows with `ReviewRowBuilder` into one NSTableView: line rows are custom-drawn (`DiffLineCellView`, character-wrapped, heights from `ReviewMetrics`), headers/comments/composer are hosted SwiftUI (`ReviewRowViews.swift`), file headers float as group rows. Syntax colors come from highlight.js in JavaScriptCore (`SyntaxHighlighter`, old/new sides tokenized separately) mapped to the theme's syntax colors. History's lower half is the same surface.
 - **Themes:** TOML files in `Sources/ImpulseKit/Resources/Themes/` (user themes in `~/Library/Application Support/impulse/themes`). `ThemeStore` resolves them; `themeToMonaco` / `themeToMarkdownColors` derive editor/preview themes. New built-in themes: add the TOML resource and its name to `ThemeStore.builtinThemeNames()`.
 - **File tree:** `FileTreeDataController` (headless) owns watchers and data; patches computed by `ImpulseKit.FileTreePatcher` with git-status enrichment composed from `ImpulseGit.GitClient`; rendered by `FileTreeListView` (ScrollView + LazyVStack, NOT List/DisclosureGroup).
 - **Version:** the top-level `VERSION` file is the single source of truth. build.sh stamps it into Info.plist; the app reads `CFBundleShortVersionString` (`AppVersion.current`). Never version-bump by hand — `scripts/release.sh` does it.

@@ -394,7 +394,8 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
 
 ### 4.2 Review surface v2 (§7.3)
 
-- [x] **Protocol v2** (`Editor/ReviewProtocol.swift` and `web/review.js`):
+- [x] **Native renderer.** *(The web renderer below was replaced by AppKit: `ReviewSurface`, `ReviewNavigatorView`, `ReviewDiffController` (one NSTableView of rows from `ReviewRowBuilder`, floating file headers, custom-drawn wrapped lines), SwiftUI comment/composer rows, and highlight.js in JavaScriptCore for syntax colors. History's lower half uses the same surface. `web/review.*` and the JSON protocol are gone.)*
+- [x] **Protocol v2** (`Editor/ReviewProtocol.swift` and `web/review.js`; superseded by the native renderer):
   - `Render{generation, scope, files[{id, path, oldPath, status, added, removed, binary, contentHash, staged?}]}`;
   - `UpdateFile`, `RemoveFile`, `SetHunks{fileId, hunks[{id, …}], contentHash}`;
   - `SetViewed`, `SetComments`, `SetLayout{unified|split, whitespace, context}`.

@@ -4,8 +4,8 @@ import Foundation
 /// bundle (populated by build.sh from vendor/monaco + web/), replacing the
 /// old Rust `include_dir!` extraction to Application Support.
 enum EditorAssets {
-  /// The bundled Monaco directory containing vs/, fonts/, highlight/,
-  /// editor.html/js, and review.html/js.
+  /// The bundled Monaco directory containing vs/, fonts/, highlight/ and
+  /// editor.html/js.
   static let monacoDirectory: URL? = {
     let url = Bundle.appResources.resourceURL?
       .appendingPathComponent("monaco", isDirectory: true)

@@ -169,7 +169,6 @@ echo "==> Copying Monaco editor assets..."
 
 MONACO_SRC="vendor/monaco"
 EDITOR_HTML_SRC="impulse-macos/web/editor.html"
-REVIEW_HTML_SRC="impulse-macos/web/review.html"
 MONACO_DST="impulse-macos/Sources/ImpulseApp/Resources/monaco"
 
 if [[ ! -d "${MONACO_SRC}" ]]; then
@@ -183,11 +182,6 @@ if [[ ! -f "${EDITOR_HTML_SRC}" ]]; then
     exit 1
 fi
 
-if [[ ! -f "${REVIEW_HTML_SRC}" ]]; then
-    echo "ERROR: review.html not found at ${REVIEW_HTML_SRC}." >&2
-    exit 1
-fi
-
 FONTS_SRC="$(dirname "${MONACO_SRC}")/fonts"
 HIGHLIGHT_SRC="$(dirname "${MONACO_SRC}")/highlight"
 WEB_SRC="$(dirname "${EDITOR_HTML_SRC}")"
@@ -195,10 +189,10 @@ WEB_SRC="$(dirname "${EDITOR_HTML_SRC}")"
 mkdir -p "${MONACO_DST}"
 cp -r "${MONACO_SRC}"/* "${MONACO_DST}/"
 cp "${WEB_SRC}/editor.html" "${WEB_SRC}/editor.js" "${MONACO_DST}/"
-cp "${WEB_SRC}/review.html" "${WEB_SRC}/review.js" "${MONACO_DST}/"
 
 # Fonts (editor @font-face + terminal font installation) and highlight.js
-# (markdown preview) mirror the layout the old Rust extraction produced.
+# (markdown preview, review syntax colors) mirror the layout the old Rust
+# extraction produced.
 mkdir -p "${MONACO_DST}/fonts" "${MONACO_DST}/highlight"
 cp -r "${FONTS_SRC}"/* "${MONACO_DST}/fonts/"
 cp -r "${HIGHLIGHT_SRC}"/* "${MONACO_DST}/highlight/"

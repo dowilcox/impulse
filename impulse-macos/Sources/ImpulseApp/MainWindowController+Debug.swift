@@ -23,6 +23,10 @@ extension MainWindowController {
     case "changes": showChangesPanel()
     case "review-split":
       for case .diffReview(_, let review) in tabManager.allSurfaces { review.setLayout("split") }
+    case _ where action.hasPrefix("review-"):
+      for case .diffReview(_, let review) in tabManager.allSurfaces {
+        review.debugAction(String(action.dropFirst(7)))
+      }
     default:
       if action.hasPrefix("open=") {
         let relative = String(action.dropFirst(5))
@@ -43,6 +47,9 @@ extension MainWindowController {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("theme=") {
+        // This window only; settings are left alone.
+        handleThemeChange(ThemeManager.theme(forName: String(action.dropFirst(6))))
       } else if action == "history" {
         showHistory()
       } else if action.hasPrefix("history-filter="), let repository = windowModel.repository {

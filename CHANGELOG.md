@@ -39,7 +39,7 @@ running in its terminals. Impulse itself never calls an AI service.
 **Git**
 
 - A Changes panel with a commit composer and full keyboard control.
-- A rebuilt review: navigator, scopes (unstaged, staged, branch, commit, range, stash, last agent turn, since last review), hunk and line staging, comments, and imported pull request threads.
+- A rebuilt, native review: navigator, scopes (unstaged, staged, branch, commit, range, stash, last agent turn, since last review), syntax-colored unified and split diffs, hunk and line staging, comments, and imported pull request threads.
 - Live change marks in the editor with a peek, inline blame, and a side-by-side diff view you can edit.
 - History with a commit graph, compare, filters (`author:`, `path:`, `since:`, `until:`) and fork-point dimming.
 - Branch switching and management, undoable stash drop/pop, merge-conflict resolution in the editor (or by an agent), and GitHub pull requests through `gh`.

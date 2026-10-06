@@ -394,6 +394,8 @@ struct ChromeTextField: View {
   let placeholder: String
   @Binding var text: String
   var icon: LucideIcon? = nil
+  /// Bump to move keyboard focus into the field.
+  var focusRequest: Int = 0
   var onSubmit: () -> Void = {}
   @FocusState private var focused: Bool
 
@@ -411,6 +413,11 @@ struct ChromeTextField: View {
       .foregroundStyle(chrome.text)
       .focused($focused)
       .onSubmit(onSubmit)
+      .onChange(of: focusRequest) { _, _ in focused = true }
+      .onKeyPress(.escape) {
+        focused = false
+        return .handled
+      }
       if !text.isEmpty {
         Button {
           text = ""
