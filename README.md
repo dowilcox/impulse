@@ -39,6 +39,7 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 - Project actions and worktree setup from `.impulse/project.toml`; the `impulse` command-line tool, which also lets Impulse be your `$EDITOR`
 - An optional quick terminal on a global shortcut; ⌘⇧T reopens a closed tab (or ⌘Z right after closing it)
 - 19 built-in themes plus user themes; Settings and Keyboard Shortcuts as searchable tabs
+- Workspace trust: language servers, formatters on save and background fetch only run in folders you trust
 
 **Terminal**
 

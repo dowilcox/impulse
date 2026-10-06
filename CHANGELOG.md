@@ -7,7 +7,16 @@ All notable changes to Impulse are documented in this file.
 **Impulse is now a native Mac app.** It was rewritten in Swift (AppKit +
 SwiftUI); only the terminal emulation core is still Rust. **Linux is no
 longer supported**: the GTK4 app's last packages are on the 0.28.0 GitHub
-release, and 0.29.0 is the last version whose source includes it.
+release, and 0.29.0 is the last version whose source includes it. Release
+builds are for Apple silicon (macOS 26 or later).
+
+**Workspace trust.** Opening a folder asks whether to trust it. Until you
+do, Impulse runs none of its code on its own: no language servers (some run
+a project's build scripts and tools), no formatters or commands on save, no
+background fetch. A Restricted item in the status bar brings the question
+back; the palette can trust, restrict or forget folders, and a setting
+turns the question off. Folders from the saved session and recent
+workspaces are trusted on the first launch.
 
 ### Terminal IDE redesign
 
@@ -59,6 +68,8 @@ running in its terminals. Impulse itself never calls an AI service.
 - Problems panel, go to symbol in file or project, project-wide replace with a preview, and Markdown preview beside the editor with Run buttons on shell blocks.
 - Language servers: cross-file renames and code actions applied across files with one Undo, commands and `codeAction/resolve`, `workspace/applyEdit`, document highlights, inlay hints (with a setting), type definition, implementation, server messages and progress. sourcekit-lsp serves Swift.
 - Requests no longer queue behind each other, and every server for a language sees opened documents.
+- Servers start in the background, get the files opened before they were up, and come back after a crash (with a growing delay); a file open in two windows is one document to them.
+- Monaco 0.57.
 
 **Accessibility**
 
@@ -79,6 +90,15 @@ running in its terminals. Impulse itself never calls an AI service.
 - Command block separators stay on their prompts when a resize rewraps long lines (opening an editor beside a terminal, for one).
 - Clicking a short commit hash in terminal output selects that commit in History.
 - A narrow terminal pane drops whole context chips instead of cutting the last one in half.
+- Diagnostics were drawn a line and a column late.
+- Workspace edits from a language server are refused when the file changed after the server computed them, instead of landing in the wrong places.
+- Text a program prints can no longer pose as a command: command text needs the terminal's shell-integration nonce to reach blocks, Rerun, completions or history.
+- Terminals stay responsive under floods of output, and shells no longer look like they run in Alacritty.
+- Typing in the input bar and Tab completion don't block the window on the filesystem, git or fish.
+- Git: timeouts stop hooks and ssh along with git, and long local operations (an LFS checkout) aren't cut off; background fetch no longer holds up staging and committing; stash review shows the untracked files a stash carries; agent-turn snapshots no longer take the index lock.
+- History doesn't mix branches when switching scope mid-load; an agent turn that ends quickly still gets its end snapshot; the Branch Manager's confirmations, errors and Undo show on top of it.
+- gh calls time out, and the login PATH includes what `.zshrc` / `config.fish` add.
+- libgit2 1.9.7 (security fixes).
 
 ## 0.29.0
 
