@@ -28,6 +28,7 @@ final class PalettePanelController: NSObject, NSWindowDelegate {
     if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
     panel.makeKeyAndOrderFront(nil)
     panel.invalidateShadow()
+    placeCaretAtEnd()
 
     // Track content height changes (results list grows/shrinks).
     sizeObserver = ObservationLoop(owner: self) { [weak self] in
@@ -39,6 +40,18 @@ final class PalettePanelController: NSObject, NSWindowDelegate {
   }
 
   private var sizeObserver: ObservationLoop?
+
+  /// Focusing the field selects its text (the mode prefix, like ">"); put
+  /// the caret after it instead so typing continues the query. SwiftUI
+  /// focuses the field a moment later, so wait for its field editor.
+  private func placeCaretAtEnd(attempts: Int = 10) {
+    guard let panel, panel.isVisible else { return }
+    if let editor = panel.firstResponder as? NSTextView, editor.isFieldEditor {
+      editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+    } else if attempts > 0 {
+      DispatchQueue.main.async { [weak self] in self?.placeCaretAtEnd(attempts: attempts - 1) }
+    }
+  }
 
   func close() {
     sizeObserver?.cancel()
