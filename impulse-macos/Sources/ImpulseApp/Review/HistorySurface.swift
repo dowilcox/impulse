@@ -35,6 +35,8 @@ final class HistoryModel {
   @ObservationIgnored private(set) var applied = Request(scope: .head, path: nil, query: HistoryQuery())
   @ObservationIgnored private var queryReload: DispatchWorkItem?
   var selectedSha: String?
+  /// Bumped to give the commit list keyboard focus (↑/↓ move the selection).
+  var focusRequest = 0
   var palette: ChromePalette
   /// Commits not on the upstream yet, and upstream commits not here yet.
   private(set) var outgoing: Set<String> = []
@@ -278,6 +280,8 @@ final class HistorySurface: NSView {
   private weak var host: GitPanelHost?
   private let review: ReviewSurface
   private var listHost: NSView!
+  /// Focus asked for before the view was in a window (a new History tab).
+  private var focusWhenInWindow = false
 
   init(repository: GitRepositoryState, path: String?, theme: Theme, host: GitPanelHost?) {
     self.repository = repository
@@ -410,8 +414,23 @@ final class HistorySurface: NSView {
     refreshWork?.cancel()
   }
 
+  /// The commit list takes the keyboard, so ↑/↓ move through commits
+  /// right away (the top one is selected when History opens).
   func focus() {
-    window?.makeFirstResponder(listHost)
+    guard let window else {
+      focusWhenInWindow = true
+      return
+    }
+    window.makeFirstResponder(listHost)
+    model.focusRequest &+= 1
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard window != nil, focusWhenInWindow else { return }
+    focusWhenInWindow = false
+    // After the hosting views are laid out in the window.
+    DispatchQueue.main.async { [weak self] in self?.focus() }
   }
 
   /// Snapshot checks: scroll the selected commit's changes.
@@ -593,6 +612,8 @@ struct HistoryListView: View {
     .focusable()
     .focused($focused)
     .focusEffectDisabled()
+    .onChange(of: model.focusRequest) { _, _ in focused = true }
+    .onAppear { if model.focusRequest > 0 { focused = true } }
     .onKeyPress(.upArrow) {
       model.moveSelection(-1)
       return .handled
