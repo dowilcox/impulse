@@ -1360,7 +1360,7 @@ impl TerminalBackend {
     }
 
     /// Recent command strings, newest-first and de-duplicated. Used by the
-    /// input-bar completion engine (which lives in `impulse-core`).
+    /// input-bar completion engine (Swift, in ImpulseKit).
     pub fn recent_command_strings(&self, limit: usize) -> Vec<String> {
         self.history
             .lock()

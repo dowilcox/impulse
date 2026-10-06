@@ -4,6 +4,11 @@ All notable changes to Impulse are documented in this file.
 
 ## Unreleased
 
+**Impulse is now a native Mac app.** It was rewritten in Swift (AppKit +
+SwiftUI); only the terminal emulation core is still Rust. **Linux is no
+longer supported**: the GTK4 app's last release is 0.29.0, whose packages
+stay on its GitHub release.
+
 ### Terminal IDE redesign
 
 Impulse moves from an Apple-styled tabbed app to a terminal IDE workbench,
@@ -64,6 +69,17 @@ running in its terminals. Impulse itself never calls an AI service.
 
 - Edit ▸ Undo/Redo now reach text fields and the window (they sent a selector nothing implemented).
 - Monaco could only edit its own file, so renames that touched other files failed.
+- Editor files are never lost to the disk: files that aren't UTF-8 stay closed instead of opening empty, byte-order marks are kept, saving through a symlink writes its target, and a file changed on disk (by an agent, git or another app) is never silently overwritten or replaced — saving asks, and unsaved edits are kept with a notice.
+- Pasted text can't end a bracketed paste early and run commands; pasting or dropping on a terminal whose input bar owns input fills the input bar.
+- Live output keeps drawing after scrolling; a synchronized update left open by a program that died no longer freezes the terminal.
+- Shell integration: bash records the commands you run (not its PROMPT_COMMAND hooks) and reads your login profile; folders and commands with non-ASCII names are tracked correctly; terminals get a UTF-8 locale.
+- Markdown preview links and terminal OSC 8 links can no longer open arbitrary apps or pages that run commands.
+- Git: reverting a hunk applies to the right block, partial staging refuses non-UTF-8 files instead of corrupting them, file names are never treated as globs, commit messages keep lines starting with #, and destructive actions don't run without their safety snapshot.
+- Language servers, node and npm are found when Impulse is started from the Dock.
+
+## 0.29.0
+
+The last release with the Linux (GTK4) app.
 
 ### macOS — Terminal backend migration and polish
 
@@ -122,7 +138,7 @@ running in its terminals. Impulse itself never calls an AI service.
 - `CADisplayLink` replaces the deprecated `CVDisplayLink` API in the terminal renderer.
 - Migrated to the flat `FlatTreeEntry` architecture for the SwiftUI file tree.
 
-### Known limitations
+### Known limitations (in 0.29.0)
 
 - **Terminal scrollback size only takes effect on new terminals.** Changing `terminalScrollback` in settings does not resize the buffer of already-running terminals (alacritty allocates the scrollback ring at `Term::new()` and does not expose a runtime resize API). Restart the tab or open a new terminal to apply the new size.
 - **Cursor shape override is unconditional.** The user's `terminalCursorShape` preference is applied at the renderer layer and overrides any ANSI `DECSCUSR` escape sequence from running programs. Vim users who rely on per-mode cursor shape switching in insert/normal modes will see the same shape throughout. A future release will track program overrides separately so user preference acts as the default rather than a hard override.
