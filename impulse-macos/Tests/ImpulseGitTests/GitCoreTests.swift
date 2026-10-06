@@ -556,10 +556,12 @@
       #expect(jane.map(\.subject) == ["Jane's change"], "author matches case-insensitively")
       let byPath = try GitLog.entries(root: repo.root, query: .parse("path:a.txt")).get()
       #expect(byPath.map(\.subject) == ["First"])
-      // Commits are dated 2026-01-01.
-      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2025-12-31")).get().count == 2)
-      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2026-01-02")).get().isEmpty)
-      #expect(try GitLog.entries(root: repo.root, query: .parse("until:2025-12-31")).get().isEmpty)
+      // Commits are dated 2026-01-01 (UTC); days well away from it keep the
+      // test independent of the local time zone.
+      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2025-12-25")).get().count == 2)
+      #expect(try GitLog.entries(root: repo.root, query: .parse("since:2026-01-05")).get().isEmpty)
+      #expect(try GitLog.entries(root: repo.root, query: .parse("until:2025-12-25")).get().isEmpty)
+      #expect(try GitLog.entries(root: repo.root, query: .parse("until:2026-01-05")).get().count == 2)
     }
 
     @Test func forkPointFromTheDefaultBranch() throws {

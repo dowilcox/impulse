@@ -17,7 +17,7 @@
     @Test func aliasesQuotesAndUnknownKeys() {
       let query = HistoryQuery.parse("by:\"Jane Doe\" before:2026-01-01 after:yesterday fix:bug")
       #expect(query.author == "Jane Doe")
-      #expect(query.until == "2026-01-01")
+      #expect(query.until == "2026-01-01 23:59:59", "the whole day")
       #expect(query.since == "yesterday")
       #expect(query.text == "fix:bug", "unknown keys stay free text")
     }
@@ -39,7 +39,9 @@
     @Test func relativeDates() {
       #expect(HistoryQuery.gitDate("12h") == "12.hours.ago")
       #expect(HistoryQuery.gitDate("1M") == "1.months.ago")
-      #expect(HistoryQuery.gitDate("2026-03-01") == "2026-03-01")
+      #expect(HistoryQuery.gitDate("2026-03-01") == "2026-03-01 00:00:00")
+      #expect(HistoryQuery.gitDate("2026-03-01", endOfDay: true) == "2026-03-01 23:59:59")
+      #expect(HistoryQuery.gitDate("last friday") == "last friday")
       #expect(HistoryQuery.gitDate("w") == "w")
     }
 

@@ -47,7 +47,7 @@ public struct HistoryQuery: Equatable, Sendable {
         case "author": query.author = value
         case "path": query.path = value
         case "since": query.since = gitDate(value)
-        default: query.until = gitDate(value)
+        default: query.until = gitDate(value, endOfDay: true)
         }
       } else {
         words.append(unquote(token))
@@ -75,14 +75,18 @@ public struct HistoryQuery: Equatable, Sendable {
     return args
   }
 
-  /// `2w` → `2.weeks.ago` (also h, d, m for months, y); anything else is
-  /// passed to git as written.
-  static func gitDate(_ value: String) -> String {
+  /// `2w` → `2.weeks.ago` (also h, d, m for months, y); a bare
+  /// `2026-01-31` covers the whole day (git would otherwise read it as that
+  /// date at the current time); anything else is passed to git as written.
+  static func gitDate(_ value: String, endOfDay: Bool = false) -> String {
     let units: [Character: String] = ["h": "hours", "d": "days", "w": "weeks", "m": "months", "y": "years"]
     if let unit = value.last.flatMap({ units[Character($0.lowercased())] }),
       let count = Int(value.dropLast()), count >= 0
     {
       return "\(count).\(unit).ago"
+    }
+    if value.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil {
+      return value + (endOfDay ? " 23:59:59" : " 00:00:00")
     }
     return value
   }
