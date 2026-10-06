@@ -99,7 +99,10 @@ public final class CommandLookup: @unchecked Sendable {
       scannedPath = path
       scannedAt = Date()
       scanning = false
+      // PATH changed while this scan ran (setPath's rescan was skipped).
+      let changed = self.path != path
       lock.unlock()
+      if changed { rescan() }
     }
   }
 

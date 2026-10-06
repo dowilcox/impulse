@@ -186,8 +186,8 @@ impl TerminalSearch {
             let next = m
                 .end()
                 .add(term, alacritty_terminal::index::Boundary::Grid, 1);
-            // Stop at the end of the grid (add wraps around) or past it.
-            if next <= *m.start() || next > end {
+            // Stop at the end of the grid (add can't move past it) or past it.
+            if next <= *m.end() || next > end {
                 break;
             }
             cursor = next;
@@ -220,15 +220,9 @@ impl TerminalSearch {
 
         // Use regex_search_right to iterate through all matches in the viewport.
         let mut cursor = start;
-        // Safety limit to prevent infinite loops on pathological patterns.
-        let max_matches = num_lines * num_cols;
-        let mut count = 0;
 
-        loop {
-            if count >= max_matches {
-                break;
-            }
-
+        // The snapshot header counts ranges in a u16.
+        while ranges.len() < u16::MAX as usize {
             match term.regex_search_right(regex, cursor, end) {
                 Some(m) => {
                     let m_start = *m.start();
@@ -261,22 +255,20 @@ impl TerminalSearch {
                         }
                     }
 
-                    // Advance cursor past this match.
-                    cursor = m_end.add(term, alacritty_terminal::index::Boundary::Grid, 1);
-
-                    // If we've gone past the viewport, stop.
-                    if cursor.line > end.line
-                        || (cursor.line == end.line && cursor.column > end.column)
-                    {
+                    // Advance past this match. At the grid's last cell `add`
+                    // can't move forward (it clamps or wraps), which would find
+                    // the same match again.
+                    let next = m_end.add(term, alacritty_terminal::index::Boundary::Grid, 1);
+                    if next <= m_end || next > end {
                         break;
                     }
-
-                    count += 1;
+                    cursor = next;
                 }
                 None => break,
             }
         }
 
+        ranges.truncate(u16::MAX as usize);
         ranges
     }
 
@@ -373,6 +365,22 @@ mod tests {
         assert_eq!(count(&mut search, "(?i)Error"), 2);
         assert_eq!(count(&mut search, "(?i)(?-u:\\b)(?:id)(?-u:\\b)"), 1);
         assert_eq!(count(&mut search, "(?i)id"), 3);
+    }
+
+    #[test]
+    fn a_match_in_the_last_cell_is_found_once() {
+        // Fill the screen so the last match ends in the bottom-right cell.
+        let term = term_with(4, 2, b"ab a\r\nb ab");
+        let mut search = TerminalSearch::new();
+        search.search(&term, "b");
+        assert_eq!(search.visible_matches(&term).len(), 3);
+        assert_eq!(search.stats(&term, 100).total, 3);
+        search.search(&term, "ab");
+        assert_eq!(search.visible_matches(&term).len(), 2);
+        assert_eq!(search.stats(&term, 100).total, 2);
+        // Matches everything: one range per cell at most.
+        search.search(&term, ".");
+        assert_eq!(search.visible_matches(&term).len(), 8);
     }
 
     #[test]

@@ -34,6 +34,27 @@
       #expect(commands.isKnown("gti", cwd: nil) == false)
     }
 
+    @Test func aPathChangeDuringAScanIsPickedUp() {
+      let started = DispatchSemaphore(value: 0)
+      let release = DispatchSemaphore(value: 0)
+      let commands = CommandLookup { directory in
+        if directory == "/bin" {
+          started.signal()
+          release.wait()
+          return ["ls"]
+        }
+        return directory == "/opt/tools" ? ["rg"] : []
+      }
+      commands.setPath("/bin")
+      started.wait()
+      commands.setPath("/opt/tools")  // arrives while /bin is being listed
+      release.signal()
+      commands.waitForScan()
+      commands.waitForScan()
+      #expect(commands.isKnown("rg", cwd: nil) == true)
+      #expect(commands.isKnown("ls", cwd: nil) == false)
+    }
+
     @Test func quotedAndExpandedWordsAreLeftAlone() {
       let commands = lookup()
       commands.setPath("/bin")

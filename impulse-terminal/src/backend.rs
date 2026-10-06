@@ -1556,11 +1556,15 @@ impl TerminalBackend {
             }
         }
 
-        let search_ranges = self
+        let mut search_ranges = self
             .search
             .lock()
             .map(|mut s| s.visible_matches(&term))
             .unwrap_or_default();
+        // The header counts each kind in a u16 (grid_buffer_size reserves
+        // that much at most).
+        selection_ranges.truncate(u16::MAX as usize);
+        search_ranges.truncate(u16::MAX as usize);
 
         let required = buffer::buffer_size(
             num_cols as u16,

@@ -3642,11 +3642,13 @@ extension TerminalRenderer: NSTextInputClient {
         }
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
-        let cursorX = padding + CGFloat(grid.cursorCol) * cw
-        // View coordinates are flipped; convert to AppKit bottom-up for window conversion.
-        let cursorYFromTop = padding + CGFloat(grid.cursorRow) * ch
-        let cursorYFromBottom = bounds.height - cursorYFromTop - ch
-        let viewRect = NSRect(x: cursorX, y: cursorYFromBottom, width: cw, height: ch)
+        // Where the marked text is drawn: the cursor's row, including the
+        // bottom-anchor offset and collapsed rows. The view is flipped, and
+        // convert(_:to:) accounts for that.
+        let viewRect = NSRect(
+            x: padding + CGFloat(grid.cursorCol) * cw,
+            y: contentYOffset + rowTopY(Int(grid.cursorRow)),
+            width: cw, height: ch)
         let windowRect = self.convert(viewRect, to: nil)
         return window.convertToScreen(windowRect)
     }
