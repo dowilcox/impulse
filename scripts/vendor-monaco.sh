@@ -4,11 +4,11 @@
 # Run once, or when upgrading Monaco version.
 set -euo pipefail
 
-MONACO_VERSION="0.55.1"
+MONACO_VERSION="0.57.0"
 # SHA256 of the npm tarball (checked against the registry's sha512
 # integrity). To update: download the new tarball, compare it with
 # `npm view monaco-editor@<version> dist.integrity`, then `shasum -a 256` it.
-MONACO_SHA256="eec3721fb6b1dc5a0bd1a73e38a5eb5d0c3791af684f7d2571efb90ad8634871"
+MONACO_SHA256="3ea1712fbacd3290cf4751007e3a5b57cc279767607812d4c3e57925fb0b05c2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENDOR_DIR="$PROJECT_ROOT/vendor/monaco"

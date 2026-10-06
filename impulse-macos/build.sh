@@ -194,6 +194,9 @@ FONTS_SRC="$(dirname "${MONACO_SRC}")/fonts"
 HIGHLIGHT_SRC="$(dirname "${MONACO_SRC}")/highlight"
 WEB_SRC="$(dirname "${EDITOR_HTML_SRC}")"
 
+# Start clean: chunk names change between Monaco versions, and copying over
+# the old folder would ship both.
+rm -rf "${MONACO_DST}"
 mkdir -p "${MONACO_DST}"
 cp -r "${MONACO_SRC}"/* "${MONACO_DST}/"
 cp "${WEB_SRC}/editor.html" "${WEB_SRC}/editor.js" "${MONACO_DST}/"
