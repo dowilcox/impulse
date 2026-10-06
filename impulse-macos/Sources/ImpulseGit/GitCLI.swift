@@ -218,6 +218,9 @@ public enum GitCLI {
     }
 
     if let inPipe, let stdin {
+      // git can exit before reading its input (a failing hook, a held
+      // index.lock); the write must fail, not raise SIGPIPE and kill the app.
+      _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
       DispatchQueue.global(qos: .userInitiated).async {
         try? inPipe.fileHandleForWriting.write(contentsOf: stdin)
         try? inPipe.fileHandleForWriting.close()

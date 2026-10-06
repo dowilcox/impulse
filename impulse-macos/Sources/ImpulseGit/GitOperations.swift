@@ -74,7 +74,13 @@ public enum GitOperations {
   /// `git add` the paths (new, modified, or deleted).
   public static func stage(paths: [String], root: String) -> GitResult {
     guard !paths.isEmpty else { return .success(()) }
-    return void(git(["add", "--all", "--"] + paths, in: root))
+    return void(git(literal(["add", "--all", "--"] + paths), in: root))
+  }
+
+  /// File paths are literal: a name like `app/[id].tsx` or `:!x` mustn't
+  /// act as a glob or pathspec magic and touch other files.
+  static func literal(_ arguments: [String]) -> [String] {
+    ["--literal-pathspecs"] + arguments
   }
 
   /// Stage every change, including untracked files.
@@ -87,9 +93,9 @@ public enum GitOperations {
   public static func unstage(paths: [String], root: String, isUnborn: Bool) -> GitResult {
     guard !paths.isEmpty else { return .success(()) }
     if isUnborn {
-      return void(git(["rm", "--cached", "-r", "--quiet", "--"] + paths, in: root))
+      return void(git(literal(["rm", "--cached", "-r", "--quiet", "--"] + paths), in: root))
     }
-    return void(git(["restore", "--staged", "--"] + paths, in: root))
+    return void(git(literal(["restore", "--staged", "--"] + paths), in: root))
   }
 
   public static func unstageAll(root: String, isUnborn: Bool) -> GitResult {
@@ -101,13 +107,13 @@ public enum GitOperations {
   /// Untracked files are not touched (the app moves those to the Trash).
   public static func discardWorkingTree(paths: [String], root: String) -> GitResult {
     guard !paths.isEmpty else { return .success(()) }
-    return void(git(["restore", "--worktree", "--"] + paths, in: root))
+    return void(git(literal(["restore", "--worktree", "--"] + paths), in: root))
   }
 
   /// Revert files to HEAD in both the index and the working tree.
   public static func discardAll(paths: [String], root: String) -> GitResult {
     guard !paths.isEmpty else { return .success(()) }
-    return void(git(["restore", "--staged", "--worktree", "--source=HEAD", "--"] + paths, in: root))
+    return void(git(literal(["restore", "--staged", "--worktree", "--source=HEAD", "--"] + paths), in: root))
   }
 
   // MARK: - Hunk / line selections
@@ -178,7 +184,9 @@ public enum GitOperations {
     guard !trimmed.isEmpty || options.amend else {
       return .failure(.invalid("Write a commit message first."))
     }
-    var args = ["commit", "--quiet", "--cleanup=strip"]
+    // `whitespace`, git's own default for -F: lines starting with "#"
+    // ("#482 was…", Markdown headings) are message, not comments.
+    var args = ["commit", "--quiet", "--cleanup=whitespace"]
     if trimmed.isEmpty && options.amend {
       args.append("--no-edit")
     } else {
@@ -211,24 +219,26 @@ public enum GitOperations {
   // MARK: - Branches
 
   public static func switchBranch(_ name: String, root: String) -> GitResult {
-    void(git(["switch", name], in: root))
+    void(git(["switch", "--end-of-options", name], in: root))
   }
 
   /// Create a branch at `startPoint` (default HEAD), optionally switching to it.
   public static func createBranch(
     _ name: String, startPoint: String? = nil, checkout: Bool = true, root: String
   ) -> GitResult {
-    var args = checkout ? ["switch", "-c", name] : ["branch", name]
+    // Names and revisions after --end-of-options: a ref like `--orphan=x`
+    // (valid in a remote) must not become an option.
+    var args = checkout ? ["switch", "-c", name, "--end-of-options"] : ["branch", "--end-of-options", name]
     if let startPoint { args.append(startPoint) }
     return void(git(args, in: root))
   }
 
   public static func renameBranch(_ name: String, to newName: String, root: String) -> GitResult {
-    void(git(["branch", "-m", name, newName], in: root))
+    void(git(["branch", "-m", "--end-of-options", name, newName], in: root))
   }
 
   public static func deleteBranch(_ name: String, force: Bool = false, root: String) -> GitResult {
-    void(git(["branch", force ? "-D" : "-d", name], in: root))
+    void(git(["branch", force ? "-D" : "-d", "--end-of-options", name], in: root))
   }
 
   public struct BranchInfo: Equatable, Sendable {
@@ -541,14 +551,14 @@ public enum GitOperations {
     if force { args.append("--force") }
     let message = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !message.isEmpty {
-      args += ["--annotate", "--file=-", name, revision]
+      args += ["--annotate", "--file=-", "--end-of-options", name, revision]
       return void(git(args, in: root, stdin: Data((message + "\n").utf8)))
     }
-    return void(git(args + [name, revision], in: root))
+    return void(git(args + ["--end-of-options", name, revision], in: root))
   }
 
   public static func deleteTag(_ name: String, root: String) -> GitResult {
-    void(git(["tag", "--delete", name], in: root))
+    void(git(["tag", "--delete", "--end-of-options", name], in: root))
   }
 
   /// The object a ref points at, unpeeled (an annotated tag's tag object).
@@ -626,17 +636,19 @@ public enum GitOperations {
   public static func resolveConflicts(_ paths: [String], takeOurs: Bool, root: String) -> GitResult {
     guard !paths.isEmpty else { return .success(()) }
     if case .failure(let error) = git(
-      ["checkout", takeOurs ? "--ours" : "--theirs", "--"] + paths, in: root)
+      literal(["checkout", takeOurs ? "--ours" : "--theirs", "--"] + paths), in: root)
     {
       return .failure(error)
     }
-    return void(git(["add", "--"] + paths, in: root))
+    return void(git(literal(["add", "--"] + paths), in: root))
   }
 
-  public enum ResetMode: String, Sendable { case soft, mixed, hard }
+  /// `keep` moves HEAD and updates files the move changes, but stops rather
+  /// than touch local modifications.
+  public enum ResetMode: String, Sendable { case soft, mixed, hard, keep }
 
   public static func reset(_ mode: ResetMode, to revision: String, root: String) -> GitResult {
-    void(git(["reset", "--\(mode.rawValue)", revision], in: root))
+    void(git(["reset", "--\(mode.rawValue)", "--end-of-options", revision, "--"], in: root))
   }
 
   /// Merge `revision` into the current branch (a fast-forward when
@@ -644,25 +656,25 @@ public enum GitOperations {
   public static func merge(_ revision: String, noFastForward: Bool = false, root: String) -> GitResult {
     var args = ["merge", "--no-edit"]
     if noFastForward { args.append("--no-ff") }
-    return void(git(args + [revision], in: root, timeout: 600))
+    return void(git(args + ["--end-of-options", revision], in: root, timeout: 600))
   }
 
   /// Replay the current branch's own commits on top of `revision`.
   /// Conflicts leave the rebase open for Continue / Skip / Abort.
   public static func rebase(onto revision: String, root: String) -> GitResult {
-    void(git(["rebase", revision], in: root, timeout: 600))
+    void(git(["rebase", "--end-of-options", revision], in: root, timeout: 600))
   }
 
   public static func cherryPick(_ revision: String, root: String) -> GitResult {
-    void(git(["cherry-pick", revision], in: root, timeout: 600))
+    void(git(["cherry-pick", "--end-of-options", revision], in: root, timeout: 600))
   }
 
   public static func revert(_ revision: String, root: String) -> GitResult {
-    void(git(["revert", "--no-edit", revision], in: root, timeout: 600))
+    void(git(["revert", "--no-edit", "--end-of-options", revision], in: root, timeout: 600))
   }
 
   public static func checkoutDetached(_ revision: String, root: String) -> GitResult {
-    void(git(["switch", "--detach", revision], in: root))
+    void(git(["switch", "--detach", "--end-of-options", revision], in: root))
   }
 
   // MARK: - Worktrees
@@ -718,10 +730,10 @@ public enum GitOperations {
   ) -> GitResult {
     var args = ["worktree", "add"]
     if newBranch {
-      args += ["-b", branch, path]
+      args += ["-b", branch, "--end-of-options", path]
       if let base { args.append(base) }
     } else {
-      args += [path, branch]
+      args += ["--end-of-options", path, branch]
     }
     return void(git(args, in: root, timeout: 300))
   }

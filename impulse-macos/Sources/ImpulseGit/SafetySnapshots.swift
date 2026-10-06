@@ -135,24 +135,43 @@ public enum SafetySnapshots {
   }
 
   /// Put `paths` (default: everything) back to how they were in `snapshot`,
-  /// in the working tree and, when recorded, the index. Files created after
-  /// the snapshot are left alone.
+  /// in the working tree and, when recorded, the index. Files that aren't in
+  /// the snapshot (created after it) are left alone.
   public static func restore(_ snapshot: SafetySnapshot, paths: [String] = [], root: String)
     -> GitResult
   {
     let pathspec = paths.isEmpty ? ["."] : paths
+    // Overlay: files that aren't in the snapshot stay as they are.
     let worktree = GitOperations.git(
-      ["restore", "--source=\(snapshot.commit)", "--worktree", "--"] + pathspec, in: root)
+      GitOperations.literal(["restore", "--overlay", "--source=\(snapshot.commit)", "--worktree", "--"] + pathspec),
+      in: root)
     if case .failure(let error) = worktree { return .failure(error) }
     // The empty tree means the index was empty: nothing to put back (and
     // git rejects a pathspec that matches nothing).
     let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
     if let indexTree = snapshot.indexTree, indexTree != emptyTree {
+      // Only paths either index knows: an untracked file brought back above
+      // matches neither, and git would reject the whole command.
+      let staged = paths.isEmpty ? pathspec : paths.filter { path in
+        indexHas(path, tree: indexTree, root: root)
+      }
+      guard !staged.isEmpty else { return .success(()) }
       let index = GitOperations.git(
-        ["restore", "--source=\(indexTree)", "--staged", "--"] + pathspec, in: root)
+        GitOperations.literal(["restore", "--overlay", "--source=\(indexTree)", "--staged", "--"] + staged),
+        in: root)
       if case .failure(let error) = index { return .failure(error) }
     }
     return .success(())
+  }
+
+  /// `path` is in the saved index tree or the current index.
+  private static func indexHas(_ path: String, tree: String, root: String) -> Bool {
+    let inTree = GitOperations.git(
+      GitOperations.literal(["ls-tree", "-r", "--name-only", tree, "--", path]), in: root)
+    if case .success(let result) = inTree, !result.stdout.isEmpty { return true }
+    let inIndex = GitOperations.git(GitOperations.literal(["ls-files", "--", path]), in: root)
+    if case .success(let result) = inIndex, !result.stdout.isEmpty { return true }
+    return false
   }
 
   /// Delete snapshots beyond `keep` or older than `maxAge`.

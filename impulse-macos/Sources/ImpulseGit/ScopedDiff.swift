@@ -119,7 +119,13 @@ extension GitClient {
     var buffer = git_buf()
     defer { git_buf_dispose(&buffer) }
     guard git_patch_to_buf(&buffer, patch) == 0, let pointer = buffer.ptr else { return nil }
-    return String(decoding: UnsafeRawBufferPointer(start: pointer, count: buffer.size), as: UTF8.self)
+    // Strictly UTF-8: a lossy decode would turn other encodings' bytes into
+    // U+FFFD, which a partial patch then writes into the index or file.
+    guard
+      let text = String(
+        data: Data(UnsafeRawBufferPointer(start: pointer, count: buffer.size)), encoding: .utf8)
+    else { throw PatchBuilder.BuildError.notUTF8 }
+    return text
   }
 
   /// Resolve a revision (branch, tag, sha, `HEAD~2`, ...) to a full commit id.

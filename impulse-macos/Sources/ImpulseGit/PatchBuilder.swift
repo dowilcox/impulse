@@ -33,6 +33,8 @@ public enum PatchBuilder {
     case nothingSelected
     case partialAddOrDelete
     case malformedPatch
+    /// The file isn't UTF-8 text, so it can't be split byte-exactly.
+    case notUTF8
 
     public var description: String {
       switch self {
@@ -40,6 +42,8 @@ public enum PatchBuilder {
       case .partialAddOrDelete:
         return "Part of a new or deleted file can't be staged on its own; select the whole file."
       case .malformedPatch: return "The diff couldn't be read."
+      case .notUTF8:
+        return "This file isn't UTF-8 text, so its hunks can't be staged, unstaged or reverted separately. Use the whole file instead."
       }
     }
   }
@@ -122,9 +126,24 @@ public enum PatchBuilder {
 
       let oldCount = lines.filter { $0.kind != "+" }.count
       let newCount = lines.filter { $0.kind != "-" }.count
-      let oldStart = hunk.oldStart
-      let newStart = oldCount == 0 && hunk.oldStart == 0 ? max(hunk.newStart, 1) : oldStart + offset
-      offset += newCount - oldCount
+      // git searches for each hunk starting at its post-image position in
+      // the file as already changed by the hunks before it. Forward, that's
+      // the old position shifted by the emitted hunks. Reversed (the sides
+      // swap), the target is the diff's new side: start from the hunk's new
+      // position, shifted by the emitted hunks being undone — never from
+      // the old position, which is off by every unselected earlier hunk and
+      // can land the change in an identical block elsewhere.
+      let oldStart: Int
+      let newStart: Int
+      if reverse {
+        newStart = hunk.newStart
+        oldStart = oldCount == 0 ? max(hunk.newStart - 1 + offset, 0) : hunk.newStart + offset
+        offset += oldCount - newCount
+      } else {
+        oldStart = hunk.oldStart
+        newStart = oldCount == 0 && hunk.oldStart == 0 ? max(hunk.newStart, 1) : oldStart + offset
+        offset += newCount - oldCount
+      }
       output.append(
         "@@ -\(range(oldStart, oldCount)) +\(range(newStart, newCount)) @@\(hunk.section)")
       for line in lines {

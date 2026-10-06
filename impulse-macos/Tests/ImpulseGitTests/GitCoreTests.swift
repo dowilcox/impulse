@@ -208,6 +208,50 @@
       #expect(try repo.read("f.txt").contains("line 2 changed"))
     }
 
+    @Test func revertingALaterHunkLandsInItsOwnBlock() throws {
+      // Hunk 0 adds lines at the top; hunks 1 and 2 delete the same line in
+      // two identical blocks. Reverting only hunk 2 (or unstaging it) must
+      // restore block 2, not the identical block 1.
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let block = "begin\nalpha\nbeta\nTARGET\ngamma\ndelta\nend\n"
+      let filler = (1...12).map { "filler \($0)" }.joined(separator: "\n") + "\n"
+      try repo.commit(["f.txt": filler + block + filler + block])
+      let added = (1...30).map { "new \($0)" }.joined(separator: "\n") + "\n"
+      let edited = block.replacingOccurrences(of: "TARGET\n", with: "")
+      try repo.write("f.txt", added + filler + edited + filler + edited)
+
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "f.txt", scope: .unstaged)
+      try #require(diff.hunks.count == 3)
+      let discard = GitOperations.apply(.discard, selection: .wholeHunks([2]), path: "f.txt", root: repo.root)
+      #expect(throws: Never.self) { try discard.get() }
+      #expect(try repo.read("f.txt") == added + filler + edited + filler + block)
+
+      // The same through the index: stage everything, unstage hunk 2.
+      try repo.write("f.txt", added + filler + edited + filler + edited)
+      try repo.git("add", "f.txt")
+      let unstage = GitOperations.apply(.unstage, selection: .wholeHunks([2]), path: "f.txt", root: repo.root)
+      #expect(throws: Never.self) { try unstage.get() }
+      #expect(try repo.git("show", ":f.txt") + "\n" == added + filler + edited + filler + block)
+    }
+
+    @Test func hunksOfNonUTF8FilesAreRefusedNotCorrupted() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let url = URL(fileURLWithPath: repo.root).appendingPathComponent("latin1.txt")
+      try Data("caf".utf8 + [0xE9] + Array("\nline\n".utf8)).write(to: url)
+      try repo.git("add", "latin1.txt")
+      try repo.git("commit", "-q", "-m", "latin1")
+      try Data("caf".utf8 + [0xE9] + Array(" au lait\nline\n".utf8)).write(to: url)
+
+      let result = GitOperations.apply(.stage, selection: .wholeHunks([0]), path: "latin1.txt", root: repo.root)
+      guard case .failure(.invalid) = result else {
+        Issue.record("expected the partial stage to be refused, got \(result)")
+        return
+      }
+      #expect(try repo.git("diff", "--cached", "--name-only") == "", "nothing reached the index")
+    }
+
     @Test func staleHunkIdIsRejected() throws {
       let repo = try twoHunkRepo()
       defer { repo.destroy() }
@@ -276,6 +320,40 @@
       #expect(try repo.git("diff", "--cached", "--name-only") == "a.txt")
     }
 
+    @Test func commitMessagesKeepHashLines() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.write("a.txt", "1\n")
+      try repo.git("add", "a.txt")
+      let message = "Fix crash\n\n#482 was caused by a race.\n## Notes\nKeep"
+      _ = try GitOperations.commit(message: message, root: repo.root).get()
+      #expect(try repo.git("log", "-1", "--format=%B") == message)
+    }
+
+    @Test func pathsAreLiteralNotGlobs() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["app/[id].tsx": "a\n", "app/d.tsx": "b\n"])
+      try repo.write("app/[id].tsx", "a2\n")
+      try repo.write("app/d.tsx", "b2\n")
+      // As a glob, "[id]" would also match "d.tsx".
+      _ = try GitOperations.discardWorkingTree(paths: ["app/[id].tsx"], root: repo.root).get()
+      #expect(try repo.read("app/[id].tsx") == "a\n")
+      #expect(try repo.read("app/d.tsx") == "b2\n")
+      _ = try GitOperations.stage(paths: ["app/[id].tsx"], root: repo.root).get()
+      #expect(try repo.git("diff", "--cached", "--name-only") == "")
+    }
+
+    @Test func refsThatLookLikeOptionsStayRefs() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      try repo.git("update-ref", "refs/heads/--orphan=x", "HEAD")
+      _ = try GitOperations.switchBranch("--orphan=x", root: repo.root).get()
+      #expect(try repo.git("rev-parse", "--abbrev-ref", "HEAD") == "--orphan=x")
+      #expect(repo.exists("a.txt"), "no orphan branch emptied the tree")
+    }
+
     @Test func emptyMessageIsRejected() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }
@@ -315,6 +393,19 @@
   struct SafetySnapshotTests {
     init() {
       GitOperations.environment = TempRepo.gitOverrides
+    }
+
+    @Test func restoringAnUntrackedFileSucceeds() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      try repo.write("new.txt", "draft\n")
+      let snapshot = try SafetySnapshots.create(reason: "discard", root: repo.root).get()
+      try FileManager.default.removeItem(atPath: repo.root + "/new.txt")
+      // The file is in neither index; the index step must not fail the restore.
+      _ = try SafetySnapshots.restore(snapshot, paths: ["new.txt"], root: repo.root).get()
+      #expect(try repo.read("new.txt") == "draft\n")
+      #expect(try repo.git("status", "--porcelain") == "?? new.txt")
     }
 
     @Test func nestedCheckpointsListAndSurvivePruning() throws {
