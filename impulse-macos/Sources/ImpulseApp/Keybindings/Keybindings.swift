@@ -353,9 +353,9 @@ enum Keybindings {
             id: "git_history",
             description: "Show Git History",
             category: "Git",
-            defaultShortcut: "Ctrl+Cmd+H",
-            keyEquivalent: "h",
-            modifierFlags: [.control, .command]
+            defaultShortcut: "Cmd+Shift+H",
+            keyEquivalent: "H",
+            modifierFlags: [.command, .shift]
         ),
         BuiltinKeybinding(
             id: "file_history",
