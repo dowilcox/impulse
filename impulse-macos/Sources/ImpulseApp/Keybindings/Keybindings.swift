@@ -653,6 +653,11 @@ enum Keybindings {
     /// Special key names: Tab, Left, Right, Up, Down, Space, Return, Enter,
     /// Escape, Delete, Backspace, F1-F20.
     static func parseShortcut(_ shortcut: String) -> (keyEquivalent: String, modifierFlags: NSEvent.ModifierFlags) {
+        // The + key itself: "Cmd++" or "+".
+        if shortcut == "+" { return ("+", []) }
+        if shortcut.hasSuffix("++") {
+            return ("+", parseShortcut(String(shortcut.dropLast(2)) + "+X").modifierFlags)
+        }
         let parts = shortcut.split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }
         guard !parts.isEmpty else { return ("", []) }
 

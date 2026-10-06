@@ -166,6 +166,13 @@ final class KeybindingsSurface: NSView, ToolSurface {
       let shortcut = Keybindings.shortcutString(
         keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: modifiers)
     else { return }
+    // A plain key (or ⇧ + key) would swallow that character everywhere you
+    // type; only function keys stand alone.
+    let functionKeys: Set<UInt16> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
+    guard !modifiers.isDisjoint(with: [.command, .control, .option]) || functionKeys.contains(event.keyCode) else {
+      NSSound.beep()
+      return
+    }
     model.setShortcut(shortcut, for: target)
   }
 }

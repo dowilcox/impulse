@@ -74,6 +74,10 @@
       let parsed = Keybindings.parseShortcut("Shift+Cmd+K")
       #expect(parsed.keyEquivalent == "k")
       #expect(parsed.modifierFlags == [.command, .shift])
+      // The + key: recorded as "Shift+Cmd++".
+      let plus = Keybindings.parseShortcut("Shift+Cmd++")
+      #expect(plus.keyEquivalent == "+")
+      #expect(plus.modifierFlags == [.command, .shift])
     }
 
     @Test func noneUnbindsACommandEverywhere() {
