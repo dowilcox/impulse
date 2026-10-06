@@ -630,7 +630,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - Full Keyboard Access.
 - [ ] **Performance pass:** measure every §11 budget and fix regressions. Spike a Metal glyph-atlas renderer with ligatures, as a separate plan if pursued.
 - [x] **Services:** the terminal implements `NSServicesMenuRequestor`; add a Finder service "New Impulse Workspace Here". (verified the bundle's Info.plist; the service itself needs a manual check in Finder)
-- [ ] **Docs:**
+- [x] **Docs:** *(CLAUDE.md, README feature list and CHANGELOG updated; superseded items in the May plan marked; README screenshots still to retake from a real project)*
   - update `CLAUDE.md`: architecture tree, workbench/surface model, CommandRegistry, GitCLI write path, `impulse` CLI, revised NSToolbar note from Spike A;
   - update `README.md` with screenshots and the feature list;
   - update `CHANGELOG.md`;

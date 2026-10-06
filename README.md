@@ -22,54 +22,54 @@
   <img src="assets/screenshot-mac.png" width="800" alt="Impulse on macOS">
 </p>
 
-Impulse combines a terminal emulator with a Monaco-powered code editor in a modern tabbed interface. It's designed for developers who live in the terminal but want integrated editing, file navigation, and project awareness without leaving their workflow.
+Impulse is a terminal IDE: a fast terminal with Warp-style command blocks, a Monaco code editor, deep git integration, and first-class support for the coding agents you run in your terminals. It's built for developers who live in the terminal but want editing, review and project awareness next to it.
 
-The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust core built on `alacritty_terminal`.
+The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust core built on `alacritty_terminal`. Impulse never calls an AI service itself; it hosts the agent CLIs you already use.
 
 ## Features
 
+**Workbench**
+
+- Workspaces (folders with their own tabs) in a sidebar, titlebar tabs, and split panes of any surface
+- Session restore of every window's workspaces, layouts and terminal output
+- Fuzzy command palette with modes: files, `>` commands, `:` line, `%` text, `@`/`#` symbols, `b:` branches, `h:` history, `pr:` pull requests, `a:` project actions, and more
+- Project actions from `.impulse/project.toml`; the `impulse` command-line tool
+- Quick terminal on a global shortcut; ⌘Z brings back a tab you just closed
+- 19 built-in themes plus user themes; Settings and Keyboard Shortcuts as searchable tabs
+
 **Terminal**
 
-- Terminal emulator with shell integration (bash, zsh, fish)
-- Warp-style command blocks with exit status, duration, and jump-to-block navigation
-- Command input bar with history ghost suggestions and path completion
-- OSC 133/7 escape sequence support for prompt/command/CWD tracking
-- Configurable scrollback, cursor shape, copy-on-select, and more
+- Shell integration for bash, zsh and fish; command blocks with status, duration, selection, bookmarks and actions
+- A multi-line input editor with shell highlighting, history (Ctrl-R), completions for subcommands, options, branches and scripts, and an underline on commands the shell can't run (optionally with fish's own completions)
+- Find with match counts and regex; hints mode to open URLs, paths, SHAs and ports from the keyboard
+- Persistent command history, background notifications, listening ports, the kitty keyboard protocol, OSC 8 links and iTerm2 session status
+
+**Coding agents**
+
+- Recognizes Claude Code, Codex, Gemini CLI, Aider, opencode, Amp, Copilot CLI and others in its terminals, and shows when each is working or waiting for you
+- Checkpoints every agent turn so you can review it, restore files from before it, or send review comments back
+- A composer (⌘I), a toolbelt, and "send to agent" for code, files and command output
+- Task worktrees for parallel work, agent hooks, and session resume after a restart
+
+**Git**
+
+- Changes panel with a commit composer and keyboard control
+- Review with scopes (unstaged, staged, branch, commit, range, stash, last agent turn, since your last review), hunk and line staging, comments, and pull request threads
+- Live change marks, inline blame, and an editable side-by-side diff view in the editor
+- History with a commit graph, compare, author/path/date filters and fork-point dimming
+- Branch switching and management, undoable stashes, merge-conflict resolution, and GitHub pull requests through `gh`
 
 **Editor**
 
-- Monaco editor for full-featured code editing
-- Syntax highlighting for 80+ languages
-- LSP integration with managed language server installation (completions, hover, go-to-definition, references, rename, code actions, formatting, signature help)
-- Auto-detected indentation, configurable tab width and spaces/tabs
-- Code folding, minimap, bracket pair colorization, indent guides
-- Git diff gutter showing added/modified/deleted lines
-- Review Changes tab with per-file diffs, word-level highlights, commit and discard
-- Markdown preview with syntax-highlighted code blocks
-- SVG preview with themed background
-- Bundled JetBrains Mono font for editor and terminal
+- Monaco with language servers: completions, hover, definitions, references, rename across files, code actions, inlay hints, highlights, formatting and diagnostics in a Problems panel
+- Outline, go to symbol, project-wide find and replace with a preview
+- Markdown and SVG preview beside the editor, with Run buttons on shell code blocks
+- Bundled JetBrains Mono for editor and terminal
 
-**Project Navigation**
+**Accessibility**
 
-- File sidebar with lazy-loaded directory tree
-- File icons for 50+ languages and file types
-- Git status coloring on filenames (added, modified, untracked, etc.)
-- Project-wide file name and content search (gitignore-aware)
-- Quick-open file picker (Cmd+P)
-
-**Automation**
-
-- Per-file-type indentation overrides (tab width, spaces/tabs)
-- Commands-on-save with file pattern matching and optional file reload (for formatters)
-- Custom keybindings that run shell commands
-
-**Interface**
-
-- Tabbed interface with command palette and pin tab support
-- 19 built-in color themes (Kanagawa, Nord, Gruvbox, Tokyo Night, Catppuccin, Rose Pine, ...) plus user themes
-- Settings UI with live-updating preferences for editor, terminal, appearance, automation, and keybindings
-- Full keybinding visibility and customization UI — click any shortcut to rebind it
-- Drag-and-drop file opening
+- VoiceOver can read terminal output; agent status changes are announced
+- Reduce Motion and Increase Contrast are honored
 
 ## Installation
 
@@ -112,8 +112,8 @@ open dist/Impulse.app
 ## Testing
 
 ```bash
-# Swift (from impulse-macos/; needs full Xcode, not just CommandLineTools)
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+# Swift (the wrapper adds the flags the active toolchain needs)
+impulse-macos/swiftw test
 
 # Rust terminal core
 cargo test -p impulse-terminal
@@ -126,9 +126,11 @@ The app is a Swift package with a small Rust core for terminal emulation.
 | Component          | Role                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------ |
 | `ImpulseApp`       | The app: AppKit/SwiftUI UI, CoreText terminal renderer, Monaco WebViews                    |
-| `ImpulseKit`       | Pure logic: themes, previews, command palette, input completion, file tree, settings logic |
-| `ImpulseGit`       | Git layer on a vendored static libgit2 (status, diffs, blame, commit, search)              |
+| `ImpulseKit`       | Pure logic: themes, previews, palette, completion, layouts, agents, git models, LSP edits  |
+| `ImpulseGit`       | Git layer: reads on a vendored static libgit2, writes through the git CLI                  |
 | `ImpulseLSP`       | LSP client: server processes, JSON-RPC framing, document sync, managed installs            |
+| `ImpulseProtocol`  | Control-socket messages shared by the app and the `impulse` CLI                            |
+| `ImpulseCLI`       | The `impulse` command-line tool: open, edit, review, split, notify from an Impulse terminal |
 | `impulse-terminal` | Rust: terminal emulation (`alacritty_terminal`), OSC parsing, command blocks, history      |
 | `impulse-ffi`      | Rust: C FFI static library exposing the terminal core to Swift                             |
 

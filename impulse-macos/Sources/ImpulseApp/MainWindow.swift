@@ -58,8 +58,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// the SwiftUI `FileTreeListView` via `windowModel`.
   let fileTreeData: FileTreeDataController
 
-  // Old AppKit sidebar buttons removed — replaced by NSToolbar items.
-
   /// Manages the tab bar and tab content lifecycle.
   let tabManager: TabManager
 

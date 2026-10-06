@@ -39,6 +39,8 @@
 
 ### 2. Project Launch Configs (Nice-to-have)
 
+> **Superseded** by the 2026-10-05 terminal IDE redesign (M6): project actions in `.impulse/project.toml`, run from the palette (`a:`), with a trust prompt for each new version of the file; task worktrees cover per-branch setups.
+
 **User value:** One command opens a project exactly as needed: files, terminal tabs, working directories, and startup commands.
 
 **Priority:** Nice-to-have / deferred. This is useful, but it is less urgent than terminal safety, search, restore, and shared command infrastructure.
@@ -85,6 +87,8 @@
 
 ### 4. Terminal Block Search and Filtering (Deferred for now)
 
+> **Superseded** by the 2026-10-05 terminal IDE redesign (M5): terminal find with match counts and case/word/regex, block selection and bookmarks; the block filter (and output folding) stay open there, waiting on virtualized rendering.
+
 **User value:** Search the terminal by command, output, cwd, duration, or failure state.
 
 **Priority:** Deferred for now. This should wait until the current session-continuity work lands.
@@ -105,6 +109,8 @@
 - [ ] Add frontend search UI entry points.
 
 ### 5. Shell-Aware Command Text Capture
+
+> **Done:** the shell integration sends `OSC 6973;Command=` (percent-encoded) from bash, zsh and fish, and blocks, history and notifications use it.
 
 **User value:** Tabs, notifications, history, and rerun actions can show the actual command instead of only knowing that a command started.
 

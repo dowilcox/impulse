@@ -4,6 +4,63 @@ All notable changes to Impulse are documented in this file.
 
 ## Unreleased
 
+### Terminal IDE redesign
+
+Impulse moves from an Apple-styled tabbed app to a terminal IDE workbench,
+with deeper git integration and first-class support for coding agents
+running in its terminals. Impulse itself never calls an AI service.
+
+**Workbench**
+
+- Themed workbench chrome: titlebar tabs, a workspaces sidebar, docks and a status bar, with Lucide icons.
+- Workspaces (folders with their own tabs), split panes of any surface, and session restore of every window's workspaces, layouts and terminal output.
+- A fuzzy command palette with modes: files, `>` commands, `:` line, `%` text, `@` / `#` symbols, `b:` branches, `t:` tabs, `w:` workspaces, `h:` history, `pr:` pull requests, `set:` settings, `a:` project actions.
+- Settings and Keyboard Shortcuts as tabs, described by one catalog (which also validates `settings.json` in the editor).
+- Quick terminal on a global shortcut (off by default).
+- Closing a tab or pane can be undone with ⌘Z for ten seconds; toasts and sheets replace blocking alerts.
+
+**Terminal**
+
+- A multi-line command editor for input, with shell highlighting, history (Ctrl-R), completions for subcommands, options, branches, scripts and paths, and an underline on commands the shell can't run.
+- Optional: ask fish for completions (`complete -C`) alongside the built-in ones.
+- Command blocks: inline status, keyboard selection, bookmarks, a toolbar, and copy/send actions.
+- Find with match counts and case/word/regex toggles; hints mode for URLs, paths, commit SHAs and ports in output.
+- Persistent command history, desktop notifications for background terminals, listening ports per workspace, and iTerm2 session status (OSC 21337).
+- The kitty keyboard protocol for programs that ask for it.
+- Services: terminal selections work with the Services menu; "New Impulse Workspace Here" in Finder.
+
+**Agents**
+
+- Impulse notices coding agents in its terminals (Claude Code, Codex, Gemini CLI, Aider, opencode, Amp, Copilot CLI and more) and shows what they're doing.
+- Each agent turn is checkpointed: review it, restore the files from before it, or send review comments back.
+- A composer (⌘I) and toolbelt for agents; send code, files and command output to them.
+- Task worktrees (`../<repo>.worktrees/<branch>`), agent hooks, session resume after a restart, and the `impulse` command-line tool.
+
+**Git**
+
+- A Changes panel with a commit composer and full keyboard control.
+- A rebuilt review: navigator, scopes (unstaged, staged, branch, commit, range, stash, last agent turn, since last review), hunk and line staging, comments, and imported pull request threads.
+- Live change marks in the editor with a peek, inline blame, and a side-by-side diff view you can edit.
+- History with a commit graph, compare, filters (`author:`, `path:`, `since:`, `until:`) and fork-point dimming.
+- Branch switching and management, undoable stash drop/pop, merge-conflict resolution in the editor (or by an agent), and GitHub pull requests through `gh`.
+- Writes go through the git CLI; reads stay on libgit2.
+
+**Editor and language servers**
+
+- Problems panel, outline, go to symbol in file or project, project-wide replace with a preview, and Markdown preview beside the editor with Run buttons on shell blocks.
+- Language servers: cross-file renames and code actions applied across files with one Undo, commands and `codeAction/resolve`, `workspace/applyEdit`, document highlights, inlay hints (with a setting), type definition, implementation, server messages and progress. sourcekit-lsp serves Swift.
+- Requests no longer queue behind each other, and every server for a language sees opened documents.
+
+**Accessibility**
+
+- VoiceOver can read terminal text; agent status changes are announced.
+- Reduce Motion and Increase Contrast are honored; keyboard-focused lists show a focus ring.
+
+**Fixes**
+
+- Edit ▸ Undo/Redo now reach text fields and the window (they sent a selector nothing implemented).
+- Monaco could only edit its own file, so renames that touched other files failed.
+
 ### macOS — Terminal backend migration and polish
 
 **Breaking**
