@@ -252,6 +252,10 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   }
 
   @objc private func boundsChanged() {
+    // Lines moved under the pointer: only the one under it stays hovered.
+    tableView.enumerateAvailableRowViews { rowView, _ in
+      (rowView.view(atColumn: 0) as? DiffLineCellView)?.refreshHover()
+    }
     let visible = tableView.visibleRect
     let top = visible.minY + scrollView.contentView.contentInsets.top
     let index = tableView.row(at: NSPoint(x: 1, y: top + ReviewMetrics.fileHeaderHeight + 2))
@@ -530,7 +534,24 @@ final class DiffLineCellView: NSView {
   func configure(row: ReviewRow, context: ReviewDiffContext) {
     self.row = row
     self.context = context
+    // A reused view still shows the hover of the line it had before.
+    refreshHover()
     needsDisplay = true
+  }
+
+  /// Hover from where the pointer is now. Scrolling moves lines under a
+  /// pointer that stays put, and AppKit sends no mouse-exited for that, so
+  /// the list asks every visible line after each scroll.
+  func refreshHover() {
+    var side: Side?
+    if let window, window.isKeyWindow {
+      let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+      if bounds.contains(point) { side = self.side(at: point.x) }
+    }
+    if side != hoverSide {
+      hoverSide = side
+      needsDisplay = true
+    }
   }
 
   override func updateTrackingAreas() {
