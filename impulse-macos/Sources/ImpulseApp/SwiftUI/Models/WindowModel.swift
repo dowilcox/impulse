@@ -154,6 +154,9 @@ final class WindowModel {
   var ports: [ListeningPort] = []
   /// A language server's work in progress ("Indexing", 40%), if any.
   var lspProgress: LspProgressStatus?
+  /// The active folder workspace isn't trusted (restricted mode).
+  var workspaceRestricted = false
+  var onTrustWorkspace: (() -> Void)?
   /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
   var tabBarPosition: String = "sidebar"
 

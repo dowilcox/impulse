@@ -198,6 +198,18 @@ enum CommandRegistry {
         keybindingId: "project_actions"
       ) { [weak controller] in controller?.showPalette(prefix: "a:") },
       AppCommand(
+        id: "trust_folder", title: "Trust This Folder…", category: "Workspaces",
+        keywords: ["workspace trust", "restricted", "security", "language servers"], icon: .shieldCheck
+      ) { [weak controller] in controller?.trustActiveFolder() },
+      AppCommand(
+        id: "restrict_folder", title: "Restrict This Folder", category: "Workspaces",
+        keywords: ["workspace trust", "untrust", "security", "language servers"], icon: .shieldAlert
+      ) { [weak controller] in controller?.restrictActiveFolder() },
+      AppCommand(
+        id: "forget_trusted_folders", title: "Forget Trusted Folders", category: "Workspaces",
+        keywords: ["workspace trust", "restricted", "security", "reset"], icon: .shieldAlert
+      ) { [weak controller] in controller?.forgetTrustedFolders() },
+      AppCommand(
         id: "edit_project_config", title: "Edit Project Actions", category: "Workspaces",
         keywords: ["project.toml", "scripts", "worktree"], icon: .pencil
       ) { [weak controller] in controller?.editProjectConfig() },

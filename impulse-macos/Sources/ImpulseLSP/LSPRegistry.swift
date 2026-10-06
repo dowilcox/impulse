@@ -61,6 +61,27 @@ public final class LSPRegistry {
   private let documentsLock = NSLock()
   private var documents: [String: TrackedDocument] = [:]
 
+  /// Whether servers may run for a file (by URI): some run a project's own
+  /// code, so the app allows only trusted folders. Unset: every file.
+  public var isAllowed: ((String) -> Bool)?
+
+  /// Whether any server is configured for a language.
+  public func hasServers(languageId: String) -> Bool {
+    !resolveServerIds(languageId: languageId).isEmpty
+  }
+
+  /// Shut down the servers whose project root (a path) matches, e.g. those
+  /// in a folder that isn't trusted any more.
+  public func shutdownServers(where matches: @escaping (String) -> Bool) {
+    stateLock.lock()
+    let stopping = clients.filter { _, client in FileURI.toPath(client.rootUri).map(matches) ?? false }
+    for key in stopping.keys { clients.removeValue(forKey: key) }
+    stateLock.unlock()
+    for client in stopping.values {
+      startQueue.async { client.shutdown() }
+    }
+  }
+
   public convenience init(rootUri: String) {
     self.init(rootUri: rootUri, config: LSPConfig.load(fallbackRootUri: rootUri))
   }
@@ -284,7 +305,7 @@ public final class LSPRegistry {
   /// background (see `startInBackground`).
   private func runningClients(languageId: String, fileUri: String) -> [ServerProcess] {
     let serverIds = resolveServerIds(languageId: languageId)
-    if serverIds.isEmpty {
+    if serverIds.isEmpty || isAllowed?(fileUri) == false {
       return []
     }
     let rootUri = detectRootUri(fileUri: fileUri)
@@ -366,7 +387,7 @@ public final class LSPRegistry {
   /// for them (requests, which run off the app's LSP queue).
   func getClients(languageId: String, fileUri: String) -> [ServerProcess] {
     let serverIds = resolveServerIds(languageId: languageId)
-    if serverIds.isEmpty {
+    if serverIds.isEmpty || isAllowed?(fileUri) == false {
       return []
     }
     let rootUri = detectRootUri(fileUri: fileUri)
@@ -467,7 +488,8 @@ public final class LSPRegistry {
       // lock throughout means no change slips in between.
       documentsLock.lock()
       for (uri, document) in documents
-      where resolveServerIds(languageId: document.languageId).contains(serverId)
+      where isAllowed?(uri) != false
+        && resolveServerIds(languageId: document.languageId).contains(serverId)
         && detectRootUri(fileUri: uri) == rootUri
       {
         client.notify(

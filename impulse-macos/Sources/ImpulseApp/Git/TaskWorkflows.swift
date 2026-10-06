@@ -248,6 +248,8 @@ extension MainWindowController {
         }
         done()
         guard let self else { return }
+        // The same repository: a task folder is as trusted as it is.
+        if Trust.shared.isTrusted(root) { Trust.shared.trust(path) }
         // The project's setup script (once trusted) runs before the agent.
         self.trustProjectConfig(root: path) { [weak self] config in
           let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
@@ -419,6 +421,7 @@ extension MainWindowController {
           self.presentGitError(error, title: "Couldn't restore the task")
           return
         }
+        if Trust.shared.isTrusted(mainRoot) { Trust.shared.trust(root) }
         self.tabManager.openWorkspace(folder: root)
       }
     }

@@ -43,6 +43,7 @@ extension MainWindowController {
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)
     }
+    windowModel.onTrustWorkspace = { [weak self] in self?.trustActiveFolder() }
     windowModel.onSuggestionResolver = { [weak self] in
       self?.tabManager.selectedTerminal?.activeTerminal?.suggestionResolver()
     }

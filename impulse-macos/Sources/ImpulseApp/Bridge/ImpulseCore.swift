@@ -302,7 +302,19 @@ final class ImpulseCore {
     func initializeLsp(rootUri: String) {
         shutdownLsp()
         lspRegistry = LSPRegistry(rootUri: rootUri)
+        // Servers only run for files in trusted folders.
+        lspRegistry?.isAllowed = { uri in FileURI.toPath(uri).map(Trust.shared.isTrusted) ?? false }
         lspRegistry?.onEventsAvailable = lspEventsAvailable
+    }
+
+    /// Whether a language has a configured server.
+    func lspHasServers(languageId: String) -> Bool {
+        lspRegistry?.hasServers(languageId: languageId) ?? false
+    }
+
+    /// Stop the servers whose project root (a path) matches.
+    func lspShutdownServers(where matches: @escaping (String) -> Bool) {
+        lspRegistry?.shutdownServers(where: matches)
     }
 
     /// Called from a language server's reader thread when events are queued.

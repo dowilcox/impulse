@@ -123,6 +123,9 @@ struct Settings: Codable {
     var editorVimMode: Bool = false
     /// Where the Scratch workspace's terminals start ("" = home; "~" works).
     var scratchDirectory: String = ""
+    /// Ask before running code from a folder (language servers, formatters,
+    /// background fetch) until it's trusted. Off: every folder is trusted.
+    var askToTrustFolders: Bool = true
     /// The commit button (and ⌘↩) commits and pushes; ⇧⌘↩ only commits.
     var gitCommitAndPush: Bool = false
     /// Push a tag to the remote right after creating it (the Create Tag
@@ -239,6 +242,7 @@ struct Settings: Codable {
         case editorPreviewTabs = "editor_preview_tabs"
         case editorVimMode = "editor_vim_mode"
         case scratchDirectory = "scratch_directory"
+        case askToTrustFolders = "workspace_trust"
         case gitCommitAndPush = "git_commit_and_push"
         case gitPushTagsOnCreate = "git_push_tags_on_create"
         case gitPushFollowTags = "git_push_follow_tags"
@@ -398,6 +402,7 @@ struct Settings: Codable {
         editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
         editorVimMode = (try? c.decode(Bool.self, forKey: .editorVimMode)) ?? d.editorVimMode
         scratchDirectory = (try? c.decode(String.self, forKey: .scratchDirectory)) ?? d.scratchDirectory
+        askToTrustFolders = (try? c.decode(Bool.self, forKey: .askToTrustFolders)) ?? d.askToTrustFolders
         gitCommitAndPush = (try? c.decode(Bool.self, forKey: .gitCommitAndPush)) ?? d.gitCommitAndPush
         gitPushTagsOnCreate = (try? c.decode(Bool.self, forKey: .gitPushTagsOnCreate)) ?? d.gitPushTagsOnCreate
         gitPushFollowTags = (try? c.decode(Bool.self, forKey: .gitPushFollowTags)) ?? d.gitPushFollowTags

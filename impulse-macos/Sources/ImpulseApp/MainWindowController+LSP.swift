@@ -133,6 +133,11 @@ extension MainWindowController {
       // editor fires FileOpened via the notification observer.
       return
     }
+    // Servers can run the project's code: trusted folders only.
+    guard Trust.shared.isTrusted(path) else {
+      noteRestrictedFile(path, language: editorTab.lspLanguage)
+      return
+    }
     lspOpenFiles.insert(uri)
     // Another window has it open already: the servers know it.
     guard LSPDocuments.shared.open(uri) else { return }

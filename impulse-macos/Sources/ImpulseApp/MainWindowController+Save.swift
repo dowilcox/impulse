@@ -31,8 +31,9 @@ extension MainWindowController {
       }
       let saved = editor.lastWrittenText ?? editor.content
 
-      // Format on save — find applicable formatter
-      let formatter = self.resolveFormatOnSave(forPath: path)
+      // Format on save — find applicable formatter. Formatters load the
+      // project's own config (prettier runs .prettierrc.js): trusted only.
+      let formatter = Trust.shared.isTrusted(path) ? self.resolveFormatOnSave(forPath: path) : nil
       if let fmt = formatter, !fmt.command.isEmpty {
         self.runExternalCommand(
           command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent
@@ -92,8 +93,9 @@ extension MainWindowController {
       }
     }
 
-    // Commands on save: run any matching commands
-    for cmd in settings.commandsOnSave {
+    // Commands on save: run any matching commands (in trusted folders:
+    // they work on the project's files with its tools).
+    for cmd in settings.commandsOnSave where Trust.shared.isTrusted(path) {
       guard !cmd.command.isEmpty else { continue }
       guard Settings.matchesFilePattern(path, pattern: cmd.filePattern) else { continue }
       let cwd = (path as NSString).deletingLastPathComponent

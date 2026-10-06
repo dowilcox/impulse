@@ -250,6 +250,7 @@ extension MainWindowController {
       nc.addObserver(forName: .impulseActiveWorkspaceDidChange, object: tabManager, queue: .main) {
         [weak self] _ in
         self?.activeWorkspaceDidChange()
+        self?.updateRestrictedIndicator()
       }
     )
     notificationObservers.append(

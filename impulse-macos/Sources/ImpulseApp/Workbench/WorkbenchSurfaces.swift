@@ -24,6 +24,17 @@ struct WorkbenchStatusBar: View {
 
   @ViewBuilder
   private var leftItems: some View {
+    if model.workspaceRestricted {
+      StatusItem(
+        icon: .shieldAlert,
+        help: "Restricted: language servers, formatters on save and background fetch are off in this folder. Click to trust it.",
+        tint: model.palette.warning
+      ) {
+        model.onTrustWorkspace?()
+      } label: {
+        Text("Restricted")
+      }
+    }
     if let branch = model.gitBranch, !branch.isEmpty {
       StatusItem(icon: .gitBranch, help: "Switch branch (⌃⌘B)") {
         model.onShowBranchSwitcher?()

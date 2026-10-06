@@ -283,6 +283,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     tabManager.onSurfaceClosing = { [weak self] entry in
       self?.willCloseSurface(entry)
     }
+    tabManager.onFolderOpened = { [weak self] folder in
+      self?.requestTrustIfNeeded(forFolder: folder)
+    }
     tabManager.onClosedTabRecorded = { [weak self] title, isPane in
       self?.offerUndoClose(title: title, isPane: isPane)
     }

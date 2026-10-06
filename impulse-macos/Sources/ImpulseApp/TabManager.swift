@@ -284,6 +284,8 @@ final class TabManager: NSObject {
   /// A surface is being torn down (editors: the window untracks it and
   /// tells language servers the file closed).
   var onSurfaceClosing: ((TabEntry) -> Void)?
+  /// A folder was opened as a new workspace (not restored).
+  var onFolderOpened: ((String) -> Void)?
   var onClosedTabRecorded: ((_ title: String, _ isPane: Bool) -> Void)?
 
   /// Maximum number of closed tabs to remember.
@@ -1094,6 +1096,7 @@ final class TabManager: NSObject {
     if let placeholder, activeWorkspaceID == workspace.id {
       closeWorkspace(placeholder.id, recordForUndo: false)
     }
+    onFolderOpened?(root)
     return workspace
   }
 

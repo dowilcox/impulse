@@ -166,6 +166,9 @@ enum SettingsCatalog {
       isModified: { $0.scratchDirectory != defaults.scratchDirectory },
       reset: { $0.scratchDirectory = defaults.scratchDirectory },
       schema: ["type": "string", "default": defaults.scratchDirectory]),
+    toggle(
+      "workspace_trust", "Ask before trusting folders", \.askToTrustFolders, .general, "Workspaces",
+      detail: "Language servers, formatters on save and background fetch can run a project's own code, so they only run in folders you trust. Off: every folder is trusted."),
   ]
 
   private static let editor: [SettingItem] = [

@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     DispatchQueue.global(qos: .userInitiated).async { _ = LoginShell.loginPath() }
     SettingsStore.shared.load()
     SettingsStore.shared.watchFile()
+    // Headless snapshots never prompt.
+    Trust.shared.isEnabled = Trust.shouldAsk(settings)
+    trustFoldersAlreadyInUse()
     NSApp.servicesProvider = serviceProvider
     NSApp.registerServicesMenuSendTypes([.string], returnTypes: [])
     QuickTerminal.shared.configure(
@@ -190,9 +193,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } else {
       NSApp.activate(ignoringOtherApps: true)
       AutoFetch.shared.repositories = { [weak self] in
+        // Fetch follows the repository's own configuration (ssh commands,
+        // credential helpers): trusted folders only.
         (self?.windowControllers ?? []).flatMap { controller in
           controller.tabManager.workspaces.compactMap(\.repository) + [controller.windowModel.repository].compactMap { $0 }
-        }
+        }.filter { Trust.shared.isTrusted($0.root) }
       }
       AutoFetch.shared.start()
     }
@@ -680,6 +685,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// The app delegate, for app-wide state.
+  static var shared: AppDelegate? { NSApp.delegate as? AppDelegate }
+
+  var allWindowControllers: [MainWindowController] { windowControllers }
+
+  /// The first launch with workspace trust: language servers already ran in
+  /// the folders of the saved session and the recent workspaces, so trust
+  /// them rather than asking about each.
+  private func trustFoldersAlreadyInUse() {
+    guard AppState.persistenceEnabled, !Trust.shared.existedBefore else { return }
+    let sessionFolders = (SessionState.load()?.windows ?? [])
+      .flatMap { $0.workspaces ?? [] }
+      .filter { $0.kind == "folder" }
+      .map(\.root)
+    for folder in sessionFolders + RecentWorkspaces.folders
+    where FileManager.default.fileExists(atPath: folder) {
+      Trust.shared.trust(folder)
+    }
+    Trust.shared.persist()
+  }
+
   private func observeSettingsChanges() {
     settingsObserver = NotificationCenter.default.addObserver(
       forName: .impulseSettingsDidChange,
@@ -687,6 +713,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       queue: .main
     ) { [weak self] notification in
       guard let self else { return }
+      let askToTrust = Trust.shouldAsk(self.settings)
+      if Trust.shared.isEnabled != askToTrust {
+        Trust.shared.isEnabled = askToTrust
+        MainWindowController.trustDidChange()
+      }
       self.rebuildMainMenu()
       QuickTerminal.shared.configure(
         enabled: self.settings.quickTerminalEnabled, shortcut: self.settings.quickTerminalShortcut)

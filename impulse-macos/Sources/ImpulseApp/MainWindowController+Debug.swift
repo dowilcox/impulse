@@ -47,6 +47,15 @@ extension MainWindowController {
         tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
+      } else if action == "trust-on" {
+        // Workspace trust is off in snapshots; turn it on to see restricted mode.
+        Trust.enabledForSnapshot = true
+        Trust.shared.isEnabled = true
+        MainWindowController.trustDidChange()
+      } else if action == "trust-prompt" {
+        Trust.enabledForSnapshot = true
+        Trust.shared.isEnabled = true
+        presentTrustPrompt(for: trustFolderForActiveContext() ?? DebugSnapshot.initialDirectory ?? fileTreeRootPath)
       } else if action.hasPrefix("focus-pane="), let id = Int(action.dropFirst(11)) {
         tabManager.focusPane(id, inTabAt: tabManager.selectedIndex)
       } else if action == "expand-workspaces" {
