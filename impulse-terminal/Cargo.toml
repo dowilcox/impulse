@@ -1,6 +1,6 @@
 [package]
 name = "impulse-terminal"
-version = "0.19.1"
+version = "0.30.0"
 edition = "2021"
 description = "Terminal emulation backend for Impulse, built on alacritty_terminal"
 license = "GPL-3.0-only"
