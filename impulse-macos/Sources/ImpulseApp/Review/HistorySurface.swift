@@ -254,36 +254,59 @@ final class HistorySurface: NSView {
     return name.isEmpty ? "History" : "History · \(name)"
   }
 
+  /// The commit graph on top, the selected commit's details and changes
+  /// below, split by a divider you can drag.
   private func setup() {
     wantsLayer = true
     let list = WorkbenchHosting.make(HistoryListView(model: model))
     listHost = list
-    let divider = NSBox()
-    divider.boxType = .custom
-    divider.borderWidth = 0
-    divider.fillColor = model.palette.nsHairline
     let details = WorkbenchHosting.make(CommitDetailsView(model: model), intrinsicHeight: true)
-    for view in [list, divider, details, review] as [NSView] {
+    let changes = NSView()
+    for view in [details, review] as [NSView] {
       view.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(view)
+      changes.addSubview(view)
     }
     NSLayoutConstraint.activate([
-      list.topAnchor.constraint(equalTo: topAnchor),
-      list.bottomAnchor.constraint(equalTo: bottomAnchor),
-      list.leadingAnchor.constraint(equalTo: leadingAnchor),
-      list.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.42),
-      divider.topAnchor.constraint(equalTo: topAnchor),
-      divider.bottomAnchor.constraint(equalTo: bottomAnchor),
-      divider.leadingAnchor.constraint(equalTo: list.trailingAnchor),
-      divider.widthAnchor.constraint(equalToConstant: 1),
-      details.topAnchor.constraint(equalTo: topAnchor),
-      details.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-      details.trailingAnchor.constraint(equalTo: trailingAnchor),
+      details.topAnchor.constraint(equalTo: changes.topAnchor),
+      details.leadingAnchor.constraint(equalTo: changes.leadingAnchor),
+      details.trailingAnchor.constraint(equalTo: changes.trailingAnchor),
       review.topAnchor.constraint(equalTo: details.bottomAnchor),
-      review.bottomAnchor.constraint(equalTo: bottomAnchor),
-      review.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-      review.trailingAnchor.constraint(equalTo: trailingAnchor),
+      review.bottomAnchor.constraint(equalTo: changes.bottomAnchor),
+      review.leadingAnchor.constraint(equalTo: changes.leadingAnchor),
+      review.trailingAnchor.constraint(equalTo: changes.trailingAnchor),
     ])
+
+    split.isVertical = false
+    split.dividerStyle = .thin
+    split.dividerTint = model.palette.nsHairline
+    split.delegate = self
+    split.addArrangedSubview(list)
+    split.addArrangedSubview(changes)
+    // A taller window gives its room to the changes.
+    split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+    split.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+    split.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(split)
+    NSLayoutConstraint.activate([
+      split.topAnchor.constraint(equalTo: topAnchor),
+      split.bottomAnchor.constraint(equalTo: bottomAnchor),
+      split.leadingAnchor.constraint(equalTo: leadingAnchor),
+      split.trailingAnchor.constraint(equalTo: trailingAnchor),
+    ])
+  }
+
+  private let split = HistorySplitView()
+  private var placedDivider = false
+  private static let dividerKey = "historyGraphHeight"
+
+  override func layout() {
+    super.layout()
+    // First layout: the graph gets the height you last gave it, or 40%.
+    guard !placedDivider, bounds.height > 0 else { return }
+    placedDivider = true
+    let saved = UserDefaults.standard.double(forKey: Self.dividerKey)
+    let height = saved > 0 ? min(saved, bounds.height - 200) : (bounds.height * 0.4).rounded()
+    split.setPosition(max(140, height), ofDividerAt: 0)
   }
 
   func refresh() {
@@ -292,6 +315,8 @@ final class HistorySurface: NSView {
 
   func applyTheme(_ theme: Theme) {
     model.palette = ChromePalette(theme: theme)
+    split.dividerTint = model.palette.nsHairline
+    split.needsDisplay = true
     review.applyTheme(theme)
   }
 
@@ -357,6 +382,27 @@ final class HistorySurface: NSView {
       GitActions(repository: self.repository, host: self.host).createBranch(name, at: entry.sha)
     }
   }
+}
+
+extension HistorySurface: NSSplitViewDelegate {
+  func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+    max(proposed, 120)
+  }
+
+  func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+    min(proposed, splitView.bounds.height - 160)
+  }
+
+  func splitViewDidResizeSubviews(_ notification: Notification) {
+    guard placedDivider, let graph = split.arrangedSubviews.first else { return }
+    UserDefaults.standard.set(Double(graph.frame.height), forKey: Self.dividerKey)
+  }
+}
+
+/// A thin divider in the theme's hairline color.
+final class HistorySplitView: NSSplitView {
+  var dividerTint: NSColor = .separatorColor
+  override var dividerColor: NSColor { dividerTint }
 }
 
 // MARK: - List
@@ -451,28 +497,21 @@ struct HistoryListView: View {
         Text(path).font(ChromeFont.mono(11.5)).foregroundStyle(chrome.text).lineLimit(1)
           .truncationMode(.middle)
       } else {
-        Picker(
-          "",
+        ChromeSegmented(
+          options: [(0, "Current branch"), (1, "All branches")],
           selection: Binding(
             get: { model.scope == .all ? 1 : 0 },
             set: { value in
               model.scope = value == 1 ? .all : .head
               model.reload()
-            })
-        ) {
-          Text("Current branch").tag(0)
-          Text("All branches").tag(1)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 210)
+            }))
       }
       Spacer(minLength: 4)
-      TextField(
-        "Filter or author:…", text: Binding(get: { model.filter }, set: { model.filter = $0 })
+      ChromeTextField(
+        placeholder: "Filter, or author: path: since:",
+        text: Binding(get: { model.filter }, set: { model.filter = $0 }), icon: .search
       )
-      .textFieldStyle(.roundedBorder)
-      .frame(maxWidth: 260)
+      .frame(maxWidth: 300)
       .help("Text matches subjects, authors, SHAs and refs. author:name, path:dir/, since:2w, until:2026-01-01 search all of history.")
       filterMenu
     }

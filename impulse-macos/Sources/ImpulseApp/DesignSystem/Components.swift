@@ -337,6 +337,103 @@ struct Hairline: View {
   }
 }
 
+// MARK: - Segmented control
+
+/// A themed segmented control (the system one uses the macOS accent color
+/// and its own metrics, which don't match the chrome).
+struct ChromeSegmented<Value: Hashable>: View {
+  @Environment(\.chrome) private var chrome
+  let options: [(value: Value, label: String)]
+  @Binding var selection: Value
+  var help: String? = nil
+
+  var body: some View {
+    HStack(spacing: 2) {
+      ForEach(options, id: \.value) { option in
+        let selected = option.value == selection
+        Button {
+          selection = option.value
+        } label: {
+          Text(option.label)
+            .font(ChromeFont.ui(11.5, weight: selected ? .semibold : .medium))
+            .foregroundStyle(selected ? chrome.text : chrome.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 20)
+            .background(
+              RoundedRectangle(cornerRadius: Metrics.radiusSmall, style: .continuous)
+                .fill(selected ? chrome.raised : .clear)
+                .shadow(color: .black.opacity(selected ? 0.18 : 0), radius: 1, y: 0.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ChromePressStyle())
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : [.isButton])
+      }
+    }
+    .padding(2)
+    .background(
+      RoundedRectangle(cornerRadius: Metrics.radiusSmall + 2, style: .continuous).fill(chrome.hover)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: Metrics.radiusSmall + 2, style: .continuous)
+        .strokeBorder(chrome.hairline, lineWidth: 1)
+    )
+    .fixedSize()
+    .help(help ?? "")
+    .accessibilityElement(children: .contain)
+  }
+}
+
+// MARK: - Text field
+
+/// A themed single-line field: optional leading icon, focus ring in the
+/// accent color.
+struct ChromeTextField: View {
+  @Environment(\.chrome) private var chrome
+  let placeholder: String
+  @Binding var text: String
+  var icon: LucideIcon? = nil
+  var onSubmit: () -> Void = {}
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    HStack(spacing: 6) {
+      if let icon {
+        Icon(icon, size: 12).foregroundStyle(chrome.textTertiary)
+      }
+      TextField(
+        "", text: $text,
+        prompt: Text(placeholder).foregroundStyle(chrome.textTertiary)
+      )
+      .textFieldStyle(.plain)
+      .font(ChromeFont.ui(12))
+      .foregroundStyle(chrome.text)
+      .focused($focused)
+      .onSubmit(onSubmit)
+      if !text.isEmpty {
+        Button {
+          text = ""
+        } label: {
+          Icon(.x, size: 10, strokeWidth: 2.2).foregroundStyle(chrome.textTertiary)
+        }
+        .buttonStyle(ChromePressStyle())
+        .help("Clear")
+        .accessibilityLabel("Clear")
+      }
+    }
+    .padding(.horizontal, 8)
+    .frame(height: 24)
+    .background(
+      RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous).fill(chrome.content)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
+        .strokeBorder(focused ? chrome.focusRing : chrome.hairlineStrong, lineWidth: focused ? 1.5 : 1)
+    )
+  }
+}
+
 // MARK: - Popup menu button
 
 /// One entry in a `ChromeMenuButton` menu.
