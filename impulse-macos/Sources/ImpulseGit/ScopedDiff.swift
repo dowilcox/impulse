@@ -245,7 +245,21 @@ extension GitClient {
         defer { git_commit_free(baseCommit) }
         let baseTree = try commitTree(baseCommit)
         defer { git_tree_free(baseTree) }
-        rc = git_diff_tree_to_tree(&diffPointer, repo.raw, baseTree, stashTree, &options)
+        // `--include-untracked` keeps the untracked files in a third parent;
+        // without them, dropping a reviewed stash could lose files never seen.
+        var untracked: OpaquePointer?
+        if git_commit_parentcount(stash) >= 3, git_commit_parent(&untracked, stash, 2) == 0,
+          let untrackedCommit = untracked
+        {
+          defer { git_commit_free(untrackedCommit) }
+          let untrackedTree = try commitTree(untrackedCommit)
+          defer { git_tree_free(untrackedTree) }
+          let combined = try combinedIndex(stashTree, untrackedTree)
+          defer { git_index_free(combined) }
+          rc = git_diff_tree_to_index(&diffPointer, repo.raw, baseTree, combined, &options)
+        } else {
+          rc = git_diff_tree_to_tree(&diffPointer, repo.raw, baseTree, stashTree, &options)
+        }
 
       case .snapshot(let from, let to):
         let fromCommit = try peelCommit(repo: repo, revision: from)
@@ -265,6 +279,30 @@ extension GitClient {
       guard rc == 0, let diff = diffPointer else { throw GitError(gitLastError()) }
       return diff
     }
+  }
+
+  /// An in-memory index holding `tree`'s files plus `extra`'s.
+  static func combinedIndex(_ tree: OpaquePointer, _ extra: OpaquePointer) throws -> OpaquePointer {
+    var index: OpaquePointer?
+    guard git_index_new(&index) == 0, let index else { throw GitError(gitLastError()) }
+    let add: git_treewalk_cb = { root, entry, payload in
+      guard let entry, let payload, git_tree_entry_type(entry) == GIT_OBJECT_BLOB else { return 0 }
+      let path = String(cString: root!) + String(cString: git_tree_entry_name(entry))
+      var indexEntry = git_index_entry()
+      indexEntry.mode = git_tree_entry_filemode(entry).rawValue
+      indexEntry.id = git_tree_entry_id(entry).pointee
+      return path.withCString { cPath in
+        indexEntry.path = cPath
+        return git_index_add(OpaquePointer(payload), &indexEntry)
+      }
+    }
+    guard git_index_read_tree(index, tree) == 0,
+      git_tree_walk(extra, GIT_TREEWALK_PRE, add, UnsafeMutableRawPointer(index)) == 0
+    else {
+      git_index_free(index)
+      throw GitError(gitLastError())
+    }
+    return index
   }
 
   static func peelCommit(repo: GitRepo, revision: String) throws -> OpaquePointer {

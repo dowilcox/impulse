@@ -136,6 +136,21 @@
       #expect(GitOperations.stashList(root: repo.root).count == 1)
     }
 
+    @Test func stashReviewShowsTheUntrackedFilesItCarries() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      try repo.write("a.txt", "1\n2\n")
+      try repo.write("notes/fresh.txt", "new\n")
+      try repo.git("stash", "-q", "--include-untracked")
+
+      let files = try GitClient.changedFiles(repoPath: repo.root, scope: .stash(index: 0))
+      #expect(files.map(\.path).sorted() == ["a.txt", "notes/fresh.txt"])
+      #expect(files.first { $0.path == "notes/fresh.txt" }?.status == .added)
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "notes/fresh.txt", scope: .stash(index: 0))
+      #expect(diff.hunks.flatMap(\.lines).map(\.content) == ["new"])
+    }
+
     // MARK: Patch building + staging
 
     private func twoHunkRepo() throws -> TempRepo {
@@ -429,6 +444,21 @@
       _ = try SafetySnapshots.restore(snapshot, paths: ["new.txt"], root: repo.root).get()
       #expect(try repo.read("new.txt") == "draft\n")
       #expect(try repo.git("status", "--porcelain") == "?? new.txt")
+    }
+
+    @Test func snapshotsLeaveTheRealIndexUnlocked() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      try repo.write("a.txt", "two\n")
+      try repo.git("add", "a.txt")
+      // Someone else's git command holds the index lock.
+      let lock = repo.root + "/.git/index.lock"
+      FileManager.default.createFile(atPath: lock, contents: nil)
+      let snapshot = try SafetySnapshots.create(reason: "turn start", root: repo.root).get()
+      try FileManager.default.removeItem(atPath: lock)
+      let staged = try repo.git("write-tree")
+      #expect(snapshot.indexTree == staged, "the index was still recorded")
     }
 
     @Test func nestedCheckpointsListAndSurvivePruning() throws {

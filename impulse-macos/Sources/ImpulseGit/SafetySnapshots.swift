@@ -59,9 +59,21 @@ public enum SafetySnapshots {
     }
     let worktreeTree = treeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // The real index's tree (fails with unresolved conflicts; then skip it).
+    // The real index's tree, from a copy: write-tree on the index itself
+    // takes index.lock, failing the user's or an agent's git add/commit
+    // running at the same moment. (It fails with unresolved conflicts; then
+    // there's no index tree.)
+    let indexCopy = (gitDir as NSString).appendingPathComponent(
+      "impulse-snapshot-\(UUID().uuidString).index-tree")
+    defer { try? FileManager.default.removeItem(atPath: indexCopy) }
+    if FileManager.default.fileExists(atPath: realIndex) {
+      try? FileManager.default.copyItem(atPath: realIndex, toPath: indexCopy)
+    }
+    var indexEnv = GitOperations.environment
+    indexEnv["GIT_INDEX_FILE"] = indexCopy
     let indexTree: String? = {
-      guard case .success(let result) = git(["write-tree"]) else { return nil }
+      guard case .success(let result) = GitCLI.run(["write-tree"], in: root, environment: indexEnv, timeout: 60)
+      else { return nil }
       return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }()
 
