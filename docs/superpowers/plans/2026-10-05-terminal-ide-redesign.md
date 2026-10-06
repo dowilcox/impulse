@@ -628,7 +628,7 @@ All of this lives in `Sources/ImpulseGit/`. Each task adds scenario-repo tests t
   - terminal AXTextArea (value, selected range, line-for-index);
   - announcements for agent status changes;
   - Full Keyboard Access.
-- [ ] **Performance pass:** measure every §11 budget and fix regressions. Spike a Metal glyph-atlas renderer with ligatures, as a separate plan if pursued.
+- [ ] **Performance pass:** measure every §11 budget and fix regressions. Spike a Metal glyph-atlas renderer with ligatures, as a separate plan if pursued. *(git budgets measured with `GitPerformanceTests` (set `IMPULSE_PERF_REPO`) on a 50k-file repo with 200 changed files / 20k lines: warm snapshot 132 ms after caching per-file line counts (was 170 ms), review file list 179 ms and list + first 5 diffs 250 ms, debug build; launch, idle CPU, keystroke latency and memory need the app running on screen)*
 - [x] **Services:** the terminal implements `NSServicesMenuRequestor`; add a Finder service "New Impulse Workspace Here". (verified the bundle's Info.plist; the service itself needs a manual check in Finder)
 - [x] **Docs:** *(CLAUDE.md, README feature list and CHANGELOG updated; superseded items in the May plan marked; README screenshots still to retake from a real project)*
   - update `CLAUDE.md`: architecture tree, workbench/surface model, CommandRegistry, GitCLI write path, `impulse` CLI, revised NSToolbar note from Spike A;

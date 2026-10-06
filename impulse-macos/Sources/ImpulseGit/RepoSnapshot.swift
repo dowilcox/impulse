@@ -260,17 +260,40 @@ extension GitClient {
   }
 
   /// Fill in added/removed counts from the scope's diff (binary-aware).
+  /// Counts for staged and unstaged files are cached by what they depend on
+  /// (index blob, working-copy size and mtime, HEAD), so a refresh only
+  /// re-diffs files that changed since the last one.
   static func withLineCounts(_ changes: [FileChange], repo: GitRepo, scope: DiffScope)
     -> [FileChange]
   {
     guard !changes.isEmpty else { return changes }
-    let paths = changes.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) }
-    guard let diff = try? makeDiff(repo: repo, scope: scope, pathspec: paths, options: DiffOptions())
-    else { return changes }
-    defer { git_diff_free(diff) }
-    // Pair renames, or a renamed file counts as all-new lines.
-    _ = git_diff_find_similar(diff, nil)
-    let stats = lineStats(diff: diff)
+    let signatures = lineCountSignatures(changes, repo: repo, scope: scope)
+    let cacheScope = "\((try? repo.workdir()) ?? "")|\(scope)"
+    var stats: [String: LineStat] = [:]
+    var missing: [FileChange] = []
+    for change in changes {
+      if let signature = signatures[change.path],
+        let cached = LineCountCache.shared.get(scope: cacheScope, path: change.path, signature: signature)
+      {
+        stats[change.path] = cached
+      } else {
+        missing.append(change)
+      }
+    }
+    if !missing.isEmpty {
+      let paths = missing.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) }
+      if let diff = try? makeDiff(repo: repo, scope: scope, pathspec: paths, options: DiffOptions()) {
+        defer { git_diff_free(diff) }
+        // Pair renames, or a renamed file counts as all-new lines.
+        _ = git_diff_find_similar(diff, nil)
+        for (path, stat) in lineStats(diff: diff) {
+          stats[path] = stat
+          if let signature = signatures[path] {
+            LineCountCache.shared.set(scope: cacheScope, path: path, signature: signature, stat: stat)
+          }
+        }
+      }
+    }
     return changes.map { change in
       guard let stat = stats[change.path] else { return change }
       return FileChange(
@@ -278,6 +301,35 @@ extension GitClient {
         added: stat.isBinary ? nil : stat.added, removed: stat.isBinary ? nil : stat.removed,
         isBinary: stat.isBinary)
     }
+  }
+
+  /// What a file's counts depend on, per path; none for scopes that aren't
+  /// cached or files that can't be described (renames).
+  static func lineCountSignatures(_ changes: [FileChange], repo: GitRepo, scope: DiffScope) -> [String: String] {
+    guard scope == .staged || scope == .unstaged else { return [:] }
+    var indexPointer: OpaquePointer?
+    guard git_repository_index(&indexPointer, repo.raw) == 0, let index = indexPointer else { return [:] }
+    defer { git_index_free(index) }
+    var head = "unborn"
+    if scope == .staged {
+      var oid = git_oid()
+      if git_reference_name_to_id(&oid, repo.raw, "HEAD") == 0 { head = oidHex(oid) }
+    }
+    let workdir = (try? repo.workdir()) ?? ""
+    var out: [String: String] = [:]
+    for change in changes where change.oldPath == nil {
+      let blob = git_index_get_bypath(index, change.path, 0).map { oidHex($0.pointee.id) } ?? "-"
+      if scope == .staged {
+        out[change.path] = "\(head)|\(blob)"
+      } else {
+        var info = stat()
+        let full = (workdir as NSString).appendingPathComponent(change.path)
+        guard lstat(full, &info) == 0 else { continue }
+        out[change.path] =
+          "\(blob)|\(info.st_size)|\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec)|\(info.st_ino)"
+      }
+    }
+    return out
   }
 
   struct LineStat {
@@ -350,5 +402,28 @@ extension GitClient {
   static func oldDeltaPath(_ delta: UnsafeMutablePointer<git_diff_delta>?) -> String? {
     guard let delta, let path = delta.pointee.old_file.path else { return nil }
     return String(cString: path)
+  }
+}
+
+/// Line counts by (repository and scope, path), valid while the signature
+/// (blob, size, mtime, …) is unchanged. Bounded; cleared when full.
+final class LineCountCache: @unchecked Sendable {
+  static let shared = LineCountCache()
+  private let lock = NSLock()
+  private var entries: [String: (signature: String, stat: GitClient.LineStat)] = [:]
+  private let limit = 20_000
+
+  func get(scope: String, path: String, signature: String) -> GitClient.LineStat? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let entry = entries[scope + "\u{0}" + path], entry.signature == signature else { return nil }
+    return entry.stat
+  }
+
+  func set(scope: String, path: String, signature: String, stat: GitClient.LineStat) {
+    lock.lock()
+    defer { lock.unlock() }
+    if entries.count >= limit { entries.removeAll(keepingCapacity: true) }
+    entries[scope + "\u{0}" + path] = (signature, stat)
   }
 }

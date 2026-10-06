@@ -181,6 +181,22 @@
       #expect(snap.untracked.map(\.path) == ["new folder/ünïcode.txt"])
     }
 
+    @Test func cachedLineCountsFollowEditsAndStaging() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n2\n3\n"])
+      try repo.write("a.txt", "1\n2\n3\n4\n")
+      #expect(try expectMatchesGit(repo).unstaged.first?.added == 1)
+      // Same file again, more lines: the cached count mustn't stick.
+      try repo.write("a.txt", "1\n2\n3\n4\n5\n6\n")
+      #expect(try expectMatchesGit(repo).unstaged.first?.added == 3)
+      try repo.git("add", "a.txt")
+      try repo.write("a.txt", "1\n2\n3\n4\n5\n6\n7\n")
+      let snap = try expectMatchesGit(repo)
+      #expect(snap.staged.first?.added == 3)
+      #expect(snap.unstaged.first?.added == 1, "now against the new index blob")
+    }
+
     // MARK: HEAD states
 
     @Test func detachedHead() throws {
