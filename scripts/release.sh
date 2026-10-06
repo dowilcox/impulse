@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release.sh — Tag a release, build, and publish the macOS app.
+# release.sh — Build, tag and publish a macOS release.
 #
 # Usage:
 #   ./scripts/release.sh 0.30.0          # bump version + tag + build .app/.dmg
@@ -21,8 +21,6 @@ shift
 for arg in "$@"; do
     case "$arg" in
         --push) PUSH=true ;;
-        --macos-only)
-            echo "Note: --macos-only is obsolete (releases are macOS-only now); ignoring." ;;
         *)
             echo "Error: unknown flag '$arg'" >&2
             exit 1 ;;
@@ -43,7 +41,9 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in cargo swift; do
+# rsvg-convert renders the app icon and DMG background; without it the
+# release would ship with a generic icon. create-dmg builds the disk image.
+for tool in cargo swift rsvg-convert create-dmg; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "Error: $tool not found." >&2
         exit 1
@@ -55,42 +55,38 @@ if [[ "$PUSH" == true ]] && ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
+VERSION_FILES=(VERSION Cargo.lock impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml)
+
+# ── Clean tree, before anything is written ─────────────────────────────
+
+# Anything besides the version files — staged, unstaged or untracked —
+# would otherwise end up built into (or committed with) the release.
+DIRTY=$(git status --porcelain | awk '{print $NF}' | grep -v -x -F -f <(printf '%s\n' "${VERSION_FILES[@]}") || true)
+if [[ -n "$DIRTY" ]]; then
+    echo "Error: working tree has changes beyond version files:" >&2
+    echo "$DIRTY" >&2
+    echo "Commit or stash first." >&2
+    exit 1
+fi
+
+# A re-run after the tag exists builds exactly that commit, or nothing.
+if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+    if [[ "$(git rev-parse "${TAG}^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+        echo "Error: ${TAG} exists but isn't HEAD; the build wouldn't match the tag." >&2
+        exit 1
+    fi
+fi
+
 # ── Version bump ───────────────────────────────────────────────────────
 
 echo "Setting version to ${VERSION}..."
 echo "$VERSION" > VERSION
 
 # Keep Rust crate versions in sync (BSD-sed-free approach).
-for toml in impulse-core/Cargo.toml impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml; do
-    [[ -f "$toml" ]] || continue
+for toml in impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml; do
     awk -v ver="$VERSION" '!done && /^version = "/ { sub(/^version = ".*"/, "version = \"" ver "\""); done=1 } 1' "$toml" > "$toml.tmp" && mv "$toml.tmp" "$toml"
 done
 cargo check -p impulse-ffi --quiet 2>/dev/null || true
-
-# ── Commit + tag ───────────────────────────────────────────────────────
-
-PRE_BUMP_DIRTY=$(git diff --name-only -- ':!Cargo.lock' ':!VERSION' ':!impulse-core/Cargo.toml' ':!impulse-ffi/Cargo.toml' ':!impulse-terminal/Cargo.toml')
-if [[ -n "$PRE_BUMP_DIRTY" ]]; then
-    echo "Error: working tree has uncommitted changes beyond version files:" >&2
-    echo "$PRE_BUMP_DIRTY" >&2
-    echo "Commit or stash first." >&2
-    exit 1
-fi
-
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-    git add VERSION Cargo.lock
-    for toml in impulse-core/Cargo.toml impulse-ffi/Cargo.toml impulse-terminal/Cargo.toml; do
-        [[ -f "$toml" ]] && git add "$toml"
-    done
-    git commit -m "Release ${TAG}"
-fi
-
-if git rev-parse "$TAG" >/dev/null 2>&1; then
-    echo "Tag ${TAG} already exists. Skipping tag creation."
-else
-    echo "Creating tag ${TAG}..."
-    git tag -a "$TAG" -m "Release ${TAG}"
-fi
 
 # ── Build ──────────────────────────────────────────────────────────────
 
@@ -107,6 +103,20 @@ bash impulse-macos/build.sh --dmg --sign --notarize
 DMG_NAME="Impulse-${VERSION}.dmg"
 if [[ -f "$DIST_DIR/$DMG_NAME" ]]; then
     DIST_FILES+=("$DMG_NAME")
+fi
+
+# ── Commit + tag (only after a successful signed, notarized build) ─────
+
+if [[ -n "$(git status --porcelain -- "${VERSION_FILES[@]}")" ]]; then
+    git add -- "${VERSION_FILES[@]}"
+    git commit -m "Release ${TAG}" -- "${VERSION_FILES[@]}"
+fi
+
+if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+    echo "Tag ${TAG} already exists at HEAD."
+else
+    echo "Creating tag ${TAG}..."
+    git tag -a "$TAG" -m "Release ${TAG}"
 fi
 
 # ── Checksums ──────────────────────────────────────────────────────────

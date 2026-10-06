@@ -12,8 +12,9 @@ set -euo pipefail
 #   3. Build the Swift macOS app with SwiftPM.
 #   4. Create a proper .app bundle.
 #   4b. Optionally codesign with Developer ID (with --sign flag).
-#   5. Optionally create a .dmg disk image (with --dmg flag).
-#   6. Optionally notarize with Apple (with --notarize flag).
+#   4c. Optionally notarize and staple the app (with --notarize flag).
+#   5. Optionally create a .dmg disk image (with --dmg flag), notarized and
+#      stapled too with --notarize.
 #
 # Usage:
 #   ./impulse-macos/build.sh                           # build .app bundle
@@ -312,6 +313,33 @@ cat > "${CONTENTS}/Info.plist" << PLIST
     <string>26.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Shown when a program run in an Impulse terminal asks for access. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>A program in an Impulse terminal wants to control another app.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use the microphone.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use the camera.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>A program in an Impulse terminal wants to read your contacts.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use your calendars.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use your reminders.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>A program in an Impulse terminal wants to know your location.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use your photo library.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use files on your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use files in Documents.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use files in Downloads.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use files on a removable volume.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>A program in an Impulse terminal wants to use files on a network volume.</string>
     <key>NSSupportsAutomaticTermination</key>
     <false/>
     <key>NSPrincipalClass</key>
@@ -774,6 +802,35 @@ RPLIST
     echo "    OK: Code signing verified"
 fi
 
+# ── Step 4c: Notarize the app (optional) ─────────────────────────────
+#
+# The app is notarized and stapled before it goes into the DMG, so the copy
+# users drag to /Applications carries its ticket and opens offline too. The
+# DMG is notarized and stapled separately after it's built.
+
+notarize() {
+    echo "    Submitting $(basename "$1") for notarization..."
+    xcrun notarytool submit "$1" \
+        --key "${IMPULSE_NOTARY_KEY}" \
+        --key-id "${IMPULSE_NOTARY_KEY_ID}" \
+        --issuer "${IMPULSE_NOTARY_ISSUER}" \
+        --wait
+}
+
+if [[ "${NOTARIZE}" == true ]]; then
+    echo "==> Notarizing ${APP_NAME}.app with Apple..."
+    NOTARIZE_ZIP="dist/${APP_NAME// /-}-${VERSION}.zip"
+    ditto -c -k --keepParent "${APP_DIR}" "${NOTARIZE_ZIP}"
+    notarize "${NOTARIZE_ZIP}"
+    rm -f "${NOTARIZE_ZIP}"
+    echo "    Stapling the app..."
+    xcrun stapler staple "${APP_DIR}"
+    # Verify Gatekeeper acceptance (requires notarization on modern macOS)
+    echo "    Verifying Gatekeeper acceptance..."
+    spctl --assess --type exec "${APP_DIR}"
+    echo "    OK: app notarized"
+fi
+
 # ── Step 5: Create .dmg (optional) ────────────────────────────────────
 
 if [[ "${CREATE_DMG}" == true ]]; then
@@ -835,47 +892,13 @@ if [[ "${CREATE_DMG}" == true ]]; then
         codesign --force --sign "${IMPULSE_SIGN_IDENTITY}" --timestamp "${DMG_PATH}"
     fi
 
-    echo "    OK: ${DMG_PATH}"
-fi
-
-# ── Step 6: Notarization (optional) ──────────────────────────────────
-
-if [[ "${NOTARIZE}" == true ]]; then
-    echo "==> Notarizing with Apple..."
-
-    # Determine what to submit: prefer DMG, fall back to zipped .app
-    NOTARIZE_ZIP="dist/${APP_NAME// /-}-${VERSION}.zip"
-    if [[ "${CREATE_DMG}" == true && -f "${DMG_PATH}" ]]; then
-        NOTARIZE_TARGET="${DMG_PATH}"
-    else
-        echo "    Creating zip for notarization..."
-        NOTARIZE_TARGET="${NOTARIZE_ZIP}"
-        ditto -c -k --keepParent "${APP_DIR}" "${NOTARIZE_TARGET}"
-    fi
-
-    echo "    Submitting ${NOTARIZE_TARGET} for notarization..."
-    xcrun notarytool submit "${NOTARIZE_TARGET}" \
-        --key "${IMPULSE_NOTARY_KEY}" \
-        --key-id "${IMPULSE_NOTARY_KEY_ID}" \
-        --issuer "${IMPULSE_NOTARY_ISSUER}" \
-        --wait
-
-    echo "    Stapling notarization ticket..."
-    xcrun stapler staple "${APP_DIR}"
-
-    if [[ "${CREATE_DMG}" == true && -f "${DMG_PATH}" ]]; then
+    if [[ "${NOTARIZE}" == true ]]; then
+        echo "    Notarizing the DMG..."
+        notarize "${DMG_PATH}"
         xcrun stapler staple "${DMG_PATH}"
     fi
 
-    # Clean up temporary zip if we created one
-    if [[ "${CREATE_DMG}" != true && -f "${NOTARIZE_ZIP}" ]]; then
-        rm -f "${NOTARIZE_ZIP}"
-    fi
-
-    # Verify Gatekeeper acceptance (requires notarization on modern macOS)
-    echo "    Verifying Gatekeeper acceptance..."
-    spctl --assess --type exec "${APP_DIR}"
-    echo "    OK: Notarization complete"
+    echo "    OK: ${DMG_PATH}"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────
