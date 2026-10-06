@@ -29,6 +29,10 @@ final class GitRepositoryState {
   @ObservationIgnored private var refreshQueued = false
   @ObservationIgnored private var refreshInFlight = false
   @ObservationIgnored private let queue: DispatchQueue
+  /// Background fetches: a slow or unreachable remote mustn't hold up
+  /// status refreshes or the user's own git actions on `queue`.
+  @ObservationIgnored private let fetchQueue: DispatchQueue
+  @ObservationIgnored private var quietFetchInFlight = false
   /// Listeners that want to know about working-tree changes even when the
   /// snapshot is identical (e.g. an open review re-diffing a modified file).
   @ObservationIgnored private var changeListeners: [UUID: (RepoWatcher.Change) -> Void] = [:]
@@ -36,6 +40,7 @@ final class GitRepositoryState {
   init(root: String) {
     self.root = root
     queue = DispatchQueue(label: "impulse.git.\(root.hashValue)", qos: .userInitiated)
+    fetchQueue = DispatchQueue(label: "impulse.git-fetch.\(root.hashValue)", qos: .utility)
   }
 
   deinit {
@@ -91,13 +96,23 @@ final class GitRepositoryState {
   /// errors shown, no credential prompts. Skipped while another operation
   /// runs or when there's no remote.
   func fetchQuietly(timeout: TimeInterval = 120) {
-    guard activity == nil, snapshot?.upstream != nil else { return }
+    guard activity == nil, !quietFetchInFlight, snapshot?.upstream != nil else { return }
+    quietFetchInFlight = true
     lastFetch = Date()
-    run { root in
-      GitOperations.fetch(root: root, timeout: timeout)
-    } completion: { result, _ in
-      if case .failure(let error) = result {
-        NSLog("Background fetch of %@ failed: %@", self.root, error.message)
+    let root = self.root
+    fetchQueue.async { [weak self] in
+      let result = GitOperations.fetch(root: root, timeout: timeout)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.quietFetchInFlight = false
+        switch result {
+        case .success:
+          self.refresh()
+          NotificationCenter.default.post(
+            name: .gitRepositoryDidChange, object: self, userInfo: ["root": root])
+        case .failure(let error):
+          NSLog("Background fetch of %@ failed: %@", root, error.message)
+        }
       }
     }
   }

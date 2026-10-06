@@ -147,34 +147,24 @@ final class FileTreeNode: Identifiable {
     ) {
         // The batch call runs on the current thread (expected to be background).
         let batchStatuses = ImpulseCore.getAllGitStatuses(repoPath: repoPath)
-        applyGitStatuses(nodes: nodes, dirPath: dirPath, batchStatuses: batchStatuses)
+        // The nodes are walked on main, where expanding and patching change
+        // their children.
+        DispatchQueue.main.async {
+            applyGitStatuses(nodes: nodes, dirPath: dirPath, batchStatuses: batchStatuses)
+        }
     }
 
-    /// Apply pre-fetched batch git statuses to nodes. Use this when the caller
-    /// already has the batch statuses (e.g. from a poll that computed a hash)
-    /// to avoid a redundant FFI call.
-    ///
-    /// Only nodes whose status actually changed are written on the main thread,
-    /// so `@Observable` doesn't fire re-renders for every node every refresh.
+    /// Apply pre-fetched batch git statuses to nodes (main thread). Only
+    /// nodes whose status actually changed are written, so `@Observable`
+    /// doesn't fire re-renders for every node every refresh.
     static func applyGitStatuses(
         nodes: [FileTreeNode],
         dirPath: String,
         batchStatuses: [String: [String: String]]
     ) {
-        let updates = collectStatusUpdates(
-            nodes: nodes,
-            dirPath: dirPath,
-            batchStatuses: batchStatuses
-        )
-        guard !updates.isEmpty else { return }
-        DispatchQueue.main.async {
-            for (node, status) in updates {
-                // Re-check here: status may have changed again between collect
-                // and apply, and we still want to skip no-op writes.
-                if node.gitStatus != status {
-                    node.gitStatus = status
-                }
-            }
+        dispatchPrecondition(condition: .onQueue(.main))
+        for (node, status) in collectStatusUpdates(nodes: nodes, dirPath: dirPath, batchStatuses: batchStatuses) {
+            node.gitStatus = status
         }
     }
 

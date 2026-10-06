@@ -11,6 +11,7 @@ final class AgentCheckpoints {
   static let shared = AgentCheckpoints()
 
   struct Turn {
+    let id: UUID
     let terminalID: UUID
     let agentName: String
     let repoRoot: String
@@ -24,42 +25,51 @@ final class AgentCheckpoints {
   private let queue = DispatchQueue(label: "impulse.checkpoints", qos: .utility)
   /// Turns per terminal, oldest first. Main thread only.
   private var turns: [UUID: [Turn]] = [:]
+  /// The turn each terminal's agent is working on. Main thread only.
+  private var openTurns: [UUID: UUID] = [:]
+  /// Each turn's repository, once its start snapshot is taken. `queue` only.
+  private var turnRoots: [UUID: String] = [:]
   private var prunedRoots: Set<String> = []
 
   /// The agent started working in `cwd`.
   func turnStarted(terminalID: UUID, agentName: String, cwd: String) {
     guard !cwd.isEmpty else { return }
+    let id = UUID()
+    openTurns[terminalID] = id
     queue.async { [weak self] in
-      guard let root = GitClient.repoRoot(forPath: cwd) else { return }
+      guard let self, let root = GitClient.repoRoot(forPath: cwd) else { return }
       let prefix = SafetySnapshots.checkpointPrefix + terminalID.uuidString + "/"
       guard
         case .success(let snapshot) = SafetySnapshots.create(
           reason: "turn start", root: root, prefix: prefix)
       else { return }
-      self?.pruneOnce(root: root)
+      self.turnRoots[id] = root
+      self.pruneOnce(root: root)
       DispatchQueue.main.async {
-        self?.turns[terminalID, default: []].append(
-          Turn(terminalID: terminalID, agentName: agentName, repoRoot: root, start: snapshot))
+        self.turns[terminalID, default: []].append(
+          Turn(id: id, terminalID: terminalID, agentName: agentName, repoRoot: root, start: snapshot))
         NotificationCenter.default.post(name: .agentCheckpointsChanged, object: nil)
       }
     }
   }
 
-  /// The agent stopped (finished, or waits for the user).
+  /// The agent stopped (finished, or waits for the user). The end snapshot
+  /// queues behind the start's, so a turn that ends before its start
+  /// snapshot is recorded still gets its end.
   func turnEnded(terminalID: UUID) {
-    guard let turn = turns[terminalID]?.last, turn.end == nil else { return }
-    let root = turn.repoRoot
+    guard let id = openTurns.removeValue(forKey: terminalID) else { return }
     let prefix = SafetySnapshots.checkpointPrefix + terminalID.uuidString + "/"
     queue.async { [weak self] in
-      guard
+      // No root: the start snapshot failed or wasn't in a repository.
+      guard let self, let root = self.turnRoots.removeValue(forKey: id),
         case .success(let snapshot) = SafetySnapshots.create(
           reason: "turn end", root: root, prefix: prefix)
       else { return }
       DispatchQueue.main.async {
-        guard let self, var list = self.turns[terminalID], let last = list.indices.last,
-          list[last].start.ref == turn.start.ref
-        else { return }
-        list[last].end = snapshot
+        guard var list = self.turns[terminalID], let index = list.lastIndex(where: { $0.id == id }) else {
+          return
+        }
+        list[index].end = snapshot
         self.turns[terminalID] = list
         NotificationCenter.default.post(name: .agentCheckpointsChanged, object: nil)
       }

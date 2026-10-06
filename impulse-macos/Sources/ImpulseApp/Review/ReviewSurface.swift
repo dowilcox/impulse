@@ -711,9 +711,16 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     let sideLines = indices.map { lines[$0] }.filter { side == .old ? $0.kind == .removed : $0.kind != .removed }
     let numbers = sideLines.compactMap { Int((side == .old ? $0.oldLineno : $0.newLineno) ?? 0) }.filter { $0 > 0 }
     let first = numbers.min() ?? Int((side == .old ? anchor.oldLineno : anchor.newLineno) ?? 1)
+    let last = numbers.max() ?? first
+    // Every line of the range on that side, context included: the comment
+    // is outdated when line `first + k` no longer reads like snippet line k.
+    let spanned = lines.filter {
+      let number = Int((side == .old ? $0.oldLineno : $0.newLineno) ?? 0)
+      return number >= first && number <= last
+    }
     file.composer = ReviewFile.Composer(
-      hunk: hunk, lineIndex: indices.last ?? target, side: side, line: first, endLine: numbers.max() ?? first,
-      snippet: sideLines.map(\.content).joined(separator: "\n"))
+      hunk: hunk, lineIndex: indices.last ?? target, side: side, line: first, endLine: last,
+      snippet: spanned.map(\.content).joined(separator: "\n"))
     file.editingComment = nil
     rebuildRows()
   }

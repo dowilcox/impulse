@@ -177,14 +177,17 @@ extension MainWindowController {
       contentRect: NSRect(x: 0, y: 0, width: 640, height: 460), styleMask: [.titled],
       backing: .buffered, defer: true)
     let palette = windowModel.palette
+    let sheetHost = SheetGitHost(base: self, sheet: sheet, palette: palette)
     let host = NSHostingView(
       rootView: BranchManagerView(
         model: model,
         onAction: { [weak self, weak window, weak sheet] action, branch in
           guard let self else { return }
           // Actions that move elsewhere close the sheet first.
-          if [.switchTo, .compare, .history, .merge, .rebase].contains(action), let sheet { window?.endSheet(sheet) }
-          self.performBranchAction(action, branch: branch, model: model, sheet: sheet)
+          let leaves = [.switchTo, .compare, .history, .merge, .rebase].contains(action)
+          if leaves, let sheet { window?.endSheet(sheet) }
+          self.performBranchAction(
+            action, branch: branch, model: model, sheet: sheet, host: leaves ? self : sheetHost)
         },
         onClose: { [weak window, weak sheet] in
           if let sheet { window?.endSheet(sheet) }
@@ -196,10 +199,11 @@ extension MainWindowController {
   }
 
   private func performBranchAction(
-    _ action: BranchAction, branch: GitOperations.BranchInfo, model: BranchManagerModel, sheet: NSWindow?
+    _ action: BranchAction, branch: GitOperations.BranchInfo, model: BranchManagerModel, sheet: NSWindow?,
+    host: GitPanelHost
   ) {
     let repository = model.repository
-    let actions = GitActions(repository: repository, host: self)
+    let actions = GitActions(repository: repository, host: host)
     switch action {
     case .switchTo:
       actions.switchBranch(branch.name)
@@ -218,7 +222,7 @@ extension MainWindowController {
       ask(on: sheet, title: "Rename \(branch.name)", initial: branch.name, confirm: "Rename") { [weak self] name in
         guard name != branch.name else { return }
         guard PaletteModel.isValidBranchName(name) else {
-          self?.toasts.show(Toast(kind: .warning, message: "“\(name)” isn't a valid branch name."))
+          host.toasts.show(Toast(kind: .warning, message: "“\(name)” isn't a valid branch name."))
           return
         }
         repository.run { GitOperations.renameBranch(branch.name, to: name, root: $0) } completion: {
@@ -253,5 +257,33 @@ extension MainWindowController {
         then(field.stringValue.trimmingCharacters(in: .whitespaces))
       }
     }
+  }
+}
+
+/// Reports git actions started in a sheet on that sheet: toasts (and their
+/// Undo) appear over it, where they can be clicked while it's open.
+/// Everything else goes to the window.
+final class SheetGitHost: GitPanelHost {
+  private weak var base: MainWindowController?
+  let toasts = ToastCenter()
+
+  init(base: MainWindowController, sheet: NSWindow, palette: ChromePalette) {
+    self.base = base
+    toasts.attach(to: sheet) { palette }
+  }
+
+  var agentTargets: [AgentSummary] { base?.agentTargets ?? [] }
+  func sendToAgent(_ text: String, terminalID: UUID) { base?.sendToAgent(text, terminalID: terminalID) }
+  func gitOpenFile(_ absolutePath: String) { base?.gitOpenFile(absolutePath) }
+  func gitOpenDiffEditor(_ absolutePath: String) { base?.gitOpenDiffEditor(absolutePath) }
+  func gitOpenReview(scope: DiffScope, focusPath: String?) { base?.gitOpenReview(scope: scope, focusPath: focusPath) }
+  func gitPresentError(_ error: GitOperationError, title: String) { base?.gitPresentError(error, title: title) }
+  func gitConfirm(
+    title: String, message: String, confirmTitle: String, destructive: Bool,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard let base else { return completion(false) }
+    base.gitConfirm(
+      title: title, message: message, confirmTitle: confirmTitle, destructive: destructive, completion: completion)
   }
 }

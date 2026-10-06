@@ -25,8 +25,14 @@ final class HistoryModel {
     }
   }
   private(set) var query = HistoryQuery()
-  /// The tokens the loaded pages were read with (the loader reads this).
-  @ObservationIgnored private(set) var appliedQuery = HistoryQuery()
+  /// What the loaded pages were read with: a page that comes back for
+  /// anything else (the scope or filter changed meanwhile) is dropped.
+  struct Request: Equatable {
+    var scope: GitLog.Scope
+    var path: String?
+    var query: HistoryQuery
+  }
+  @ObservationIgnored private(set) var applied = Request(scope: .head, path: nil, query: HistoryQuery())
   @ObservationIgnored private var queryReload: DispatchWorkItem?
   var selectedSha: String?
   var palette: ChromePalette
@@ -65,7 +71,8 @@ final class HistoryModel {
   @ObservationIgnored var onShowCommit: ((String) -> Void)?
   @ObservationIgnored var onAction: ((HistoryAction, LogEntry) -> Void)?
   /// A page of history: (skip, limit).
-  @ObservationIgnored var loader: ((Int, Int) -> Result<[LogEntry], GitOperationError>)?
+  /// Reads a page (off the main thread) for a request taken on main.
+  @ObservationIgnored var loader: ((Request, Int, Int) -> Result<[LogEntry], GitOperationError>)?
 
   /// What the menus need: the checked-out branch, the remotes (to tell
   /// `origin/x` from a local `feature/x`) and the web host's name.
@@ -107,9 +114,9 @@ final class HistoryModel {
   /// Re-read history when the filter's tokens change (typing settles first).
   private func scheduleQueryReload() {
     queryReload?.cancel()
-    guard query.server != appliedQuery else { return }
+    guard query.server != applied.query else { return }
     let work = DispatchWorkItem { [weak self] in
-      guard let self, self.query.server != self.appliedQuery else { return }
+      guard let self, self.query.server != self.applied.query else { return }
       self.reload()
     }
     queryReload = work
@@ -120,7 +127,7 @@ final class HistoryModel {
     entries = []
     rows = []
     reachedEnd = false
-    appliedQuery = query.server
+    applied = Request(scope: scope, path: path, query: query.server)
     loadMore()
     loadSurroundings()
   }
@@ -131,13 +138,13 @@ final class HistoryModel {
     guard !isLoading, let loader else { return }
     isLoading = true
     let count = max(entries.count, HistorySurface.pageSize)
-    let applied = appliedQuery
+    let request = applied
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = loader(0, count)
+      let result = loader(request, 0, count)
       DispatchQueue.main.async {
         guard let self else { return }
         self.isLoading = false
-        guard applied == self.appliedQuery else { return self.reload() }
+        guard request == self.applied else { return self.reload() }
         if case .success(let page) = result, page != self.entries {
           self.entries = page
           self.reachedEnd = page.count < count
@@ -196,14 +203,14 @@ final class HistoryModel {
     guard !isLoading, !reachedEnd, let loader else { return }
     isLoading = true
     let skip = entries.count
-    let applied = appliedQuery
+    let request = applied
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = loader(skip, HistorySurface.pageSize)
+      let result = loader(request, skip, HistorySurface.pageSize)
       DispatchQueue.main.async {
         guard let self else { return }
         self.isLoading = false
-        // The filter changed while this page was loading: start over.
-        guard applied == self.appliedQuery else {
+        // The scope or filter changed while this page loaded: start over.
+        guard request == self.applied else {
           self.reload()
           return
         }
@@ -281,10 +288,9 @@ final class HistorySurface: NSView {
     super.init(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
     model.path = path
     let root = repository.root
-    model.loader = { [weak model] skip, limit in
+    model.loader = { request, skip, limit in
       GitLog.entries(
-        root: root, scope: model?.scope ?? .head, path: model?.path,
-        query: model?.appliedQuery ?? HistoryQuery(), skip: skip, limit: limit)
+        root: root, scope: request.scope, path: request.path, query: request.query, skip: skip, limit: limit)
     }
     model.contextLoader = {
       let web = GitOperations.defaultRemote(root: root)

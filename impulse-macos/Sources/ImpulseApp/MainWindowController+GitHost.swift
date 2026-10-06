@@ -60,7 +60,8 @@ extension MainWindowController: GitPanelHost {
     title: String, message: String, confirmTitle: String, destructive: Bool,
     completion: @escaping (Bool) -> Void
   ) {
-    guard let window else { return completion(false) }
+    // On top of an open sheet (the Branch Manager), not queued behind it.
+    guard let window = window?.attachedSheet ?? window else { return completion(false) }
     let alert = NSAlert()
     alert.alertStyle = destructive ? .warning : .informational
     alert.messageText = title
