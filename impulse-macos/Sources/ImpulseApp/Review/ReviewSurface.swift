@@ -957,6 +957,10 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       revealFile(String(action.dropFirst(7)))
     } else if action == "edit", let comment = files.lazy.flatMap(\.comments).first {
       reviewEditComment(comment.id, path: comment.path)
+    } else if action == "scope=uncommitted" {
+      setScope(.uncommitted)
+    } else if action.hasPrefix("scope=branch:") {
+      setScope(.branch(base: String(action.dropFirst(13))))
     } else if action == "composer", let focus = diffContext.focus {
       reviewOpenComposer(path: focus.path, hunk: focus.hunk, line: nil)
     }

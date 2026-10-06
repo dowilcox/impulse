@@ -6,8 +6,8 @@ All notable changes to Impulse are documented in this file.
 
 **Impulse is now a native Mac app.** It was rewritten in Swift (AppKit +
 SwiftUI); only the terminal emulation core is still Rust. **Linux is no
-longer supported**: the GTK4 app's last release is 0.29.0, whose packages
-stay on its GitHub release.
+longer supported**: the GTK4 app's last packages are on the 0.28.0 GitHub
+release, and 0.29.0 is the last version whose source includes it.
 
 ### Terminal IDE redesign
 
@@ -76,6 +76,9 @@ running in its terminals. Impulse itself never calls an AI service.
 - Markdown preview links and terminal OSC 8 links can no longer open arbitrary apps or pages that run commands.
 - Git: reverting a hunk applies to the right block, partial staging refuses non-UTF-8 files instead of corrupting them, file names are never treated as globs, commit messages keep lines starting with #, and destructive actions don't run without their safety snapshot.
 - Language servers, node and npm are found when Impulse is started from the Dock.
+- Command block separators stay on their prompts when a resize rewraps long lines (opening an editor beside a terminal, for one).
+- Clicking a short commit hash in terminal output selects that commit in History.
+- A narrow terminal pane drops whole context chips instead of cutting the last one in half.
 
 ## 0.29.0
 

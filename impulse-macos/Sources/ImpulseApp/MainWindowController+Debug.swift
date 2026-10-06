@@ -47,6 +47,8 @@ extension MainWindowController {
         tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
+      } else if action.hasPrefix("focus-pane="), let id = Int(action.dropFirst(11)) {
+        tabManager.focusPane(id, inTabAt: tabManager.selectedIndex)
       } else if action == "expand-workspaces" {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
@@ -80,6 +82,12 @@ extension MainWindowController {
         handleThemeChange(ThemeManager.theme(forName: String(action.dropFirst(6))))
       } else if action == "history" {
         showHistory()
+      } else if action == "history-all" {
+        // History with every branch (snapshot checks).
+        for case .history(_, let view) in tabManager.allSurfaces {
+          view.model.scope = .all
+          view.model.reload()
+        }
       } else if action.hasPrefix("history-filter="), let repository = windowModel.repository {
         tabManager.addHistoryTab(repository: repository, host: self)
         if case let index = tabManager.selectedIndex, tabManager.tabs.indices.contains(index),
