@@ -35,6 +35,9 @@ extension Notification.Name {
     /// Posted when the editor content is modified. The `userInfo` dictionary contains
     /// `"filePath"` as a `String`.
     static let editorContentChanged = Notification.Name("impulse.editorContentChanged")
+    /// Text pasted or dropped on a terminal whose input bar owns input
+    /// (object: TerminalTab, userInfo "text").
+    static let terminalInsertIntoInputBar = Notification.Name("impulse.terminalInsertIntoInputBar")
     /// An editor's file changed on disk while it had unsaved edits (object: EditorTab).
     static let editorChangedOnDisk = Notification.Name("impulse.editorChangedOnDisk")
     /// Posted when a completion request is received from Monaco. The `userInfo`

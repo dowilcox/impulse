@@ -201,10 +201,7 @@ extension MainWindowController {
         terminal.insertInput(text)
         terminal.focus()
       } else {
-        let draft = windowModel.inputDraft
-        windowModel.inputDraft = draft.isEmpty || draft.hasSuffix(" ") ? draft + text : draft + " " + text
-        windowModel.inputDraftRestoreToken += 1
-        windowModel.inputBarFocusToken += 1
+        insertIntoInputBar(text)
       }
     default:
       switch TerminalHintMatch.Kind(rawValue: info["kind"] as? String ?? "") {
@@ -321,6 +318,14 @@ extension MainWindowController {
     let current = tabManager.selectedTerminal?.activeTerminal?.id
     let start = waiting.firstIndex { $0.id == current }.map { $0 + 1 } ?? 0
     revealTerminal(id: waiting[start % waiting.count].id)
+  }
+
+  /// Append text to the input bar's draft (a space apart) and focus it.
+  func insertIntoInputBar(_ text: String) {
+    let draft = windowModel.inputDraft
+    windowModel.inputDraft = draft.isEmpty || draft.hasSuffix(" ") ? draft + text : draft + " " + text
+    windowModel.inputDraftRestoreToken += 1
+    windowModel.inputBarFocusToken += 1
   }
 
   /// Split, focus, resize and zoom panes of the selected tab. `command` is

@@ -23,13 +23,15 @@ extension MainWindowController {
       alert.addButton(withTitle: "Cancel")
 
       guard let window = self.window else { return }
+      let tabView = tabManager.tabs[index].view
       alert.beginSheetModal(for: window) { [weak self] response in
-        guard let self else { return }
-        if response == .alertFirstButtonReturn {
-          // Unpin, then re-enter requestCloseTab for unsaved-changes handling
-          self.tabManager.unpin(index: index)
-          self.requestCloseTab(index: index)
-        }
+        // Re-find the tab: others may have closed or opened while asking.
+        guard let self, response == .alertFirstButtonReturn,
+          let current = self.tabManager.tabs.firstIndex(where: { $0.view === tabView })
+        else { return }
+        // Unpin, then re-enter requestCloseTab for unsaved-changes handling
+        self.tabManager.unpin(index: current)
+        self.requestCloseTab(index: current)
       }
       return
     }

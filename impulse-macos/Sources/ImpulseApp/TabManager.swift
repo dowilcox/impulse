@@ -281,6 +281,9 @@ final class TabManager: NSObject {
   /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
   private(set) var closedTabs: [ClosedTabInfo] = []
   /// A tab (or, when the flag is set, a pane) was closed and can come back.
+  /// A surface is being torn down (editors: the window untracks it and
+  /// tells language servers the file closed).
+  var onSurfaceClosing: ((TabEntry) -> Void)?
   var onClosedTabRecorded: ((_ title: String, _ isPane: Bool) -> Void)?
 
   /// Maximum number of closed tabs to remember.
@@ -441,6 +444,7 @@ final class TabManager: NSObject {
           kind: .info, message: "\((path as NSString).lastPathComponent) is a binary file the editor can't show.",
           actionTitle: "Open in Default App",
           action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
+      ensureATab()
       return
     }
 
@@ -463,6 +467,7 @@ final class TabManager: NSObject {
               message: "\((path as NSString).lastPathComponent) isn't UTF-8 text, so the editor won't open it.",
               actionTitle: "Open in Default App",
               action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
+          self.ensureATab()
           return
         }
 
@@ -474,6 +479,12 @@ final class TabManager: NSObject {
           beside: beside, preview: preview)
       }
     }
+  }
+
+  /// A window launched to open files that turned out unopenable would be
+  /// left with no tabs at all: give it a terminal.
+  private func ensureATab() {
+    if records.isEmpty { addTerminalTab() }
   }
 
   /// Creates and inserts an editor tab for a file whose content was already
@@ -753,6 +764,9 @@ final class TabManager: NSObject {
   /// Release resources owned by a tab entry (kill processes, tear down
   /// WebViews) so they don't linger after the tab is removed.
   private func cleanupTab(_ entry: TabEntry) {
+    // Every way a surface goes (close, preview replacement, workspace close)
+    // passes here, so the window can do its bookkeeping (LSP didClose…).
+    if case .editor = entry { onSurfaceClosing?(entry) }
     switch entry {
     case .split(let split):
       for pane in split.panes.values { cleanupTab(pane) }

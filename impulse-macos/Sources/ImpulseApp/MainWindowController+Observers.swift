@@ -199,6 +199,9 @@ extension MainWindowController {
             }
           }
           self.applyGitDiffDecorations(editor: editor)
+          if let path = editor.filePath, self.pendingDiffViewPaths.remove(path) != nil {
+            self.setDiffView(editor, enabled: true)
+          }
         }
       }
     )
@@ -213,6 +216,15 @@ extension MainWindowController {
           // them and gets a "changed on disk" notice instead.
           self.findEditorTab(forPath: path)?.reloadFromDisk(force: false)
         }
+      }
+    )
+    notificationObservers.append(
+      nc.addObserver(forName: .terminalInsertIntoInputBar, object: nil, queue: .main) { [weak self] notification in
+        guard let self, let terminal = notification.object as? TerminalTab, self.tabManager.ownsTerminal(terminal),
+          let text = notification.userInfo?["text"] as? String
+        else { return }
+        if let location = self.tabManager.location(ofTerminal: terminal) { self.tabManager.reveal(location) }
+        self.insertIntoInputBar(text)
       }
     )
     notificationObservers.append(

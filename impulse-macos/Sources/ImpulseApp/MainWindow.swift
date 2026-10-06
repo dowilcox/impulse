@@ -124,6 +124,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   var repositoryObservation: ObservationLoop?
   /// Change listener on the active repository (file tree badges).
   var repositoryListener: (state: GitRepositoryState, token: UUID)?
+  /// Files asked to open in the diff view before their tab existed.
+  var pendingDiffViewPaths: Set<String> = []
 
   // MARK: LSP State (internal for MainWindowController+LSP extension)
 
@@ -278,6 +280,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // Wire the tab close handler for save confirmation on unsaved editor tabs.
     tabManager.tabCloseHandler = { [weak self] index in
       self?.requestCloseTab(index: index)
+    }
+    tabManager.onSurfaceClosing = { [weak self] entry in
+      self?.willCloseSurface(entry)
     }
     tabManager.onClosedTabRecorded = { [weak self] title, isPane in
       self?.offerUndoClose(title: title, isPane: isPane)

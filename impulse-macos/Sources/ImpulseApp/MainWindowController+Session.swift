@@ -26,7 +26,8 @@ extension MainWindowController {
   /// inserted on main in saved order. Returns false when nothing in the
   /// session can be restored.
   @discardableResult
-  func restoreSessionWindow(_ state: SessionWindowState) -> Bool {
+  /// `then` runs once the restored tabs are in (e.g. files to open on top).
+  func restoreSessionWindow(_ state: SessionWindowState, then: (() -> Void)? = nil) -> Bool {
     let savedWorkspaces = (state.workspaces ?? []).filter { workspace in
       workspace.kind == "scratch" || FileManager.default.fileExists(atPath: workspace.root)
     }
@@ -52,6 +53,7 @@ extension MainWindowController {
       DispatchQueue.main.async { [weak self] in
         self?.insertRestoredWorkspaces(
           workspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
+        then?()
       }
     }
     return true
@@ -233,7 +235,9 @@ extension MainWindowController {
       guard !remaining.isEmpty else {
         self.reviewingDirtyWindowClose = false
         self.closingAfterDirtyReview = true
-        self.window?.close()
+        // performClose, not close: close() skips windowShouldClose, and with
+        // it the running-processes check that follows the dirty review.
+        self.window?.performClose(nil)
         return
       }
 
@@ -311,6 +315,16 @@ extension MainWindowController {
     // Remove all notification observers.
     notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     notificationObservers.removeAll()
+    // A closed window must not keep timers and shared-repository listeners
+    // (and through them, itself) alive.
+    portTimer?.invalidate()
+    portTimer = nil
+    if let listener = repositoryListener {
+      listener.state.removeChangeListener(listener.token)
+      repositoryListener = nil
+    }
+    repositoryObservation?.cancel()
+    repositoryObservation = nil
 
     // Clean up all remaining tabs (kill terminal processes, tear down
     // editor WebViews) so resources are freed immediately.

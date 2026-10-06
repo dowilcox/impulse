@@ -406,7 +406,7 @@ struct TerminalContextBarView: View {
   /// closed and returns false.
   private func openCompletionsFromTab() -> Bool {
     guard !text.isEmpty, !model.commandRunning,
-      let resolve = model.onCompletionCandidates
+      let resolve = model.onCompletionResolver?()
     else { return false }
 
     // Invalidate any pending async fetch — this synchronous result wins.
@@ -469,7 +469,9 @@ struct TerminalContextBarView: View {
       return
     }
 
-    guard let resolve = model.onCompletionCandidates else { return }
+    // Read the terminal's state now, on the main thread; only the resolving
+    // runs in the background.
+    guard let resolve = model.onCompletionResolver?() else { return }
 
     DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.04) {
       // Skip if a newer keystroke superseded this request before the debounce

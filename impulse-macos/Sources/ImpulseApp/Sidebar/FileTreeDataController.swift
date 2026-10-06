@@ -175,6 +175,8 @@ final class FileTreeDataController {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.isRefreshingTree = false
+                // Re-rooted while building: this tree is for another folder.
+                guard self.rootPath == root else { return }
 
                 // If more events arrived during the rebuild, start a fresh
                 // refresh with the latest filesystem state instead of applying

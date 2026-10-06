@@ -342,9 +342,10 @@ final class WindowModel {
   /// Whether the focused terminal's shell can run a command word (nil: can't
   /// tell).
   @ObservationIgnored var onIsKnownCommand: ((String) -> Bool?)?
-  /// Resolve path-completion candidates for the active token of the typed
-  /// input (input-bar dropdown). Filesystem work — call off the main thread.
-  var onCompletionCandidates: ((String) -> CompletionResult?)?
+  /// The active terminal's completion, captured on the main thread: the
+  /// returned function resolves candidates for the typed input's active
+  /// token (filesystem work — call it off the main thread).
+  var onCompletionResolver: (() -> ((String) -> CompletionResult?)?)?
   /// Most recent commands, newest first, for ↑/↓ cycling in the input bar.
   var onRecentCommands: ((Int) -> [String])?
   /// Send SIGINT to the active terminal (input-bar Stop button / ⌃C).

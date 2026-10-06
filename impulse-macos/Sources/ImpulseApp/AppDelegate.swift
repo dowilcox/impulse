@@ -131,9 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let sessionToRestore: SessionState?
     if let file = DebugSnapshot.sessionFile {
       sessionToRestore = SessionState.load(from: file)
-    } else if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive,
+    } else if settings.restoreSession && !DebugSnapshot.isActive,
       let saved = SessionState.load(), !saved.windows.isEmpty
     {
+      // Also when launched to open files: they open on top of the restored
+      // session, which would otherwise be overwritten at the next quit.
       sessionToRestore = saved
     } else {
       sessionToRestore = nil
@@ -141,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let filesToOpen: [String]
     if sessionToRestore != nil {
-      filesToOpen = []
+      filesToOpen = pendingFiles
     } else if pendingFiles.isEmpty && settings.restoreSession && !DebugSnapshot.isActive {
       filesToOpen = settings.openFiles.filter {
         FileManager.default.fileExists(atPath: $0)
@@ -155,8 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     openNewWindow(skipInitialTerminal: sessionToRestore != nil || !filesToOpen.isEmpty)
 
     if let sessionToRestore {
+      let files = filesToOpen
+      pendingFiles.removeAll()
       DispatchQueue.main.async { [weak self] in
-        self?.restoreWindows(from: sessionToRestore)
+        self?.restoreWindows(from: sessionToRestore, thenOpen: files)
       }
     }
 
@@ -437,7 +441,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Reopen every saved window (the first reuses the launch window), then
   /// bring the one that was active to the front.
-  private func restoreWindows(from session: SessionState) {
+  /// Restore every window; `files` open in the first one once its tabs are back.
+  private func restoreWindows(from session: SessionState, thenOpen files: [String] = []) {
     var controllers: [MainWindowController] = []
     for (index, windowState) in session.windows.enumerated() {
       let controller: MainWindowController
@@ -446,8 +451,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       } else {
         controller = openNewWindow(skipInitialTerminal: true)
       }
-      if !controller.restoreSessionWindow(windowState) {
-        controller.tabManager.addTerminalTab()
+      let open = index == 0 && !files.isEmpty ? { [weak controller] in
+        for path in files { controller?.openFile(path: path) }
+      } : nil
+      if !controller.restoreSessionWindow(windowState, then: open) {
+        if files.isEmpty || index != 0 { controller.tabManager.addTerminalTab() }
+        open?()
       }
       controllers.append(controller)
     }

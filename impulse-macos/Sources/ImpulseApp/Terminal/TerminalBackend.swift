@@ -935,13 +935,28 @@ final class TerminalBackend {
     // MARK: - Lifecycle
 
     func shutdown() {
+        beginShutdown()
+        finishShutdown()
+    }
+
+    /// First half of shutdown, on the main thread: every method checks
+    /// `isShutdown` first, so from here on a caller still holding this
+    /// backend (a tick in progress) can't reach the handle while
+    /// `finishShutdown()` frees it elsewhere.
+    func beginShutdown() {
         guard let handle, !isShutdown else { return }
         ImpulseCore.terminalSetWakeupCallback(handle: handle, callback: nil, context: nil)
         wakeBox?.release()
         wakeBox = nil
         isShutdown = true
-        ImpulseCore.terminalDestroy(handle: handle)
+    }
+
+    /// Second half: free the terminal (joins its reader thread; may block,
+    /// so it can run off the main thread).
+    func finishShutdown() {
+        guard let handle else { return }
         self.handle = nil
+        ImpulseCore.terminalDestroy(handle: handle)
     }
 }
 

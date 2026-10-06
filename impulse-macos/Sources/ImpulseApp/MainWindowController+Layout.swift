@@ -47,8 +47,8 @@ extension MainWindowController {
       guard let terminal = self?.tabManager.selectedTerminal?.activeTerminal else { return nil }
       return terminal.commandLookup.isKnown(word, cwd: terminal.currentWorkingDirectory)
     }
-    windowModel.onCompletionCandidates = { [weak self] text in
-      self?.tabManager.selectedTerminal?.activeTerminal?.completionCandidates(for: text)
+    windowModel.onCompletionResolver = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.completionResolver()
     }
     windowModel.onRecentCommands = { [weak self] limit in
       self?.tabManager.selectedTerminal?.activeTerminal?.recentCommands(limit: limit) ?? []
@@ -107,7 +107,8 @@ extension MainWindowController {
         Self.restoreExpandedPaths(expandedPaths, in: nodes, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
         DispatchQueue.main.async { [weak self] in
-          guard let self else { return }
+          // The sidebar moved to another folder meanwhile: drop this one.
+          guard let self, self.fileTreeRootPath == root else { return }
           self.fileTreeData.showHidden = showHidden
           self.fileTreeData.updateTree(nodes: nodes, rootPath: root)
           self.windowModel.updateFileTree(nodes)
@@ -137,7 +138,8 @@ extension MainWindowController {
         let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
         FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
         DispatchQueue.main.async { [weak self] in
-          guard let self else { return }
+          // The sidebar moved to another folder meanwhile: drop this one.
+          guard let self, self.fileTreeRootPath == root else { return }
           self.fileTreeData.showHidden = showHidden
           self.fileTreeData.updateTree(nodes: nodes, rootPath: root)
           self.windowModel.updateFileTree(nodes)
@@ -211,8 +213,10 @@ extension MainWindowController {
 
     windowModel.gitHost = self
     if let window {
-      let model = windowModel
-      windowModel.toasts.attach(to: window) { model.palette }
+      // Weak: the model owns the toast center, which keeps this closure.
+      windowModel.toasts.attach(to: window) { [weak model = windowModel, fallback = windowModel.palette] in
+        model?.palette ?? fallback
+      }
     }
     windowModel.onShowCommandPalette = { [weak self] in
       self?.showCommandPalette()

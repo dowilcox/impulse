@@ -37,8 +37,13 @@ extension MainWindowController: GitPanelHost {
 
   func gitOpenDiffEditor(_ absolutePath: String) {
     openCommandPaletteSearchResult(path: absolutePath, line: nil)
-    guard let editor = findEditorTab(forPath: absolutePath) else { return }
-    setDiffView(editor, enabled: true)
+    if let editor = findEditorTab(forPath: absolutePath) {
+      setDiffView(editor, enabled: true)
+    } else {
+      // Not open yet: the tab arrives once the file is read, then shows
+      // its diff (see the FileOpened observer).
+      pendingDiffViewPaths.insert(absolutePath)
+    }
   }
 
   func gitOpenReview(scope: DiffScope, focusPath: String?) {

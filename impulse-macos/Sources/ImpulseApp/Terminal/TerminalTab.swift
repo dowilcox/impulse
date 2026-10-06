@@ -557,10 +557,14 @@ class TerminalTab: NSView {
     renderer.stopRefreshLoop()
 
     guard let backendToShutdown, !backendToShutdown.isShutdown else { return }
+    let pid = backendToShutdown.childPid()
+    // Mark it shut down here, on the main thread, before freeing it on a
+    // background queue: main-thread code still holding it then stops at
+    // `isShutdown` instead of calling into freed memory.
+    backendToShutdown.beginShutdown()
 
     // Send signals and destroy the backend on a background queue so the
     // main thread is never blocked by PTY teardown.
-    let pid = backendToShutdown.childPid()
     DispatchQueue.global(qos: .utility).async { [weak self] in
       if pid > 0 {
         let descendants = self?.collectDescendants(of: pid) ?? []
@@ -580,7 +584,7 @@ class TerminalTab: NSView {
           self?.escalateKill(shellPid: pid, descendants: descendants)
         }
       }
-      backendToShutdown.shutdown()
+      backendToShutdown.finishShutdown()
     }
   }
 
@@ -712,6 +716,12 @@ class TerminalTab: NSView {
   }
 
   private func writePastePayload(_ payload: String, to backend: TerminalBackend) {
+    // The input bar owns input: what's pasted or dropped belongs in it. In
+    // the shell's line it would sit unseen and run with the next command.
+    if !wantsGridFocus {
+      NotificationCenter.default.post(name: .terminalInsertIntoInputBar, object: self, userInfo: ["text": payload])
+      return
+    }
     guard backend.mode()?.bracketedPaste ?? false else {
       backend.write(payload)
       return
@@ -868,12 +878,20 @@ class TerminalTab: NSView {
   /// targets, hosts), else paths. Runs git for branch values — call off the
   /// main thread.
   func completionCandidates(for text: String) -> CompletionResult? {
-    guard !text.isEmpty, backend != nil else { return nil }
+    completionResolver()?(text)
+  }
+
+  /// Completion for this terminal as it is now: reads its state here (on
+  /// the main thread) and returns a function that only works on those
+  /// values plus the filesystem, so it can run on a background queue.
+  func completionResolver() -> ((String) -> CompletionResult?)? {
+    guard backend != nil else { return nil }
     let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
     var shellCompletions: ((String) -> [CompletionCandidate])?
     let shellPath = LoginShell.defaultShellPath()
     if SettingsStore.shared.settings.terminalShellCompletions, ShellCompletions.supports(shellPath: shellPath) {
-      shellCompletions = { [weak self] line in self?.cachedShellCompletions(line, cwd: cwd, shellPath: shellPath) ?? [] }
+      let cache = shellCompletionCache
+      shellCompletions = { line in Self.cachedShellCompletions(line, cwd: cwd, shellPath: shellPath, cache: cache) }
     }
     let context = CompletionContext(
       cwd: cwd,
@@ -881,7 +899,7 @@ class TerminalTab: NSView {
       gitRemotes: { cwd.map { GitOperations.remotes(root: $0) } ?? [] },
       gitTags: { cwd.map { GitOperations.tags(root: $0) } ?? [] },
       shellCompletions: shellCompletions)
-    return CompletionEngine.candidates(input: text, context: context)
+    return { text in text.isEmpty ? nil : CompletionEngine.candidates(input: text, context: context) }
   }
 
   /// Recent answers from the shell, reused for a few seconds (typing narrows
@@ -892,7 +910,9 @@ class TerminalTab: NSView {
     return cache
   }()
 
-  private func cachedShellCompletions(_ line: String, cwd: String?, shellPath: String) -> [CompletionCandidate] {
+  private static func cachedShellCompletions(
+    _ line: String, cwd: String?, shellPath: String, cache shellCompletionCache: NSCache<NSString, ShellCompletionBox>
+  ) -> [CompletionCandidate] {
     let key = "\(cwd ?? "")\u{0}\(line)" as NSString
     if let hit = shellCompletionCache.object(forKey: key), Date().timeIntervalSince(hit.date) < 5 {
       return hit.candidates
