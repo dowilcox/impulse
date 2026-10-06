@@ -139,6 +139,23 @@ impl CommandBlockTracker {
         self.row_base
     }
 
+    /// Move every recorded row through `map` (a resize reflowed the grid,
+    /// so soft-wrapped lines now take more or fewer rows).
+    pub(crate) fn remap_rows(&mut self, mut map: impl FnMut(i64) -> i64) {
+        let mut remap = |row: &mut Option<i64>| {
+            if let Some(row) = row {
+                *row = map(*row);
+            }
+        };
+        remap(&mut self.pending_prompt_row);
+        for block in self.completed.iter_mut().chain(self.current.iter_mut()) {
+            remap(&mut block.prompt_row);
+            remap(&mut block.output_row);
+            remap(&mut block.end_row);
+        }
+        self.touch();
+    }
+
     pub(crate) fn command_started(&mut self, abs_row: Option<i64>) -> TerminalCommandBlock {
         self.command_started_at(current_time_ms(), abs_row)
     }

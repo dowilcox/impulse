@@ -176,6 +176,89 @@ fn absolute_cursor_row<T: EventListener>(term: &Term<T>, row_base: i64) -> i64 {
     row_base + grid.history_size() as i64 + i64::from(grid.cursor.point.line.0)
 }
 
+/// Resize the term, keeping recorded block rows on the text they marked.
+///
+/// Resizing reflows soft-wrapped lines into more or fewer rows, which moves
+/// everything below them; the logical lines themselves (and their distance
+/// from the cursor) survive, so rows are mapped through those. The alternate
+/// screen hides the primary grid, so rows stay put while it is active.
+fn resize_term<T: EventListener>(
+    term: &mut Term<T>,
+    blocks: &Mutex<CommandBlockTracker>,
+    size: TermSize,
+) {
+    if term.mode().contains(TermMode::ALT_SCREEN) {
+        term.resize(size);
+        return;
+    }
+    let before = row_positions(term);
+    term.resize(size);
+    let after = row_positions(term);
+    if before == after {
+        return;
+    }
+    if let Ok(mut blocks) = blocks.lock() {
+        let base = blocks.row_base();
+        blocks.remap_rows(|abs| base + reflowed_row(abs - base, &before, &after));
+    }
+}
+
+/// Grid rows (topmost history row first) as positions in the text.
+#[derive(PartialEq)]
+struct RowPositions {
+    /// For each row: (logical line, row within that line).
+    rows: Vec<(i64, i64)>,
+    cursor: usize,
+}
+
+fn row_positions<T: EventListener>(term: &Term<T>) -> RowPositions {
+    let grid = term.grid();
+    let last_column = alacritty_terminal::index::Column(grid.columns().saturating_sub(1));
+    let mut rows = Vec::with_capacity(grid.total_lines());
+    let (mut line, mut within) = (0i64, 0i64);
+    for row in grid.topmost_line().0..=grid.bottommost_line().0 {
+        rows.push((line, within));
+        if grid[alacritty_terminal::index::Line(row)][last_column]
+            .flags
+            .contains(AlacFlags::WRAPLINE)
+        {
+            within += 1;
+        } else {
+            line += 1;
+            within = 0;
+        }
+    }
+    let cursor = (grid.history_size() as i64 + i64::from(grid.cursor.point.line.0)).max(0) as usize;
+    let cursor = cursor.min(rows.len().saturating_sub(1));
+    RowPositions { rows, cursor }
+}
+
+/// Where a row (counted from the top of the grid) lands after a reflow:
+/// the same row of the logical line that is as many lines above the cursor
+/// as before. Lines pushed out of the scrollback land above the top.
+fn reflowed_row(row: i64, before: &RowPositions, after: &RowPositions) -> i64 {
+    let (Some(&(cursor_line, _)), Some(&(new_cursor_line, _))) =
+        (before.rows.get(before.cursor), after.rows.get(after.cursor))
+    else {
+        return row;
+    };
+    let Some(&(line, within)) = usize::try_from(row).ok().and_then(|i| before.rows.get(i)) else {
+        // Already above the top (or past the bottom): shift with the cursor.
+        return row - before.cursor as i64 + after.cursor as i64;
+    };
+    let target = new_cursor_line - (cursor_line - line);
+    let first_line = after.rows.first().map_or(0, |&(line, _)| line);
+    if target < first_line {
+        return target - first_line;
+    }
+    let start = after.rows.partition_point(|&(line, _)| line < target);
+    let rows_in_line = after.rows[start..]
+        .iter()
+        .take_while(|&&(line, _)| line == target)
+        .count() as i64;
+    start as i64 + within.min((rows_in_line - 1).max(0))
+}
+
 /// Read and reset the term's accumulated damage.
 ///
 /// Returns `None` for full damage, or `Some(rows)` with the damaged viewport
@@ -761,7 +844,7 @@ impl TerminalBackend {
                             columns: cols as usize,
                             screen_lines: rows as usize,
                         };
-                        term.lock().resize(size);
+                        resize_term(&mut term.lock(), &blocks, size);
                         true
                     }
                     BackendMsg::Shutdown => false,
@@ -2293,6 +2376,90 @@ mod tests {
         // Pop: back to legacy keys.
         processor.advance(&mut term, b"\x1b[<u");
         assert_eq!(convert_mode(*term.mode()).bits() >> 11, 0);
+    }
+
+    #[test]
+    fn block_rows_follow_text_when_a_resize_rewraps_it() {
+        use super::resize_term;
+        use crate::blocks::CommandBlockTracker;
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::{Config, Term};
+        use alacritty_terminal::vte::ansi::Processor;
+        use std::sync::Mutex;
+
+        let size = |columns| TermSize {
+            columns,
+            screen_lines: 10,
+        };
+        let mut term = Term::new(Config::default(), &size(20), VoidListener);
+        let mut processor: Processor = Processor::new();
+        // Row 0 the prompt, rows 1-2 one long line wrapped, row 3 the next prompt.
+        processor.advance(&mut term, b"$ long\r\n");
+        processor.advance(&mut term, "a".repeat(30).as_bytes());
+        processor.advance(&mut term, b"\r\n$ next");
+
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        {
+            let mut blocks = blocks.lock().unwrap();
+            blocks.prompt_marked(0);
+            blocks.command_started(Some(1));
+            blocks.command_ended(0, Some(3));
+            blocks.prompt_marked(3);
+        }
+        let rows = |blocks: &Mutex<CommandBlockTracker>| {
+            let blocks = blocks.lock().unwrap();
+            let block = blocks.iter_blocks().next().unwrap().clone();
+            (
+                block.prompt_row,
+                block.output_row,
+                block.end_row,
+                blocks.pending_prompt_row(),
+            )
+        };
+
+        // Narrower: the long line takes three rows, pushing the prompt down.
+        resize_term(&mut term, &blocks, size(10));
+        assert_eq!(rows(&blocks), (Some(0), Some(1), Some(4), Some(4)));
+
+        // Wider: it fits on one row, pulling the prompt up.
+        resize_term(&mut term, &blocks, size(40));
+        assert_eq!(rows(&blocks), (Some(0), Some(1), Some(2), Some(2)));
+    }
+
+    #[test]
+    fn block_rows_follow_text_in_the_scrollback_too() {
+        use super::{absolute_cursor_row, resize_term};
+        use crate::blocks::CommandBlockTracker;
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::{Config, Term};
+        use alacritty_terminal::vte::ansi::Processor;
+        use std::sync::Mutex;
+
+        let size = |columns| TermSize {
+            columns,
+            screen_lines: 4,
+        };
+        let mut term = Term::new(Config::default(), &size(20), VoidListener);
+        let mut processor: Processor = Processor::new();
+        for i in 0..6 {
+            processor.advance(&mut term, format!("line {i}\r\n").as_bytes());
+        }
+        processor.advance(&mut term, "b".repeat(50).as_bytes());
+        processor.advance(&mut term, b"\r\nout\r\n");
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        blocks
+            .lock()
+            .unwrap()
+            .prompt_marked(absolute_cursor_row(&term, 0));
+        // Rows 0-5 the short lines, 6-8 the long one, 9 "out", 10 the prompt —
+        // most of it scrolled into history on a four-line screen.
+        assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(10));
+
+        resize_term(&mut term, &blocks, size(10));
+        // The long line now takes five rows.
+        assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(12));
+        resize_term(&mut term, &blocks, size(80));
+        assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(8));
     }
 
     #[test]
