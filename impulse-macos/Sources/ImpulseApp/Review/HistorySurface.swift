@@ -177,12 +177,16 @@ final class HistoryModel {
 
   /// Select `sha`, paging further into history until it shows up (the
   /// caller shows the commit itself right away).
+  /// `sha` may be abbreviated (a hash clicked in terminal output); the
+  /// selection takes the full one once the commit is in the list.
   func reveal(_ sha: String) {
-    selectedSha = sha
-    loadDetails(sha)
-    if entries.contains(where: { $0.sha == sha }) {
+    if let entry = entries.first(where: { $0.sha.hasPrefix(sha) }) {
+      selectedSha = entry.sha
+      loadDetails(entry.sha)
       scrollToken += 1
     } else {
+      selectedSha = sha
+      loadDetails(sha)
       pendingReveal = sha
       loadMore()
     }
@@ -210,8 +214,9 @@ final class HistoryModel {
           self.entries += page
           self.rows = CommitGraph.layout(self.entries.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
           if let pending = self.pendingReveal {
-            if self.entries.contains(where: { $0.sha.hasPrefix(pending) || pending.hasPrefix($0.sha) }) {
+            if let match = self.entries.first(where: { $0.sha.hasPrefix(pending) || pending.hasPrefix($0.sha) }) {
               self.pendingReveal = nil
+              if self.selectedSha == pending { self.selectedSha = match.sha }
               self.scrollToken += 1
             } else if !self.reachedEnd, self.entries.count < 20_000 {
               self.loadMore()

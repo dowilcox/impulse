@@ -140,38 +140,66 @@ struct TerminalContextBarView: View {
 
   private var chipRow: some View {
     HStack(spacing: 6) {
-      // In a narrow split pane the chips clip at the trailing edge instead of
-      // forcing the whole bar wider than the pane.
-      chips
-        .fixedSize()
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        .clipped()
+      // In a narrow split pane, chips drop off the trailing end (whole, not
+      // cut in half) instead of forcing the bar wider than the pane.
+      ViewThatFits(in: .horizontal) {
+        chips(limit: 5)
+        chips(limit: 4)
+        chips(limit: 3)
+        chips(limit: 2)
+        chips(limit: 1)
+      }
+      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+      .clipped()
       actionButton(symbol: "clock.arrow.circlepath", help: "Command History (⌃R)") {
         model.onShowCommandHistory?()
       }
     }
   }
 
-  private var chips: some View {
-    HStack(spacing: 6) {
-      if !model.shellName.isEmpty {
-        ContextChip(symbol: "terminal", text: model.shellName, theme: model.theme)
+  private enum Chip {
+    case shell, cwd, branch(String), review, status
+  }
+
+  private var availableChips: [Chip] {
+    var chips: [Chip] = []
+    if !model.shellName.isEmpty { chips.append(.shell) }
+    if !model.currentCwd.isEmpty { chips.append(.cwd) }
+    if let branch = model.gitBranch, !branch.isEmpty { chips.append(.branch(branch)) }
+    if model.reviewChangedFileCount > 0 { chips.append(.review) }
+    if !model.commandRunning, model.lastCommandExitCode != nil { chips.append(.status) }
+    return chips
+  }
+
+  /// The first `limit` chips, at their natural width.
+  private func chips(limit: Int) -> some View {
+    let chips = Array(availableChips.prefix(limit))
+    return HStack(spacing: 6) {
+      ForEach(chips.indices, id: \.self) { index in
+        chip(chips[index])
       }
-      if !model.currentCwd.isEmpty {
-        ContextChip(
-          symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd),
-          theme: model.theme)
-      }
-      if let branch = model.gitBranch, !branch.isEmpty {
-        BranchChip(model: model, branch: branch)
-      }
-      if model.reviewChangedFileCount > 0 {
-        ReviewChip(
-          model: model,
-          fileCount: model.reviewChangedFileCount,
-          added: model.reviewAddedLines,
-          removed: model.reviewRemovedLines)
-      }
+    }
+    .fixedSize()
+  }
+
+  @ViewBuilder
+  private func chip(_ chip: Chip) -> some View {
+    switch chip {
+    case .shell:
+      ContextChip(symbol: "terminal", text: model.shellName, theme: model.theme)
+    case .cwd:
+      ContextChip(
+        symbol: "folder", text: TabManager.abbreviateHomePath(model.currentCwd),
+        theme: model.theme)
+    case .branch(let branch):
+      BranchChip(model: model, branch: branch)
+    case .review:
+      ReviewChip(
+        model: model,
+        fileCount: model.reviewChangedFileCount,
+        added: model.reviewAddedLines,
+        removed: model.reviewRemovedLines)
+    case .status:
       statusChip
     }
   }

@@ -281,13 +281,14 @@ struct ReviewCommentRow: View {
   }
 
   var body: some View {
-    let range = comment.endLine > comment.line ? "\(comment.line)–\(comment.endLine)" : "\(comment.line)"
+    let range =
+      comment.endLine > comment.line ? "lines \(comment.line)–\(comment.endLine)" : "line \(comment.line)"
     VStack(alignment: .leading, spacing: 3) {
       HStack(spacing: 8) {
         if let author = comment.remote?.author {
           Text("@\(author)").font(ChromeFont.ui(11, weight: .semibold)).foregroundStyle(chrome.text)
         }
-        Text((comment.side == .old ? "removed line " : "line ") + range)
+        Text((comment.side == .old ? "removed " : "") + range)
           .font(ChromeFont.ui(11))
           .foregroundStyle(chrome.textTertiary)
         Spacer()
@@ -371,6 +372,7 @@ struct ReviewComposerRow: View {
   @FocusState private var focused: Bool
 
   var body: some View {
+    let lines = composer.endLine > composer.line ? "lines" : "line"
     let range = composer.endLine > composer.line ? "\(composer.line)–\(composer.endLine)" : "\(composer.line)"
     VStack(alignment: .leading, spacing: 6) {
       ZStack(alignment: .topLeading) {
@@ -388,7 +390,7 @@ struct ReviewComposerRow: View {
       }
       .frame(maxHeight: .infinity)
       HStack(spacing: 6) {
-        Text((composer.side == .old ? "Removed line " : "Line ") + range + " · ⌘↩ to save")
+        Text((composer.side == .old ? "Removed \(lines) " : "\(lines.capitalized) ") + range + " · ⌘↩ to save")
           .font(ChromeFont.ui(11))
           .foregroundStyle(chrome.textTertiary)
         Spacer()
