@@ -66,7 +66,7 @@ struct GitActions {
     completion: ((Bool) -> Void)? = nil
   ) {
     let reason = target == .discard ? "Revert changes in \(change.path)" : nil
-    repository.run(snapshotReason: reason) { root in
+    repository.run(snapshotReason: reason, requireSnapshot: target == .discard) { root in
       GitOperations.apply(
         target, selection: selection, path: change.path, oldPath: change.oldPath,
         expectedHunkIds: expectedHunkIds, options: options, root: root)
@@ -121,7 +121,7 @@ struct GitActions {
     let tracked = changes.filter { $0.status != .untracked }
     let trackedPaths = tracked.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) }
     let label = changes.count == 1 ? (changes[0].path as NSString).lastPathComponent : "\(changes.count) files"
-    repository.run(snapshotReason: "Discard \(label)") { root in
+    repository.run(snapshotReason: "Discard \(label)", requireSnapshot: true) { root in
       if !trackedPaths.isEmpty {
         let result =
           includeStaged
@@ -340,9 +340,11 @@ struct GitActions {
   func pull(mode: GitOperations.PullMode? = nil) {
     let repository = self.repository
     let mode = mode ?? GitOperations.PullMode(rawValue: SettingsStore.shared.settings.gitPullMode) ?? .fastForwardOnly
-    let before = repository.snapshot?.headOid
+    var before: String?
     repository.run("Pulling…", snapshotReason: mode == .fastForwardOnly ? nil : "pull --\(mode.rawValue)") { root in
-      GitOperations.pull(mode: mode, root: root) { repository.reportProgress($0) }
+      // Where HEAD is when the pull runs (not when it was asked for).
+      before = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      return GitOperations.pull(mode: mode, root: root) { repository.reportProgress($0) }
     } completion: { result, snapshot in
       repository.lastFetch = Date()
       guard case .success = result else { return report(result, failure: "Couldn't pull") }
@@ -522,9 +524,10 @@ struct GitActions {
   func merge(_ revision: String, label: String? = nil) {
     let label = label ?? String(revision.prefix(7))
     let into = repository.snapshot?.branch ?? "HEAD"
-    let before = repository.snapshot?.headOid
-    repository.run("Merging \(label)…", snapshotReason: "merge \(label)") {
-      GitOperations.merge(revision, root: $0)
+    var before: String?
+    repository.run("Merging \(label)…", snapshotReason: "merge \(label)") { root in
+      before = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      return GitOperations.merge(revision, root: root)
     } completion: { result, snapshot in
       guard case .success = result else { return report(result, failure: "Merge of \(label) stopped") }
       guard let before, headMoved(from: before) else {
@@ -539,9 +542,10 @@ struct GitActions {
   func rebase(onto revision: String, label: String? = nil) {
     let label = label ?? String(revision.prefix(7))
     let branch = repository.snapshot?.branch ?? "HEAD"
-    let before = repository.snapshot?.headOid
-    repository.run("Rebasing onto \(label)…", snapshotReason: "rebase onto \(label)") {
-      GitOperations.rebase(onto: revision, root: $0)
+    var before: String?
+    repository.run("Rebasing onto \(label)…", snapshotReason: "rebase onto \(label)") { root in
+      before = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      return GitOperations.rebase(onto: revision, root: root)
     } completion: { result, snapshot in
       guard case .success = result else { return report(result, failure: "Rebase onto \(label) stopped") }
       guard let before, headMoved(from: before) else {
@@ -788,7 +792,7 @@ struct GitActions {
     let paths = changes.map(\.path)
     repository.run(
       takeOurs ? "Keeping current…" : "Taking incoming…",
-      snapshotReason: takeOurs ? "keep current side" : "take incoming side"
+      snapshotReason: takeOurs ? "keep current side" : "take incoming side", requireSnapshot: true
     ) {
       GitOperations.resolveConflicts(paths, takeOurs: takeOurs, root: $0)
     } completion: { [repository] result, _ in
@@ -839,10 +843,13 @@ struct GitActions {
   /// Move the current branch to a commit. Hard resets ask first; every reset
   /// can be undone (HEAD and the working tree come back).
   func reset(_ mode: GitOperations.ResetMode, to sha: String) {
-    let previousHead = repository.snapshot?.headOid
     let perform = {
-      repository.run("Resetting…", snapshotReason: "reset --\(mode.rawValue) \(sha.prefix(7))") {
-        GitOperations.reset(mode, to: sha, root: $0)
+      var previousHead: String?
+      repository.run(
+        "Resetting…", snapshotReason: "reset --\(mode.rawValue) \(sha.prefix(7))", requireSnapshot: mode == .hard
+      ) { root in
+        previousHead = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+        return GitOperations.reset(mode, to: sha, root: root)
       } completion: { result, snapshot in
         if case .failure(let error) = result {
           host?.gitPresentError(error, title: "Couldn't reset")
@@ -871,18 +878,23 @@ struct GitActions {
   }
 
   /// A success toast whose Undo moves the branch back to `previousHead` and
-  /// restores the working tree from the safety snapshot.
+  /// restores the working tree from the safety snapshot. Undo snapshots the
+  /// current state first (edits made since aren't thrown away unrecorded);
+  /// without the operation's snapshot it moves HEAD with `reset --keep`,
+  /// which keeps uncommitted work, instead of `--hard`.
   private func offerHeadUndo(_ message: String, previousHead: String, snapshot: SafetySnapshot?, failure: String) {
     let repository = self.repository
     host?.toasts.show(
       Toast(
         kind: .success, message: message, actionTitle: "Undo",
         action: { [host] in
-          repository.run {
-            let back = GitOperations.reset(.hard, to: previousHead, root: $0)
-            guard case .success = back, let snapshot else { return back }
-            return SafetySnapshots.restore(snapshot, root: $0)
-          } completion: { result, _ in
+          let undo: (String) -> GitResult = { root in
+            guard let snapshot else { return GitOperations.reset(.keep, to: previousHead, root: root) }
+            let back = GitOperations.reset(.hard, to: previousHead, root: root)
+            guard case .success = back else { return back }
+            return SafetySnapshots.restore(snapshot, root: root)
+          }
+          repository.run(snapshotReason: "before undo", requireSnapshot: snapshot != nil, undo) { result, _ in
             if case .failure(let error) = result { host?.gitPresentError(error, title: failure) }
           }
         }, lifetime: 15))

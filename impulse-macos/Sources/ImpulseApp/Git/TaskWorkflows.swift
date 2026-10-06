@@ -378,8 +378,19 @@ extension MainWindowController {
       // ("Save & Close"), which then belong in the snapshot too.
       let dirty = dirty || (GitClient.snapshot(forPath: root)?.changedFileCount ?? 0) > 0
       var saved: SafetySnapshot?
-      if dirty, case .success(let snapshot) = SafetySnapshots.create(reason: "archive \(branch)", root: root) {
-        saved = snapshot
+      if dirty {
+        switch SafetySnapshots.create(reason: "archive \(branch)", root: root) {
+        case .success(let snapshot):
+          saved = snapshot
+        case .failure(let error):
+          // The dialog promised the uncommitted files would be saved.
+          DispatchQueue.main.async {
+            self?.presentGitError(
+              .invalid("The task wasn't archived: its uncommitted files couldn't be saved first. \(error.message)"),
+              title: "Couldn't archive the task")
+          }
+          return
+        }
       }
       let result = GitOperations.removeWorktree(path: root, force: dirty, root: mainRoot)
       DispatchQueue.main.async {

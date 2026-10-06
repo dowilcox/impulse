@@ -131,8 +131,12 @@ final class GitRepositoryState {
 
   /// Run a git operation off the main thread, optionally recording a safety
   /// snapshot first, then refresh. `completion` gets the result on main.
+  ///
+  /// `requireSnapshot`: the operation throws work away, so it doesn't run at
+  /// all when the snapshot can't be made (an unreadable file, an LFS filter
+  /// that isn't installed…) — the promised Undo would be missing.
   func run(
-    _ label: String? = nil, snapshotReason: String? = nil,
+    _ label: String? = nil, snapshotReason: String? = nil, requireSnapshot: Bool = false,
     _ operation: @escaping (String) -> GitResult,
     completion: ((GitResult, SafetySnapshot?) -> Void)? = nil
   ) {
@@ -140,12 +144,21 @@ final class GitRepositoryState {
     let root = self.root
     queue.async { [weak self] in
       var safety: SafetySnapshot?
-      if let snapshotReason,
-        case .success(let created) = SafetySnapshots.create(reason: snapshotReason, root: root)
-      {
-        safety = created
+      var snapshotFailure: GitOperationError?
+      if let snapshotReason {
+        switch SafetySnapshots.create(reason: snapshotReason, root: root) {
+        case .success(let created): safety = created
+        case .failure(let error): snapshotFailure = error
+        }
       }
-      let result = operation(root)
+      let result: GitResult
+      if requireSnapshot, let snapshotFailure {
+        result = .failure(
+          .invalid(
+            "Nothing was changed: Impulse couldn't save a safety snapshot to undo it with. \(snapshotFailure.message)"))
+      } else {
+        result = operation(root)
+      }
       DispatchQueue.main.async {
         guard let self else { return }
         if label != nil {

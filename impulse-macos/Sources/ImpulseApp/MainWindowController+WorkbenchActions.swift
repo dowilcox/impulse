@@ -290,7 +290,7 @@ extension MainWindowController {
       guard proceed, let self else { return }
       GitRepositoryStore.shared.resolve(directory: turn.repoRoot) { [weak self] state in
         guard let self, let state else { return }
-        state.run("Restoring…", snapshotReason: "restore agent checkpoint") {
+        state.run("Restoring…", snapshotReason: "restore agent checkpoint", requireSnapshot: true) {
           SafetySnapshots.restore(turn.start, root: $0)
         } completion: { [weak self] result, snapshot in
           guard let self else { return }
