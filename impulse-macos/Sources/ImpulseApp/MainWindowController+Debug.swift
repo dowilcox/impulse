@@ -47,6 +47,12 @@ extension MainWindowController {
         for workspace in tabManager.workspaces {
           tabManager.setWorkspaceExpanded(workspace.id, true)
         }
+      } else if action.hasPrefix("setting-on="),
+        let item = SettingsCatalog.items.first(where: { $0.key == String(action.dropFirst(11)) }),
+        case .toggle(let keyPath) = item.control
+      {
+        // In memory only: snapshot runs never save settings.
+        SettingsStore.shared.settings[keyPath: keyPath] = true
       } else if action.hasPrefix("command=") {
         runCommand(id: String(action.dropFirst(8)))
       } else if action == "tag-sheet" {

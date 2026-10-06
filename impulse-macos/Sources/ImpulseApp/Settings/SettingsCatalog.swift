@@ -282,6 +282,9 @@ enum SettingsCatalog {
   ]
 
   private static let git: [SettingItem] = [
+    toggle(
+      "git_commit_and_push", "Commit and push", \.gitCommitAndPush, .git, "Commit",
+      detail: "The commit button and ⌘↩ push right after committing; ⇧⌘↩ only commits."),
     choice(
       "git_pull_mode", "When pulling", \.gitPullMode, .git, "Remote",
       [("ff-only", "Fast-forward only"), ("rebase", "Rebase local commits"), ("merge", "Merge")],

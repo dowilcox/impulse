@@ -3,8 +3,9 @@ import ImpulseGit
 import SwiftUI
 
 /// Commit message editor + options + commit button, pinned to the bottom of
-/// the Changes panel. ⌘↩ commits, ↑ in an empty field recalls the previous
-/// message, Amend prefills the last commit's message.
+/// the Changes panel. ⌘↩ commits (and pushes, with the "Commit and push"
+/// setting; ⇧⌘↩ does the other one), ↑ in an empty field recalls the
+/// previous message, Amend prefills the last commit's message.
 struct CommitComposer: View {
   @Environment(\.chrome) private var chrome
   var repository: GitRepositoryState
@@ -42,7 +43,7 @@ struct CommitComposer: View {
           .fixedSize(horizontal: false, vertical: true)
           .onKeyPress(.return, phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
-            commit(thenPush: press.modifiers.contains(.shift))
+            commit(thenPush: pushesByDefault != press.modifiers.contains(.shift))
             return .handled
           }
           .onKeyPress(.upArrow) {
@@ -112,15 +113,24 @@ struct CommitComposer: View {
     .padding(10)
   }
 
+  /// The button and ⌘↩ push too (the "Commit and push" setting). Amending
+  /// never pushes by default: a pushed commit would need a force push.
+  private var pushesByDefault: Bool {
+    SettingsStore.shared.settings.gitCommitAndPush && !amend
+  }
+
   private var commitButton: some View {
     let staged = repository.snapshot?.staged.count ?? 0
+    let push = pushesByDefault
     let title: String = {
-      if isCommitting { return "Committing…" }
+      if isCommitting { return push ? "Committing & Pushing…" : "Committing…" }
       if amend { return "Amend" }
-      return staged > 0 ? "Commit \(staged) file\(staged == 1 ? "" : "s")" : "Commit"
+      let files = staged > 0 ? " \(staged) file\(staged == 1 ? "" : "s")" : ""
+      return push ? "Commit\(files) & Push" : "Commit\(files)"
     }()
-    return ChromeButton(title: title, icon: .check, kind: .primary, help: "Commit (⌘↩) · ⇧⌘↩ commits and pushes") {
-      commit(thenPush: false)
+    let help = push ? "Commit and push (⌘↩) · ⇧⌘↩ only commits" : "Commit (⌘↩) · ⇧⌘↩ commits and pushes"
+    return ChromeButton(title: title, icon: push ? .arrowUp : .check, kind: .primary, help: help) {
+      commit(thenPush: push)
     }
     .disabled(isCommitting)
   }

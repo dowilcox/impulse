@@ -121,6 +121,8 @@ struct Settings: Codable {
     var editorPreviewTabs: Bool = true
     /// Vim keybindings in the editor (monaco-vim).
     var editorVimMode: Bool = false
+    /// The commit button (and ⌘↩) commits and pushes; ⇧⌘↩ only commits.
+    var gitCommitAndPush: Bool = false
     /// Push a tag to the remote right after creating it (the Create Tag
     /// sheet's checkbox starts from this).
     var gitPushTagsOnCreate: Bool = false
@@ -234,6 +236,7 @@ struct Settings: Codable {
         case terminalShellCompletions = "terminal_shell_completions"
         case editorPreviewTabs = "editor_preview_tabs"
         case editorVimMode = "editor_vim_mode"
+        case gitCommitAndPush = "git_commit_and_push"
         case gitPushTagsOnCreate = "git_push_tags_on_create"
         case gitPushFollowTags = "git_push_follow_tags"
         case gitPullMode = "git_pull_mode"
@@ -391,6 +394,7 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
         editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
         editorVimMode = (try? c.decode(Bool.self, forKey: .editorVimMode)) ?? d.editorVimMode
+        gitCommitAndPush = (try? c.decode(Bool.self, forKey: .gitCommitAndPush)) ?? d.gitCommitAndPush
         gitPushTagsOnCreate = (try? c.decode(Bool.self, forKey: .gitPushTagsOnCreate)) ?? d.gitPushTagsOnCreate
         gitPushFollowTags = (try? c.decode(Bool.self, forKey: .gitPushFollowTags)) ?? d.gitPushFollowTags
         gitPullMode = (try? c.decode(String.self, forKey: .gitPullMode)) ?? d.gitPullMode
