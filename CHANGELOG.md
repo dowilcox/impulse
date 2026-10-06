@@ -2,7 +2,7 @@
 
 All notable changes to Impulse are documented in this file.
 
-## Unreleased
+## 0.30.0
 
 **Impulse is now a native Mac app.** It was rewritten in Swift (AppKit +
 SwiftUI); only the terminal emulation core is still Rust. **Linux is no
@@ -32,6 +32,8 @@ running in its terminals. Impulse itself never calls an AI service.
 - Settings and Keyboard Shortcuts as tabs, described by one catalog (which also validates `settings.json` in the editor).
 - Quick terminal on a global shortcut (off by default).
 - Closing a tab or pane can be undone with ⌘Z for ten seconds; toasts and sheets replace blocking alerts.
+- Sidebar panel shortcuts work like VS Code's: ⇧⌘E Files (new), ⇧⌘F Search, ⌃⇧G Changes; pressed again while the panel has the keyboard, they go back to the active tab.
+- Tooltips show after half a second.
 
 **Terminal**
 
@@ -98,7 +100,9 @@ running in its terminals. Impulse itself never calls an AI service.
 - Git: timeouts stop hooks and ssh along with git, and long local operations (an LFS checkout) aren't cut off; background fetch no longer holds up staging and committing; stash review shows the untracked files a stash carries; agent-turn snapshots no longer take the index lock.
 - History doesn't mix branches when switching scope mid-load; an agent turn that ends quickly still gets its end snapshot; the Branch Manager's confirmations, errors and Undo show on top of it.
 - gh calls time out, and the login PATH includes what `.zshrc` / `config.fish` add.
-- libgit2 1.9.7 (security fixes).
+- libgit2 1.9.7 (security fixes); highlight.js 11.12.
+- Review and History: the file list's Viewed checkbox works, and a line's hover no longer sticks while scrolling.
+- History's commit list has the keyboard when it opens, so ↑/↓ work right away.
 
 ## 0.29.0
 
