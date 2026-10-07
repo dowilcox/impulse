@@ -26,29 +26,55 @@ public struct LSPConfig {
   // MARK: Loading
 
   /// Port of `LspConfig::load`: defaults, then the trusted global config,
-  /// then untrusted project-local configs under the workspace root.
-  public static func load(fallbackRootUri: String) -> LSPConfig {
+  /// then untrusted project-local configs in `projectFolder`.
+  public static func load(globalConfigPath: String?, projectFolder: String?) -> LSPConfig {
     var cfg = defaultConfig()
-
-    if let globalPath = globalLspConfigPath() {
-      cfg.applyFile(globalPath, trusted: true)
+    if let globalConfigPath {
+      cfg.applyFile(globalConfigPath, trusted: true)
     }
-
-    if let rootPath = FileURI.toPath(fallbackRootUri) {
-      let projectConfigPaths = [
-        (rootPath as NSString).appendingPathComponent(".impulse/lsp.json"),
-        (rootPath as NSString).appendingPathComponent(".impulse-lsp.json"),
-      ]
-      for path in projectConfigPaths {
-        // Project-local configs are untrusted: they cannot define new server
-        // commands, only remap language->server associations and root
-        // markers. This prevents malicious repos from executing arbitrary
-        // binaries.
-        cfg.applyFile(path, trusted: false)
-      }
+    if let projectFolder {
+      cfg.applyProjectConfig(in: projectFolder)
     }
-
     return cfg
+  }
+
+  /// Apply the project-local configs in `folder`. They are untrusted: they
+  /// cannot define new server commands, only remap language->server
+  /// associations and root markers. This prevents malicious repos from
+  /// executing arbitrary binaries.
+  mutating func applyProjectConfig(in folder: String) {
+    for path in Self.projectConfigPaths(in: folder) {
+      applyFile(path, trusted: false)
+    }
+  }
+
+  /// A folder's project-local config files, in the order they apply.
+  static func projectConfigPaths(in folder: String) -> [String] {
+    [".impulse/lsp.json", ".impulse-lsp.json"].map { (folder as NSString).appendingPathComponent($0) }
+  }
+
+  /// The folder whose project config applies to files in `directory`: the
+  /// nearest one, from `directory` up, that has `.impulse/lsp.json` or
+  /// `.impulse-lsp.json`. A repository's root is as far up as it looks.
+  static func projectConfigFolder(forDirectory directory: String) -> String? {
+    let fm = FileManager.default
+    var dir = directory
+    while !dir.isEmpty {
+      if projectConfigPaths(in: dir).contains(where: { fm.fileExists(atPath: $0) }) { return dir }
+      if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(".git")) { return nil }
+      let parent = (dir as NSString).deletingLastPathComponent
+      if parent == dir { break }
+      dir = parent
+    }
+    return nil
+  }
+
+  /// Changes when the file at `path` is written, replaced or removed (nil
+  /// when there's no file).
+  static func fileStamp(_ path: String) -> String? {
+    var st = stat()
+    guard stat(path, &st) == 0 else { return nil }
+    return "\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec):\(st.st_size):\(st.st_ino)"
   }
 
   static func globalLspConfigPath() -> String? {

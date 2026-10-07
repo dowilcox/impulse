@@ -365,6 +365,100 @@
       #expect(kill(pid, 0) == -1, "the server process is gone")
     }
 
+    /// A server that logs what it's told to `<name>.log`, answers shutdown,
+    /// and runs `onOpen` / `onClose` shell code for didOpen / didClose.
+    private static func loggingServer(_ name: String, onOpen: String = "", onClose: String = "") -> String {
+      mockScriptPrelude + readBody + #"""
+        log="$(dirname "$0")/\#(name).log"
+        read_body
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        while true; do
+          read_body
+          [ -n "$body" ] || exit 0
+          case "$body" in
+            *'"method":"textDocument/didOpen"'*) echo didOpen >> "$log"; \#(onOpen) ;;
+            *'"method":"textDocument/didClose"'*) echo didClose >> "$log"; \#(onClose) ;;
+            *'"method":"shutdown"'*)
+              id=$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+              send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}" ;;
+            *'"method":"exit"'*) exit 0 ;;
+          esac
+        done
+        """#
+    }
+
+    private static func publish(_ uri: String, _ message: String) -> String {
+      #"send '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"\#(uri)","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"message":"\#(message)"}]}}'"#
+    }
+
+    @Test func aRemappedLanguageMovesItsDocumentsToTheNewServer() throws {
+      let workspace = try makeWorkspace(scriptBody: "exit 0\n")
+      defer { workspace.cleanup() }
+      let root = workspace.root
+      let uri = workspace.fileUri
+      // The old server publishes once more after closing the document: late,
+      // and dropped.
+      for (name, script) in [
+        ("a", Self.loggingServer("a", onClose: Self.publish(uri, "stale"))),
+        ("b", Self.loggingServer("b", onOpen: Self.publish(uri, "from b"))),
+      ] {
+        try script.write(toFile: "\(root)/\(name).sh", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(root)/\(name).sh")
+      }
+      try FileManager.default.createDirectory(atPath: root + "/.impulse", withIntermediateDirectories: true)
+      try #"{"servers": {"a": {"command": "\#(root)/a.sh"}, "b": {"command": "\#(root)/b.sh"}}}"#
+        .write(toFile: root + "/global.json", atomically: true, encoding: .utf8)
+      try #"{"language_servers": {"mocklang": ["a"]}}"#
+        .write(toFile: root + "/.impulse/lsp.json", atomically: true, encoding: .utf8)
+      let registry = LSPRegistry(rootUri: workspace.rootUri, globalConfigPath: root + "/global.json")
+      registry.configRecheckInterval = 0
+      defer { registry.shutdownAll() }
+
+      func log(_ name: String) -> [String] {
+        ((try? String(contentsOfFile: "\(root)/\(name).log", encoding: .utf8)) ?? "")
+          .split(separator: "\n").map(String.init)
+      }
+      func waitUntil(_ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+          if condition() { return true }
+          Thread.sleep(forTimeInterval: 0.02)
+        }
+        return false
+      }
+
+      registry.notify(
+        languageId: "mocklang", fileUri: uri, method: "textDocument/didOpen", paramsJSON: didOpen(workspace))
+      #expect(waitUntil { log("a") == ["didOpen"] })
+
+      try #"{"language_servers": {"mocklang": ["b"]}}"#
+        .write(toFile: root + "/.impulse/lsp.json", atomically: true, encoding: .utf8)
+      registry.didChange(languageId: "mocklang", fileUri: uri, version: 2, fullText: "hello!", changesJSON: nil)
+
+      // a closes it and its diagnostics are cleared; b gets it and publishes.
+      var messages: [[String]] = []
+      func drain() {
+        while let raw = registry.pollEvent() {
+          guard let event = JSONUtil.parse(raw) as? [String: Any], event["type"] as? String == "diagnostics" else {
+            continue
+          }
+          messages.append((event["diagnostics"] as? [[String: Any]] ?? []).compactMap { $0["message"] as? String })
+        }
+      }
+      #expect(
+        waitUntil {
+          drain()
+          return messages.contains(["from b"]) && log("a").contains("didClose")
+        })
+      // Time for a's late publish to arrive (and be dropped).
+      Thread.sleep(forTimeInterval: 0.5)
+      drain()
+      #expect(messages.first == [])
+      #expect(!messages.contains(["stale"]))
+      #expect(log("a") == ["didOpen", "didClose"])
+      #expect(log("b") == ["didOpen"])
+    }
+
     @Test func unknownLanguageHasNoClients() throws {
       let workspace = try makeWorkspace(scriptBody: "exit 0\n")
       defer { workspace.cleanup() }

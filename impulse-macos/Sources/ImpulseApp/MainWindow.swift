@@ -323,19 +323,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   /// Replace the search query with the replacement in every file the
-  /// search found it in. Files with unsaved edits are left alone; the
-  /// originals are kept for Undo.
+  /// search finds it in, including files past the result list's cap. Files
+  /// with unsaved edits are left alone; the originals are kept for Undo.
   func replaceAllInProject() {
     let query = windowModel.searchQuery
     let replacement = windowModel.searchReplacement
     let caseSensitive = windowModel.searchCaseSensitive
+    let root = windowModel.fileTreeRootPath
+    let matches = windowModel.searchResults.filter { $0.matchType == "content" }
+    guard !query.isEmpty, !matches.isEmpty else { return }
     var seen = Set<String>()
-    let paths = windowModel.searchResults.compactMap { result -> String? in
-      guard result.matchType == "content", seen.insert(result.path).inserted else { return nil }
-      return result.path
+    let listed = matches.map(\.path).filter { seen.insert($0).inserted }
+    // The list stops at the search's cap; then search again for every file.
+    guard matches.count >= ImpulseCore.contentSearchLimit, !root.isEmpty else {
+      replaceAll(in: listed, query: query, replacement: replacement, caseSensitive: caseSensitive)
+      return
     }
-    guard !query.isEmpty, !paths.isEmpty else { return }
-    let skipped = paths.filter { findEditorTab(forPath: $0)?.isModified == true }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let paths = FileSearch.filesContaining(root: root, query: query, caseSensitive: caseSensitive)
+      DispatchQueue.main.async {
+        self?.replaceAll(
+          in: paths.isEmpty ? listed : paths, query: query, replacement: replacement,
+          caseSensitive: caseSensitive)
+      }
+    }
+  }
+
+  private func replaceAll(in paths: [String], query: String, replacement: String, caseSensitive: Bool) {
+    let skipped = Set(paths.filter { findEditorTab(forPath: $0)?.isModified == true })
     let targets = paths.filter { !skipped.contains($0) }
     gitConfirm(
       title: "Replace in \(targets.count) file\(targets.count == 1 ? "" : "s")?",
@@ -707,13 +722,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Re-applies all settings to every open tab. Called when settings change
   /// via the preferences window.
   func applyAllSettings() {
-    let editorOptions = tabManager.editorOptionsFromSettings()
     let termSettings = settings.terminalSettings()
 
     for tab in tabManager.allSurfaces {
       switch tab {
       case .editor(let editor):
-        editor.applySettings(editorOptions)
+        editor.applySettings(tabManager.editorOptionsFromSettings(forPath: editor.filePath))
       case .terminal(let container):
         container.applySettings(settings: termSettings)
       case .imagePreview, .diffReview, .history, .tool, .split:

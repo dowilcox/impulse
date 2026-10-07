@@ -340,6 +340,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             // notifications, and other post-save actions run correctly.
             NotificationCenter.default.post(name: .impulseSaveFile, object: self)
 
+        case let .closeRequested(save):
+            NotificationCenter.default.post(
+                name: .editorCloseRequested, object: self, userInfo: ["save": save])
+
         case let .completionRequested(requestId, line, character):
             NotificationCenter.default.post(
                 name: .editorCompletionRequested,
@@ -605,6 +609,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         case "vue": return "vue"
         case "svelte": return "svelte"
         case "jsonc": return "jsonc"
+        // Highlighted as shell, but bash-language-server can't parse fish.
+        case "fish": return "fish"
         default: return monacoLanguage == "shell" ? "shellscript" : monacoLanguage
         }
     }

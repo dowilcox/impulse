@@ -116,6 +116,9 @@ extension Notification.Name {
     /// Posted by an EditorTab when the git peek widget asks to stage a hunk or
     /// open the review (userInfo: action, line).
     static let editorGitAction = Notification.Name("impulse.editorGitAction")
+    /// Posted by an EditorTab when Vim mode's `:q`, `:wq` or `:x` asks to
+    /// close it (userInfo["save"]: "never", "always" or "modified").
+    static let editorCloseRequested = Notification.Name("impulse.editorCloseRequested")
     /// Run a palette command by id in the key window (menu items for
     /// commands without a dedicated action; userInfo["id"]).
     static let impulseRunCommand = Notification.Name("impulseRunCommand")

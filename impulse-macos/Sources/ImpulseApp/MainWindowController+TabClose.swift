@@ -65,6 +65,22 @@ extension MainWindowController {
     }
   }
 
+  /// Closes the pane showing `editor` (its whole tab when it's the only
+  /// pane), with the usual confirmations.
+  func requestClose(editor: EditorTab) {
+    guard let location = tabManager.location(of: editor) else { return }
+    guard location.paneID != nil else {
+      requestCloseTab(index: location.tabIndex)
+      return
+    }
+    let surface = TabEntry.editor(editor)
+    confirmClosing([surface]) { [weak self] in
+      guard let self, let location = self.tabManager.location(of: editor) else { return }
+      self.willCloseSurface(surface)
+      self.tabManager.closePane(location.paneID, inTabAt: location.tabIndex)
+    }
+  }
+
   /// Bookkeeping before a surface goes away.
   func willCloseSurface(_ surface: TabEntry) {
     guard case .editor(let editor) = surface else { return }
@@ -134,18 +150,10 @@ extension MainWindowController {
       case .alertFirstButtonReturn:
         // Close only once the save has landed: the save is asynchronous
         // (the buffer comes from Monaco, or a save panel), and closing first
-        // tears down the editor before anything is written.
-        let finish: (Bool) -> Void = { [weak self] saved in
-          if !saved, editor.filePath != nil {
-            self?.toasts.show(Toast(kind: .warning, message: "Couldn't save \(filename); it stays open."))
-          }
-          completion(saved)
-        }
-        if editor.filePath != nil {
-          editor.fetchContentAndSave(completion: finish)
-        } else {
-          self.showSaveAsDialog(for: editor, completion: finish)
-        }
+        // tears down the editor before anything is written. The normal save
+        // runs its formatter and post-save steps; a failed save says so and
+        // the tab stays open.
+        self.saveEditorTab(editor, completion: completion)
       case .alertSecondButtonReturn:
         completion(true)
       default:
@@ -221,11 +229,9 @@ extension MainWindowController {
       }
       switch response {
       case .alertFirstButtonReturn:
-        if editor.filePath != nil {
-          editor.fetchContentAndSave { success in completion(success) }
-        } else {
-          self.showSaveAsDialog(for: editor) { success in completion(success) }
-        }
+        // The normal save (formatter, commands on save, language servers),
+        // asking for a name if it's untitled.
+        self.saveEditorTab(editor, completion: completion)
       case .alertThirdButtonReturn:
         completion(true)
       default:

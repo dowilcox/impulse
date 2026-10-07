@@ -658,6 +658,22 @@ extension MainWindowController {
         self.handleEditorGitAction(editor: editor, action: action, line: line)
       }
     )
+    // Vim mode's :q, :wq and :x.
+    notificationObservers.append(
+      nc.addObserver(forName: .editorCloseRequested, object: nil, queue: .main) {
+        [weak self] notification in
+        guard let self, let editor = self.ownedEditor(from: notification) else { return }
+        let save = notification.userInfo?["save"] as? String ?? "never"
+        guard save == "always" || (save == "modified" && editor.isModified) else {
+          self.requestClose(editor: editor)
+          return
+        }
+        self.saveEditorTab(editor) { [weak self, weak editor] saved in
+          guard saved, let self, let editor else { return }
+          self.requestClose(editor: editor)
+        }
+      }
+    )
     notificationObservers.append(
       nc.addObserver(forName: .editorCodeActionChosen, object: nil, queue: .main) {
         [weak self] notification in

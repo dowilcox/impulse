@@ -157,23 +157,21 @@ extension MainWindowController {
         Toast(
           kind: .success, message: "No conflicts left in \((relative as NSString).lastPathComponent).",
           actionTitle: "Save & Mark Resolved",
-          action: { [weak editor] in
-            editor?.fetchContentAndSave { saved in
+          action: { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.saveEditorTab(editor) { saved in
               if saved { actions.markResolved([change]) }
             }
           }, lifetime: 20))
       return
     }
     guard !editor.isModified else {
-      toasts.show(
-        Toast(
-          kind: .info, message: "Save the file to stage this change.", actionTitle: "Save",
-          action: { [weak self] in
-            if let location = self?.tabManager.location(of: editor) {
-              self?.tabManager.reveal(location)
-            }
-            NotificationCenter.default.post(name: .impulseSaveFile, object: nil)
-          }))
+      // Staging takes the file from disk: save first (the usual save, with
+      // its formatter), then stage the change.
+      saveEditorTab(editor) { [weak self, weak editor] saved in
+        guard saved, let self, let editor, !editor.isModified else { return }
+        self.handleEditorGitAction(editor: editor, action: action, line: line)
+      }
       return
     }
     let root = repository.root

@@ -58,7 +58,7 @@ struct AutomationSettingsView: View {
             SectionField(placeholder: "*.swift", value: entry.filePattern, width: 110) { value in
               update(command: index) { $0.filePattern = value }
             }
-            SectionField(placeholder: "command --flag", value: joinCommandLine([entry.command] + entry.args)) {
+            SectionField(placeholder: "command --flag {file}", value: joinCommandLine([entry.command] + entry.args)) {
               value in
               let parts = splitCommandLine(value)
               update(command: index) {

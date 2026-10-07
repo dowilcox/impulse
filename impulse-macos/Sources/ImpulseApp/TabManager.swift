@@ -585,7 +585,7 @@ final class TabManager: NSObject {
     path: String, content fileContent: String, bom: Bool = false, largeFile: Bool, projectDirectory: String?,
     goToLine: UInt32? = nil, goToColumn: UInt32? = nil
   ) -> EditorTab {
-    let editorOptions = editorOptionsFromSettings()
+    let editorOptions = editorOptionsFromSettings(forPath: path)
     let themeDef = ThemeManager.monacoTheme(forName: theme.id)
     let language = languageIdForPath(path)
 
@@ -2139,6 +2139,19 @@ final class TabManager: NSObject {
     )
   }
 
+  /// The editor options for one file: a matching file-type override
+  /// (Settings ▸ Automation ▸ File types) can set its tab width and
+  /// indentation.
+  func editorOptionsFromSettings(forPath path: String?) -> EditorOptions {
+    var options = editorOptionsFromSettings()
+    if let path {
+      let indentation = settings.indentation(forPath: path)
+      options.tabSize = UInt32(max(1, indentation.tabWidth))
+      options.insertSpaces = indentation.useSpaces
+    }
+    return options
+  }
+
   // MARK: - Language Detection
 
   /// Maps a file path to its Monaco language identifier based on extension.
@@ -2177,6 +2190,9 @@ final class TabManager: NSObject {
     case "toml": return "toml"
     case "md", "markdown": return "markdown"
     case "html", "htm": return "html"
+    // Monaco has no Vue or Svelte grammar; HTML is the closest. Their
+    // language servers still get "vue"/"svelte" (EditorTab.lspLanguage).
+    case "vue", "svelte": return "html"
     case "css": return "css"
     case "scss": return "scss"
     case "less": return "less"

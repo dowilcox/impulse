@@ -97,6 +97,34 @@ public enum FileSearch {
     return results
   }
 
+  /// Every file `searchContents` would report at least one match in, with
+  /// no limit (for replacing across the project, where the result list's
+  /// cap would leave files out).
+  public static func filesContaining(root: String, query: String, caseSensitive: Bool) -> [String] {
+    guard !query.isEmpty else { return [] }
+    let queryMatch = caseSensitive ? query : query.lowercased()
+    var paths: [String] = []
+    walk(root: root) { path, _, isDirectory in
+      guard !isDirectory else { return true }
+      guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+        ((attrs[.size] as? UInt64) ?? 0) <= maxContentFileSize,
+        let data = FileManager.default.contents(atPath: path),
+        !data.prefix(binarySniffBytes).contains(0)
+      else { return true }
+      for lineData in data.split(separator: 0x0A, omittingEmptySubsequences: false) {
+        var slice = lineData
+        if slice.last == 0x0D { slice = slice.dropLast() }
+        guard let line = String(data: slice, encoding: .utf8) else { continue }
+        if (caseSensitive ? line : line.lowercased()).range(of: queryMatch) != nil {
+          paths.append(path)
+          break
+        }
+      }
+      return true
+    }
+    return paths
+  }
+
   // MARK: - Walk
 
   /// Depth-first walk skipping hidden entries, `.git`, other filesystems,

@@ -242,6 +242,9 @@ enum EditorEvent: Decodable {
     /// highlights, inlay hints, type definition, implementation); `params`
     /// is LSP JSON without the text document.
     case lspRequested(requestId: UInt64, method: String, params: String)
+    /// Vim mode's `:q` ("never"), `:wq` ("always") and `:x` ("modified"):
+    /// close the tab, saving first as given.
+    case closeRequested(save: String)
 
     private enum TypeTag: String, Decodable {
         case ready = "Ready"
@@ -264,6 +267,7 @@ enum EditorEvent: Decodable {
         case diffViewChanged = "DiffViewChanged"
         case codeActionChosen = "CodeActionChosen"
         case lspRequested = "LspRequested"
+        case closeRequested = "CloseRequested"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -291,6 +295,7 @@ enum EditorEvent: Decodable {
         case token
         case method
         case params
+        case save
     }
 
     init(from decoder: Decoder) throws {
@@ -404,6 +409,9 @@ enum EditorEvent: Decodable {
                 requestId: try container.decode(UInt64.self, forKey: .requestId),
                 method: try container.decode(String.self, forKey: .method),
                 params: try container.decode(String.self, forKey: .params))
+
+        case .closeRequested:
+            self = .closeRequested(save: try container.decodeIfPresent(String.self, forKey: .save) ?? "never")
         }
     }
 }

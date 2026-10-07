@@ -186,7 +186,8 @@
     @Test func systemStatusJSONShape() throws {
       let raw = ManagedServers.systemStatusJSON()
       let parsed = try #require(JSONUtil.parse(raw) as? [[String: Any]])
-      #expect(parsed.map { $0["command"] as? String } == ["rust-analyzer", "pyright", "clangd"])
+      #expect(
+        parsed.map { $0["command"] as? String } == ["rust-analyzer", "pyright", "clangd", "sourcekit-lsp"])
       for entry in parsed {
         #expect(entry.keys.sorted() == ["command", "installed", "resolvedPath"])
       }

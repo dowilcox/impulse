@@ -896,4 +896,15 @@ extension Settings {
     static func matchesFilePattern(_ path: String, pattern: String) -> Bool {
         return Glob.matchesFilePattern(path: path, pattern: pattern)
     }
+
+    /// Tab width and spaces-or-tabs for a file: each comes from the first
+    /// file-type override that matches the file and sets it, otherwise from
+    /// the editor's own settings.
+    func indentation(forPath path: String) -> (tabWidth: Int, useSpaces: Bool) {
+        let matching = fileTypeOverrides.filter { Self.matchesFilePattern(path, pattern: $0.pattern) }
+        return (
+            tabWidth: matching.lazy.compactMap(\.tabWidth).first { $0 > 0 } ?? tabWidth,
+            useSpaces: matching.lazy.compactMap(\.useSpaces).first ?? useSpaces
+        )
+    }
 }

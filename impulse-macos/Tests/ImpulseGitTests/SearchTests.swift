@@ -123,5 +123,26 @@
         root: root.path, query: "needle", limit: 1, caseSensitive: false)
       #expect(results.count == 1)
     }
+
+    @Test func filesContainingMatchesTheContentSearchWithoutALimit() throws {
+      let root = try makeTree()
+      defer { try? FileManager.default.removeItem(at: root) }
+      for caseSensitive in [true, false] {
+        let uncapped = FileSearch.searchContents(
+          root: root.path, query: "needle", limit: .max, caseSensitive: caseSensitive)
+        var seen = Set<String>()
+        let expected = uncapped.map(\.path).filter { seen.insert($0).inserted }
+        let files = FileSearch.filesContaining(root: root.path, query: "needle", caseSensitive: caseSensitive)
+        #expect(files == expected)
+      }
+      // notes.txt only matches ignoring case; a cap of one result still
+      // lists every file.
+      #expect(
+        !FileSearch.filesContaining(root: root.path, query: "needle", caseSensitive: true)
+          .contains { $0.hasSuffix("notes.txt") })
+      #expect(FileSearch.searchContents(root: root.path, query: "needle", limit: 1, caseSensitive: false).count == 1)
+      #expect(FileSearch.filesContaining(root: root.path, query: "needle", caseSensitive: false).count == 3)
+      #expect(FileSearch.filesContaining(root: root.path, query: "", caseSensitive: false).isEmpty)
+    }
   }
 #endif

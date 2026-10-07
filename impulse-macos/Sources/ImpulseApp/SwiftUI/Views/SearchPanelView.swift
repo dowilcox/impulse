@@ -38,7 +38,7 @@ struct SidebarSearchBar: View {
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(model.searchResults.contains { $0.matchType == "content" } ? model.theme.colorAccent : .secondary)
         .disabled(!model.searchResults.contains { $0.matchType == "content" })
-        .help("Replace every match in the files listed (⌘↩ in the field)")
+        .help("Replace every match in the project (↩ in the field)")
     }
     .padding(.horizontal, 10)
     .padding(.bottom, 6)

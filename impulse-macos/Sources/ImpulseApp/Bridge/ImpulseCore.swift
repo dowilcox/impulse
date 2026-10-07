@@ -70,8 +70,11 @@ final class ImpulseCore {
     ///   response, or an empty array on failure.
     static func searchContent(root: String, query: String, caseSensitive: Bool) -> [SearchResult] {
         return FileSearch.searchContents(
-            root: root, query: query, limit: 500, caseSensitive: caseSensitive)
+            root: root, query: query, limit: contentSearchLimit, caseSensitive: caseSensitive)
     }
+
+    /// The most content matches a search lists.
+    static let contentSearchLimit = 500
 
     /// Runs filename and content searches concurrently under `root` and returns
     /// a merged, deduplicated result list. Filename hits that are also present

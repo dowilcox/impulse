@@ -148,6 +148,8 @@ The tables below list every setting in the order the Settings tab shows them. "K
 | Insert spaces instead of tabs | `use_spaces`    | on / off | on      | Indent with spaces rather than tab characters. |
 | Indent guides                 | `indent_guides` | on / off | on      | Draw vertical lines at each indentation level. |
 
+[File types](#file-types) under Automation can set a different tab width or indentation for files that match a pattern.
+
 #### Display
 
 | Setting                | Key                         | Values                                                                                        | Default     | What it does                                       |
@@ -300,7 +302,7 @@ Both lists match files by a simple pattern:
 - `*.ts` matches files ending in `.ts` (ignoring case).
 - Anything else must equal the file's name exactly, for example `Makefile` or `package.json`.
 
-Both kinds of command run only for files inside folders you trust. They run in the folder that contains the saved file, with the arguments you give them; the file's path is not added for you. The command field is split into words like a shell would (quotes group words), but the command isn't run through a shell, so pipes, `&&` and variables don't work. The command must be a plain program name (found on Impulse's `PATH`) or an absolute path. Impulse runs commands with its own environment, which may not include folders your shell adds to `PATH`; if a tool isn't found, give its full path, for example `/opt/homebrew/bin/npx`. Output is discarded, and a command that fails doesn't show an error.
+Both kinds of command run only for files inside folders you trust. They run in the folder that contains the saved file, with the arguments you give them; write `{file}` in an argument where the saved file's full path should go (Impulse doesn't add it otherwise). The command field is split into words like a shell would (quotes group words), but the command isn't run through a shell, so pipes, `&&` and variables don't work. The command must be a plain program name or an absolute path. A plain name is looked up on your login shell's `PATH`, the same one language servers use, so tools from Homebrew, npm and the like are found even when Impulse starts from the Dock. Output isn't shown, but when a command fails, a notification names it and shows the first line of its error output. A formatter that runs for more than a minute is stopped.
 
 #### Commands on save
 
@@ -334,7 +336,7 @@ In `settings.json`, this list is `commands_on_save`:
 
 When you save a file that matches, its formatter runs before the commands on save, and the editor then shows the formatted file (unless you've kept typing since the save). The first row whose pattern matches and that has a formatter is used.
 
-The **Tab width** and **Indent** choices are saved, but in this version the editor still uses the **Editor › Indentation** settings for every file.
+The **Tab width** and **Indent** choices apply to editors whose file matches, in place of the **Editor › Indentation** settings; "default" keeps those. Each comes from the first matching row that sets it, so a `*.go` row with **Tabs** and a later `*.go` row with tab width 8 combine. Open editors change as soon as you edit a row.
 
 In `settings.json`, this list is `file_type_overrides`:
 
@@ -344,7 +346,7 @@ In `settings.json`, this list is `file_type_overrides`:
     "pattern": "*.md",
     "tab_width": 2,
     "use_spaces": true,
-    "format_on_save": { "command": "npx", "args": ["prettier", "--write", "."] }
+    "format_on_save": { "command": "npx", "args": ["prettier", "--write", "{file}"] }
   }
 ]
 ```
@@ -364,7 +366,7 @@ The Language Servers page shows the language servers that give the editor comple
 
 - **Managed by Impulse** lists the web-language servers Impulse installs with npm into its own folder (`~/Library/Application Support/impulse/lsp`, or `~/.local/share/impulse/lsp` if an earlier install is there): `typescript-language-server`, `intelephense`, `vscode-html-language-server`, `vscode-css-language-server`, `vscode-json-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `vue-language-server`, `svelteserver`, `graphql-lsp`, `emmet-ls`, `yaml-language-server`, `docker-langserver` and `bash-language-server`. Each row shows where the server was found, or "Not installed".
 - **Install All** installs or updates all of them with npm. It needs Node.js and npm; without npm the button is disabled and the page says "Install Node.js (npm) to manage these." When the install finishes, the page shows "Language servers installed." or the error npm reported. The palette command **Install Web LSP Servers** does the same thing.
-- **From your system** lists the servers you install yourself with a package manager such as Homebrew or rustup: `rust-analyzer`, `pyright-langserver` and `clangd`. Impulse looks for them on your login shell's `PATH`.
+- **From your system** lists the servers you install yourself with a package manager such as Homebrew or rustup: `rust-analyzer`, `pyright-langserver`, `clangd` and `sourcekit-lsp` (which comes with Xcode and the Command Line Tools). Impulse looks for them on your login shell's `PATH`.
 
 Language servers only start in folders you trust.
 

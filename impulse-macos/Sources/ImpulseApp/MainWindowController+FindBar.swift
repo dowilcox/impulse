@@ -166,9 +166,13 @@ extension MainWindowController {
       windowModel.cursorLine = tabInfo.cursorLine
       windowModel.cursorCol = tabInfo.cursorCol
       windowModel.currentLanguage = language
+      // A file type can set its own indentation (Settings ▸ Automation).
+      let indentation =
+        tabManager.selectedEditor?.filePath.map(settings.indentation(forPath:))
+        ?? (tabWidth: settings.tabWidth, useSpaces: settings.useSpaces)
       windowModel.currentIndent =
-        settings.useSpaces
-        ? "Spaces: \(settings.tabWidth)" : "Tab Size: \(settings.tabWidth)"
+        indentation.useSpaces
+        ? "Spaces: \(indentation.tabWidth)" : "Tab Size: \(indentation.tabWidth)"
       // Show/hide preview button based on file type
       if let editor = tabManager.selectedEditor,
         let fp = editor.filePath,

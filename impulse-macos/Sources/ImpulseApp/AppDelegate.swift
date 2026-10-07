@@ -254,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateCancel
       }
       isApplicationTerminating = true
-      return .terminateNow
+      return terminateAfterCommandsOnSave()
     }
 
     let alert = NSAlert()
@@ -280,11 +280,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateCancel
       }
       isApplicationTerminating = true
-      return .terminateNow
+      return terminateAfterCommandsOnSave()
     default:
       isApplicationTerminating = false
       return .terminateCancel
     }
+  }
+
+  /// Quitting would kill commands on save mid-run (saving while quitting,
+  /// or just before, starts them): quit once they finish, waiting at most
+  /// `commandsOnSaveQuitTimeout`.
+  private func terminateAfterCommandsOnSave() -> NSApplication.TerminateReply {
+    guard MainWindowController.commandsOnSaveRunning else { return .terminateNow }
+    afterCommandsOnSave { NSApp.reply(toApplicationShouldTerminate: true) }
+    return .terminateLater
+  }
+
+  private static let commandsOnSaveQuitTimeout: TimeInterval = 10
+
+  private func afterCommandsOnSave(_ proceed: @escaping () -> Void) {
+    guard MainWindowController.commandsOnSaveRunning else { return proceed() }
+    let front = windowControllers.first { $0.window?.isKeyWindow == true } ?? windowControllers.first
+    front?.toasts.show(Toast(message: "Waiting for commands on save to finish…", lifetime: nil))
+    var done = false
+    let finish = {
+      guard !done else { return }
+      done = true
+      proceed()
+    }
+    MainWindowController.commandsOnSave.notify(queue: .main, execute: finish)
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.commandsOnSaveQuitTimeout, execute: finish)
   }
 
   /// One dirty editor scheduled for review during quit.
@@ -319,7 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           return
         }
         self.isApplicationTerminating = true
-        NSApp.reply(toApplicationShouldTerminate: true)
+        // Saving started the files' commands on save.
+        self.afterCommandsOnSave { NSApp.reply(toApplicationShouldTerminate: true) }
         return
       }
       let ref = remaining.removeFirst()

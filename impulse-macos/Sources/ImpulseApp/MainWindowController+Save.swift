@@ -14,19 +14,27 @@ extension MainWindowController {
   /// 3. LSP didSave notification
   /// 4. Commands on save
   /// 5. Git diff decoration refresh
-  func saveEditorTab(_ editor: EditorTab) {
+  ///
+  /// `completion` gets whether the file was written, after the formatter
+  /// (if any) has run and the post-save steps have started. Untitled
+  /// editors ask for a name first.
+  func saveEditorTab(_ editor: EditorTab, completion: ((Bool) -> Void)? = nil) {
     guard let path = editor.filePath else {
-      showSaveAsDialog(for: editor)
+      showSaveAsDialog(for: editor, completion: completion)
       return
     }
 
     // Fetch the latest content from Monaco (content changes are debounced
     // in JS, so the Swift property may be stale when saving via menu Cmd+S).
     editor.fetchContentAndSave { [weak self, weak editor] success in
-      guard let self, let editor else { return }
+      guard let self, let editor else {
+        completion?(success)
+        return
+      }
       guard success else {
         self.toasts.show(
           Toast(kind: .warning, message: "Couldn't save \((path as NSString).lastPathComponent)."))
+        completion?(false)
         return
       }
       let saved = editor.lastWrittenText ?? editor.content
@@ -36,21 +44,31 @@ extension MainWindowController {
       let formatter = Trust.shared.isTrusted(path) ? self.resolveFormatOnSave(forPath: path) : nil
       if let fmt = formatter, !fmt.command.isEmpty {
         self.runExternalCommand(
-          command: fmt.command, args: fmt.args, cwd: (path as NSString).deletingLastPathComponent
+          command: fmt.command, args: SaveCommand.expandArguments(fmt.args, file: path),
+          cwd: (path as NSString).deletingLastPathComponent, timeout: Self.formatterTimeout,
+          failure: "Formatter “\(fmt.command)” failed on \((path as NSString).lastPathComponent)."
         ) { [weak self, weak editor] in
-          guard let editor else { return }
+          guard let editor else {
+            completion?(true)
+            return
+          }
           // The formatter rewrote the file: show its result, unless typing
           // has moved on since the save (then it's kept, unsaved).
           editor.adoptDiskChanges(afterSaving: saved) { [weak self, weak editor] in
-            guard let self, let editor else { return }
-            self.postSaveActions(editor: editor, path: path)
+            if let self, let editor { self.postSaveActions(editor: editor, path: path) }
+            completion?(true)
           }
         }
       } else {
         self.postSaveActions(editor: editor, path: path)
+        completion?(true)
       }
     }
   }
+
+  /// A formatter that runs longer is stopped (closing and quitting wait
+  /// for it).
+  static let formatterTimeout: TimeInterval = 60
 
   /// The file changed on disk since the editor loaded or saved it: save
   /// over it, take the disk version instead, or don't save.
@@ -99,17 +117,31 @@ extension MainWindowController {
       guard !cmd.command.isEmpty else { continue }
       guard Settings.matchesFilePattern(path, pattern: cmd.filePattern) else { continue }
       let cwd = (path as NSString).deletingLastPathComponent
+      let args = SaveCommand.expandArguments(cmd.args, file: path)
+      let failure =
+        "Command on save “\(cmd.name.isEmpty ? cmd.command : cmd.name)” failed on \((path as NSString).lastPathComponent)."
+      Self.commandsOnSave.enter()
       if cmd.reloadFile {
         let saved = editor.lastWrittenText ?? editor.content
-        runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd) { [weak editor] in
+        runExternalCommand(command: cmd.command, args: args, cwd: cwd, failure: failure) { [weak editor] in
           // Show what the command wrote, unless typing has moved on.
           editor?.adoptDiskChanges(afterSaving: saved)
+          Self.commandsOnSave.leave()
         }
       } else {
-        runExternalCommand(command: cmd.command, args: cmd.args, cwd: cwd, completion: nil)
+        runExternalCommand(command: cmd.command, args: args, cwd: cwd, failure: failure) {
+          Self.commandsOnSave.leave()
+        }
       }
     }
   }
+
+  /// Commands on save still running, in every window: quitting waits for
+  /// them (see `AppDelegate.terminateAfterCommandsOnSave`).
+  static let commandsOnSave = DispatchGroup()
+
+  /// Whether a command on save is still running.
+  static var commandsOnSaveRunning: Bool { commandsOnSave.wait(timeout: .now()) == .timedOut }
 
   /// Shows a save-as dialog for an untitled editor tab, then transitions it
   /// to a file-backed editor on successful save. The optional completion is
@@ -150,6 +182,8 @@ extension MainWindowController {
         editor.untitledCwd = nil
         editor.projectDirectory = (chosenPath as NSString).deletingLastPathComponent
         editor.openFile(path: chosenPath, content: editor.content, language: language)
+        // Its file type can set the indentation.
+        editor.applySettings(self.tabManager.editorOptionsFromSettings(forPath: chosenPath))
 
         // Register in dedup set
         self.tabManager.registerOpenFilePath(chosenPath)
@@ -184,48 +218,56 @@ extension MainWindowController {
   /// thread when the process finishes.
   ///
   /// The command name is validated to be either an absolute path or a plain
-  /// executable name (letters, digits, `-`, `_`, `.` only). Arguments and
-  /// `cwd` must not contain null bytes. Failures are logged and `completion`
-  /// is still invoked so the caller's control flow continues.
+  /// executable name (letters, digits, `-`, `_`, `.` only), looked up on the
+  /// login shell's `PATH` (the one language servers get). Arguments
+  /// and `cwd` must not contain null bytes. When it can't run or fails, a
+  /// toast shows `failure` with the first line of its error output;
+  /// `completion` is still invoked so the caller's control flow continues.
   private func runExternalCommand(
-    command: String, args: [String], cwd: String,
+    command: String, args: [String], cwd: String, timeout: TimeInterval? = nil, failure: String,
     completion: (() -> Void)?
   ) {
+    let refuse = { [weak self] (reason: String) in
+      NSLog("Not running command '%@': %@", command, reason)
+      DispatchQueue.main.async {
+        self?.toasts.show(Toast(kind: .warning, message: failure, detail: reason, lifetime: 10))
+        completion?()
+      }
+    }
     guard Self.isSafeExternalCommand(command) else {
-      NSLog("Refusing to run command with unsafe name: %@", command)
-      if let completion = completion { DispatchQueue.main.async { completion() } }
-      return
+      return refuse("“\(command)” must be a program name or an absolute path.")
     }
     guard !cwd.contains("\0"), args.allSatisfy({ !$0.contains("\0") }) else {
-      NSLog("Refusing to run command with null byte in args/cwd")
-      if let completion = completion { DispatchQueue.main.async { completion() } }
-      return
+      return refuse("Its arguments contain a null byte.")
     }
 
-    DispatchQueue.global(qos: .userInitiated).async {
-      let process = Process()
-      if command.hasPrefix("/") {
-        // Absolute path: invoke directly, skip PATH lookup via env.
-        process.executableURL = URL(fileURLWithPath: command)
-        process.arguments = args
-      } else {
-        // Bare name: use env to honor PATH. Name has been validated.
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [command] + args
-      }
-      process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-      process.standardOutput = FileHandle.nullDevice
-      process.standardError = FileHandle.nullDevice
-
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      var problem: String?
       do {
-        try process.run()
-        process.waitUntilExit()
+        // The login shell's PATH, as language servers and project scripts
+        // get: launched from the Dock, the app's own lacks Homebrew, npm…
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = LoginShell.loginPath()
+        // A bare name goes through env to honor PATH (the name has been
+        // validated); an absolute path runs directly.
+        let output = try ChildProcess.run(
+          command.hasPrefix("/") ? command : "/usr/bin/env",
+          command.hasPrefix("/") ? args : [command] + args,
+          in: cwd, environment: environment, timeout: timeout)
+        if output.status != 0 || output.timedOut {
+          problem = SaveCommand.failureSummary(
+            status: output.status, stdout: output.stdout, stderr: output.stderr, timedOut: output.timedOut)
+        }
       } catch {
-        NSLog("Failed to run command '\(command)': \(error)")
+        problem = error.localizedDescription
       }
+      if let problem { NSLog("Command '%@' failed: %@", command, problem) }
 
-      if let completion = completion {
-        DispatchQueue.main.async { completion() }
+      DispatchQueue.main.async {
+        if let problem {
+          self?.toasts.show(Toast(kind: .warning, message: failure, detail: problem, lifetime: 10))
+        }
+        completion?()
       }
     }
   }
@@ -238,7 +280,7 @@ extension MainWindowController {
     if command.hasPrefix("/") {
       return !command.contains("..")
     }
-    if command == "." || command == ".." { return false }
+    if command == "." || command == ".." || command.hasPrefix("-") { return false }
     let allowed = CharacterSet(
       charactersIn:
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")

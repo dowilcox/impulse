@@ -94,6 +94,8 @@ These are in Settings ▸ Editor (⌘,). The key is the name in `settings.json`;
 
 Changes apply to open editors right away.
 
+Files can have their own tab width and indentation: add a row for their pattern under **File types** in Settings ▸ Automation (for example `*.go` with **Tabs**, or `*.md` with tab width 2). A row's choices override **Tab width** and **Insert spaces instead of tabs** for the files it matches; see [Settings and themes](settings-and-themes.md#file-types).
+
 ## Saving
 
 Press **⌘S** (File ▸ Save) to save the focused editor. If **Save when focus leaves the editor** is on, Impulse also saves a modified file whenever you click or switch away from its editor.
@@ -104,11 +106,11 @@ Each save runs the same steps: write the file, run its formatter if one is set u
 
 Closing a tab or pane (⌘W) that holds an editor with unsaved changes asks first, in an **Unsaved Changes** sheet:
 
-- **Save & Close** saves (asking for a name if the file is untitled) and closes once the save has landed. If the save fails, the tab stays open.
+- **Save & Close** saves the way ⌘S does (asking for a name if the file is untitled, then running the formatter and commands on save) and closes once the save has landed. If the save fails, the tab stays open.
 - **Don't Save** closes and drops the changes.
 - **Cancel** keeps the tab.
 
-When a tab has several modified editors in split panes, you're asked about each in turn. Quitting asks the usual "Do you want to save the changes made to…?" question for each modified file.
+When a tab has several modified editors in split panes, you're asked about each in turn. Quitting asks the usual "Do you want to save the changes made to…?" question for each modified file; its **Save** is the same full save.
 
 ### When a file changes on disk
 
@@ -123,7 +125,7 @@ Agents, git and other tools often rewrite files you have open. Impulse watches e
 You can have Impulse run a program after saving files that match a pattern, for example a formatter or a code generator. Both are set up in Settings ▸ Automation:
 
 - **Commands on save**: click **Add**, then fill in a name, a file pattern and the command with its arguments. Tick **Reload** when the command rewrites the file you saved, so the editor shows the result.
-- **File types**: click **Add**, enter a file pattern, and type the formatter command in the **formatter (optional)** field. A formatter always reloads the file afterwards.
+- **File types**: click **Add**, enter a file pattern, and type the formatter command in the **formatter (optional)** field, for example `prettier --write {file}`. A formatter always reloads the file afterwards.
 
 The same lists live in `settings.json` as `commands_on_save` and `file_type_overrides`:
 
@@ -133,8 +135,8 @@ The same lists live in `settings.json` as `commands_on_save` and `file_type_over
     {
       "name": "Regenerate routes",
       "file_pattern": "*.ts",
-      "command": "/usr/local/bin/gen-routes",
-      "args": ["--quiet"],
+      "command": "gen-routes",
+      "args": ["--quiet", "{file}"],
       "reload_file": false
     }
   ],
@@ -142,8 +144,8 @@ The same lists live in `settings.json` as `commands_on_save` and `file_type_over
     {
       "pattern": "*.ts",
       "format_on_save": {
-        "command": "/usr/local/bin/my-formatter",
-        "args": ["--write", "."]
+        "command": "prettier",
+        "args": ["--write", "{file}"]
       }
     }
   ]
@@ -153,10 +155,11 @@ The same lists live in `settings.json` as `commands_on_save` and `file_type_over
 How these commands run:
 
 - **Patterns** are `*` (every file), `*.ext` (an extension, any case) or an exact file name such as `Makefile`. The first file-type entry with a formatter that matches wins.
-- The command runs **in the saved file's folder**, with exactly the arguments you gave. Impulse doesn't add the file's path, so use arguments that tell your tool what to work on (`.` for the folder, for instance).
+- The command runs **in the saved file's folder**, with the arguments you gave. `{file}` in an argument is replaced with the saved file's full path (also inside a longer argument, such as `--stdin-filepath={file}`); without it, Impulse doesn't add the path, so use arguments that tell your tool what to work on (`.` for the folder, for instance).
 - There's no shell: no pipes, `&&`, globbing or `~`. The command must be a plain program name or an absolute path. A relative path such as `./node_modules/.bin/prettier` isn't run.
-- A plain program name is looked up in the `PATH` Impulse itself was started with. When you open Impulse from the Dock or Finder, that `PATH` doesn't include Homebrew or npm folders, so give the full path (for example `/opt/homebrew/bin/…`).
-- Output isn't shown anywhere. If a command fails, the file just stays as you saved it.
+- A plain program name is looked up in your login shell's `PATH`, the same one language servers get, so Homebrew, npm and other tools you can run in a terminal are found even when you open Impulse from the Dock.
+- Output isn't shown while a command works. If a command fails (exits with an error, or can't be started), a notification names it and the file, with the first line of its error output, for example "Formatter “prettier” failed on forecast.ts." and "[error] src/forecast.ts: SyntaxError: Unexpected token (12:3)". The file stays as you saved it.
+- A formatter that runs for more than a minute is stopped. Closing a tab with **Save & Close** and quitting wait for the formatter to finish. Quitting also waits, up to 10 seconds, for commands on save that are still running.
 - If you keep typing while a formatter runs, your newer text is kept (and stays unsaved) instead of the formatter's result.
 - Formatters and commands on save run only in [trusted folders](getting-started.md), because they run a project's own tools and configuration.
 
@@ -188,7 +191,9 @@ Completions, hover information, go to definition, rename, code actions, formatti
 
 When a language has several servers, they all run: in `trailhead`, TypeScript files get type checking from `typescript-language-server`, lint results from ESLint, and Tailwind and Emmet completions where they apply. Each request goes to the first server that supports it.
 
-Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but no server unless you add one; see [Adding or replacing servers](#adding-or-replacing-servers).
+Monaco has no Vue or Svelte highlighting of its own, so `.vue` and `.svelte` files are highlighted as HTML; their servers still treat them as Vue and Svelte.
+
+Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but no server unless you add one; see [Adding or replacing servers](#adding-or-replacing-servers). Fish scripts (`.fish`) are highlighted as shell, but `bash-language-server` doesn't run for them, since it can't read fish.
 
 ### Installing servers
 
@@ -202,7 +207,7 @@ Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but 
 
 The packages go into `~/Library/Application Support/impulse/lsp`. Run the command again to update them. A server found on your `PATH` is used before the managed copy.
 
-Settings ▸ Language Servers lists the managed servers, then `rust-analyzer`, `pyright` and `clangd` under "From your system", each with a check mark and the path where it was found, or "Not installed".
+Settings ▸ Language Servers lists the managed servers, then `rust-analyzer`, `pyright`, `clangd` and `sourcekit-lsp` under "From your system", each with a check mark and the path where it was found, or "Not installed".
 
 ![Settings ▸ Language Servers, listing the managed web servers with Install All and the system servers found on PATH](images/editor-language-servers.png)
 
@@ -241,7 +246,20 @@ For example, to use `gopls` for Go files:
 }
 ```
 
-Language ids are Monaco's (`go`, `ruby`, `java`, …), except `typescriptreact` and `javascriptreact` for `.tsx` and `.jsx`, `shellscript` for shell scripts, and `jsonc`, `vue` and `svelte`. If the file has a mistake, Impulse ignores all of it. Quit and reopen Impulse after editing it.
+Language ids are Monaco's (`go`, `ruby`, `java`, …), except `typescriptreact` and `javascriptreact` for `.tsx` and `.jsx`, `shellscript` for shell scripts, `fish` for fish scripts, and `jsonc`, `vue` and `svelte`. If the file has a mistake, Impulse ignores all of it.
+
+A project can have its own settings in `.impulse/lsp.json` (or `.impulse-lsp.json`) in its folder. They apply to files in that folder and below, within its repository; a folder deeper down with its own file uses that one instead. Because a project file comes with the code you open, it can only use `language_servers` to choose among servers that already exist (built in, or defined in your own `lsp.json`) and set `root_markers`; any `servers` in it are ignored. For example, to skip ESLint and Tailwind for TypeScript in one project:
+
+```json
+{
+  "language_servers": {
+    "typescript": ["typescript-language-server"],
+    "typescriptreact": ["typescript-language-server"]
+  }
+}
+```
+
+Impulse notices when either file changes, within a couple of seconds, without a restart: files you open or edit afterwards use the new settings, open files move to the servers the new settings pick (a server that no longer serves a file closes it, and its problems for that file are cleared), and a running server whose `command`, `args` or `initialization_options` you changed is stopped and starts again with them the next time a file needs it.
 
 ## Language features
 
@@ -317,7 +335,7 @@ To replace:
 3. Click **Replace All** (or press Return in the replace field). A sheet asks you to confirm: "Replace in 4 files?"
 4. Click **Replace All** in the sheet.
 
-Every occurrence is replaced in each file listed, with the case setting you chose. Files you have open with unsaved changes are skipped (the sheet says how many); other open files reload with the change. A notification reports how many matches were replaced, and its **Undo** button, available for 20 seconds, puts every file back. If the search stopped at 500 matches, search again afterwards to find the rest.
+Every occurrence is replaced in every file the search covers, with the case setting you chose. When the list stopped at 500 matches, Impulse searches again for the files past it before asking, so the sheet's count includes them. Files you have open with unsaved changes are skipped (the sheet says how many); other open files reload with the change. A notification reports how many matches were replaced, and its **Undo** button, available for 20 seconds, puts every file back.
 
 For a quick search without the panel, type `%` and the text in the palette. See [Command palette](command-palette.md).
 
@@ -355,7 +373,7 @@ Opening an image (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.ti
 
 Turn on **Vim keybindings** (Settings ▸ Editor ▸ Behavior, `editor_vim_mode`) to edit with Vim's normal, insert and visual modes. Impulse uses [monaco-vim](https://github.com/brijeshb42/monaco-vim), which provides Vim's common motions, operators, registers, search and `:` commands such as `:s`. The current mode, and the command line while you type a `:` command, show in the bottom-right corner of the editor.
 
-- Save with ⌘S. Vim's `:w` isn't connected to saving.
+- `:w` saves (like ⌘S), `:q` closes the tab, `:wq` saves and closes, and `:x` saves if there are unsaved changes, then closes. `:q` (and `:q!`) with unsaved changes asks first, like closing the tab any other way.
 - ⌘ shortcuts keep working as usual.
 - Vim keybindings apply to the normal editor, not to the [diff view](#diff-view).
 - The setting applies to every editor tab as soon as you change it.
@@ -374,7 +392,7 @@ Click a mark to open a _peek_ under the change:
 
 - The title says what changed: "2 lines added", "1 line removed" or "Changed 3 lines (was 2)". Below it are the original lines.
 - **Revert** puts the original lines back in the editor. It's an ordinary edit: ⌘Z brings your change back, and nothing is written until you save.
-- **Stage** stages this change (`git add` of just this hunk). The file must be saved first; if it isn't, a notification offers **Save**. When it works you see "Staged the change", and the mark disappears.
+- **Stage** stages this change (`git add` of just this hunk). Staging works on the saved file, so if the file has unsaved changes it's saved first (with its formatter and commands on save, like ⌘S). When it works you see "Staged the change", and the mark disappears.
 - **Diff** opens the [diff view](#diff-view) for the whole file.
 - **Review** opens the Review tab on its Unstaged scope, at this file. See [Review](review.md).
 - **✕**, or clicking the mark again, closes the peek.

@@ -2070,6 +2070,27 @@ function handleUndoEdits(cmd) {
 let vimMode = null;
 let vimWanted = false;
 let vimStatus = null;
+let vimFileCommandsDefined = false;
+
+// :w saves through the app (monaco-vim's write calls the adapter's save
+// command); :q closes the tab (asking about unsaved changes, also for :q!);
+// :wq saves and closes; :x saves only when modified, then closes.
+function defineVimFileCommands(VimMode) {
+  if (vimFileCommandsDefined) return;
+  vimFileCommandsDefined = true;
+  VimMode.commands.save = function () {
+    sendToHost({ type: "SaveRequested" });
+  };
+  VimMode.Vim.defineEx("quit", "q", function () {
+    sendToHost({ type: "CloseRequested", save: "never" });
+  });
+  VimMode.Vim.defineEx("wq", "wq", function () {
+    sendToHost({ type: "CloseRequested", save: "always" });
+  });
+  VimMode.Vim.defineEx("xit", "x", function () {
+    sendToHost({ type: "CloseRequested", save: "modified" });
+  });
+}
 
 function setVimMode(enabled) {
   vimWanted = enabled;
@@ -2097,6 +2118,7 @@ function setVimMode(enabled) {
   require(["vim/monaco-vim.umd"], function (MonacoVim) {
     if (vimMode || !vimWanted) return;
     try {
+      defineVimFileCommands(MonacoVim.VimMode);
       vimMode = MonacoVim.initVimMode(editor, vimStatus);
     } catch (e) {
       console.error("Vim mode failed to start:", e);

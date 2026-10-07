@@ -46,6 +46,8 @@ public enum ManagedServers {
     ("rust-analyzer", "rust-analyzer"),
     ("pyright", "pyright-langserver"),
     ("clangd", "clangd"),
+    // Ships with Xcode and the Command Line Tools (Swift files use it).
+    ("sourcekit-lsp", "sourcekit-lsp"),
   ]
 
   // MARK: Managed directories
