@@ -10,10 +10,11 @@ import WebKit
 ///         [--impulse-snapshot-delay 4] [--impulse-snapshot-cwd ~/Code/impulse]
 ///         [--impulse-snapshot-actions sidebar,palette]
 ///         [--impulse-snapshot-session saved-session.json]
+///         [--impulse-snapshot-size 1280x800] [--impulse-snapshot-no-lsp]
 ///
 /// Windows are made fully transparent so nothing flashes on screen; AppKit
-/// still lays them out and draws them into the snapshot bitmap. WKWebView
-/// content (Monaco) does not render into these snapshots.
+/// still lays them out and draws them into the snapshot bitmap, and web views
+/// (Monaco, previews) are snapshotted separately and composited in place.
 enum DebugSnapshot {
   /// Output directory, set when launched with `--impulse-snapshot`.
   private(set) static var outputDirectory: URL?
@@ -24,6 +25,10 @@ enum DebugSnapshot {
   private(set) static var actions: [String] = []
   /// A session file to restore (read-only) instead of starting fresh.
   private(set) static var sessionFile: URL?
+  /// Size of the main window(s) in points.
+  private(set) static var windowSize = NSSize(width: 1440, height: 900)
+  /// Start no language servers (their absence would otherwise show notices).
+  private(set) static var withoutLanguageServers = false
 
   static var isActive: Bool { outputDirectory != nil }
 
@@ -44,6 +49,13 @@ enum DebugSnapshot {
     }
     if let path = value(after: "--impulse-snapshot-session") {
       sessionFile = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    }
+    withoutLanguageServers = arguments.contains("--impulse-snapshot-no-lsp")
+    if let raw = value(after: "--impulse-snapshot-size") {
+      let parts = raw.split(separator: "x").compactMap { Double($0) }
+      if parts.count == 2, parts[0] >= 400, parts[1] >= 300 {
+        windowSize = NSSize(width: parts[0], height: parts[1])
+      }
     }
     if let raw = value(after: "--impulse-snapshot-actions") {
       actions = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -96,10 +108,11 @@ enum DebugSnapshot {
     guard let outputDirectory else { return }
     try? FileManager.default.createDirectory(
       at: outputDirectory, withIntermediateDirectories: true)
+    keepWindowsTransparent()
     for window in NSApp.windows {
       window.alphaValue = 0
       // Fixed size so snapshots are comparable run to run.
-      if window.isVisible { window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true) }
+      if window.isVisible { window.setFrame(NSRect(origin: .zero, size: windowSize), display: true) }
     }
 
     // Run actions spaced out so each one's animations settle.
@@ -113,6 +126,7 @@ enum DebugSnapshot {
     DispatchQueue.main.asyncAfter(deadline: .now() + captureAt) {
       let targets = NSApp.windows.enumerated().filter { $0.element.isVisible }
       var written: [String] = []
+      var webNotes: [String] = []
       let group = DispatchGroup()
       for (index, window) in targets {
         window.alphaValue = 0
@@ -125,8 +139,22 @@ enum DebugSnapshot {
         let webViews = Self.webViews(in: view)
         for webView in webViews {
           group.enter()
-          webView.takeSnapshot(with: nil) { image, _ in
-            defer { group.leave() }
+          // Never wait forever on a page that doesn't paint.
+          var left = false
+          let leave = {
+            guard !left else { return }
+            left = true
+            group.leave()
+          }
+          DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if !left { NSLog("DebugSnapshot: a web view didn't answer takeSnapshot") }
+            leave()
+          }
+          webView.takeSnapshot(with: nil) { image, error in
+            defer { leave() }
+            webNotes.append(
+              "web view \(Int(webView.frame.width))x\(Int(webView.frame.height)) url=\(webView.url?.lastPathComponent ?? "-")"
+                + " image=\(image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "nil") error=\(error.map { "\($0)" } ?? "-")")
             guard let image else { return }
             let frame = webView.convert(webView.bounds, to: view)
             NSGraphicsContext.saveGraphicsState()
@@ -149,6 +177,12 @@ enum DebugSnapshot {
         // Give the per-window notify blocks (queued first) a turn to finish.
         DispatchQueue.main.async {
           var report = "captured: \(written.sorted().joined(separator: ", "))\n"
+          report += webNotes.map { $0 + "\n" }.joined()
+          for (index, window) in targets {
+            let f = window.frame
+            report += "frame window-\(index) x=\(f.minX) y=\(f.minY) w=\(f.width) h=\(f.height)"
+            report += " level=\(window.level.rawValue) sheet=\(window.isSheet) class=\(type(of: window))\n"
+          }
           report += hitTestReport()
           let log = outputDirectory.appendingPathComponent("snapshot.log")
           try? report.write(to: log, atomically: true, encoding: .utf8)
@@ -161,5 +195,17 @@ enum DebugSnapshot {
   private static func webViews(in view: NSView) -> [WKWebView] {
     if let web = view as? WKWebView { return web.isHidden ? [] : [web] }
     return view.subviews.flatMap { webViews(in: $0) }
+  }
+
+  /// Windows made after the run starts (toasts, popovers, the quick
+  /// terminal) must not show on screen either: hide each one as soon as the
+  /// app updates its windows, and on a short timer as a fallback.
+  private static func keepWindowsTransparent() {
+    let hide = {
+      for window in NSApp.windows where window.alphaValue != 0 { window.alphaValue = 0 }
+    }
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didUpdateNotification, object: nil, queue: .main) { _ in hide() }
+    Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in hide() }
   }
 }

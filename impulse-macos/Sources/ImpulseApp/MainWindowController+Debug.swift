@@ -155,6 +155,7 @@ extension MainWindowController {
         windowModel.runSearchNow()
       } else if action == "quick-terminal" {
         QuickTerminal.shared.toggle()
+
       } else if action == "preview-beside" {
         togglePreviewBeside()
       } else if action == "diff-view" {
@@ -173,6 +174,56 @@ extension MainWindowController {
             edits: [LSPTextEdit(startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 0, newText: "edited ")]),
         ])
         reportWorkspaceEdit(applyWorkspaceEdit(edit), verb: "Renamed")
+      } else if action.hasPrefix("git-peek="), let line = Int(action.dropFirst(9)) {
+        // What clicking the change mark at that line does.
+        tabManager.selectedEditor?.webView?.evaluateJavaScript("renderGitPeek(gitHunkAtLine(\(line)))")
+      } else if action.hasPrefix("tree-expand=") {
+        // A folder in the file tree, by root-relative path (its parent must be open).
+        let path = (fileTreeRootPath as NSString).appendingPathComponent(String(action.dropFirst(12)))
+        if let node = windowModel.flatFileTree.first(where: { $0.node.path == path })?.node {
+          windowModel.expandDirectory(node)
+        }
+      } else if action.hasPrefix("search=") {
+        windowModel.beginSearch()
+        windowModel.searchQuery = String(action.dropFirst(7))
+        windowModel.runSearchNow()
+      } else if action.hasPrefix("task-sheet=") {
+        // The New Task sheet filled in: `title[|command[|base]]`.
+        let parts = action.dropFirst(11).split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        presentNewTaskSheet(
+          title: parts.first ?? "", command: parts.count > 1 ? parts[1] : "", base: parts.count > 2 ? parts[2] : nil)
+      } else if action == "project-trust" {
+        // The trust question for the active workspace's .impulse/project.toml.
+        trustProjectConfig(root: tabManager.activeWorkspace.root) { _ in }
+      } else if action.hasPrefix("select-workspace=") {
+        // By name, as the sidebar shows it.
+        let name = String(action.dropFirst(17))
+        if let workspace = tabManager.workspaces.first(where: { $0.name == name }) {
+          tabManager.activateWorkspace(workspace.id)
+        }
+      } else if action.hasPrefix("problems=") {
+        // A JSON list of {path (root-relative), line, column, severity, message, source, code?}.
+        let data = FileManager.default.contents(atPath: String(action.dropFirst(9))) ?? Data()
+        let list = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+        var byPath: [String: [Problem]] = [:]
+        for item in list {
+          guard let relative = item["path"] as? String, let message = item["message"] as? String else { continue }
+          let path = (fileTreeRootPath as NSString).appendingPathComponent(relative)
+          let severity: Problem.Severity =
+            switch item["severity"] as? String {
+            case "error": .error
+            case "warning": .warning
+            case "hint": .hint
+            default: .info
+            }
+          byPath[path, default: []].append(
+            Problem(
+              path: path, line: item["line"] as? Int ?? 1, column: item["column"] as? Int ?? 1,
+              severity: severity, message: message, source: item["source"] as? String,
+              code: item["code"] as? String))
+        }
+        windowModel.problemsByPath = byPath
+        showProblems()
       } else if action == "problems" {
         windowModel.problemsByPath = [
           (fileTreeRootPath as NSString).appendingPathComponent("search.swift"): [

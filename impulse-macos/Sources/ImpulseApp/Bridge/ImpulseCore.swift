@@ -303,7 +303,9 @@ final class ImpulseCore {
         shutdownLsp()
         lspRegistry = LSPRegistry(rootUri: rootUri)
         // Servers only run for files in trusted folders.
-        lspRegistry?.isAllowed = { uri in FileURI.toPath(uri).map(Trust.shared.isTrusted) ?? false }
+        lspRegistry?.isAllowed = { uri in
+          !DebugSnapshot.withoutLanguageServers && (FileURI.toPath(uri).map(Trust.shared.isTrusted) ?? false)
+        }
         lspRegistry?.onEventsAvailable = lspEventsAvailable
     }
 

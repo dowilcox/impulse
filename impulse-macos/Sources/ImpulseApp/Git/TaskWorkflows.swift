@@ -148,15 +148,20 @@ extension MainWindowController {
   }
 
   /// "New Task…": ask for a title and what to start, then create it (from
-  /// `workspaceID`'s repository, or the active workspace's).
-  func presentNewTaskSheet(from workspaceID: UUID? = nil) {
+  /// `workspaceID`'s repository, or the active workspace's). `title`,
+  /// `command` and `base` prefill the sheet.
+  func presentNewTaskSheet(
+    from workspaceID: UUID? = nil, title: String = "", command: String = "", base: String? = nil
+  ) {
     guard let window, let repository = taskRepository(from: workspaceID) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository to start a task."))
       return
     }
     // Tasks branch from the main checkout, even when started from a task.
     let root = repository.root
-    let model = TaskSheetModel(repoRoot: root, base: repository.snapshot?.branch ?? "HEAD")
+    let model = TaskSheetModel(repoRoot: root, base: base ?? repository.snapshot?.branch ?? "HEAD")
+    model.draft.title = title
+    model.draft.command = command
     DispatchQueue.global(qos: .userInitiated).async {
       let taken = Set(GitOperations.branches(root: root).local)
       let include = try? String(
