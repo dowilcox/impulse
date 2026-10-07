@@ -376,7 +376,7 @@ Before closing, Impulse asks about:
 - **Running commands.** When a terminal is still running something, a sheet lists it and asks whether to close anyway.
 - **Pinned tabs.** "This tab is pinned. Close anyway?"
 
-To skip the question about running commands, turn off **Warn before closing active work** (`confirm_close_warnings`) in Settings ▸ General ▸ Window. Unsaved files are always asked about.
+To skip the question about running commands, turn off **Warn before closing running commands** (`confirm_close_warnings`) in Settings ▸ General ▸ Window. Unsaved files are always asked about.
 
 Closing a terminal ends its shell and everything running in it.
 

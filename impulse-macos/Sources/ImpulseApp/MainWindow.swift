@@ -582,17 +582,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   // MARK: - Custom Command Execution
 
-  /// Executes a custom keybinding command by opening a new terminal tab
-  /// with the command running in it, using the active tab's working directory.
+  /// Runs a Run in Terminal shortcut's command line, as typed, in the
+  /// focused terminal when its shell is at the prompt and the input bar is
+  /// on. When no terminal is focused, the focused one is running something,
+  /// or the input bar is off (the shell's own line may hold typed text the
+  /// command would be appended to), it runs in a new terminal tab in the
+  /// active tab's folder instead.
   func executeCustomCommand(command: String, args: [String]) {
-    let fullCommand = ([command.shellEscaped] + args.map(\.shellEscaped)).joined(separator: " ")
+    let line = CustomKeybinding(command: command, args: args).commandLine
+    guard !line.isEmpty else { return }
+    if settings.terminalContextBar, case .terminal(let container) = tabManager.selectedTab?.focused,
+      let terminal = container.activeTerminal, Self.isAtPrompt(terminal)
+    {
+      terminal.runCommand(line)
+      return
+    }
 
     // Get the CWD from the active tab (terminal CWD or editor file's parent)
     let cwd = getActiveCwd()
 
     // Pass the command through so it's sent right after the shell process
     // starts (shell spawn is deferred to the next run loop tick for layout).
-    tabManager.addTerminalTab(directory: cwd, initialCommand: fullCommand)
+    tabManager.addTerminalTab(directory: cwd, initialCommand: line)
+  }
+
+  /// Whether the terminal's shell is in the foreground waiting for a
+  /// command, so a command typed into it reaches the shell and not a
+  /// running program.
+  private static func isAtPrompt(_ terminal: TerminalTab) -> Bool {
+    guard !terminal.isCommandRunning, !terminal.isAltScreen, let backend = terminal.backend else { return false }
+    // Without shell integration commands aren't marked; the PTY's
+    // foreground process group is the shell's only while it's at its prompt.
+    guard let foreground = backend.foregroundPid() else { return true }
+    return foreground == backend.childPid()
   }
 
   /// Returns the current working directory from the active tab:
@@ -662,42 +684,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Shows a dialog asking for a line number and navigates the active editor to it.
   // MARK: - Font Size
 
-  /// Changes both editor and terminal font sizes by the given delta.
+  /// Changes both editor and terminal font sizes by the given delta. Like
+  /// any settings change it's broadcast, so every window (and everything
+  /// that follows the font sizes) picks up the new sizes.
   func changeFontSize(delta: Int) {
-    let newEditorSize = max(6, min(72, settings.fontSize + delta))
-    let newTerminalSize = max(6, min(72, settings.terminalFontSize + delta))
-
-    settings.fontSize = newEditorSize
-    settings.terminalFontSize = newTerminalSize
-    applyFontSizeToAllTabs()
+    SettingsStore.shared.update { settings in
+      settings.fontSize = max(6, min(72, settings.fontSize + delta))
+      settings.terminalFontSize = max(6, min(72, settings.terminalFontSize + delta))
+    }
   }
 
   /// Resets font sizes to defaults (14 for both editor and terminal).
   func resetFontSize() {
-    settings.fontSize = 14
-    settings.terminalFontSize = 14
-    applyFontSizeToAllTabs()
-  }
-
-  /// Applies the current font size settings to all open tabs.
-  private func applyFontSizeToAllTabs() {
-    // Build EditorOptions with updated font size from our local settings,
-    // since TabManager's settings copy may not reflect the change yet.
-    let editorOptions = EditorOptions(
-      fontSize: UInt32(settings.fontSize),
-      fontFamily: settings.fontFamily
-    )
-    let termSettings = settings.terminalSettings()
-
-    for tab in tabManager.allSurfaces {
-      switch tab {
-      case .editor(let editor):
-        editor.applySettings(editorOptions)
-      case .terminal(let container):
-        container.applySettings(settings: termSettings)
-      case .imagePreview, .diffReview, .history, .tool, .split:
-        break
-      }
+    SettingsStore.shared.update { settings in
+      settings.fontSize = Settings.default.fontSize
+      settings.terminalFontSize = Settings.default.terminalFontSize
     }
   }
 

@@ -295,7 +295,7 @@ To write a longer prompt for an agent that owns the terminal, use the composer (
 
 ### Classic prompt mode
 
-Turn off **Input bar** (`terminal_context_bar`) in Settings ▸ Terminal to type at your shell's own prompt in the grid instead. The grid then always has the keyboard, your shell's line editor, key bindings and completions work as they would in any terminal, and the shell's prompt is drawn as usual. Command blocks, history recording and notifications keep working (they come from shell integration); the input bar's chips, suggestions, completion menu and underline aren't available. ⌃R goes to your shell, and choosing a command from history search types it at the prompt.
+Turn off **Input bar** (`terminal_context_bar`) in Settings ▸ Terminal to type at your shell's own prompt in the grid instead. The grid then always has the keyboard, your shell's line editor, key bindings and completions work as they would in any terminal, and the shell's prompt is drawn as usual. Command blocks, history recording and notifications keep working (they come from shell integration); the input bar's chips, suggestions, completion menu and underline aren't available. ⌃R goes to your shell, and choosing a command from history search types it at the prompt. **Run in Terminal** shortcuts (see [Settings and themes](settings-and-themes.md#run-a-shell-command-from-a-shortcut)) run in a new terminal tab, so they never add to a command you're typing at the prompt.
 
 The [quick terminal](workspaces-and-tabs.md) always uses the shell's own prompt.
 

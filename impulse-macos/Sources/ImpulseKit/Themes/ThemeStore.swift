@@ -19,7 +19,36 @@ public enum ThemeStore {
     do {
       return try TOMLDecoder().decode(ThemeFile.self, from: tomlString)
     } catch {
-      throw ThemeError(message: "Failed to parse theme TOML: \(error)")
+      throw ThemeError(message: describeParseError(error))
+    }
+  }
+
+  /// A short, readable reason a theme file didn't parse ("palette.accent
+  /// is missing or isn't a string", "… at line 3, column 7").
+  static func describeParseError(_ error: Error) -> String {
+    func path(_ codingPath: [CodingKey]) -> String {
+      codingPath.map(\.stringValue).joined(separator: ".")
+    }
+    switch error {
+    case let error as TOMLParseError:
+      return "\(error.description) at line \(error.source.begin.line), column \(error.source.begin.column)"
+    case DecodingError.keyNotFound(let key, let context):
+      var keys = context.codingPath
+      if keys.last?.stringValue != key.stringValue { keys.append(key) }
+      // TOMLKit reports a value of the wrong type the same way as a missing
+      // one ("A \"String\" does not exist at …").
+      let types = ["String": "a string", "Int": "a whole number", "Double": "a number", "Bool": "true or false"]
+      if let type = types.first(where: { context.debugDescription.hasPrefix("A \"\($0.key)\" does not exist") }) {
+        return "\(path(keys)) is missing or isn't \(type.value)"
+      }
+      return "\(path(keys)) is missing"
+    case DecodingError.typeMismatch(_, let context), DecodingError.valueNotFound(_, let context):
+      return "\(path(context.codingPath)) has the wrong type"
+    case DecodingError.dataCorrupted(let context):
+      return context.codingPath.isEmpty
+        ? context.debugDescription : "\(path(context.codingPath)): \(context.debugDescription)"
+    default:
+      return String(describing: error)
     }
   }
 
@@ -204,10 +233,12 @@ public enum ThemeStore {
 
   // MARK: - User themes
 
-  /// Discover user themes from `~/Library/Application Support/impulse/themes`.
-  /// Returns `(theme_id, file_path)` pairs. The theme ID is the filename stem.
-  public static func discoverUserThemes() -> [(id: String, path: URL)] {
-    let dir = userThemesDir()
+  /// Discover user themes from `~/Library/Application Support/impulse/themes`
+  /// (or `directory`). Returns `(theme_id, file_path)` pairs. The theme ID is
+  /// the filename stem, lowercased: ids are matched without regard to case,
+  /// so `Campfire.toml` is the theme `campfire`.
+  public static func discoverUserThemes(in directory: URL? = nil) -> [(id: String, path: URL)] {
+    let dir = directory ?? userThemesDir()
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir),
       isDir.boolValue
@@ -219,8 +250,9 @@ public enum ThemeStore {
     if let entries = try? FileManager.default.contentsOfDirectory(
       at: dir, includingPropertiesForKeys: nil)
     {
-      for path in entries where path.pathExtension == "toml" {
-        let stem = path.deletingPathExtension().lastPathComponent
+      for path in entries where path.pathExtension.lowercased() == "toml" {
+        let stem = path.deletingPathExtension().lastPathComponent.lowercased()
+        guard !stem.isEmpty else { continue }
         themes.append((id: stem, path: path))
       }
     }
@@ -229,36 +261,76 @@ public enum ThemeStore {
   }
 
   /// Load a user theme from a file path.
-  /// The theme ID is derived from the filename stem (`my-theme.toml` → `"my-theme"`).
+  /// The theme ID is derived from the filename stem (`My-Theme.toml` → `"my-theme"`).
   public static func loadUserTheme(at path: URL) throws -> ResolvedTheme {
-    let stem = path.deletingPathExtension().lastPathComponent
+    let stem = path.deletingPathExtension().lastPathComponent.lowercased()
     let id = stem.isEmpty ? "custom" : stem
     let contents: String
     do {
       contents = try String(contentsOf: path, encoding: .utf8)
     } catch {
-      throw ThemeError(message: "Failed to read theme file: \(error)")
+      throw ThemeError(message: "the file couldn't be read")
     }
     let tf = try parseTheme(contents)
     return resolveTheme(id: id, file: tf)
   }
 
   /// Return all available theme names: built-in first, then user themes.
-  public static func availableThemes() -> [String] {
+  public static func availableThemes(userThemesIn directory: URL? = nil) -> [String] {
     var names = builtinThemeNames()
-    for (id, _) in discoverUserThemes() where !names.contains(id) {
+    for (id, _) in discoverUserThemes(in: directory) where !names.contains(id) {
       names.append(id)
     }
     return names
   }
 
+  /// A user theme file that exists for a theme id but can't be used.
+  public struct LoadProblem: Equatable, Sendable {
+    /// The theme file.
+    public let path: URL
+    /// Why it couldn't be used ("palette.accent is missing or isn't a string").
+    public let message: String
+  }
+
+  /// Why the user theme file for `name` can't be used (it doesn't parse),
+  /// or nil when there is no such file or it loads. `getTheme` falls back
+  /// to the built-in theme with that id, or Nord, in that case.
+  public static func loadProblem(for name: String, userThemesIn directory: URL? = nil) -> LoadProblem? {
+    let normalized = normalizeThemeID(name)
+    guard let path = discoverUserThemes(in: directory).first(where: { $0.id == normalized })?.path else {
+      return nil
+    }
+    do {
+      _ = try loadUserTheme(at: path)
+      return nil
+    } catch {
+      return LoadProblem(path: path, message: (error as? ThemeError)?.message ?? String(describing: error))
+    }
+  }
+
+  /// The name to list a theme under: the `name` in its theme file (a user
+  /// file, which may replace a built-in theme, else the built-in one), or
+  /// a name made from the id when the file doesn't load.
+  public static func themeMenuName(_ id: String, userThemesIn directory: URL? = nil) -> String {
+    let normalized = normalizeThemeID(id)
+    if let path = discoverUserThemes(in: directory).first(where: { $0.id == normalized })?.path,
+      let contents = try? String(contentsOf: path, encoding: .utf8),
+      let file = try? parseTheme(contents)
+    {
+      let name = file.name.trimmingCharacters(in: .whitespacesAndNewlines)
+      return name.isEmpty ? themeDisplayName(normalized) : name
+    }
+    if let builtin = builtinTheme(normalized) { return builtin.name }
+    return themeDisplayName(normalized)
+  }
+
   /// Resolve a theme by name. Checks user themes first (allows overrides),
   /// then built-in themes, then falls back to Nord.
-  public static func getTheme(_ name: String) -> ResolvedTheme {
+  public static func getTheme(_ name: String, userThemesIn directory: URL? = nil) -> ResolvedTheme {
     let normalized = normalizeThemeID(name)
 
     // Check user themes first
-    for (id, path) in discoverUserThemes() where id == normalized {
+    for (id, path) in discoverUserThemes(in: directory) where id == normalized {
       if let theme = try? loadUserTheme(at: path) {
         return theme
       }
@@ -300,6 +372,11 @@ public enum ThemeStore {
   }
 
   // MARK: - Internals
+
+  /// The theme id a `color_scheme` value names ("Tokyo_Night" → "tokyo-night").
+  public static func canonicalID(_ name: String) -> String {
+    normalizeThemeID(name)
+  }
 
   /// Normalize theme name variants (underscore, no-separator) to canonical
   /// kebab-case ID.

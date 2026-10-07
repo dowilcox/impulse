@@ -255,9 +255,9 @@ private struct SettingRow: View {
       }
       Spacer(minLength: 12)
       SettingControl(item: item)
+      // A theme change applies through the settings broadcast (AppDelegate).
       ChromeIconButton(icon: .rotateCcw, help: "Reset to default", size: 22, iconSize: 12) {
         store.update { item.reset(&$0) }
-        if case .theme = item.control { applyThemeChange() }
       }
       .opacity(modified ? 1 : 0)
       .disabled(!modified)
@@ -265,10 +265,6 @@ private struct SettingRow: View {
     .padding(.vertical, 9)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(item.title)
-  }
-
-  private func applyThemeChange() {
-    (NSApp.delegate as? AppDelegate)?.applyTheme(named: SettingsStore.shared.settings.colorScheme)
   }
 }
 
@@ -308,11 +304,9 @@ private struct SettingControl: View {
       Picker(
         "",
         selection: Binding(
-          get: { SettingsStore.shared.settings[keyPath: kp] },
-          set: { name in
-            SettingsStore.shared.update { $0[keyPath: kp] = name }
-            (NSApp.delegate as? AppDelegate)?.applyTheme(named: name)
-          })
+          // Names typed by hand ("Tokyo_Night") select their theme.
+          get: { ThemeManager.canonicalID(SettingsStore.shared.settings[keyPath: kp]) },
+          set: { name in SettingsStore.shared.update { $0[keyPath: kp] = name } })
       ) {
         ForEach(ThemeManager.availableThemes(), id: \.self) { id in
           Text(ThemeManager.displayName(for: id)).tag(id)

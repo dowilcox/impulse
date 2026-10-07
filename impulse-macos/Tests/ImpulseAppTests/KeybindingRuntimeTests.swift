@@ -114,6 +114,29 @@
       #expect(QuickTerminal.carbonKey(for: "Shift+K") == nil, "needs ⌘, ⌃ or ⌥ to be global")
       #expect(QuickTerminal.carbonKey(for: "Ctrl+F13") == nil, "unknown keys are refused")
     }
+
+    /// Recording a shortcut takes the keyboard from a text field, so its
+    /// keys (⌘V) stop being typing; otherwise the tab doesn't take it.
+    @MainActor
+    @Test func recordingAShortcutTakesTheKeyboard() {
+      _ = NSApplication.shared
+      let surface = KeybindingsSurface(palette: ChromePalette(theme: ThemeManager.theme(forName: "nord")))
+      defer { surface.cleanupTool() }
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered,
+        defer: true)
+      let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+      let content = NSView(frame: window.contentLayoutRect)
+      content.addSubview(surface)
+      content.addSubview(field)
+      window.contentView = content
+      window.makeFirstResponder(field)
+      #expect(!surface.acceptsFirstResponder)
+      surface.model.recording = "copy"
+      #expect(window.firstResponder === surface)
+      surface.model.recording = nil
+      #expect(!surface.acceptsFirstResponder)
+    }
   }
 #elseif canImport(XCTest)
   import AppKit

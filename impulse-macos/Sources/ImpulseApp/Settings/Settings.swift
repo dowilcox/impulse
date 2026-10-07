@@ -7,6 +7,10 @@ struct SettingsLoadWarning: Equatable {
     let settingsPath: URL
     let backupPath: URL?
     let message: String
+    /// True when the defaults are in use (the file was already broken at
+    /// launch); false when the settings Impulse had are kept (it broke while
+    /// Impulse was running).
+    let usingDefaults: Bool
 }
 
 private struct SettingsFileSnapshot: Equatable {
@@ -72,11 +76,15 @@ struct CommandOnSave: Codable {
     }
 }
 
-/// A user-defined keybinding that runs a command.
+/// A user-defined keybinding that runs a shell command line.
 struct CustomKeybinding: Codable {
     var name: String
     var key: String
+    /// The command line, as typed at a shell prompt (pipes, `&&`, quotes
+    /// and variables work).
     var command: String
+    /// Extra arguments added after `command`, each quoted (older entries
+    /// kept the program's arguments here).
     var args: [String]
 
     init(name: String = "", key: String = "", command: String = "", args: [String] = []) {
@@ -84,6 +92,22 @@ struct CustomKeybinding: Codable {
         self.key = key
         self.command = command
         self.args = args
+    }
+
+    /// `args` may be left out in settings.json.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        key = try c.decodeIfPresent(String.self, forKey: .key) ?? ""
+        command = try c.decode(String.self, forKey: .command)
+        args = try c.decodeIfPresent([String].self, forKey: .args) ?? []
+    }
+
+    /// What the shortcut runs: `command` as typed, then `args`, quoted.
+    var commandLine: String {
+        ([command.trimmingCharacters(in: .whitespaces)] + args.map(\.shellEscaped))
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 
@@ -576,15 +600,19 @@ extension Settings {
     /// Clamp numeric settings to safe ranges to prevent crashes or resource
     /// exhaustion from malformed settings files.
     mutating func validate() {
-        fontSize = max(6, min(72, fontSize))
-        tabWidth = max(1, min(16, tabWidth))
-        terminalFontSize = max(6, min(72, terminalFontSize))
-        terminalScrollback = max(100, min(1_000_000, terminalScrollback))
-        terminalLongCommandSeconds = max(1, min(86_400, terminalLongCommandSeconds))
-        terminalMinimumContrast = max(1.0, min(21.0, terminalMinimumContrast))
+        // Numbers keep to the ranges the Settings tab (and the settings.json
+        // schema) offer, so a hand-edited file can't hold values the UI can't.
+        for item in SettingsCatalog.items {
+            switch item.control {
+            case .integer(let kp, let range, _, _):
+                self[keyPath: kp] = max(range.lowerBound, min(range.upperBound, self[keyPath: kp]))
+            case .decimal(let kp, let range, _):
+                self[keyPath: kp] = max(range.lowerBound, min(range.upperBound, self[keyPath: kp]))
+            default:
+                break
+            }
+        }
         sidebarWidth = max(100, min(1000, sidebarWidth))
-        rightMarginPosition = max(1, min(500, rightMarginPosition))
-        editorLineHeight = max(0, min(100, editorLineHeight))
         // The settings UI once offered "bar" while the terminal only knows
         // "beam", which silently fell back to a block cursor.
         switch terminalCursorShape.lowercased() {
@@ -621,10 +649,16 @@ extension Settings {
     }
 
     /// Loads settings from disk, falling back to defaults for any missing or
-    /// corrupt data. `backupInvalid`: copy a file that doesn't parse aside
-    /// (at launch, not on every reload while it's being edited).
-    static func load(backupInvalid: Bool = true) -> Settings {
+    /// corrupt data. `reloading`: the file changed while Impulse runs, and
+    /// the caller keeps its current settings if this one doesn't load (a
+    /// file that doesn't parse is copied aside only at launch, not on every
+    /// reload while it's being edited).
+    static func load(reloading: Bool = false) -> Settings {
         let url = settingsPath()
+        // Still on the defaults from a launch with a broken file: say so,
+        // and keep pointing at the copy made then.
+        let usingDefaults = !reloading || (loadWarning?.usingDefaults ?? false)
+        let earlierBackup = usingDefaults ? loadWarning?.backupPath : nil
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -633,8 +667,9 @@ extension Settings {
             if FileManager.default.fileExists(atPath: url.path) {
                 loadWarning = SettingsLoadWarning(
                     settingsPath: url,
-                    backupPath: nil,
-                    message: error.localizedDescription
+                    backupPath: reloading ? earlierBackup : nil,
+                    message: error.localizedDescription,
+                    usingDefaults: usingDefaults
                 )
                 saveBlockedByLoadError = true
                 fileSnapshot = nil
@@ -659,7 +694,9 @@ extension Settings {
             settings.validate()
             return settings
         } catch {
-            let backupURL = backupInvalid ? backupInvalidSettingsFile(url: url, data: data) : nil
+            // No copy when Impulse mustn't write files (headless snapshots).
+            let backupURL =
+                reloading || !AppState.persistenceEnabled ? nil : backupInvalidSettingsFile(url: url, data: data)
             if let backupURL {
                 os_log(.error,
                        "Backed up invalid settings file to '%{public}@'",
@@ -667,8 +704,9 @@ extension Settings {
             }
             loadWarning = SettingsLoadWarning(
                 settingsPath: url,
-                backupPath: backupURL,
-                message: error.localizedDescription
+                backupPath: reloading ? earlierBackup : backupURL,
+                message: error.localizedDescription,
+                usingDefaults: usingDefaults
             )
             saveBlockedByLoadError = true
             fileSnapshot = nil
@@ -682,6 +720,7 @@ extension Settings {
     /// Encoding and writing happen on a background queue to avoid blocking the
     /// main thread. File permissions are set to 0600 (owner read/write only).
     func save(synchronously: Bool = false) {
+        guard AppState.persistenceEnabled else { return }
         if Settings.saveBlockedByLoadError {
             let path = Settings.loadWarning?.settingsPath.path ?? Settings.settingsPath().path
             let message = Settings.loadWarning?.message ?? "settings load failed"

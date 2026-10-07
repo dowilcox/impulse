@@ -68,12 +68,12 @@ Impulse's window doesn't use translucent materials, so **Reduce transparency** h
 
 ### Text size
 
-| What                         | How                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Editor and terminal together | ⌘= and ⌘- make both one point larger or smaller (6 to 72 points); ⌘0 sets both back to 14. The new sizes are saved in your settings. |
-| Editor only                  | **Settings › Editor › Font size** (`font_size`) and **Line height** (`editor_line_height`, in points; 0 uses the font's own).        |
-| Terminal only                | **Settings › Terminal › Font size** (`terminal_font_size`).                                                                          |
-| Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your Mac.                            |
+| What                         | How                                                                                                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Editor and terminal together | ⌘= and ⌘- make both one point larger or smaller (6 to 72 points); ⌘0 sets both back to 14. The new sizes apply in every window and are saved in your settings. |
+| Editor only                  | **Settings › Editor › Font size** (`font_size`) and **Line height** (`editor_line_height`, in points; 0 uses the font's own).                                  |
+| Terminal only                | **Settings › Terminal › Font size** (`terminal_font_size`).                                                                                                    |
+| Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your Mac.                                                      |
 
 Some text doesn't follow these settings: the window's sidebar, tabs and panels use fixed sizes, the input bar and the composer use 13-point text, and the Review and History diffs use the editor's font family at a fixed 12 points.
 
@@ -152,6 +152,10 @@ Icon-only buttons show a tooltip with their name, and often their shortcut, afte
 ### Sheets and dialogs
 
 In sheets such as **New Task…** and in confirmation dialogs, ↩ presses the default button and Esc cancels.
+
+### Changing shortcuts
+
+In the Keyboard Shortcuts tab (⌥⌘,), choose a command's shortcut and press the new keys. A key that can't be a shortcut, such as a letter without ⌘, ⌃ or ⌥, is refused: the shortcut shows why, VoiceOver announces it, and the tab waits for other keys until you press a valid shortcut or Esc. See [Customize keyboard shortcuts](settings-and-themes.md#customize-keyboard-shortcuts).
 
 ## Sound and notifications
 

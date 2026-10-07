@@ -203,7 +203,7 @@ After ⇧⌘Space, letters appear over the URLs, file paths, commit SHAs and por
 | ⌥⌘G      | Toggle Diff View                                                                                                      | Git  | `diff_view`               |
 | Hold ⌃⌥  | Show or hide inlay hints, when **Settings › Editor › Inlay hints** is "While holding ⌃⌥" or "Hidden while holding ⌃⌥" | —    | —                         |
 
-The editor is Monaco, and Monaco's own keybindings work in it too. Impulse removes Monaco's bindings for ⌥⌘↑ and ⌥⌘↓ (add cursor above or below) and ⇧⌘O (quick outline), so that **Focus Pane Above**, **Focus Pane Below** and **Go to Symbol in File…** work while you edit. With **Vim keybindings** on, the editor also has Vim's modes and keys. See [Editor](editor.md).
+The editor is Monaco, and Monaco's own keybindings work in it too, except where Impulse uses the same keys: then Impulse's command runs, so ⌘D, ⌘G, ⇧⌘G, ⇧⌘↩, ⌥⌘↑, ⌥⌘↓ and ⇧⌘O do what this page lists while you edit (Monaco binds them to add next occurrence, find next and previous, insert line above, add cursor above or below and quick outline). Monaco keeps ⌘F, ⌘S, ⌘C and ⌘V, which do the same thing either way, and the keys of terminal-only commands: ⌘I shows suggestions, ⇧⌘K deletes the line and ⇧⌘Space shows parameter hints. Removing or changing an Impulse shortcut gives its keys back to Monaco. With **Vim keybindings** on, the editor also has Vim's modes and keys. See [Editor](editor.md).
 
 ## Git
 

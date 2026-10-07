@@ -178,7 +178,7 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         pagePrefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = pagePrefs
 
-        let wv = WKWebView(frame: bounds, configuration: config)
+        let wv = EditorWebView(frame: bounds, configuration: config)
         wv.navigationDelegate = self
         wv.translatesAutoresizingMaskIntoConstraints = false
         wv.allowsMagnification = false

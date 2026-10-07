@@ -84,7 +84,7 @@ In a git repository the list is what git knows about: tracked files plus untrack
 - When you type, titles are matched first. If the title doesn't match, the category and the command's keywords are tried, so `git` finds **Review Changes** and `worktree` finds **New Task…**; those rows rank lower and show no highlight.
 - Commands you ran recently get a small boost in the ranking.
 
-Custom shortcuts that run shell commands (`custom_keybindings` in `settings.json`) appear here too, in the **Custom** category, and run in a new terminal tab. See [Settings and themes](settings-and-themes.md).
+Custom shortcuts that run shell commands (`custom_keybindings` in `settings.json`) appear here too, in the **Custom** category. They run in the focused terminal, or in a new terminal tab when no terminal is focused, it's busy, or the input bar is off. See [Settings and themes](settings-and-themes.md).
 
 ## Go to line (`:`)
 

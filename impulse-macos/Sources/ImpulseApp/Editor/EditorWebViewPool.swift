@@ -77,7 +77,7 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDel
         pagePrefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = pagePrefs
 
-        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
+        let wv = EditorWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
         wv.allowsMagnification = false
         wv.underPageBackgroundColor = .clear
         wv.navigationDelegate = self

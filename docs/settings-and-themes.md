@@ -66,22 +66,21 @@ If the file doesn't exist yet, Impulse writes it first. In the editor, the file 
 
 ### When your edits apply
 
-Impulse watches the file. When you save it, from Impulse's editor or any other app, the new values apply to every window within a moment. One exception: a theme set by editing `color_scheme` by hand applies the next time Impulse starts. To switch themes right away, choose the theme in **Settings › Appearance**.
+Impulse watches the file. When you save it, from Impulse's editor or any other app, the new values apply to every window within a moment, the theme (`color_scheme`) included.
 
 ### Values Impulse can't use
 
 - A key whose value has the wrong type (for example `"font_size": "big"`) falls back to that setting's default. The rest of the file still loads.
-- Out-of-range font sizes, tab width, line height, right margin column, scrollback, minimum contrast and long-command threshold are clamped to safe limits.
+- A number outside its setting's range (the **Values** column in the tables below) is clamped to the nearest limit, the same as in the Settings tab.
 - A value that isn't one of a menu's choices is kept, and the menu in Settings shows it as an extra item.
 - Keys Impulse doesn't know are ignored, and they disappear the next time Impulse saves the file.
 
 ### If the file can't be read
 
-If `settings.json` isn't valid JSON (a missing comma, a stray comment) or can't be read, a banner appears under the window's titlebar: **Settings file could not be loaded**, with **Open Settings File** and a dismiss button.
+If `settings.json` isn't valid JSON (a missing comma, a stray comment) or can't be read, a banner appears under the window's titlebar: **Settings file could not be loaded**, with **Open Settings File** and a dismiss button. The banner says which settings are in use; hover over it to see the error.
 
-
-- If this happens when Impulse starts, Impulse uses the default settings and copies the broken file next to the original as `settings.invalid-<timestamp>.json`, so nothing you wrote is lost.
-- If the file breaks while Impulse is running (you saved it mid-edit), Impulse keeps the settings it already had.
+- If this happens when Impulse starts, Impulse uses the default settings ("Using the default settings") and copies the broken file next to the original as `settings.invalid-<timestamp>.json`, so nothing you wrote is lost. The banner shows where the copy is, for example `~/Library/Application Support/impulse/settings.invalid-1759834200.json`.
+- If the file breaks while Impulse is running (you saved it mid-edit), Impulse keeps the settings it already had ("Keeping the settings Impulse already had").
 
 Either way, Impulse stops saving settings until the file is fixed, so it never overwrites your broken file with defaults. Changes you make in the Settings tab meanwhile apply but aren't saved. Fix the file and save it; Impulse reloads it and the banner goes away.
 
@@ -112,9 +111,9 @@ The tables below list every setting in the order the Settings tab shows them. "K
 
 #### Window
 
-| Setting                         | Key                      | Values   | Default | What it does                                                         |
-| ------------------------------- | ------------------------ | -------- | ------- | -------------------------------------------------------------------- |
-| Warn before closing active work | `confirm_close_warnings` | on / off | on      | Ask before closing unsaved files or terminals with running commands. |
+| Setting                              | Key                      | Values   | Default | What it does                                                                                                                        |
+| ------------------------------------ | ------------------------ | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Warn before closing running commands | `confirm_close_warnings` | on / off | on      | Ask before closing a tab or window, or quitting, while a terminal is still running a command. Unsaved files are always asked about. |
 
 #### Sidebar
 
@@ -139,7 +138,7 @@ The tables below list every setting in the order the Settings tab shows them. "K
 | Font family    | `font_family`        | An installed monospaced font family | `JetBrains Mono`       | The editor's font.                                                                                                   |
 | Font size      | `font_size`          | 6–72                                | 14                     | The editor's font size in points. ⌘= and ⌘- change it together with the terminal font size; ⌘0 sets both back to 14. |
 | Font ligatures | `font_ligatures`     | on / off                            | on                     | Draw the font's ligatures (for example `=>` as one glyph).                                                           |
-| Line height    | `editor_line_height` | 0–50                                | 0 (shown as "Default") | In points; 0 uses the font's own.                                                                                    |
+| Line height    | `editor_line_height` | 0–100                               | 0 (shown as "Default") | In points; 0 uses the font's own.                                                                                    |
 
 #### Indentation
 
@@ -251,7 +250,7 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 | Request attention on bell        | `terminal_attention_on_bell`         | on / off | on      | Mark the terminal as needing attention, bounce the Dock icon if Impulse is in the background, and post a "Bell" notification. |
 | Allow terminal notifications     | `terminal_allow_notifications`       | on / off | on      | OSC 9 / 99 / 777 notifications from programs and agents.                                                                      |
 | Notify when long commands finish | `terminal_attention_on_long_command` | on / off | on      | Tell you when a command that ran longer than the threshold below finishes.                                                    |
-| Long command threshold           | `terminal_long_command_seconds`      | 1–3600   | 30      | Seconds.                                                                                                                      |
+| Long command threshold           | `terminal_long_command_seconds`      | 1–86,400 | 30      | Seconds.                                                                                                                      |
 
 #### Scrollback
 
@@ -397,7 +396,7 @@ A theme colors the whole window: the window chrome, the editor, the terminal (in
 
 The theme applies at once to every window and to the quick terminal. **Reset to default** next to the menu goes back to Nord.
 
-You can also set `color_scheme` in `settings.json` to a theme's id. A theme set that way applies the next time Impulse starts.
+You can also set `color_scheme` in `settings.json` to a theme's id. The theme changes as soon as you save the file.
 
 ### Built-in themes
 
@@ -438,16 +437,16 @@ In `settings.json`, a few alternate spellings of the ids also work, such as `ros
 Themes are TOML files. To add one:
 
 1. Create the folder `~/Library/Application Support/impulse/themes` if it doesn't exist. (The dev build reads the same folder.)
-2. Save a theme file there with a lowercase name made of letters, digits and hyphens, for example `campfire.toml`. The file name without `.toml` is the theme's id.
+2. Save a theme file there, for example `campfire.toml`. The file name without `.toml`, in lowercase, is the theme's id: `Campfire.toml` is the theme `campfire`.
 3. In **Settings › Appearance**, choose it from the **Theme** menu. If the Settings tab was already open, close it and open it again so the menu picks up the new file.
 
-The **Theme** menu shows a name made from the file name (`campfire.toml` appears as "Campfire", `night-owl.toml` as "Night Owl"), not the `name` inside the file. Your themes are listed after the built-in ones.
+The **Theme** menu lists your theme under the `name` inside the file. Your themes are listed after the built-in ones.
 
 A file with the same id as a built-in theme (for example `nord.toml`) replaces that built-in theme.
 
 Impulse reads the file each time the theme is applied. After editing it, choose another theme and then yours again, or restart Impulse.
 
-If the file can't be parsed (a TOML syntax error or a missing required key), Impulse uses the built-in theme with the same id, or Nord, and doesn't show an error. Write every color as a hex value; color names and other formats aren't understood.
+If the file can't be parsed (a TOML syntax error, a missing required key or a value of the wrong type), Impulse uses the built-in theme with the same id, or Nord, and a notice at the bottom of the window names the file and the problem, such as "palette.accent is missing or isn't a string" or a syntax error with its line and column. Click **Open File** in the notice to fix it, then choose the theme again. Write every color as a hex value; color names and other formats aren't understood.
 
 A complete theme needs only a name, a variant and ten colors. Everything else is worked out from them:
 
@@ -512,7 +511,7 @@ All optional.
 
 | Key             | Meaning                                                                                                                 | When missing                                                          |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `bg_dark`       | Darker background: editor pop-ups (suggestions, hover) and the minimap.                                                | `bg`, 5% darker (dark themes) or 4% lighter (light themes).           |
+| `bg_dark`       | Darker background: editor pop-ups (suggestions, hover) and the minimap.                                                 | `bg`, 5% darker (dark themes) or 4% lighter (light themes).           |
 | `bg_highlight`  | Highlighted background, such as the current line and the selected suggestion.                                           | `bg`, 8% lighter (dark) or 5% darker (light).                         |
 | `bg_surface`    | The window background behind the titlebar.                                                                              | `palette.surface`, else `bg` 10% darker (dark) or 8% lighter (light). |
 | `border`        | Borders.                                                                                                                | `palette.overlay`, else `bg` 4% lighter (dark) or 8% darker (light).  |
@@ -526,7 +525,7 @@ All optional.
 | `git_renamed`   | Git: renamed.                                                                                                           | `blue`                                                                |
 | `git_conflict`  | Git: conflicts.                                                                                                         | `orange`                                                              |
 | `git_ignored`   | Git: ignored files.                                                                                                     | `fg_muted`                                                            |
-| `surface_style` | `"flat"` or `"card"`. The workbench draws every theme edge to edge; `"card"` only drops the terminal find bar's border.  | `"flat"`                                                              |
+| `surface_style` | `"flat"` or `"card"`. The workbench draws every theme edge to edge; `"card"` only drops the terminal find bar's border. | `"flat"`                                                              |
 
 #### [syntax]
 
@@ -577,7 +576,7 @@ To find a command, type in **Search commands** (it matches names, ids, categorie
 1. Click the command's shortcut (or **Unbound**). It changes to "Press keys… (⌫ removes, esc cancels)".
 2. Press the new shortcut.
 
-The new shortcut works right away, in the menus, the command palette and the terminal. It must include ⌘, ⌃ or ⌥; only the function keys F1–F12 can be used alone. If you press a key without one of those modifiers, Impulse beeps and leaves the shortcut as it was.
+The new shortcut works right away, in the menus, the command palette and the terminal. It must include ⌘, ⌃ or ⌥; only the function keys F1–F12 can be used alone. If you press a key without one of those modifiers, Impulse beeps, the chip says why (for example "⇧A needs ⌘, ⌃ or ⌥"), and it waits for another shortcut; press Esc to stop.
 
 A changed shortcut gets an accent bar on its left edge and a **Reset to default** button (a circular arrow) on its right.
 
@@ -585,15 +584,13 @@ A changed shortcut gets an accent bar on its left edge and a **Reset to default*
 
 - To remove a shortcut, click it and press ⌫ (Delete) on its own. The command shows **Unbound**.
 - To go back to the default, click **Reset to default** on the command's row. Recording the default shortcut again has the same effect.
-- Press Esc while recording to cancel without changing anything.
+- Press Esc, or click anywhere else, while recording to cancel without changing anything.
 
 ### Conflicts
 
-When two commands share a shortcut, both rows show a warning triangle. Hover over it to see the other command ("Also bound to …"). Conflicts include the shortcuts you add under **Run in Terminal**.
+When two commands share a shortcut, both rows show a warning triangle. Hover over it to see the other command ("Also bound to …"). Conflicts include the shortcuts you add under **Run in Terminal**, and the shortcuts you can't change, such as ⌘1–⌘9, ⌘O or ⌘Q ("Also bound to Quit Impulse (can't be changed)"; see [What you can't change](#what-you-cant-change)).
 
 Only one command can run for a given shortcut, so change one of them. A **Run in Terminal** shortcut takes priority over a built-in command with the same keys.
-
-The check doesn't cover shortcuts you can't change, such as ⌘1–⌘9, ⌘O or ⌘Q (see [What you can't change](#what-you-cant-change)), so avoid those when you pick a shortcut.
 
 ### Run a shell command from a shortcut
 
@@ -604,9 +601,9 @@ The **Run in Terminal** section at the end of the tab holds shortcuts that run a
 3. In the **Command** field, type `npm test`, then press Return.
 4. Click the row's shortcut chip (**Unbound**) and press ⌃⌥T.
 
-Pressing the shortcut opens a new terminal tab in the current tab's folder (a terminal's working directory, or the folder of the file you're editing) and runs the command there. Each entry with a name also appears in the command palette under "Custom", showing its shortcut.
+Pressing the shortcut runs the command in the focused terminal, as if you had typed it at the prompt. If no terminal is focused (you're in an editor, for example), the focused terminal is still running something, or the input bar is off (see [Classic prompt mode](terminal.md#classic-prompt-mode)), it opens a new terminal tab in the current tab's folder (a terminal's working directory, or the folder of the file you're editing) and runs the command there. Each entry with a name also appears in the command palette under "Custom", showing its shortcut.
 
-The **Command** field is split at spaces into the program and its arguments, and each word is passed to the shell as-is, so quotes, pipes, `&&` and variables are taken literally. For anything more complex, put it in a script or a `package.json` script and run that. Click the trash button to remove an entry.
+The **Command** field is a command line for your shell, kept as you type it: quotes, pipes, `&&` and variables work, for example `npm run lint && npm test`. Click the trash button to remove an entry.
 
 ### Shortcuts in settings.json
 
@@ -632,16 +629,16 @@ Write a shortcut as modifiers and a key joined by `+`:
 
 ```json
 "custom_keybindings": [
-  { "name": "Run tests", "key": "Ctrl+Alt+T", "command": "npm", "args": ["test"] }
+  { "name": "Run tests", "key": "Ctrl+Alt+T", "command": "npm test" }
 ]
 ```
 
-| Field     | Meaning                                               |
-| --------- | ----------------------------------------------------- |
-| `name`    | The name shown in the tab and in the command palette. |
-| `key`     | The shortcut, in the format above.                    |
-| `command` | The program to run.                                   |
-| `args`    | Its arguments, as a list of strings.                  |
+| Field     | Meaning                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------- |
+| `name`    | The name shown in the tab and in the command palette.                                       |
+| `key`     | The shortcut, in the format above.                                                          |
+| `command` | The command line to run, as you'd type it in the shell.                                     |
+| `args`    | Optional. More arguments, as a list of strings, added after `command` with each one quoted. |
 
 ### What you can't change
 

@@ -47,6 +47,7 @@ The editor behaves like Monaco in VS Code, with a few changes so it fits with th
 - **⌘F** (Edit ▸ Find…) opens Monaco's find widget for the current file. Its arrow on the left shows the replace field.
 - **⌘G** (Edit ▸ Go to Line…) opens the palette's line mode: type `42` or `42:7` and press Return.
 - **⇧⌘O** is Impulse's Go to Symbol in File (see [Go to symbol](#go-to-symbol)), not Monaco's outline. **⌥⌘↑** and **⌥⌘↓** move between split panes instead of adding cursors.
+- Where Monaco and Impulse use the same keys, Impulse's command runs: **⌘D** splits right (not Monaco's Add Selection to Next Find Match), **⌘G** is Go to Line (in the find widget, Return and ⇧Return or F3 and ⇧F3 step through matches), **⇧⌘G** opens Review and **⇧⌘↩** zooms the pane (not Insert Line Above). Monaco keeps the keys of Impulse's terminal-only commands: **⌘I** shows suggestions, **⇧⌘K** deletes the line and **⇧⌘Space** shows parameter hints. Removing or changing an Impulse shortcut in Keyboard Shortcuts gives its keys back to Monaco.
 - Right-click for Monaco's context menu (Go to Definition, Go to References, Rename Symbol, Format Document, Command Palette and so on). Impulse adds **Show Commit for This Line**.
 - **⌘=**, **⌘-** and **⌘0** make the editor and terminal text bigger, smaller, or back to 14 pt.
 

@@ -64,7 +64,7 @@ final class SettingsStore {
     guard Settings.fileChangedOnDisk() else { return }
     saveWorkItem?.cancel()
     saveWorkItem = nil
-    let loaded = Settings.load(backupInvalid: false)
+    let loaded = Settings.load(reloading: true)
     if Settings.loadWarning == nil {
       isLoading = true
       settings = loaded

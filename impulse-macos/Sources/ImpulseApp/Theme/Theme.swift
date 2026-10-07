@@ -345,9 +345,20 @@ enum ThemeManager {
         return ImpulseKit.ThemeStore.availableThemes()
     }
 
-    /// Returns the display name for a theme ID.
+    /// Returns the name to list a theme under (the `name` in its file).
     static func displayName(for id: String) -> String {
-        return ImpulseKit.ThemeStore.themeDisplayName(id)
+        return ImpulseKit.ThemeStore.themeMenuName(id)
+    }
+
+    /// The theme id a `color_scheme` value names (aliases and case folded).
+    static func canonicalID(_ name: String) -> String {
+        return ImpulseKit.ThemeStore.canonicalID(name)
+    }
+
+    /// Why the user theme file for `name` couldn't be used, if it exists
+    /// and doesn't parse (the theme then falls back to a built-in one).
+    static func loadProblem(for name: String) -> ImpulseKit.ThemeStore.LoadProblem? {
+        return ImpulseKit.ThemeStore.loadProblem(for: name)
     }
 
     /// Returns the theme matching `name`. Falls back to Nord on decode failure.

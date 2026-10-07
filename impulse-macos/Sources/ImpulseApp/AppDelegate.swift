@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// The current color theme, derived from `settings.colorScheme`.
   var theme: Theme = ThemeManager.theme(forName: "nord")
 
+  /// The `color_scheme` value `theme` was made from, so a change made by
+  /// editing settings.json by hand is noticed and applied.
+  private var appliedThemeName = ""
+
   /// The FFI bridge to impulse-core/impulse-editor Rust code.
   let core = ImpulseCore()
 
@@ -106,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       DesktopNotifier.shared.setBadge(count: count)
     }
     theme = ThemeManager.theme(forName: settings.colorScheme)
+    appliedThemeName = settings.colorScheme
     rebuildMainMenu()
     observeSettingsChanges()
 
@@ -492,6 +497,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Apply the initial theme.
     controller.handleThemeChange(theme)
+    if windowControllers.count == 1 {
+      reportThemeProblem(settings.colorScheme, in: controller)
+    }
     return controller
   }
 
@@ -523,11 +531,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// Changes the active theme across all windows and persists the choice.
   func applyTheme(named name: String) {
     theme = ThemeManager.theme(forName: name)
-    settings.colorScheme = name
+    appliedThemeName = name
+    // Assigning saves settings.json: not for a value that's already there
+    // (color_scheme edited by hand, Increase Contrast toggled).
+    if settings.colorScheme != name {
+      settings.colorScheme = name
+    }
     for controller in windowControllers {
       controller.handleThemeChange(theme)
     }
     QuickTerminal.shared.applyTheme(theme)
+    if let controller = windowControllers.first(where: { $0.window?.isKeyWindow == true }) ?? windowControllers.first {
+      reportThemeProblem(name, in: controller)
+    }
+  }
+
+  /// A theme file that doesn't parse falls back to a built-in theme; say
+  /// which file and why rather than switching colors without a word.
+  private func reportThemeProblem(_ name: String, in controller: MainWindowController) {
+    guard let problem = ThemeManager.loadProblem(for: name) else { return }
+    let path = problem.path.path
+    let toast = Toast(
+      kind: .warning,
+      message: "Couldn't load the theme \(problem.path.lastPathComponent); using \(theme.name) instead",
+      detail: problem.message,
+      actionTitle: "Open File",
+      action: { [weak controller] in controller?.openFile(path: path) },
+      lifetime: 15)
+    // After the window is up (at launch it's still being set up).
+    DispatchQueue.main.async { [weak controller] in controller?.toasts.show(toast) }
   }
 
   // MARK: Menu Actions
@@ -724,6 +756,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self.rebuildMainMenu()
       QuickTerminal.shared.configure(
         enabled: self.settings.quickTerminalEnabled, shortcut: self.settings.quickTerminalShortcut)
+      // A new theme, from the Settings tab or color_scheme edited in
+      // settings.json.
+      if self.settings.colorScheme != self.appliedThemeName {
+        self.applyTheme(named: self.settings.colorScheme)
+      }
     }
     // Increase Contrast changes the chrome palette: re-apply the theme.
     displayOptionsObserver = NSWorkspace.shared.notificationCenter.addObserver(

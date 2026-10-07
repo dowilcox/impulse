@@ -388,10 +388,14 @@ struct WorkbenchBanner: View {
   }
 
   private func detailText(_ warning: SettingsLoadWarning) -> String {
+    var text =
+      warning.usingDefaults
+      ? "Using the default settings; changes aren't saved until the file is fixed."
+      : "Keeping the settings Impulse already had; changes aren't saved until the file is fixed."
     if let backupPath = warning.backupPath {
-      return "Using defaults. The invalid file was backed up to \(backupPath.path)."
+      text += " A copy of the broken file is at \((backupPath.path as NSString).abbreviatingWithTildeInPath)."
     }
-    return "Using defaults. Automatic settings saves are paused until this is fixed."
+    return text
   }
 }
 

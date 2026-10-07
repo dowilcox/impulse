@@ -156,8 +156,8 @@ enum SettingsCatalog {
       detail: "Bring back each terminal's output when the session is restored."),
     toggle("check_for_updates", "Check for updates on launch", \.checkForUpdates, .general, "Startup"),
     toggle(
-      "confirm_close_warnings", "Warn before closing active work", \.confirmCloseWarnings, .general, "Window",
-      detail: "Ask before closing unsaved files or terminals with running commands."),
+      "confirm_close_warnings", "Warn before closing running commands", \.confirmCloseWarnings, .general, "Window",
+      detail: "Ask before closing a tab or window, or quitting, while a terminal is still running a command. Unsaved files are always asked about."),
     toggle(
       "sidebar_tabs", "List tabs in the sidebar", \.sidebarTabs, .general, "Sidebar",
       detail: "Show the active workspace's tabs under it in the sidebar instead of in the titlebar."),
@@ -179,7 +179,7 @@ enum SettingsCatalog {
     integer("font_size", "Font size", \.fontSize, .editor, "Font", range: 6...72),
     toggle("font_ligatures", "Font ligatures", \.fontLigatures, .editor, "Font"),
     integer(
-      "editor_line_height", "Line height", \.editorLineHeight, .editor, "Font", range: 0...50,
+      "editor_line_height", "Line height", \.editorLineHeight, .editor, "Font", range: 0...100,
       zeroLabel: "Default", detail: "In points; 0 uses the font's own."),
     integer("tab_width", "Tab width", \.tabWidth, .editor, "Indentation", range: 1...16),
     toggle("use_spaces", "Insert spaces instead of tabs", \.useSpaces, .editor, "Indentation"),
@@ -290,7 +290,7 @@ enum SettingsCatalog {
       \.terminalAttentionOnLongCommand, .terminal, "Bell & notifications"),
     integer(
       "terminal_long_command_seconds", "Long command threshold", \.terminalLongCommandSeconds, .terminal,
-      "Bell & notifications", range: 1...3600, detail: "Seconds."),
+      "Bell & notifications", range: 1...86_400, detail: "Seconds."),
     integer(
       "terminal_scrollback", "Scrollback lines", \.terminalScrollback, .terminal, "Scrollback",
       range: 100...1_000_000, step: 1000),
@@ -342,11 +342,18 @@ enum SettingsCatalog {
       "additionalProperties": ["type": "string"],
     ]
     properties["custom_keybindings"] = [
-      "type": "array", "description": "Shortcuts that run a shell command in the active terminal.",
+      "type": "array",
+      "description":
+        "Shortcuts that run a shell command line in the focused terminal (or a new terminal tab when none is at its prompt).",
       "items": [
         "type": "object", "required": ["name", "key", "command"],
         "properties": [
-          "name": ["type": "string"], "key": ["type": "string"], "command": ["type": "string"], "args": stringArray,
+          "name": ["type": "string"], "key": ["type": "string"],
+          "command": ["type": "string", "description": "The command line, as you'd type it in the shell."],
+          "args": [
+            "type": "array", "items": ["type": "string"],
+            "description": "Optional arguments added after the command, each quoted.",
+          ],
         ],
       ],
     ]
