@@ -7,13 +7,21 @@ import SwiftUI
 /// it. Each row shows the branch, pending changes and tabs that need
 /// attention; expanding a row lists its tabs, and its + makes a new
 /// workspace (a task from that repository, or another folder).
+///
+/// The section fits its rows (up to `autoMaxHeight`) until the hairline under
+/// it is dragged; double-clicking the hairline goes back to fitting.
 struct WorkspacesSection: View {
   @Environment(\.chrome) private var chrome
   var model: WindowModel
+  /// The most a dragged height may take (leaves room for the files panel);
+  /// nil while the dock's height is unknown.
+  var heightLimit: CGFloat?
 
   private static let rowHeight: CGFloat = 26
   private static let tabRowHeight: CGFloat = 24
-  private static let maxHeight: CGFloat = 280
+  private static let autoMaxHeight: CGFloat = 280
+
+  @State private var dragStartHeight: CGFloat = 0
 
   var body: some View {
     VStack(spacing: 0) {
@@ -36,9 +44,22 @@ struct WorkspacesSection: View {
         .padding(.vertical, 6)
       }
       .scrollIndicators(.never)
-      .frame(height: min(contentHeight, Self.maxHeight))
-      Hairline()
+      .frame(height: height)
+      SectionResizeHandle(
+        onDragBegan: { dragStartHeight = height },
+        onDrag: { delta in model.workspacesHeight = clamped(dragStartHeight + delta) },
+        onReset: { model.workspacesHeight = nil }
+      )
     }
+  }
+
+  private var height: CGFloat {
+    guard let dragged = model.workspacesHeight else { return min(contentHeight, Self.autoMaxHeight) }
+    return clamped(dragged)
+  }
+
+  private func clamped(_ height: CGFloat) -> CGFloat {
+    max(0, min(height, heightLimit ?? .greatestFiniteMagnitude))
   }
 
   // MARK: Grouping
@@ -75,6 +96,50 @@ struct WorkspacesSection: View {
     let tabRows = model.workspaces.filter(\.isExpanded).reduce(0) { $0 + $1.tabs.count }
     return CGFloat(groupHeaders) * 22 + CGFloat(rows) * (Self.rowHeight + 1)
       + CGFloat(tabRows) * (Self.tabRowHeight + 1) + 12
+  }
+}
+
+// MARK: - Resize handle
+
+/// The hairline under the workspaces, with a taller invisible grab band.
+/// Like the dock dividers, it turns accent while hovered or dragged.
+private struct SectionResizeHandle: View {
+  @Environment(\.chrome) private var chrome
+  let onDragBegan: () -> Void
+  /// Vertical distance from where the drag began (down is positive).
+  let onDrag: (CGFloat) -> Void
+  let onReset: () -> Void
+
+  @State private var hovering = false
+  @State private var dragging = false
+
+  var body: some View {
+    let active = hovering || dragging
+    Rectangle()
+      .fill(active ? chrome.accent.opacity(0.8) : chrome.hairline)
+      .frame(height: active ? 2 : 1)
+      .frame(height: 1)
+      .overlay {
+        Color.clear
+          .frame(height: DockDivider.hitThickness)
+          .contentShape(Rectangle())
+          .pointerStyle(.rowResize)
+          .onHover { hovering = $0 }
+          .onTapGesture(count: 2) { onReset() }
+          .gesture(
+            // Global coordinates: the handle moves with the drag.
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+              .onChanged { value in
+                if !dragging {
+                  dragging = true
+                  onDragBegan()
+                }
+                onDrag(value.translation.height)
+              }
+              .onEnded { _ in dragging = false }
+          )
+      }
+      .accessibilityHidden(true)
   }
 }
 

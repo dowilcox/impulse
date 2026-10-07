@@ -167,6 +167,9 @@ final class WindowModel {
     didSet { onSidebarVisibilityChanged?(sidebarVisible) }
   }
   var sidebarWidth: CGFloat = 250
+  /// Height of the workspaces section at the top of the left dock when the
+  /// user has dragged it; nil fits it to its rows.
+  var workspacesHeight: CGFloat?
   var showHiddenFiles: Bool = false
 
   // MARK: Git

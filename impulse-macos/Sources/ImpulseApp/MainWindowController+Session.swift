@@ -18,7 +18,8 @@ extension MainWindowController {
       workspaces: workspaces, activeWorkspaceIndex: activeIndex,
       frame: window.map { NSStringFromRect($0.frame) },
       sidebarVisible: windowModel.sidebarVisible,
-      sidebarWidth: Double(windowModel.sidebarWidth))
+      sidebarWidth: Double(windowModel.sidebarWidth),
+      workspacesHeight: windowModel.workspacesHeight.map(Double.init))
   }
 
   /// Rebuild workspaces, tabs and split layouts from a saved window. File
@@ -43,6 +44,7 @@ extension MainWindowController {
     }
     if let visible = state.sidebarVisible { setSidebarVisible(visible) }
     if let width = state.sidebarWidth, width > 120 { windowModel.sidebarWidth = CGFloat(width) }
+    windowModel.workspacesHeight = state.workspacesHeight.map { CGFloat(max(0, $0)) }
 
     let paths = savedWorkspaces.flatMap { $0.tabs.flatMap { $0.panes.compactMap(\.path) } }
     let withScrollback = settings.restoreScrollback

@@ -197,10 +197,20 @@ struct StatusItem<Label: View>: View {
 /// file tree or project search.
 struct LeftDockView: View {
   var model: WindowModel
+  @State private var dockHeight: CGFloat = 0
+
+  /// What a dragged workspaces section leaves for the files panel.
+  private static let filesPanelMinHeight: CGFloat = 120
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspacesSection(model: model)
+      WorkspacesSection(
+        model: model,
+        heightLimit: dockHeight > 0 ? max(0, dockHeight - Self.filesPanelMinHeight) : nil
+      )
+      // Above the header, so the resize handle's grab band overlapping its
+      // top edge gets the mouse.
+      .zIndex(1)
       header
       switch model.sidebarPanel {
       case .search:
@@ -220,6 +230,7 @@ struct LeftDockView: View {
     }
     .background(model.palette.chrome)
     .environment(\.chrome, model.palette)
+    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { dockHeight = $0 }
   }
 
   private var header: some View {

@@ -110,6 +110,8 @@ struct SessionWindowState: Codable {
   var frame: String?
   var sidebarVisible: Bool?
   var sidebarWidth: Double?
+  /// Height the workspaces section was dragged to (nil: fits its rows).
+  var workspacesHeight: Double?
 
   enum CodingKeys: String, CodingKey {
     case projectRoot = "project_root"
@@ -121,17 +123,19 @@ struct SessionWindowState: Codable {
     case frame
     case sidebarVisible = "sidebar_visible"
     case sidebarWidth = "sidebar_width"
+    case workspacesHeight = "workspaces_height"
   }
 
   init(
     workspaces: [SessionWorkspaceState], activeWorkspaceIndex: Int?, frame: String?,
-    sidebarVisible: Bool?, sidebarWidth: Double?
+    sidebarVisible: Bool?, sidebarWidth: Double?, workspacesHeight: Double? = nil
   ) {
     self.workspaces = workspaces
     self.activeWorkspaceIndex = activeWorkspaceIndex
     self.frame = frame
     self.sidebarVisible = sidebarVisible
     self.sidebarWidth = sidebarWidth
+    self.workspacesHeight = workspacesHeight
   }
 
   /// A version 1 window becomes one scratch workspace (whose file tree
