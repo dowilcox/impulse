@@ -111,6 +111,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
 - **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon).
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
+- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first.
 
 ## History
 

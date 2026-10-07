@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="#features">Features</a> &bull;
+  <a href="docs/README.md">Documentation</a> &bull;
   <a href="#installation">Installation</a> &bull;
   <a href="#building-from-source">Building from Source</a> &bull;
   <a href="#architecture">Architecture</a> &bull;
@@ -25,6 +26,8 @@
 Impulse is a terminal IDE: a fast terminal with Warp-style command blocks, a Monaco code editor, deep git integration, and first-class support for the coding agents you run in your terminals. It's built for developers who live in the terminal but want editing, review and project awareness next to it.
 
 The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust core built on `alacritty_terminal`. Impulse never calls an AI service itself; it hosts the agent CLIs you already use.
+
+**[Read the documentation](docs/README.md)** for how every feature works, with screenshots.
 
 > **Impulse is macOS-only.** Linux is no longer supported: the GTK4 Linux app was retired with the move to a native Mac app. Its last packages (`.deb`, `.rpm` and Arch) are on the `v0.28.0` release and won't get updates or fixes.
 
