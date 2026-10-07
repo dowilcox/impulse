@@ -173,13 +173,12 @@ extension MainWindowController {
       return
     }
     let model = BranchManagerModel(repository: repository)
-    let sheet = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 640, height: 460), styleMask: [.titled],
-      backing: .buffered, defer: true)
     let palette = windowModel.palette
+    let sheet = NSWindow.themedSheet(palette: palette)
     let sheetHost = SheetGitHost(base: self, sheet: sheet, palette: palette)
-    let host = NSHostingView(
-      rootView: BranchManagerView(
+    window.beginThemedSheet(
+      sheet, palette: palette,
+      content: BranchManagerView(
         model: model,
         onAction: { [weak self, weak window, weak sheet] action, branch in
           guard let self else { return }
@@ -192,10 +191,7 @@ extension MainWindowController {
         onClose: { [weak window, weak sheet] in
           if let sheet { window?.endSheet(sheet) }
         }
-      ).environment(\.chrome, palette))
-    host.sizingOptions = [.preferredContentSize]
-    sheet.contentView = host
-    window.beginSheet(sheet)
+      ))
   }
 
   private func performBranchAction(

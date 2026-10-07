@@ -175,12 +175,11 @@ extension MainWindowController {
       }
     }
 
-    let sheet = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 480, height: 360), styleMask: [.titled],
-      backing: .buffered, defer: true)
     let palette = windowModel.palette
-    let host = NSHostingView(
-      rootView: TaskSheetView(
+    let sheet = NSWindow.themedSheet(palette: palette)
+    window.beginThemedSheet(
+      sheet, palette: palette,
+      content: TaskSheetView(
         model: model,
         onCancel: { [weak window, weak sheet] in
           if let sheet { window?.endSheet(sheet) }
@@ -190,10 +189,7 @@ extension MainWindowController {
             if let sheet { window?.endSheet(sheet) }
           }
         }
-      ).environment(\.chrome, palette))
-    host.sizingOptions = [.preferredContentSize]
-    sheet.contentView = host
-    window.beginSheet(sheet)
+      ))
   }
 
   /// Snapshot runs: create a task without the sheet.

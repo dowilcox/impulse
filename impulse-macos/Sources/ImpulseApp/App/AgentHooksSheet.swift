@@ -205,18 +205,14 @@ extension MainWindowController {
   func presentAgentHooksSheet() {
     guard let window else { return }
     let model = AgentHooksModel(projectRoot: windowModel.repository?.root)
-    let sheet = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 620, height: 440), styleMask: [.titled],
-      backing: .buffered, defer: true)
     let palette = windowModel.palette
-    let host = NSHostingView(
-      rootView: AgentHooksSheetView(model: model) { [weak self, weak window, weak sheet] message in
+    let sheet = NSWindow.themedSheet(palette: palette)
+    window.beginThemedSheet(
+      sheet, palette: palette,
+      content: AgentHooksSheetView(model: model) { [weak self, weak window, weak sheet] message in
         if let sheet { window?.endSheet(sheet) }
         if let message { self?.toasts.show(Toast(kind: .success, message: message)) }
-      }.environment(\.chrome, palette))
-    host.sizingOptions = [.preferredContentSize]
-    sheet.contentView = host
-    window.beginSheet(sheet)
+      })
   }
 
   /// Toggle "Impulse as $EDITOR" for new terminals.

@@ -58,6 +58,7 @@ struct ChromePalette {
   let nsChrome: NSColor
   let nsPanel: NSColor
   let nsContent: NSColor
+  let nsOverlay: NSColor
   let nsHairline: NSColor
   let nsText: NSColor
   let nsTextSecondary: NSColor
@@ -126,6 +127,7 @@ struct ChromePalette {
     nsChrome = chromeNS
     nsPanel = panelNS
     nsContent = bg
+    nsOverlay = overlayNS
     nsHairline = hairlineNS
     nsText = fg
     nsTextSecondary = increaseContrast ? Self.mix(muted, toward: fg, amount: 0.5) : muted
