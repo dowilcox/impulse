@@ -256,10 +256,10 @@ private struct FlatFileRowView: View {
   @ViewBuilder
   private func nodeContextMenu(for node: FileTreeNode) -> some View {
     if node.isDirectory {
-      Button("New File...") {
+      Button("New File…") {
         model.onNewFile?(node.path)
       }
-      Button("New Folder...") {
+      Button("New Folder…") {
         model.onNewFolder?(node.path)
       }
       Divider()

@@ -109,29 +109,30 @@ public enum CommandPalette {
 
   private static let builtinCommands: [BuiltinCommand] = [
     BuiltinCommand(
-      id: "new_tab", title: "New Terminal Tab", category: "Tabs", keywords: ["terminal", "shell"]),
+      id: "new_tab", title: "New Tab", category: "Tabs", keywords: ["terminal", "shell"]),
     BuiltinCommand(id: "close_tab", title: "Close Tab", category: "Tabs", keywords: ["remove"]),
     BuiltinCommand(
       id: "reopen_tab", title: "Reopen Closed Tab", category: "Tabs", keywords: ["restore", "undo"]),
-    BuiltinCommand(id: "next_tab", title: "Next Tab", category: "Tabs", keywords: ["navigate"]),
-    BuiltinCommand(id: "prev_tab", title: "Previous Tab", category: "Tabs", keywords: ["navigate"]),
+    BuiltinCommand(id: "next_tab", title: "Show Next Tab", category: "Tabs", keywords: ["navigate"]),
+    BuiltinCommand(
+      id: "prev_tab", title: "Show Previous Tab", category: "Tabs", keywords: ["navigate"]),
     BuiltinCommand(id: "copy", title: "Copy", category: "Terminal", keywords: ["clipboard"]),
     BuiltinCommand(id: "paste", title: "Paste", category: "Terminal", keywords: ["clipboard"]),
     BuiltinCommand(
       id: "review_changes", title: "Review Changes", category: "Navigation",
       keywords: ["git", "diff", "commit", "review"]),
     BuiltinCommand(id: "new_file", title: "New File", category: "Editor", keywords: ["editor"]),
-    BuiltinCommand(id: "save", title: "Save File", category: "Editor", keywords: ["write"]),
-    BuiltinCommand(id: "find", title: "Find", category: "Editor", keywords: ["search"]),
+    BuiltinCommand(id: "save", title: "Save", category: "Editor", keywords: ["write"]),
+    BuiltinCommand(id: "find", title: "Find…", category: "Editor", keywords: ["search"]),
     BuiltinCommand(
-      id: "go_to_line", title: "Go to Line", category: "Editor", keywords: ["jump", "navigate"]),
+      id: "go_to_line", title: "Go to Line…", category: "Editor", keywords: ["jump", "navigate"]),
     BuiltinCommand(
-      id: "toggle_markdown_preview", title: "Toggle Preview", category: "Editor",
+      id: "toggle_markdown_preview", title: "Toggle Markdown Preview", category: "Editor",
       keywords: ["markdown", "preview"]),
     BuiltinCommand(
       id: "toggle_sidebar", title: "Toggle Sidebar", category: "Navigation", keywords: ["files"]),
     BuiltinCommand(
-      id: "quick_open", title: "Quick Open File", category: "Navigation",
+      id: "quick_open", title: "Go to File…", category: "Navigation",
       keywords: ["file", "finder"]),
     BuiltinCommand(
       id: "project_search", title: "Find in Project", category: "Navigation",
@@ -140,7 +141,7 @@ public enum CommandPalette {
       id: "command_palette", title: "Command Palette", category: "Navigation",
       keywords: ["commands"]),
     BuiltinCommand(
-      id: "open_settings", title: "Open Settings", category: "Navigation",
+      id: "open_settings", title: "Settings…", category: "Navigation",
       keywords: ["preferences"]),
     BuiltinCommand(
       id: "font_increase", title: "Increase Font Size", category: "Font", keywords: ["zoom"]),
@@ -150,7 +151,7 @@ public enum CommandPalette {
       id: "font_reset", title: "Reset Font Size", category: "Font", keywords: ["zoom"]),
     BuiltinCommand(id: "new_window", title: "New Window", category: "App", keywords: ["window"]),
     BuiltinCommand(
-      id: "fullscreen", title: "Toggle Fullscreen", category: "App", keywords: ["window"]),
+      id: "fullscreen", title: "Toggle Full Screen", category: "App", keywords: ["window"]),
     BuiltinCommand(
       id: "install_lsp", title: "Install Web LSP Servers", category: "Language Servers",
       keywords: ["typescript", "php", "html", "css"]),

@@ -14,7 +14,7 @@ Every file opens in its own editor tab. A file that's already open in the window
 | Quick open                        | Press ⌘P (View ▸ Go to File…), type part of the path, and press Return. With nothing typed, the list starts with the files you have open. See [Command palette](command-palette.md).                        |
 | Terminal output                   | ⌘-click a path such as `src/forecast.ts:42:7`. It opens at that line and column. See [Terminal](terminal.md).                                                                                               |
 | The command line                  | In an Impulse terminal, `impulse open src/forecast.ts:42` opens the file; `impulse edit <file>` opens it and waits until you close the tab, which is what `$EDITOR` needs. See [Command-line tool](cli.md). |
-| The menu bar                      | File ▸ Open... (⌘O) opens a file in a tab, or a folder as a workspace.                                                                                                                                      |
+| The menu bar                      | File ▸ Open… (⌘O) opens a file in a tab, or a folder as a workspace.                                                                                                                                        |
 | Finder                            | Choose **Open With ▸ Impulse** on a source file.                                                                                                                                                            |
 | Search results, Problems, symbols | Click a result to open the file at that spot.                                                                                                                                                               |
 
@@ -44,8 +44,8 @@ Each workspace has at most one preview tab. To always open files in normal tabs,
 The editor behaves like Monaco in VS Code, with a few changes so it fits with the rest of the window:
 
 - **⌘-click** a symbol to go to its definition (the symbol underlines while you hold ⌘). **⌥-click** adds another cursor.
-- **⌘F** (Edit ▸ Find...) opens Monaco's find widget for the current file. Its arrow on the left shows the replace field.
-- **⌘G** (Edit ▸ Go to Line...) opens the palette's line mode: type `42` or `42:7` and press Return.
+- **⌘F** (Edit ▸ Find…) opens Monaco's find widget for the current file. Its arrow on the left shows the replace field.
+- **⌘G** (Edit ▸ Go to Line…) opens the palette's line mode: type `42` or `42:7` and press Return.
 - **⇧⌘O** is Impulse's Go to Symbol in File (see [Go to symbol](#go-to-symbol)), not Monaco's outline. **⌥⌘↑** and **⌥⌘↓** move between split panes instead of adding cursors.
 - Right-click for Monaco's context menu (Go to Definition, Go to References, Rename Symbol, Format Document, Command Palette and so on). Impulse adds **Show Commit for This Line**.
 - **⌘=**, **⌘-** and **⌘0** make the editor and terminal text bigger, smaller, or back to 14 pt.
@@ -326,7 +326,7 @@ For a quick search without the panel, type `%` and the text in the palette. See 
 
 Markdown files (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`) can be shown rendered:
 
-- **Toggle Preview** (⇧⌘M, View ▸ Toggle Markdown Preview, or the **Preview** button in the status bar) swaps the editor for the rendered page in the same tab. Do it again to go back to the text.
+- **Toggle Markdown Preview** (⇧⌘M, in the View menu, or the **Preview** button in the status bar) swaps the editor for the rendered page in the same tab. Do it again to go back to the text.
 - **Open Preview to the Side** (in the command palette) puts the rendered page in the right half of the tab, with the editor on the left. It updates shortly after you stop typing and keeps its scroll position. Run it again to close it.
 
 ![README.md in the editor with its rendered preview beside it, including a shell code block with a Run button](images/editor-markdown-preview.png)
@@ -344,7 +344,7 @@ For example, a `trailhead` README block containing `$ npm install` and `$ npm ru
 
 ### SVG
 
-SVG files open as text, highlighted as XML. **Toggle Preview** (⇧⌘M) and **Open Preview to the Side** show the drawing instead, centered on your theme's background. The side preview redraws as you edit. Scripts, `foreignObject` elements, event handlers and `javascript:` links are removed before the drawing is shown, and files over 1 MB aren't previewed.
+SVG files open as text, highlighted as XML. **Toggle Markdown Preview** (⇧⌘M) and **Open Preview to the Side** show the drawing instead, centered on your theme's background. The side preview redraws as you edit. Scripts, `foreignObject` elements, event handlers and `javascript:` links are removed before the drawing is shown, and files over 1 MB aren't previewed.
 
 ### Image tabs
 

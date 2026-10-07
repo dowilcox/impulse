@@ -127,7 +127,7 @@ Hover over a block to show its toolbar at the top-right corner:
 | Button        | What it does                                                                                                                        |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Copy output   | Copies the block's output (without the command).                                                                                    |
-| Run again     | Runs the block's command again. Shown when the block has a command and has finished.                                                |
+| Rerun command | Runs the block's command again. Shown when the block has a command and has finished.                                                |
 | Send to agent | Sends the command, how it ended, and its output to a coding agent. See [Sending a block to an agent](#sending-a-block-to-an-agent). |
 | More (⋯)      | Opens the block menu below, plus block navigation.                                                                                  |
 
@@ -138,15 +138,15 @@ Right-click a block for the same actions and more. The menu's first group acts o
 | **Copy Command**                                                            | Copies the command.                                                                                                            |
 | **Copy Output**                                                             | Copies the output.                                                                                                             |
 | **Copy Command & Output**                                                   | Copies both, separated by a blank line.                                                                                        |
-| **Re-run Command**                                                          | Runs the command again in the terminal's current folder (which may not be where it first ran). Unavailable while it's running. |
+| **Rerun Command**                                                           | Runs the command again in the terminal's current folder (which may not be where it first ran). Unavailable while it's running. |
 | **Send to Agent**                                                           | Sends the block to an agent. Unavailable while it's running.                                                                   |
 | **Bookmark Block** / **Remove Bookmark**                                    | Toggles a [bookmark](#bookmarks).                                                                                              |
 | **Copy**, **Paste**                                                         | Copies the selected text; pastes the clipboard.                                                                                |
 | **Copy Last Command**                                                       | Copies the most recent command.                                                                                                |
 | **Copy Last Command Output**                                                | Copies the output of the most recent command that printed something.                                                           |
 | **Rerun Last Command**                                                      | Runs the most recent command again.                                                                                            |
-| **Command History...**                                                      | Opens [history search](#searching-history).                                                                                    |
-| **Previous Command Block**, **Next Command Block**, **Last Failed Command** | Jump between blocks (see below).                                                                                               |
+| **Command History…**                                                        | Opens [history search](#searching-history).                                                                                    |
+| **Previous Block**, **Next Block**, **Last Failed Block**                   | Jump between blocks (see below).                                                                                               |
 | **Select All**                                                              | Selects the text on screen.                                                                                                    |
 | **Clear**                                                                   | Sends ⌃L to the shell, which clears the screen.                                                                                |
 
@@ -156,7 +156,7 @@ Right-clicking outside any block shows the same menu without the first group.
 
 Select blocks to copy several commands with their output at once, or to send them to an agent.
 
-1. In the input bar, press ⌘↑. The newest block is selected and the keyboard moves to the blocks. (You can also choose **View ▸ Command Blocks ▸ Select Blocks**, or **Select Command Blocks** in the command palette.)
+1. In the input bar, press ⌘↑. The newest block is selected and the keyboard moves to the blocks. (You can also choose **View ▸ Command Blocks ▸ Select Blocks**, or **Select Blocks** in the command palette.)
 2. Press ↑ and ↓ to move to another block. Hold ⇧ to extend the selection over a range. ⌘-click a block to add it to the selection or remove it (⌘-click on a link opens the link instead).
 3. Act on the selection:
    - ⌘C copies every selected block as `$ command` followed by its output, with a blank line between blocks.
@@ -182,7 +182,7 @@ The **View ▸ Command Blocks** menu moves through blocks: the target block is h
 | **Previous Bookmark** |          | The previous bookmarked block, wrapping around.                                                                         |
 | **Next Bookmark**     |          | The next bookmarked block, wrapping around.                                                                             |
 
-**Previous Block**, **Next Block**, **Previous Bookmark** and **Next Bookmark** have no shortcut by default. You can give them one in Keyboard Shortcuts (see [Settings and themes](settings-and-themes.md)).
+**Select Blocks**, **Previous Block**, **Next Block**, **Last Failed Block**, **Previous Bookmark** and **Next Bookmark** have no shortcut by default (⌘↑ is a key of the input bar, not a menu shortcut, so it stays free in the editor and other text fields). You can give them one in Keyboard Shortcuts (see [Settings and themes](settings-and-themes.md)).
 
 ### Bookmarks
 
@@ -363,7 +363,7 @@ To stop recording, turn off **Keep command history** (`terminal_persistent_histo
 
 ### Searching history
 
-Press ⌃R in the input bar, click the clock button in the context chips, or choose **Search Command History…** in the command palette. History search opens in the command palette (its `h:` mode).
+Press ⌃R in the input bar, click the clock button in the context chips, or choose **Command History…** in the command palette. History search opens in the command palette (its `h:` mode).
 
 - Type to search (matching is fuzzy). With nothing typed, the most recent commands come first.
 - Each result shows the folder it ran in, how long ago, `exit N` if it failed, and `×N` when you've run it more than once.
@@ -384,7 +384,7 @@ To start with the commands you've already typed elsewhere, run **Import Shell Hi
 
 ## Find in the terminal
 
-Press ⌘F (**Edit ▸ Find...**) in a terminal to search its whole scrollback. The find bar opens along the top of the terminal.
+Press ⌘F (**Edit ▸ Find…**) in a terminal to search its whole scrollback. The find bar opens along the top of the terminal.
 
 ![The terminal find bar searching for "forecast", with its match count and the Match case, Whole word and Regular expression toggles](images/terminal-find.png)
 
@@ -414,7 +414,7 @@ To turn links off, turn off **Clickable links** (`terminal_allow_hyperlink`) in 
 
 ## Hints mode
 
-Hints mode lets you open, copy or insert anything on screen without the mouse. Press ⇧⌘Space (**View ▸ Command Blocks ▸ Show Hints**, or **Show Terminal Hints** in the command palette). Every target on screen is underlined and gets a short label made of home-row letters: single letters (`A`, `S`, `D`, …) when there are nine targets or fewer, otherwise two letters each (`AA`, `AS`, `AD`, …).
+Hints mode lets you open, copy or insert anything on screen without the mouse. Press ⇧⌘Space (**View ▸ Command Blocks ▸ Show Hints**, or **Show Hints** in the command palette). Every target on screen is underlined and gets a short label made of home-row letters: single letters (`A`, `S`, `D`, …) when there are nine targets or fewer, otherwise two letters each (`AA`, `AS`, `AD`, …).
 
 ![Hints mode: letter labels over commit SHAs, a test file reference and a localhost URL in the terminal output](images/terminal-hints.png)
 

@@ -249,6 +249,9 @@ extension MainWindowController {
     windowModel.onSetWorkspaceExpanded = { [weak self] id, expanded in
       self?.tabManager.setWorkspaceExpanded(id, expanded)
     }
+    windowModel.onMoveWorkspace = { [weak self] id, step in
+      self?.tabManager.moveWorkspace(id, by: step)
+    }
     windowModel.onOpenWorkspace = { [weak self] in
       self?.presentOpenWorkspacePanel()
     }
@@ -298,9 +301,7 @@ extension MainWindowController {
       titlebar: WorkbenchHosting.make(ChromeBarView(model: windowModel)),
       banner: WorkbenchHosting.make(WorkbenchBanner(model: windowModel), intrinsicHeight: true),
       statusBar: WorkbenchHosting.make(WorkbenchStatusBar(model: windowModel)),
-      leftDockContent: WorkbenchHosting.make(LeftDockView(model: windowModel)),
-      rightDockContent: nil,
-      bottomDockContent: nil
+      leftDockContent: WorkbenchHosting.make(LeftDockView(model: windowModel))
     )
     self.workbench = workbench
     workbench.translatesAutoresizingMaskIntoConstraints = false

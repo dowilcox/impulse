@@ -4,6 +4,9 @@
   import Testing
 
   struct KeybindingRuntimeTests {
+    // Menu tests run on the main actor: building the menu bar sets NSApp's
+    // Services, Window and Help menus, which isn't safe from parallel threads.
+    @MainActor
     @Test func builtinOverrideChangesMenuShortcut() {
       _ = NSApplication.shared
 
@@ -80,6 +83,7 @@
       #expect(plus.modifierFlags == [.command, .shift])
     }
 
+    @MainActor
     @Test func noneUnbindsACommandEverywhere() {
       _ = NSApplication.shared
       let overrides = ["review_changes": Keybindings.unbound]

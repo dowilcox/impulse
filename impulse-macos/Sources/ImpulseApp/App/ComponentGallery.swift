@@ -150,7 +150,7 @@ private struct ThemeSampleCard: View {
           HStack(spacing: 8) {
             Badge(text: "3")
             Badge(text: "12", color: chrome.accent)
-            KeyHint("⌘⇧P")
+            KeyHint("⇧⌘P")
             ProgressRing(progress: 0.6, color: chrome.working, size: 14, lineWidth: 2)
             ProgressRing(progress: nil, color: chrome.textSecondary, size: 14, lineWidth: 2)
             Text("accent").font(ChromeFont.ui(11, weight: .medium)).foregroundStyle(chrome.accent)

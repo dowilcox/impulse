@@ -466,51 +466,74 @@ struct ChromeMenuItem {
 
 /// A chrome button (any label) that pops up a native menu below itself.
 /// Used instead of SwiftUI `Menu`, whose borderless style rescales icon
-/// labels and can't be styled to match the chrome.
+/// labels and can't be styled to match the chrome. The mouse opens it on
+/// mouse-down (like a native pop-up); it's also a real button, so Space with
+/// keyboard navigation and VoiceOver's press open it too.
 struct ChromeMenuButton<Label: View>: View {
   let help: String
   let items: () -> [ChromeMenuItem]
   @ViewBuilder let label: () -> Label
 
   @State private var hovering = false
+  @State private var anchor = MenuAnchor.Reference()
   @Environment(\.chrome) private var chrome
 
   var body: some View {
-    label()
-      .padding(.horizontal, 4)
-      .frame(minWidth: 22, minHeight: 22)
-      .background(
-        RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
-          .fill(hovering ? chrome.hover : .clear)
-      )
-      .contentShape(Rectangle())
-      .overlay(MenuAnchor(items: items))
-      .onHover { hovering = $0 }
-      .help(help)
-      .accessibilityLabel(help)
-      .accessibilityAddTraits(.isButton)
+    Button {
+      anchor.view?.showMenu()
+    } label: {
+      label()
+        .padding(.horizontal, 4)
+        .frame(minWidth: 22, minHeight: 22)
+        .background(
+          RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
+            .fill(hovering ? chrome.hover : .clear)
+        )
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(ChromePressStyle())
+    // Over the button, so clicks reach it on mouse-down.
+    .overlay(MenuAnchor(items: items, reference: anchor))
+    .onHover { hovering = $0 }
+    .help(help)
+    .accessibilityLabel(help)
   }
 }
 
 /// Transparent AppKit view that shows the menu on mouse down, anchored to
 /// its own bottom-left corner.
 private struct MenuAnchor: NSViewRepresentable {
+  /// Lets the button open the menu from the keyboard or VoiceOver.
+  final class Reference {
+    weak var view: AnchorView?
+  }
+
   let items: () -> [ChromeMenuItem]
+  let reference: Reference
 
   func makeNSView(context: Context) -> AnchorView {
     let view = AnchorView()
     view.items = items
+    reference.view = view
     return view
   }
 
   func updateNSView(_ nsView: AnchorView, context: Context) {
     nsView.items = items
+    reference.view = nsView
   }
 
   final class AnchorView: NSView {
     var items: (() -> [ChromeMenuItem])?
 
     override func mouseDown(with event: NSEvent) {
+      showMenu()
+    }
+
+    /// Accessibility sees the SwiftUI button, not this view.
+    override func isAccessibilityElement() -> Bool { false }
+
+    func showMenu() {
       guard let items else { return }
       let menu = NSMenu()
       menu.autoenablesItems = false

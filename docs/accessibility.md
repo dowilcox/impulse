@@ -23,7 +23,8 @@ To go to the agent that needs you, press ⇧⌘U (**Next Agent Needing You**). S
 
 Impulse's controls have labels VoiceOver reads. Some examples:
 
-- **Buttons that show only an icon** are labeled with the same text as their tooltip, for example "New Terminal Tab (⌘T)".
+- **Buttons that show only an icon** are labeled with the same text as their tooltip, for example "New Tab (⌘T)".
+- **Buttons that open a menu**, such as a workspace row's **+**, Review's scope menu and the agent toolbelt's turns, are buttons to VoiceOver: its press action opens the menu, and so does Space when they have the keyboard (with **Keyboard navigation** on in System Settings ▸ Keyboard).
 - **Tabs** read as "Terminal: _title_" or "Editor: _title_", followed by "needs attention", the program's status or a progress percentage when there is one. Each tab's close button reads "Close _title_", and the tab strip as a whole is labeled "Tabs".
 - **Workspaces** read as "Workspace _name_", with the branch and how many tabs need attention.
 - **Agents**: the status icon reads "Agent working", "Agent needs input", "Agent finished" or "Agent idle". The inbox button in the titlebar reads, for example, "Agents: 1 working, 2 waiting", and each row in the inbox gives the agent, its tab and its state.

@@ -1,12 +1,15 @@
 import AppKit
 import ImpulseGit
+import ImpulseKit
 import SwiftUI
 
 /// The top of the left dock: the window's workspaces as top-level rows
 /// (no section header), with worktrees of the same repository grouped under
 /// it. Each row shows the branch, pending changes and tabs that need
 /// attention; expanding a row lists its tabs, and its + makes a new
-/// workspace (a task from that repository, or another folder).
+/// workspace (a task from that repository, or another folder). With
+/// `sidebar_tabs` on, the active workspace's tabs are always listed here
+/// instead of in the titlebar.
 ///
 /// The section fits its rows (up to `autoMaxHeight`) until the hairline under
 /// it is dragged; double-clicking the hairline goes back to fitting.
@@ -25,25 +28,37 @@ struct WorkspacesSection: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      ScrollView(.vertical) {
-        VStack(spacing: 1) {
-          ForEach(groups, id: \.id) { group in
-            if let name = group.name {
-              RepoGroupHeader(name: name)
-            }
-            ForEach(group.workspaces) { workspace in
-              WorkspaceRow(model: model, workspace: workspace, indented: group.name != nil)
-              if workspace.isExpanded {
-                ForEach(workspace.tabs) { tab in
-                  WorkspaceTabRow(model: model, tab: tab)
+      ScrollViewReader { proxy in
+        ScrollView(.vertical) {
+          VStack(spacing: 1) {
+            ForEach(groups, id: \.id) { group in
+              if let name = group.name {
+                RepoGroupHeader(name: name)
+              }
+              ForEach(group.workspaces) { workspace in
+                WorkspaceRow(
+                  model: model, workspace: workspace, indented: group.name != nil,
+                  isExpanded: isExpanded(workspace), tabsPinnedOpen: tabsPinnedOpen(workspace),
+                  canMoveUp: canMove(workspace, by: -1), canMoveDown: canMove(workspace, by: 1))
+                if isExpanded(workspace) {
+                  ForEach(workspace.tabs) { tab in
+                    WorkspaceTabRow(model: model, tab: tab).id(tab.id)
+                  }
+                  if tabsPinnedOpen(workspace) {
+                    NewTabRow(model: model)
+                  }
                 }
               }
             }
           }
+          .padding(.vertical, 6)
         }
-        .padding(.vertical, 6)
+        .scrollIndicators(.never)
+        .onChange(of: model.selectedTabIndex) {
+          guard model.showsTabsInSidebar, let selected = model.selectedTabInfo else { return }
+          proxy.scrollTo(selected.id)
+        }
       }
-      .scrollIndicators(.never)
       .frame(height: height)
       SectionResizeHandle(
         onDragBegan: { dragStartHeight = height },
@@ -54,12 +69,41 @@ struct WorkspacesSection: View {
   }
 
   private var height: CGFloat {
-    guard let dragged = model.workspacesHeight else { return min(contentHeight, Self.autoMaxHeight) }
+    guard let dragged = model.workspacesHeight else { return min(contentHeight, autoMaxHeight) }
     return clamped(dragged)
   }
 
+  /// Tabs listed here take more of the dock before the list scrolls.
+  private var autoMaxHeight: CGFloat {
+    guard model.showsTabsInSidebar, let heightLimit else { return Self.autoMaxHeight }
+    return max(Self.autoMaxHeight, heightLimit * 0.6)
+  }
+
   private func clamped(_ height: CGFloat) -> CGFloat {
-    max(0, min(height, heightLimit ?? .greatestFiniteMagnitude))
+    min(max(minimumHeight, height), heightLimit ?? .greatestFiniteMagnitude)
+  }
+
+  /// With tabs listed here they're shown nowhere else, so the section can't
+  /// be dragged shut: it keeps room for the active workspace's row and a
+  /// few of its tabs (or all of its rows, when they take less).
+  private var minimumHeight: CGFloat {
+    guard model.showsTabsInSidebar else { return 0 }
+    return min(contentHeight, Self.rowHeight + 1 + 4 * (Self.tabRowHeight + 1) + 12)
+  }
+
+  /// The active workspace's tabs are always listed when tabs live in the
+  /// sidebar.
+  private func tabsPinnedOpen(_ workspace: WorkspaceInfo) -> Bool {
+    model.showsTabsInSidebar && workspace.isActive
+  }
+
+  private func isExpanded(_ workspace: WorkspaceInfo) -> Bool {
+    workspace.isExpanded || tabsPinnedOpen(workspace)
+  }
+
+  private func canMove(_ workspace: WorkspaceInfo, by step: Int) -> Bool {
+    guard let index = model.workspaces.firstIndex(where: { $0.id == workspace.id }) else { return false }
+    return GroupedOrder.moving(model.workspaces, at: index, by: step, key: Self.groupKey) != nil
   }
 
   // MARK: Grouping
@@ -71,18 +115,15 @@ struct WorkspacesSection: View {
     let workspaces: [WorkspaceInfo]
   }
 
+  private static func groupKey(_ workspace: WorkspaceInfo) -> String {
+    Workspace.sidebarGroup(repository: workspace.repository, id: workspace.id)
+  }
+
   /// Workspaces in sidebar order, with those that share a repository (its
   /// worktrees) gathered under the first one's position.
   private var groups: [Group] {
-    var order: [String] = []
-    var members: [String: [WorkspaceInfo]] = [:]
-    for workspace in model.workspaces {
-      let key = workspace.repository?.snapshot?.commonDir ?? workspace.id.uuidString
-      if members[key] == nil { order.append(key) }
-      members[key, default: []].append(workspace)
-    }
-    return order.map { key in
-      let list = members[key] ?? []
+    GroupedOrder.groups(model.workspaces, key: Self.groupKey).map { list in
+      let key = Self.groupKey(list[0])
       let name: String? =
         list.count > 1
         ? ((key as NSString).deletingLastPathComponent as NSString).lastPathComponent : nil
@@ -93,9 +134,10 @@ struct WorkspacesSection: View {
   private var contentHeight: CGFloat {
     let groupHeaders = groups.filter { $0.name != nil }.count
     let rows = model.workspaces.count
-    let tabRows = model.workspaces.filter(\.isExpanded).reduce(0) { $0 + $1.tabs.count }
+    let tabRows = model.workspaces.filter(isExpanded).reduce(0) { $0 + $1.tabs.count }
+    let newTabRow = model.showsTabsInSidebar ? 1 : 0
     return CGFloat(groupHeaders) * 22 + CGFloat(rows) * (Self.rowHeight + 1)
-      + CGFloat(tabRows) * (Self.tabRowHeight + 1) + 12
+      + CGFloat(tabRows + newTabRow) * (Self.tabRowHeight + 1) + 12
   }
 }
 
@@ -168,22 +210,30 @@ private struct WorkspaceRow: View {
   var model: WindowModel
   let workspace: WorkspaceInfo
   let indented: Bool
+  /// Its tabs are listed under it.
+  let isExpanded: Bool
+  /// Listed because tabs live in the sidebar (the chevron can't hide them).
+  let tabsPinnedOpen: Bool
+  let canMoveUp: Bool
+  let canMoveDown: Bool
   @State private var hovering = false
 
   var body: some View {
     let snapshot = workspace.repository?.snapshot
     HStack(spacing: 6) {
       Button {
-        model.onSetWorkspaceExpanded?(workspace.id, !workspace.isExpanded)
+        model.onSetWorkspaceExpanded?(workspace.id, !isExpanded)
       } label: {
-        Icon(workspace.isExpanded ? .chevronDown : .chevronRight, size: 10)
+        Icon(isExpanded ? .chevronDown : .chevronRight, size: 10)
           .foregroundStyle(chrome.textTertiary)
           .frame(width: 12, height: 16)
           .contentShape(Rectangle())
       }
       .buttonStyle(ChromePressStyle())
-      .opacity(hovering || workspace.isExpanded ? 1 : 0)
-      .help(workspace.isExpanded ? "Hide tabs" : "Show tabs")
+      .opacity((hovering || isExpanded) && !tabsPinnedOpen ? 1 : 0)
+      .allowsHitTesting(!tabsPinnedOpen)
+      .accessibilityHidden(tabsPinnedOpen)
+      .help(isExpanded ? "Hide tabs" : "Show tabs")
 
       leadingIcon
       Text(workspace.name)
@@ -219,7 +269,7 @@ private struct WorkspaceRow: View {
     .padding(.trailing, 6)
     .frame(height: 26)
     // When its tabs are listed, the selected tab carries the highlight.
-    .rowBackground(selected: workspace.isActive && !workspace.isExpanded, hovered: hovering)
+    .rowBackground(selected: workspace.isActive && !isExpanded, hovered: hovering)
     .overlay(alignment: .leading) {
       if workspace.isActive {
         Capsule().fill(chrome.accent).frame(width: 2, height: 14).padding(.leading, 3)
@@ -274,7 +324,7 @@ private struct WorkspaceRow: View {
       }
       if workspace.attentionCount > 0 {
         Badge(text: "\(workspace.attentionCount)", color: chrome.attention)
-      } else if !workspace.isExpanded, workspace.tabs.count > 1 {
+      } else if !isExpanded, workspace.tabs.count > 1 {
         Text("\(workspace.tabs.count)")
           .font(ChromeFont.mono(10))
           .foregroundStyle(chrome.textTertiary)
@@ -312,9 +362,15 @@ private struct WorkspaceRow: View {
       }
     }
     Divider()
-    Button(workspace.isExpanded ? "Hide Tabs" : "Show Tabs") {
-      model.onSetWorkspaceExpanded?(workspace.id, !workspace.isExpanded)
+    if !tabsPinnedOpen {
+      Button(isExpanded ? "Hide Tabs" : "Show Tabs") {
+        model.onSetWorkspaceExpanded?(workspace.id, !isExpanded)
+      }
     }
+    Button("Move Up") { model.onMoveWorkspace?(workspace.id, -1) }
+      .disabled(!canMoveUp)
+    Button("Move Down") { model.onMoveWorkspace?(workspace.id, 1) }
+      .disabled(!canMoveDown)
     Divider()
     if workspace.isTask {
       Button("Archive Task…") { model.onArchiveTask?(workspace.id) }
@@ -340,7 +396,8 @@ private struct WorkspaceRow: View {
   }
 }
 
-/// A tab listed under its expanded workspace.
+/// A tab listed under its expanded workspace: select it, close it on hover,
+/// and the same context menu as in the titlebar strip.
 private struct WorkspaceTabRow: View {
   @Environment(\.chrome) private var chrome
   var model: WindowModel
@@ -350,33 +407,103 @@ private struct WorkspaceTabRow: View {
   var body: some View {
     let selected = tab.index == model.selectedTabIndex
     HStack(spacing: 6) {
-      if tab.isTerminal {
-        Icon(tab.isDirectInteractionActive ? .squareTerminal : .terminal, size: 12)
-          .foregroundStyle(chrome.textTertiary)
-      } else if let icon = tab.icon {
-        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 13, height: 13)
-      } else {
-        Icon(.file, size: 12).foregroundStyle(chrome.textTertiary)
-      }
+      icon
       Text(tab.title)
         .font(ChromeFont.ui(11.5))
+        .italic(tab.isPreview)
         .foregroundStyle(selected ? chrome.text : chrome.textSecondary)
         .lineLimit(1)
         .truncationMode(.middle)
       Spacer(minLength: 4)
-      if tab.needsAttention {
-        StatusDot(color: chrome.attention, size: 6)
-      } else if tab.isDirty {
-        StatusDot(color: chrome.textSecondary, size: 6)
-      }
+      trailing(selected: selected)
     }
     .padding(.leading, 40)
-    .padding(.trailing, 12)
+    .padding(.trailing, 8)
     .frame(height: 24)
     .rowBackground(selected: selected, hovered: hovering)
     .contentShape(Rectangle())
-    .onTapGesture { model.onTabSelected?(tab.index) }
+    .simultaneousGesture(TapGesture().onEnded { model.onTabSelected?(tab.index) })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { model.onKeepTab?(tab.index) })
     .onHover { hovering = $0 }
+    .contextMenu { TabContextMenu(model: model, tab: tab) }
     .help(tab.directory ?? tab.title)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(tab.accessibilityDescription)
+    .accessibilityAddTraits(selected ? [.isSelected, .isButton] : [.isButton])
+  }
+
+  @ViewBuilder
+  private var icon: some View {
+    if let state = tab.agentState {
+      AgentStatusGlyph(state: state, size: 12)
+    } else if let progress = tab.progress {
+      ProgressRing(progress: progress.fraction, color: chrome.working, size: 11, lineWidth: 1.5)
+    } else if let indicator = tab.sessionStatus?.indicator {
+      StatusDot(color: Color(nsColor: NSColor(hex: indicator)), size: 7)
+        .frame(width: 12, height: 12)
+    } else if tab.isTerminal {
+      Icon(tab.isDirectInteractionActive ? .squareTerminal : .terminal, size: 12)
+        .foregroundStyle(chrome.textTertiary)
+    } else if let icon = tab.icon {
+      Image(nsImage: icon).resizable().interpolation(.high).frame(width: 13, height: 13)
+    } else {
+      Icon(.file, size: 12).foregroundStyle(chrome.textTertiary)
+    }
+  }
+
+  @ViewBuilder
+  private func trailing(selected: Bool) -> some View {
+    ZStack {
+      if hovering && !tab.isPinned {
+        Button(action: { model.onTabClosed?(tab.index) }) {
+          Icon(.x, size: 10, strokeWidth: 2.2)
+            .foregroundStyle(chrome.textSecondary)
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(chrome.hover))
+            .contentShape(Circle())
+        }
+        .buttonStyle(ChromePressStyle())
+        .help("Close Tab")
+        .accessibilityLabel("Close \(tab.title)")
+      } else if tab.needsAttention && !selected {
+        StatusDot(color: chrome.attention, size: 6)
+      } else if tab.isDirty {
+        StatusDot(color: chrome.textSecondary, size: 6)
+      } else if tab.isPinned {
+        Icon(.pin, size: 10).foregroundStyle(chrome.textTertiary)
+          .accessibilityLabel("Pinned")
+      }
+    }
+    .frame(width: 16, height: 16)
+  }
+}
+
+/// "New Tab" under the active workspace's tabs when they're listed in the
+/// sidebar (the titlebar's + isn't there then).
+private struct NewTabRow: View {
+  @Environment(\.chrome) private var chrome
+  var model: WindowModel
+  @State private var hovering = false
+
+  var body: some View {
+    Button {
+      model.onNewTab?()
+    } label: {
+      HStack(spacing: 6) {
+        Icon(.plus, size: 12).foregroundStyle(chrome.textTertiary)
+        Text("New Tab")
+          .font(ChromeFont.ui(11.5))
+          .foregroundStyle(chrome.textTertiary)
+        Spacer(minLength: 4)
+      }
+      .padding(.leading, 40)
+      .padding(.trailing, 8)
+      .frame(height: 24)
+      .rowBackground(selected: false, hovered: hovering)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(ChromePressStyle())
+    .onHover { hovering = $0 }
+    .help("New Tab (⌘T)")
   }
 }

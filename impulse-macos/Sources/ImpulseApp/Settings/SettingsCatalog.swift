@@ -158,6 +158,9 @@ enum SettingsCatalog {
     toggle(
       "confirm_close_warnings", "Warn before closing active work", \.confirmCloseWarnings, .general, "Window",
       detail: "Ask before closing unsaved files or terminals with running commands."),
+    toggle(
+      "sidebar_tabs", "List tabs in the sidebar", \.sidebarTabs, .general, "Sidebar",
+      detail: "Show the active workspace's tabs under it in the sidebar instead of in the titlebar."),
     toggle("sidebar_show_hidden", "Show hidden files", \.sidebarShowHidden, .general, "Sidebar"),
     SettingItem(
       key: "scratch_directory", title: "Scratch folder",
@@ -374,8 +377,7 @@ enum SettingsCatalog {
     for key in ["window_width", "window_height", "sidebar_width"] {
       properties[key] = ["type": "integer"]
     }
-    properties["sidebar_visible"] = ["type": "boolean"]
-    properties["tab_bar_position"] = ["type": "string", "enum": ["sidebar", "top"]]
+    properties["sidebar_visible"] = ["type": "boolean", "default": defaults.sidebarVisible]
     properties["last_directory"] = ["type": "string"]
     properties["open_files"] = stringArray
     return [

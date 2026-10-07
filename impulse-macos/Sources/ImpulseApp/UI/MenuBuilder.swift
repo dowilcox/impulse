@@ -57,7 +57,7 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
-        let prefsItem = NSMenuItem(title: "Settings...",
+        let prefsItem = NSMenuItem(title: "Settings…",
                                    action: #selector(AppDelegate.showPreferences(_:)),
                                    keyEquivalent: ",")
         applyKeybinding("open_settings", overrides: overrides, to: prefsItem)
@@ -126,7 +126,7 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
-        let openItem = NSMenuItem(title: "Open...",
+        let openItem = NSMenuItem(title: "Open…",
                                   action: #selector(MenuActions.menuOpenFile(_:)),
                                   keyEquivalent: "o")
         openItem.target = MenuActions.shared
@@ -246,14 +246,14 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
-        let findItem = NSMenuItem(title: "Find...",
+        let findItem = NSMenuItem(title: "Find…",
                                   action: #selector(MenuActions.menuFind(_:)),
                                   keyEquivalent: "f")
         findItem.target = MenuActions.shared
         applyKeybinding("find", overrides: overrides, to: findItem)
         menu.addItem(findItem)
 
-        let goToLineItem = NSMenuItem(title: "Go to Line...",
+        let goToLineItem = NSMenuItem(title: "Go to Line…",
                                       action: #selector(MenuActions.menuGoToLine(_:)),
                                       keyEquivalent: "g")
         goToLineItem.target = MenuActions.shared
@@ -554,9 +554,11 @@ enum MenuBuilder {
         let item = NSMenuItem()
         item.submenu = menu
 
+        // The app has no help book: the user guide is online.
         let helpItem = NSMenuItem(title: "Impulse Help",
-                                  action: #selector(NSApplication.showHelp(_:)),
+                                  action: #selector(MenuActions.menuShowHelp(_:)),
                                   keyEquivalent: "?")
+        helpItem.target = MenuActions.shared
         helpItem.keyEquivalentModifierMask = [.command]
         menu.addItem(helpItem)
 
@@ -715,6 +717,13 @@ final class MenuActions: NSObject {
 
     @objc func menuPrevTab(_ sender: Any?) {
         NotificationCenter.default.post(name: .impulsePrevTab, object: nil)
+    }
+
+    /// Help ▸ Impulse Help: the user guide on GitHub.
+    static let helpURL = URL(string: "https://github.com/dowilcox/impulse/blob/main/docs/README.md")!
+
+    @objc func menuShowHelp(_ sender: Any?) {
+        NSWorkspace.shared.open(Self.helpURL)
     }
 
     @objc func menuSelectTab(_ sender: Any?) {

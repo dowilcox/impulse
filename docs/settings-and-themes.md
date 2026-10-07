@@ -6,7 +6,7 @@ Impulse keeps its settings in one JSON file and shows them in a searchable Setti
 
 Settings opens as a tab in the current window, next to your terminals and editors. Each window has at most one Settings tab; opening it again brings the existing one forward.
 
-- Press ⌘, or choose **Impulse › Settings...**.
+- Press ⌘, or choose **Impulse › Settings…**.
 - From the command palette (⇧⌘P), run **Open Settings**.
 - To jump straight to one setting, run **Find a Setting…** in the palette (or type `set:` in the palette) and pick it. See [Find a setting](#find-a-setting).
 
@@ -106,7 +106,7 @@ The tables below list every setting in the order the Settings tab shows them. "K
 
 | Setting                     | Key                  | Values   | Default | What it does                                                    |
 | --------------------------- | -------------------- | -------- | ------- | --------------------------------------------------------------- |
-| Restore previous session    | `restore_session`    | on / off | off     | Reopen workspaces, tabs, splits and terminal folders on launch. |
+| Restore previous session    | `restore_session`    | on / off | on      | Reopen workspaces, tabs, splits and terminal folders on launch. |
 | Restore terminal scrollback | `restore_scrollback` | on / off | on      | Bring back each terminal's output when the session is restored. |
 | Check for updates on launch | `check_for_updates`  | on / off | on      | Check GitHub for a newer release each time Impulse starts.      |
 
@@ -118,9 +118,10 @@ The tables below list every setting in the order the Settings tab shows them. "K
 
 #### Sidebar
 
-| Setting           | Key                   | Values   | Default | What it does                                   |
-| ----------------- | --------------------- | -------- | ------- | ---------------------------------------------- |
-| Show hidden files | `sidebar_show_hidden` | on / off | off     | Show hidden files (dotfiles) in the file tree. |
+| Setting                  | Key                   | Values   | Default | What it does                                                                                                                                                |
+| ------------------------ | --------------------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| List tabs in the sidebar | `sidebar_tabs`        | on / off | off     | Show the active workspace's tabs under it in the sidebar instead of in the titlebar. See [Tabs in the sidebar](workspaces-and-tabs.md#tabs-in-the-sidebar). |
+| Show hidden files        | `sidebar_show_hidden` | on / off | off     | Show hidden files (dotfiles) in the file tree.                                                                                                              |
 
 #### Workspaces
 
@@ -377,13 +378,13 @@ The Advanced page links to the two places where you edit settings that don't fit
 
 ### Keys that only appear in settings.json
 
-| Key                                                                                                                     | What it holds                                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `keybinding_overrides`                                                                                                  | Your shortcut changes. See [Shortcuts in settings.json](#shortcuts-in-settingsjson).              |
-| `custom_keybindings`                                                                                                    | Shortcuts that run a shell command. See [Shortcuts in settings.json](#shortcuts-in-settingsjson). |
-| `commands_on_save`                                                                                                      | See [Commands on save](#commands-on-save).                                                        |
-| `file_type_overrides`                                                                                                   | See [File types](#file-types).                                                                    |
-| `window_width`, `window_height`, `sidebar_visible`, `sidebar_width`, `tab_bar_position`, `last_directory`, `open_files` | Window and session details that Impulse records itself. You don't need to edit them.              |
+| Key                                                                                                 | What it holds                                                                                     |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `keybinding_overrides`                                                                              | Your shortcut changes. See [Shortcuts in settings.json](#shortcuts-in-settingsjson).              |
+| `custom_keybindings`                                                                                | Shortcuts that run a shell command. See [Shortcuts in settings.json](#shortcuts-in-settingsjson). |
+| `commands_on_save`                                                                                  | See [Commands on save](#commands-on-save).                                                        |
+| `file_type_overrides`                                                                               | See [File types](#file-types).                                                                    |
+| `window_width`, `window_height`, `sidebar_visible`, `sidebar_width`, `last_directory`, `open_files` | Window and session details that Impulse records itself. You don't need to edit them.              |
 
 ## Themes
 
@@ -644,10 +645,10 @@ Write a shortcut as modifiers and a key joined by `+`:
 
 ### What you can't change
 
-- The standard macOS items: **About Impulse**, **Hide Impulse** (⌘H), **Hide Others** (⌥⌘H), **Quit Impulse** (⌘Q), **Open...** (⌘O), **Close Window** (⇧⌘W), **Minimize** (⌘M), and the Edit menu's **Undo**, **Redo**, **Cut**, **Paste and Match Style** and **Select All**. (**Copy**, **Paste**, **Find...** and **Go to Line...** can be changed.)
+- The standard macOS items: **About Impulse**, **Hide Impulse** (⌘H), **Hide Others** (⌥⌘H), **Quit Impulse** (⌘Q), **Open…** (⌘O), **Close Window** (⇧⌘W), **Minimize** (⌘M), the Edit menu's **Undo**, **Redo**, **Cut**, **Paste and Match Style** and **Select All**, and **Impulse Help** (⌘?). (**Copy**, **Paste**, **Find…** and **Go to Line…** can be changed.)
 - **Tab 1** through **Tab 9** (⌘1–⌘9) in the Window menu.
 - Keys inside a panel or field, such as the Review keys, the Changes panel keys, the input bar keys and hints mode. These are listed in [Keyboard shortcuts](keyboard-shortcuts.md).
-- Commands that aren't in the Keyboard Shortcuts tab (for example **Fetch All Remotes** or **Stash All Changes**) can't have a shortcut. Run them from the command palette.
+- Commands that are only in the command palette (for example **Trust This Folder…** or **Import Shell History**) can't have a shortcut. Run them from the palette.
 
 ## Related
 

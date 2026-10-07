@@ -31,17 +31,17 @@ There is nothing to configure before you start typing:
 
 - Shell integration for zsh, bash and fish loads automatically in Impulse terminals. It is what gives you [command blocks](terminal.md) and lets Impulse follow each terminal's current folder.
 - The fonts the editor and terminal use (JetBrains Mono and Inter) are copied into `~/Library/Fonts` if they aren't there yet.
-- The sidebar starts hidden. Press ⌘B, or click the sidebar button at the left of the titlebar, to show it.
+- The sidebar is open, with your workspaces above the Files panel. Press ⌘B, or click the sidebar button at the left of the titlebar, to hide or show it.
+- Session restore is on: when you quit and open Impulse again, your windows, workspaces, tabs and splits come back. To start fresh each time, turn off **Restore previous session** (`restore_session`) in Settings ▸ General ▸ Startup. See [Session restore](workspaces-and-tabs.md#session-restore).
 
 A few things are off until you turn them on:
 
 | Setting                                                    | Where                                | What it does                                                                                                                |
 | ---------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| **Restore previous session** (`restore_session`)           | Settings ▸ General ▸ Startup         | Reopens your windows, workspaces, tabs and splits at launch. See [Session restore](workspaces-and-tabs.md#session-restore). |
 | **Quick terminal** (`quick_terminal_enabled`)              | Settings ▸ General ▸ Quick terminal  | A terminal that drops down over any app on a global shortcut. See [Quick terminal](workspaces-and-tabs.md#quick-terminal).  |
 | **Use Impulse as $EDITOR** (`terminal_editor_integration`) | Settings ▸ Terminal ▸ Blocks & input | `git commit` and other tools open files in an Impulse tab. See [Command-line tool](cli.md).                                            |
 
-Settings open as a tab with ⌘, (**Impulse ▸ Settings...**). Every setting is described in [Settings and themes](settings-and-themes.md).
+Settings open as a tab with ⌘, (**Impulse ▸ Settings…**). Every setting is described in [Settings and themes](settings-and-themes.md).
 
 ## A tour of the window
 
@@ -53,7 +53,7 @@ From top to bottom, left to right:
 
 - **Sidebar button** shows and hides the sidebar (⌘B).
 - **Workspace name and branch.** The name of the active workspace (`trailhead`) is followed by its git branch (`feature/forecast-cache`) and, when your branch is ahead of or behind its upstream, counts such as `↑2 ↓1`. Click the name to switch workspaces (⌃⌘O) and the branch to switch branches (⌃⌘B); both open the [command palette](command-palette.md). When the branch has a GitHub pull request (found with the GitHub CLI, `gh`), a chip with its number and check status follows; click it to open the pull request in your browser.
-- **Tabs.** The active workspace's tabs, with a **+** button for a new terminal tab (⌘T). See [Tabs](workspaces-and-tabs.md#tabs).
+- **Tabs.** The active workspace's tabs, with a **+** button for a new terminal tab (⌘T). To list them in the sidebar instead, turn on **List tabs in the sidebar** (`sidebar_tabs`) in Settings ▸ General ▸ Sidebar. See [Tabs](workspaces-and-tabs.md#tabs).
 - **Agents button.** Appears while a coding agent runs in one of the window's terminals. It shows how many agents are working and how many are waiting for you; click it for the list. See [Agents](agents.md).
 - **Search or run a command.** Opens the [command palette](command-palette.md) (⇧⌘P).
 - **Changes pill.** When the repository has uncommitted changes, it shows the number of changed files and the lines added and removed. Click it to open [Review](review.md) (⇧⌘G).
@@ -93,7 +93,7 @@ Impulse works in **workspaces**: a folder you open gets its own tabs, file tree 
 ### From Impulse
 
 - **File ▸ Open Folder as Workspace…**, then choose the folder and click **Open Workspace**.
-- **File ▸ Open...** (⌘O) accepts a file or a folder: a file opens in an editor tab, a folder opens as a workspace.
+- **File ▸ Open…** (⌘O) accepts a file or a folder: a file opens in an editor tab, a folder opens as a workspace.
 - Press ⌃⌘O (**File ▸ Switch Workspace…**) to open the palette's workspace list. It shows open workspaces, then folders you opened recently (marked `recent`), then **Open Folder as Workspace…**.
 - Hover over a workspace row in the sidebar, click its **+**, and choose **Open Folder as Workspace…**.
 

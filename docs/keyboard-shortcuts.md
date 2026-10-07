@@ -18,10 +18,10 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 
 | Shortcut | Command                                                 | Menu    | ID                                                                                                |
 | -------- | ------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
-| ⌘,       | Settings...                                             | Impulse | `open_settings`                                                                                   |
+| ⌘,       | Settings…                                               | Impulse | `open_settings`                                                                                   |
 | ⌥⌘,      | Keyboard Shortcuts…                                     | Impulse | `open_keybindings`                                                                                |
 | ⇧⌘P      | Command Palette                                         | View    | `command_palette`                                                                                 |
-| ⌘P       | Go to File…                                             | View    | `quick_open`                                                                                      |
+| ⌘P       | Go to File… (the palette's file mode)                   | View    | `quick_open`                                                                                      |
 | ⌘B       | Toggle Sidebar                                          | View    | `toggle_sidebar`                                                                                  |
 | ⇧⌘N      | New Window                                              | File    | `new_window`                                                                                      |
 | ⌃⌘F      | Toggle Full Screen                                      | View    | `fullscreen`                                                                                      |
@@ -42,11 +42,11 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 | ⌃⇧⇥      | Show Previous Tab (in the current workspace)                         | Window      | `prev_tab`         |
 | ⌘1 … ⌘9  | Tab 1 … Tab 9: the first to ninth tab of the current workspace       | Window      | —                  |
 | ⌃⌘O      | Switch Workspace… (the palette in `w:` mode)                         | File        | `switch_workspace` |
-| ⌘O       | Open...: a file in an editor tab, or a folder as a workspace         | File        | —                  |
+| ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                  |
 | ⌥⌘N      | New Task…                                                            | File        | `new_task`         |
 | ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`  |
 
-The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace** and **Archive This Task…** have no shortcut. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).
+The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace** and **Archive Task…** have no shortcut. To reorder workspaces, use **Move Up** and **Move Down** in a workspace row's context menu. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).
 
 ## Panes
 
@@ -101,17 +101,19 @@ What you type at the start of the query picks the mode, for example `>` for comm
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------- |
 | ⌘C                    | Copy                                                                                                                                             | Edit                  | `copy`                    |
 | ⌘V                    | Paste                                                                                                                                            | Edit                  | `paste`                   |
-| ⌘F                    | Find...: in a terminal, opens the find bar                                                                                                       | Edit                  | `find`                    |
+| ⌘F                    | Find…: in a terminal, opens the find bar                                                                                                         | Edit                  | `find`                    |
 | ⇧⌘Space               | Show Hints                                                                                                                                       | View › Command Blocks | `terminal_hints`          |
-| ⌘↑ (in the input bar) | Select Blocks: selects the most recent command block                                                                                             | View › Command Blocks | —                         |
+| ⌘↑ (in the input bar) | Select Blocks: selects the most recent command block                                                                                             | View › Command Blocks | `select_blocks`           |
 | Unbound               | Previous Block                                                                                                                                   | View › Command Blocks | `previous_block`          |
 | Unbound               | Next Block                                                                                                                                       | View › Command Blocks | `next_block`              |
-| —                     | Last Failed Block                                                                                                                                | View › Command Blocks | —                         |
+| Unbound               | Last Failed Block                                                                                                                                | View › Command Blocks | `last_failed_block`       |
 | ⇧⌘K                   | Bookmark Block                                                                                                                                   | View › Command Blocks | `toggle_block_bookmark`   |
 | Unbound               | Previous Bookmark                                                                                                                                | View › Command Blocks | `previous_block_bookmark` |
 | Unbound               | Next Bookmark                                                                                                                                    | View › Command Blocks | `next_block_bookmark`     |
 | ⌘A                    | Select All: selects the visible screen when the terminal output has the keyboard                                                                 | Edit                  | —                         |
 | ⌘-click               | Open a link or file path under the pointer (when **Clickable links** is on); on a command block, add it to or remove it from the block selection | —                     | —                         |
+
+⌘↑ in the input bar selects blocks. It's fixed; the menu's **Select Blocks** has no shortcut until you give it one.
 
 See [Terminal](terminal.md) for command blocks, hints and find.
 
@@ -192,8 +194,8 @@ After ⇧⌘Space, letters appear over the URLs, file paths, commit SHAs and por
 | -------- | --------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------- |
 | ⌘N       | New File                                                                                                              | File | `new_file`                |
 | ⌘S       | Save                                                                                                                  | File | `save`                    |
-| ⌘F       | Find...: opens the editor's find widget                                                                               | Edit | `find`                    |
-| ⌘G       | Go to Line... (the palette in `:` mode)                                                                               | Edit | `go_to_line`              |
+| ⌘F       | Find…: opens the editor's find widget                                                                                 | Edit | `find`                    |
+| ⌘G       | Go to Line… (the palette in `:` mode)                                                                                 | Edit | `go_to_line`              |
 | ⇧⌘O      | Go to Symbol in File… (the palette in `@` mode)                                                                       | View | `go_to_symbol`            |
 | ⌥⌘O      | Go to Symbol in Project… (the palette in `#` mode)                                                                    | View | `go_to_project_symbol`    |
 | ⇧⌘M      | Toggle Markdown Preview (Markdown and SVG files)                                                                      | View | `toggle_markdown_preview` |
@@ -207,21 +209,33 @@ The editor is Monaco, and Monaco's own keybindings work in it too. Impulse remov
 
 ### Commands
 
-| Shortcut | Command                   | Menu | ID                |
-| -------- | ------------------------- | ---- | ----------------- |
-| ⌃⇧G      | Show Changes              | Git  | `show_changes`    |
-| ⇧⌘G      | Review Changes            | Git  | `review_changes`  |
-| ⇧⌘H      | Show Git History          | Git  | `git_history`     |
-| ⌃⇧⌘H     | Show History of This File | Git  | `file_history`    |
-| ⌥⌘G      | Toggle Diff View          | Git  | `diff_view`       |
-| ⌃⌘B      | Switch Branch…            | Git  | `switch_branch`   |
-| Unbound  | Manage Branches…          | Git  | `manage_branches` |
-| Unbound  | Fetch                     | Git  | `git_fetch`       |
-| Unbound  | Pull                      | Git  | `git_pull`        |
-| Unbound  | Push                      | Git  | `git_push`        |
-| Unbound  | Create Tag…               | Git  | `git_create_tag`  |
+| Shortcut | Command                         | Menu | ID                       |
+| -------- | ------------------------------- | ---- | ------------------------ |
+| ⌃⇧G      | Show Changes                    | Git  | `show_changes`           |
+| ⇧⌘G      | Review Changes                  | Git  | `review_changes`         |
+| ⇧⌘H      | Show Git History                | Git  | `git_history`            |
+| ⌃⇧⌘H     | Show History of This File       | Git  | `file_history`           |
+| ⌥⌘G      | Toggle Diff View                | Git  | `diff_view`              |
+| ⌃⌘B      | Switch Branch…                  | Git  | `switch_branch`          |
+| Unbound  | Manage Branches…                | Git  | `manage_branches`        |
+| Unbound  | Fetch                           | Git  | `git_fetch`              |
+| Unbound  | Pull                            | Git  | `git_pull`               |
+| Unbound  | Push                            | Git  | `git_push`               |
+| Unbound  | Create Tag…                     | Git  | `git_create_tag`         |
+| Unbound  | Fetch All Remotes               | Git  | `git_fetch_all`          |
+| Unbound  | Pull (Rebase)                   | Git  | `git_pull_rebase`        |
+| Unbound  | Force Push (With Lease)…        | Git  | `git_force_push`         |
+| Unbound  | Push All Tags                   | Git  | `git_push_tags`          |
+| Unbound  | Stash All Changes               | Git  | `git_stash`              |
+| Unbound  | Pop Latest Stash                | Git  | `git_pop_stash`          |
+| Unbound  | Undo Last Commit                | Git  | `git_undo_commit`        |
+| Unbound  | Open or Create Pull Request     | Git  | `pull_request`           |
+| Unbound  | Create Draft Pull Request       | Git  | `create_draft_pr`        |
+| Unbound  | Check Out Pull Request as Task… | Git  | `checkout_pr`            |
+| Unbound  | Open Repository in Browser      | Git  | `git_open_remote`        |
+| Unbound  | Open Branch in Browser          | Git  | `git_open_branch_remote` |
 
-The other Git menu commands (**Fetch All Remotes**, **Pull (Rebase)**, **Force Push (With Lease)…**, **Push All Tags**, **Stash All Changes**, **Pop Latest Stash**, **Undo Last Commit**, **Open or Create Pull Request**, **Create Draft Pull Request**, **Check Out Pull Request as Task…**, **Open Repository in Browser** and **Open Branch in Browser**) have no shortcut and can't be given one. Run them from the Git menu or the command palette. See [Git](git.md).
+Every Git menu command can be given a shortcut in the Keyboard Shortcuts tab. See [Git](git.md).
 
 ### Changes panel
 
@@ -354,18 +368,19 @@ In sheets such as **New Task…** and in confirmation dialogs, ↩ presses the d
 
 These work as in other Mac apps and can't be changed in Impulse.
 
-| Shortcut | Command               | Menu    |
-| -------- | --------------------- | ------- |
-| ⌘H       | Hide Impulse          | Impulse |
-| ⌥⌘H      | Hide Others           | Impulse |
-| ⌘Q       | Quit Impulse          | Impulse |
-| ⇧⌘W      | Close Window          | File    |
-| ⌘M       | Minimize              | Window  |
-| ⌘Z       | Undo                  | Edit    |
-| ⇧⌘Z      | Redo                  | Edit    |
-| ⌘X       | Cut                   | Edit    |
-| ⌥⇧⌘V     | Paste and Match Style | Edit    |
-| ⌘A       | Select All            | Edit    |
+| Shortcut | Command                                 | Menu    |
+| -------- | --------------------------------------- | ------- |
+| ⌘H       | Hide Impulse                            | Impulse |
+| ⌥⌘H      | Hide Others                             | Impulse |
+| ⌘Q       | Quit Impulse                            | Impulse |
+| ⇧⌘W      | Close Window                            | File    |
+| ⌘M       | Minimize                                | Window  |
+| ⌘Z       | Undo                                    | Edit    |
+| ⇧⌘Z      | Redo                                    | Edit    |
+| ⌘X       | Cut                                     | Edit    |
+| ⌥⇧⌘V     | Paste and Match Style                   | Edit    |
+| ⌘A       | Select All                              | Edit    |
+| ⌘?       | Impulse Help (the user guide on GitHub) | Help    |
 
 ## Related
 

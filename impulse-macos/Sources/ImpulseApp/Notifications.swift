@@ -203,7 +203,7 @@ extension Notification.Name {
 
     // MARK: Command Palette Actions
 
-    /// Requests opening the Quick Open file search panel.
+    /// Requests Go to File… (the palette's file mode).
     static let impulseQuickOpen = Notification.Name("impulseQuickOpen")
     /// Requests installing managed web LSP servers.
     static let impulseInstallLsp = Notification.Name("impulseInstallLsp")

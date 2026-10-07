@@ -61,6 +61,14 @@ final class Workspace {
   /// setting as it changes).
   var defaultDirectory: String { kind == .scratch ? Self.scratchRoot : root }
 
+  /// Workspaces with the same group (worktrees of one repository) sit
+  /// together in the sidebar.
+  var sidebarGroup: String { Self.sidebarGroup(repository: repository, id: id) }
+
+  static func sidebarGroup(repository: GitRepositoryState?, id: UUID) -> String {
+    repository?.snapshot?.commonDir ?? id.uuidString
+  }
+
   static func normalize(_ path: String) -> String {
     let standardized = ((path as NSString).expandingTildeInPath as NSString).standardizingPath
     return URL(fileURLWithPath: standardized).resolvingSymlinksInPath().path

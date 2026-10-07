@@ -5,7 +5,7 @@ An Impulse window holds workspaces, each workspace holds tabs, and a tab can be 
 ## How a window is organized
 
 - A **workspace** is a folder you work in (or Scratch, for everything else). Each one has its own tabs, file tree and git state, and a row in the sidebar.
-- The **tab strip** in the titlebar shows the active workspace's tabs. Switching workspaces swaps the whole set.
+- The **tab strip** in the titlebar shows the active workspace's tabs (or the sidebar lists them, when [tabs are in the sidebar](#tabs-in-the-sidebar)). Switching workspaces swaps the whole set.
 - A **tab** shows one surface (a terminal, an editor, Review, History, Settings…) or several side by side as **panes**.
 
 ## Workspaces
@@ -53,7 +53,7 @@ From left to right, a row shows:
 | Branch             | The repository's branch (or the commit, when detached). Hidden when it's the same as the name. Scratch shows `follows tab`.                                                                    |
 | Port               | The first port a program in the workspace listens on, such as `:3000`; `:3000+` when there are more. Hover to list them all.                                                                   |
 | Spinner            | Coding agents in the workspace are working.                                                                                                                                                    |
-| Agent count        | A bot icon with a number: agents waiting for you. See [Agents](agents.md).                                                                                                                  |
+| Agent count        | A bot icon with a number: agents waiting for you. See [Agents](agents.md).                                                                                                                     |
 | Line counts        | Lines added and removed in uncommitted changes, such as `+42 −7`.                                                                                                                              |
 | Badge or tab count | A colored badge counts tabs that need your attention. Otherwise, a collapsed row with more than one tab shows how many tabs it has.                                                            |
 | **+**              | A menu for making another workspace. Appears on hover.                                                                                                                                         |
@@ -68,7 +68,7 @@ Workspaces that are worktrees of the same repository are grouped under a header 
 
 ### Showing a workspace's tabs
 
-Click a row's chevron, or choose **Show Tabs** from its context menu, to list its tabs under it. Each tab row shows the tab's icon and title, with a dot when it needs attention or has unsaved changes. Click a tab row to go to that tab (and its workspace). While a workspace's tabs are listed, the selected tab is highlighted instead of the workspace row.
+Click a row's chevron, or choose **Show Tabs** from its context menu, to list its tabs under it. Each tab row shows the tab's icon and title, with a dot when it needs attention or has unsaved changes. Click a tab row to go to that tab (and its workspace), or double-click it to keep a [preview tab](#preview-tabs). Hover over a tab row for its close button; Control-click it for the same menu as in the tab strip. While a workspace's tabs are listed, the selected tab is highlighted instead of the workspace row.
 
 ![The trailhead workspace expanded in the sidebar, listing a terminal, forecast.ts and Review · trailhead under it](images/workspaces-and-tabs-expanded-tabs.png)
 
@@ -89,7 +89,8 @@ Control-click a row for its context menu:
 | **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                |
 | **Copy Path**                 | Copy the folder's path (not for Scratch).                                   |
 | **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                            |
-| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                       |
+| **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                  |
+| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                          |
 | **Close Workspace**           | Close the workspace and all its tabs.                                       |
 
 ### Renaming a workspace
@@ -100,15 +101,17 @@ Choose **Rename…** from the row's context menu, or run **Rename Workspace…**
 
 Choose **Close Workspace** from the row's context menu, or run **Close Workspace** from the palette for the active one. Impulse asks about unsaved files and running commands first, as it does when [closing a tab](#closing-tabs-and-undo). Then every tab in the workspace closes and Impulse shows the workspace you used before it.
 
-Each closed tab can be reopened with ⇧⌘T, one at a time, into the workspace you're in.
+A notice then says, for example, "Closed workspace trailhead". For ten seconds its **Undo ⌘Z** button, or ⌘Z, brings the workspace back with its tabs, in its old place in the sidebar; after that, ⇧⌘T (**File ▸ Reopen Closed Tab**) does the same while the workspace is the last thing you closed. See [Getting a tab back](#getting-a-tab-back).
 
 Closing a workspace's last tab also closes the workspace, as long as the window has another one. The window's last workspace never goes away: closing its last tab gives you a fresh terminal.
 
-Workspaces stay in the order you opened them; they can't be reordered.
+### Reordering workspaces
+
+New workspaces are added at the bottom of the list. To move one, choose **Move Up** or **Move Down** from its row's context menu (they're dimmed at the top and bottom of the list). A worktree in a repository group moves within its group; from the group's first or last row, the whole group moves past its neighbor. The order is saved with your session.
 
 ### Resizing the workspaces section
 
-The workspaces section grows with its rows up to a fixed height, then scrolls. To give it a different height, drag the hairline under it; the cursor changes to a resize arrow and the line turns the accent color. The Files panel below always keeps at least 120 points. Double-click the hairline to go back to fitting the rows. A dragged height is saved with the window's session.
+The workspaces section grows with its rows up to a fixed height, then scrolls. To give it a different height, drag the hairline under it; the cursor changes to a resize arrow and the line turns the accent color. The Files panel below always keeps at least 120 points. Double-click the hairline to go back to fitting the rows. A dragged height is saved with the window's session. While tabs are [listed in the sidebar](#tabs-in-the-sidebar), the section can't be dragged shorter than about five rows (or all of its rows, when it has fewer), so the active workspace's tabs stay in view.
 
 ## Tabs
 
@@ -129,15 +132,19 @@ The selected tab has an accent underline. When the tabs don't fit, the strip scr
 
 Hover over a tab for its full title, its folder and its branch.
 
+### Tabs in the sidebar
+
+To list tabs down the side instead of across the titlebar, turn on **List tabs in the sidebar** (`sidebar_tabs`) in Settings ▸ General ▸ Sidebar. The titlebar then has no tab strip, and the active workspace's tabs are always listed under its row in the sidebar, as when you [show a workspace's tabs](#showing-a-workspaces-tabs), followed by a **New Tab** row. Other workspaces' tabs can still be shown with their chevrons. When you hide the sidebar (⌘B), the tab strip comes back to the titlebar until you show it again.
+
 ### Opening tabs
 
 | To open                                | Do this                                                                                                                                      |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | A terminal                             | ⌘T (**File ▸ New Tab**) or the **+** in the strip. It starts in the workspace's folder (Scratch: the Scratch folder).                        |
 | An untitled file                       | ⌘N (**File ▸ New File**).                                                                                                                    |
-| A file                                 | Click it in the [Files panel](#files-panel), use **File ▸ Open...** (⌘O), or find it in the [command palette](command-palette.md).           |
+| A file                                 | Click it in the [Files panel](#files-panel), use **File ▸ Open…** (⌘O), or find it in the [command palette](command-palette.md).             |
 | Settings, Keyboard Shortcuts, Problems | ⌘, for Settings, ⌥⌘, for Keyboard Shortcuts, ⌃⌘M for Problems. Each opens as a tab, one per window; opening it again shows the existing tab. |
-| Review and History                     | ⇧⌘G and ⇧⌘H. See [Review](review.md) and [History](history.md).                                                                        |
+| Review and History                     | ⇧⌘G and ⇧⌘H. See [Review](review.md) and [History](history.md).                                                                              |
 
 New tabs open right after the selected one and are selected. A file that's already open isn't opened twice: Impulse shows its tab.
 
@@ -164,7 +171,7 @@ Choose **Pin Tab** from a tab's context menu. A pinned tab shrinks to its icon a
 
 ### Reordering tabs
 
-Drag a tab left or right in the strip; the other tabs move aside. Dragging a tab also selects it. Tabs stay in their workspace: you can't drag them to another workspace or window.
+Drag a tab left or right in the strip; the other tabs move aside. Dragging a tab also selects it. Tabs stay in their workspace: you can't drag them to another workspace or window. Tabs listed in the sidebar can't be dragged.
 
 ### The tab context menu
 
@@ -178,7 +185,7 @@ Control-click a tab:
 | **Move into Current Tab, Below** | The same, below.                                                                                                 |
 | **Even Out Panes**               | On the selected tab when it's split: make its panes equal sizes.                                                 |
 | **Move Pane to New Tab**         | On the selected tab when it's split: move its focused pane into a tab of its own.                                |
-| **New Terminal Tab**             | Open a terminal tab.                                                                                             |
+| **New Tab**                      | Open a terminal tab.                                                                                             |
 
 ## Split panes
 
@@ -312,9 +319,9 @@ Control-click an item:
 
 | Item                                | Shown for     | What it does                                                                                                                                                                                            |
 | ----------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **New File...** / **New Folder...** | Folders       | Create an item inside the folder.                                                                                                                                                                       |
+| **New File…** / **New Folder…**     | Folders       | Create an item inside the folder.                                                                                                                                                                       |
 | **Open to the Side**                | Files         | Open in a pane to the right.                                                                                                                                                                            |
-| **Mention in Agent**                | Files         | Send `@` and the file's path to the coding agent most likely meant. See [Agents](agents.md).                                                                                                         |
+| **Mention in Agent**                | Files         | Send `@` and the file's path to the coding agent most likely meant. See [Agents](agents.md).                                                                                                            |
 | **Show History**                    | Both          | The file's or folder's commits in [History](history.md).                                                                                                                                                |
 | **Reveal in Finder**                | Both          | Show it in Finder.                                                                                                                                                                                      |
 | **Copy Path**                       | Both          | Copy the full path.                                                                                                                                                                                     |
@@ -352,7 +359,7 @@ The Search panel (⇧⌘F) searches the folder shown in the file tree. Type in *
 
 The chevron at the left of the field shows a **Replace with…** field for replacing across files. See [Editor](editor.md) for project-wide replace.
 
-⌘P (**View ▸ Go to File…**) also opens the Search panel. To jump to a file by fuzzy name, use the [command palette](command-palette.md#files-no-prefix) instead.
+To jump to a file by name instead, press ⌘P (**View ▸ Go to File…**), which opens the [command palette](command-palette.md#files-no-prefix) in file mode.
 
 ## Closing tabs and undo
 
@@ -375,23 +382,23 @@ Closing a terminal ends its shell and everything running in it.
 
 ### Getting a tab back
 
-After a tab or pane closes, a notice at the bottom of the window says what closed and offers **Undo ⌘Z**.
+After a tab, pane or workspace closes, a notice at the bottom of the window says what closed and offers **Undo ⌘Z**.
 
 ![The notice "Closed forecast.ts" with an Undo ⌘Z button at the bottom of the window](images/workspaces-and-tabs-undo-close-toast.png)
 
-- For ten seconds, ⌘Z (**Edit ▸ Undo**) or the notice's button reopens it.
+- For ten seconds, ⌘Z (**Edit ▸ Undo**) or the notice's button reopens it. A notice's button always reopens what that notice names, even if you've closed something else since; ⌘Z starts with the most recent.
 - After that, ⇧⌘T (**File ▸ Reopen Closed Tab**) reopens the most recently closed tab or pane. Press it again for the one before; each window remembers its last 20.
 
-A reopened pane goes back into its old tab when that tab is still open. A file reopens at the line you were on. A terminal comes back in the same folder with a new shell; its earlier output is shown above the prompt when **Restore terminal scrollback** is on. Untitled files and the Settings, Keyboard Shortcuts and Problems tabs can't be reopened this way, and a file reopens as it is on disk, without edits you didn't save.
+A reopened pane goes back into its old tab when that tab is still open. A tab goes back to its workspace while that workspace is open, even if you've closed and reopened it since; otherwise it opens in the active workspace. A file reopens at the line you were on. A terminal comes back in the same folder with a new shell; its earlier output is shown above the prompt when **Restore terminal scrollback** is on. Untitled files and the Settings, Keyboard Shortcuts and Problems tabs can't be reopened this way, and a file reopens as it is on disk, without edits you didn't save.
 
 ## Session restore
 
-With **Restore previous session** (`restore_session`) turned on in Settings ▸ General ▸ Startup, Impulse reopens everything at launch the way you left it. It's off until you turn it on.
+Impulse reopens everything at launch the way you left it. To start fresh instead, turn off **Restore previous session** (`restore_session`) in Settings ▸ General ▸ Startup.
 
 What comes back:
 
 - Every window, its size and position, and which window was in front.
-- Each window's workspaces, their names and whether their tabs were listed in the sidebar, and the active workspace.
+- Each window's workspaces in their sidebar order (Scratch included), their names and whether their tabs were listed in the sidebar, and the active workspace.
 - Tabs in order, pins, splits and pane sizes, and the selected tab and pane.
 - Terminals in the folder they were in. With **Restore terminal scrollback** (`restore_scrollback`, on by default) their earlier output is shown again; the shells themselves are new.
 - Coding agent sessions: when Claude Code or Codex was running in a terminal and its [hooks](agents.md) are installed, the restored terminal's input bar holds the command that resumes that session, such as `claude --resume …`. Press ↩ to run it, or clear it.
@@ -415,7 +422,6 @@ Closing a window asks about its unsaved files and running commands. Closing the 
 
 The quick terminal drops down from the top of the screen over any app, even one in full screen, on a global shortcut. Use it for a quick command without switching to Impulse's window.
 
-
 To set it up:
 
 1. Open Settings (⌘,) ▸ General ▸ Quick terminal.
@@ -436,10 +442,10 @@ Left side:
 
 | Item           | Shows                                                                                                        | Click to                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| **Restricted** | The active folder workspace isn't trusted.                                                                   | Trust it. See [Getting started](getting-started.md#workspace-trust).      |
+| **Restricted** | The active folder workspace isn't trusted.                                                                   | Trust it. See [Getting started](getting-started.md#workspace-trust).         |
 | Branch         | The repository's branch.                                                                                     | Switch branches (⌃⌘B).                                                       |
 | Changes        | Changed files and lines added and removed.                                                                   | Open [Review](review.md) (⇧⌘G).                                              |
-| Problems       | Errors and warnings from language servers.                                                                   | Open the Problems tab (⌃⌘M). See [Editor](editor.md).                     |
+| Problems       | Errors and warnings from language servers.                                                                   | Open the Problems tab (⌃⌘M). See [Editor](editor.md).                        |
 | Ports          | Up to three ports that programs in the workspace's terminals listen on, such as `:3000`, then `+N` for more. | Open `http://localhost:<port>` in your browser. Hover `+N` to list the rest. |
 | Folder         | The terminal's current folder (terminal tabs).                                                               |                                                                              |
 

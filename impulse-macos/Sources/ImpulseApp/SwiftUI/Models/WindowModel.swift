@@ -157,8 +157,12 @@ final class WindowModel {
   /// The active folder workspace isn't trusted (restricted mode).
   var workspaceRestricted = false
   var onTrustWorkspace: (() -> Void)?
-  /// "sidebar" (Warp-style vertical list) or "top" (horizontal bar).
-  var tabBarPosition: String = "sidebar"
+  /// List tabs in the sidebar (under the active workspace) instead of the
+  /// titlebar strip (`sidebar_tabs`).
+  var sidebarTabs = false
+  /// Where the active workspace's tabs are shown: the sidebar when tabs are
+  /// listed there and it's open, otherwise the titlebar.
+  var showsTabsInSidebar: Bool { sidebarTabs && sidebarVisible }
 
   // MARK: Sidebar
 
@@ -182,16 +186,8 @@ final class WindowModel {
   /// Toasts shown bottom-center in this window.
   @ObservationIgnored let toasts = ToastCenter()
 
-  // MARK: Workbench docks
-  //
-  // The left dock is the sidebar (`sidebarVisible` / `sidebarWidth` /
-  // `sidebarPanel`). The right and bottom docks host panels such as the live
-  // Review and Problems views.
+  // MARK: Window
 
-  var rightDockVisible: Bool = false
-  var rightDockWidth: CGFloat = Metrics.rightDockDefaultWidth
-  var bottomDockVisible: Bool = false
-  var bottomDockHeight: CGFloat = Metrics.bottomDockDefaultHeight
   /// True while the window is in native full screen (traffic lights hidden,
   /// so the titlebar drops their inset).
   var isFullScreen: Bool = false
@@ -424,6 +420,8 @@ final class WindowModel {
   var onCloseWorkspace: ((UUID) -> Void)?
   var onRenameWorkspace: ((UUID) -> Void)?
   var onSetWorkspaceExpanded: ((UUID, Bool) -> Void)?
+  /// Move a workspace one row up (-1) or down (+1) in the sidebar.
+  var onMoveWorkspace: ((UUID, Int) -> Void)?
   /// Pick a folder to open as a workspace.
   var onOpenWorkspace: (() -> Void)?
   var onShowWorkspaceSwitcher: (() -> Void)?

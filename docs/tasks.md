@@ -189,7 +189,7 @@ You can't check out the task's branch in your main checkout while the task exist
 
 Archiving removes the task's folder and closes its workspace, and keeps its branch and commits. Use it when the work is merged, or when you want to put it aside.
 
-1. Choose **Archive Task…** from the task row's context menu, or, with the task workspace active, run **Archive This Task…** from the command palette.
+1. Choose **Archive Task…** from the task row's context menu, or, with the task workspace active, run **Archive Task…** from the command palette.
 2. Read the confirmation and click **Archive**. It says what will happen, for example: "The folder `~/Code/trailhead.worktrees/fix-elevation` is removed; branch fix-elevation is kept." It also warns when the task has uncommitted files ("3 uncommitted files will be saved in a snapshot that Undo restores.") and when "The branch has commits that aren't pushed."
 3. If the task's `.impulse/project.toml` has commands you haven't trusted yet, Impulse asks about the file (see [Project configuration](project-config.md#trusting-the-project-file)).
 4. The workspace closes. As when closing any workspace, Impulse first asks about unsaved files and running processes in its tabs; if you cancel there, nothing is removed.

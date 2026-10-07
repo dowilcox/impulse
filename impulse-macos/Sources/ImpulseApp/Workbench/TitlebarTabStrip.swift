@@ -39,7 +39,7 @@ struct TitlebarTabStrip: View {
                 .zIndex(draggedId == tab.id ? 1 : 0)
                 .simultaneousGesture(dragGesture(for: tab))
             }
-            ChromeIconButton(icon: .plus, help: "New Terminal Tab (⌘T)") {
+            ChromeIconButton(icon: .plus, help: "New Tab (⌘T)") {
               model.onNewTab?()
             }
           }
@@ -85,7 +85,7 @@ struct TitlebarTabStrip: View {
             Text("\(tab.paneCount)").font(ChromeFont.mono(10))
           }
           .foregroundStyle(chrome.textTertiary)
-          .help(tab.isZoomed ? "Zoomed pane (⌘⇧↩ to restore)" : "\(tab.paneCount) panes")
+          .help(tab.isZoomed ? "Zoomed pane (⇧⌘↩ to restore)" : "\(tab.paneCount) panes")
         }
         trailingAccessory(tab, selected: selected, hovered: hovered)
       }
@@ -107,10 +107,10 @@ struct TitlebarTabStrip: View {
     .simultaneousGesture(TapGesture().onEnded { model.onTabSelected?(tab.index) })
     .simultaneousGesture(TapGesture(count: 2).onEnded { model.onKeepTab?(tab.index) })
     .onHover { hoveredId = $0 ? tab.id : (hoveredId == tab.id ? nil : hoveredId) }
-    .contextMenu { contextMenu(tab) }
+    .contextMenu { TabContextMenu(model: model, tab: tab) }
     .help(tabHelp(tab))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(accessibilityLabel(tab))
+    .accessibilityLabel(tab.accessibilityDescription)
     .accessibilityAddTraits(selected ? [.isSelected, .isButton] : [.isButton])
   }
 
@@ -180,33 +180,6 @@ struct TitlebarTabStrip: View {
     return parts.joined(separator: " — ")
   }
 
-  private func accessibilityLabel(_ tab: TabDisplayInfo) -> String {
-    var label = "\(tab.isTerminal ? "Terminal" : "Editor"): \(tab.title)"
-    if tab.needsAttention { label += ", needs attention" }
-    if let status = tab.sessionStatus?.status, !status.isEmpty { label += ", \(status)" }
-    if let progress = tab.progress, let fraction = progress.fraction {
-      label += ", \(Int(fraction * 100)) percent"
-    }
-    return label
-  }
-
-  @ViewBuilder
-  private func contextMenu(_ tab: TabDisplayInfo) -> some View {
-    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { model.onTabPinToggled?(tab.index) }
-    Button("Close Tab") { model.onTabClosed?(tab.index) }
-    Divider()
-    if tab.index != model.selectedTabIndex {
-      Button("Move into Current Tab, Right") { model.onJoinTab?(tab.index, false) }
-      Button("Move into Current Tab, Below") { model.onJoinTab?(tab.index, true) }
-      Divider()
-    } else if tab.paneCount > 1 {
-      Button("Even Out Panes") { model.onPaneCommand?("equalize_panes") }
-      Button("Move Pane to New Tab") { model.onPaneCommand?("move_pane_to_tab") }
-      Divider()
-    }
-    Button("New Terminal Tab") { model.onNewTab?() }
-  }
-
   // MARK: Drag to reorder
 
   private func dragGesture(for tab: TabDisplayInfo) -> some Gesture {
@@ -260,10 +233,50 @@ struct TitlebarTabStrip: View {
   }
 }
 
+/// A tab's context menu, in the titlebar strip and in the sidebar's tab rows.
+struct TabContextMenu: View {
+  var model: WindowModel
+  let tab: TabDisplayInfo
+
+  var body: some View {
+    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { model.onTabPinToggled?(tab.index) }
+    Button("Close Tab") { model.onTabClosed?(tab.index) }
+    Divider()
+    if tab.index != model.selectedTabIndex {
+      Button("Move into Current Tab, Right") { model.onJoinTab?(tab.index, false) }
+      Button("Move into Current Tab, Below") { model.onJoinTab?(tab.index, true) }
+      Divider()
+    } else if tab.paneCount > 1 {
+      Button("Even Out Panes") { model.onPaneCommand?("equalize_panes") }
+      Button("Move Pane to New Tab") { model.onPaneCommand?("move_pane_to_tab") }
+      Divider()
+    }
+    Button("New Tab") { model.onNewTab?() }
+  }
+}
+
 private struct TabFramesKey: PreferenceKey {
   static var defaultValue: [Int: CGRect] = [:]
   static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
     value.merge(nextValue()) { $1 }
+  }
+}
+
+extension TabDisplayInfo {
+  /// What VoiceOver says for the tab, in the strip and in the sidebar's
+  /// tab rows: its kind and title, then what its glyphs and dots show
+  /// (their own labels are replaced by this one).
+  var accessibilityDescription: String {
+    var label = "\(isTerminal ? "Terminal" : "Editor"): \(title)"
+    if needsAttention { label += ", needs attention" }
+    if let agentState { label += ", \(agentName ?? "Agent"): \(agentState.label)" }
+    if let status = sessionStatus?.status, !status.isEmpty { label += ", \(status)" }
+    if let progress, let fraction = progress.fraction {
+      label += ", \(Int(fraction * 100)) percent"
+    }
+    if isDirty { label += ", unsaved changes" }
+    if isPinned { label += ", pinned" }
+    return label
   }
 }
 

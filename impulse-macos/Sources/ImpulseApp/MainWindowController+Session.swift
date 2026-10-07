@@ -67,6 +67,7 @@ extension MainWindowController {
   ) {
     var activeWorkspaceID: UUID?
     var activeTabIndex: Int?
+    var savedOrder: [UUID] = []
     for (position, savedWorkspace) in saved.enumerated() {
       let workspace: Workspace
       if savedWorkspace.kind == "scratch", let scratch = tabManager.scratchWorkspace {
@@ -78,6 +79,7 @@ extension MainWindowController {
         workspace = Workspace(kind: .folder, root: savedWorkspace.root)
         tabManager.addWorkspace(workspace)
       }
+      savedOrder.append(workspace.id)
       workspace.customName = savedWorkspace.name
       workspace.isExpanded = savedWorkspace.expanded ?? false
       let projectDirectory = workspace.kind == .folder ? workspace.root : nil
@@ -113,6 +115,8 @@ extension MainWindowController {
         }
       }
     }
+    // Scratch keeps its saved row (it was first, the folders appended).
+    tabManager.arrangeWorkspaces(inOrder: savedOrder)
     tabManager.finishRestore(activeWorkspaceID: activeWorkspaceID, activeTabIndex: activeTabIndex)
   }
 

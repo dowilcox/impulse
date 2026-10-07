@@ -44,12 +44,6 @@ extension MainWindowController {
     }
   }
 
-  private func showSearchSidebarAndFocus() {
-    setSidebarVisible(true)
-    // Enter search mode and ask the in-sidebar search field to take focus.
-    windowModel.beginSearch()
-  }
-
   func setupNotificationObservers() {
     let nc = NotificationCenter.default
 
@@ -436,7 +430,6 @@ extension MainWindowController {
       }
     )
 
-    // Quick Open — show sidebar in search mode
     notificationObservers.append(
       nc.addObserver(forName: .impulseRunInTerminal, object: nil, queue: .main) { [weak self] notification in
         guard let self, let editor = notification.object as? EditorTab, self.tabManager.ownsEditor(editor),
@@ -452,10 +445,11 @@ extension MainWindowController {
         self.showPalette(prefix: "@")
       }
     )
+    // Go to File… (⌘P): the palette's file mode.
     notificationObservers.append(
       nc.addObserver(forName: .impulseQuickOpen, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
-        self.showSearchSidebarAndFocus()
+        self.showPalette(prefix: "")
       }
     )
 

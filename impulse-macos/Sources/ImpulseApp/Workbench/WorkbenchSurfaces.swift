@@ -43,7 +43,7 @@ struct WorkbenchStatusBar: View {
       }
     }
     if model.reviewChangedFileCount > 0 {
-      StatusItem(icon: .fileDiff, help: "Review changes (⌘⇧G)") {
+      StatusItem(icon: .fileDiff, help: "Review changes (⇧⌘G)") {
         model.onOpenDiffReview?()
       } label: {
         HStack(spacing: 5) {
@@ -128,7 +128,7 @@ struct WorkbenchStatusBar: View {
     if model.isPreviewable {
       StatusItem(
         icon: model.isPreviewing ? .eyeOff : .eye,
-        help: model.isPreviewing ? "Hide preview (⌘⇧M)" : "Show preview (⌘⇧M)",
+        help: model.isPreviewing ? "Hide preview (⇧⌘M)" : "Show preview (⇧⌘M)",
         tint: model.isPreviewing ? model.palette.accent : nil
       ) {
         model.onPreviewToggle?()

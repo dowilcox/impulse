@@ -7,7 +7,7 @@
       "shell"
     ],
     "source": "builtin",
-    "title": "New Terminal Tab"
+    "title": "New Tab"
   },
   {
     "category": "Tabs",
@@ -35,7 +35,7 @@
       "navigate"
     ],
     "source": "builtin",
-    "title": "Next Tab"
+    "title": "Show Next Tab"
   },
   {
     "category": "Tabs",
@@ -44,7 +44,7 @@
       "navigate"
     ],
     "source": "builtin",
-    "title": "Previous Tab"
+    "title": "Show Previous Tab"
   },
   {
     "category": "Terminal",
@@ -92,7 +92,7 @@
       "write"
     ],
     "source": "builtin",
-    "title": "Save File"
+    "title": "Save"
   },
   {
     "category": "Editor",
@@ -101,7 +101,7 @@
       "search"
     ],
     "source": "builtin",
-    "title": "Find"
+    "title": "Find…"
   },
   {
     "category": "Editor",
@@ -111,7 +111,7 @@
       "navigate"
     ],
     "source": "builtin",
-    "title": "Go to Line"
+    "title": "Go to Line…"
   },
   {
     "category": "Editor",
@@ -121,7 +121,7 @@
       "preview"
     ],
     "source": "builtin",
-    "title": "Toggle Preview"
+    "title": "Toggle Markdown Preview"
   },
   {
     "category": "Navigation",
@@ -140,7 +140,7 @@
       "finder"
     ],
     "source": "builtin",
-    "title": "Quick Open File"
+    "title": "Go to File…"
   },
   {
     "category": "Navigation",
@@ -168,7 +168,7 @@
       "preferences"
     ],
     "source": "builtin",
-    "title": "Open Settings"
+    "title": "Settings…"
   },
   {
     "category": "Font",
@@ -213,7 +213,7 @@
       "window"
     ],
     "source": "builtin",
-    "title": "Toggle Fullscreen"
+    "title": "Toggle Full Screen"
   },
   {
     "category": "Language Servers",

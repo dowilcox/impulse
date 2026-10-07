@@ -236,9 +236,31 @@ enum TabEntry {
 /// split tabs come back with their layout.
 struct ClosedTabInfo {
   let tab: SessionTab
-  let workspaceID: UUID
+  /// Updated when its workspace is closed and reopened (as a new one).
+  var workspaceID: UUID
   /// When a single pane closed: the tab it was in, so it can rejoin it.
   let fromTabUID: Int?
+}
+
+/// A closed workspace, brought back whole (its tabs, name and sidebar row).
+struct ClosedWorkspaceInfo {
+  let state: SessionWorkspaceState
+  /// Its index in the sidebar order.
+  let position: Int
+  /// The workspace's id while it was open: tabs closed from it earlier
+  /// go back to it once it's reopened.
+  let workspaceID: UUID
+}
+
+/// What "Reopen Closed Tab" brings back; `id` names it for the notice
+/// whose Undo reopens it.
+struct ClosedItem {
+  enum Content {
+    case tab(ClosedTabInfo)
+    case workspace(ClosedWorkspaceInfo)
+  }
+  let id = UUID()
+  var content: Content
 }
 
 // MARK: - Tab Manager
@@ -278,15 +300,18 @@ final class TabManager: NSObject {
   /// Set of file paths currently open in editor/image tabs for O(1) deduplication.
   private var openFilePaths: Set<String> = []
 
-  /// Stack of recently closed tabs for "reopen closed tab" (Cmd+Shift+T).
-  private(set) var closedTabs: [ClosedTabInfo] = []
-  /// A tab (or, when the flag is set, a pane) was closed and can come back.
+  /// Recently closed tabs and workspaces for "Reopen Closed Tab" (⇧⌘T).
+  private(set) var closedTabs: [ClosedItem] = []
   /// A surface is being torn down (editors: the window untracks it and
   /// tells language servers the file closed).
   var onSurfaceClosing: ((TabEntry) -> Void)?
   /// A folder was opened as a new workspace (not restored).
   var onFolderOpened: ((String) -> Void)?
-  var onClosedTabRecorded: ((_ title: String, _ isPane: Bool) -> Void)?
+  /// A tab (or, when the flag is set, a pane) was closed and can come back;
+  /// `item` is what `reopenClosedItem` takes to bring it back.
+  var onClosedTabRecorded: ((_ title: String, _ isPane: Bool, _ item: UUID) -> Void)?
+  /// A workspace was closed and can come back with its tabs (`item`, as above).
+  var onClosedWorkspaceRecorded: ((_ name: String, _ item: UUID) -> Void)?
 
   /// Maximum number of closed tabs to remember.
   private let maxClosedTabs = 20
@@ -796,11 +821,18 @@ final class TabManager: NSObject {
     _ entry: TabEntry, pinned: Bool = false, workspaceID: UUID, fromTabUID: Int? = nil
   ) {
     guard let tab = sessionTab(for: entry, pinned: pinned) else { return }
-    closedTabs.append(ClosedTabInfo(tab: tab, workspaceID: workspaceID, fromTabUID: fromTabUID))
+    let id = rememberClosed(.tab(ClosedTabInfo(tab: tab, workspaceID: workspaceID, fromTabUID: fromTabUID)))
+    onClosedTabRecorded?(entry.title, fromTabUID != nil, id)
+  }
+
+  @discardableResult
+  private func rememberClosed(_ content: ClosedItem.Content) -> UUID {
+    let item = ClosedItem(content: content)
+    closedTabs.append(item)
     if closedTabs.count > maxClosedTabs {
       closedTabs.removeFirst()
     }
-    onClosedTabRecorded?(entry.title, fromTabUID != nil)
+    return item.id
   }
 
   /// Closes the tab at the given index. If it is the active tab, the tab that
@@ -884,15 +916,95 @@ final class TabManager: NSObject {
 
   // MARK: - Reopening Closed Tabs
 
-  /// Reopens the most recently closed tab or pane. A pane rejoins its old
-  /// tab when that tab is still open.
+  /// Reopens the most recently closed tab, pane or workspace. A pane
+  /// rejoins its old tab when that tab is still open.
   func reopenLastClosedTab() {
-    guard let info = closedTabs.popLast() else { return }
-    let paths = info.tab.panes.compactMap(\.path)
+    guard let item = closedTabs.popLast() else { return }
+    reopen(item)
+  }
+
+  /// Reopens one closed item (a notice's Undo), if it's still remembered
+  /// and wasn't reopened already.
+  func reopenClosedItem(_ id: UUID) {
+    guard let index = closedTabs.firstIndex(where: { $0.id == id }) else { return }
+    reopen(closedTabs.remove(at: index))
+  }
+
+  private func reopen(_ item: ClosedItem) {
+    let tabs: [SessionTab]
+    switch item.content {
+    case .tab(let info): tabs = [info.tab]
+    case .workspace(let info): tabs = info.state.tabs
+    }
+    let paths = tabs.flatMap { $0.panes.compactMap(\.path) }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let contents = Self.preloadFileContents(paths)
-      DispatchQueue.main.async { self?.insertReopened(info, contents: contents) }
+      DispatchQueue.main.async {
+        switch item.content {
+        case .tab(let info): self?.insertReopened(info, contents: contents)
+        case .workspace(let info): self?.insertReopenedWorkspace(info, contents: contents)
+        }
+      }
     }
+  }
+
+  /// Tabs closed from a workspace that's been reopened (with a new id) go
+  /// back to it.
+  private func remapClosedTabs(fromWorkspace oldID: UUID, to newID: UUID) {
+    guard oldID != newID else { return }
+    for index in closedTabs.indices {
+      guard case .tab(var info) = closedTabs[index].content, info.workspaceID == oldID else { continue }
+      info.workspaceID = newID
+      closedTabs[index].content = .tab(info)
+    }
+  }
+
+  /// A closed workspace back in its sidebar row with its tabs (into the
+  /// open one when the folder, or Scratch, is open again by now).
+  private func insertReopenedWorkspace(
+    _ info: ClosedWorkspaceInfo, contents: [String: (text: String, large: Bool, bom: Bool)]
+  ) {
+    let state = info.state
+    let kind = Workspace.Kind(rawValue: state.kind) ?? .folder
+    // The window's untouched starting terminal makes way, as when opening.
+    let placeholder = kind == .folder ? pristineScratch : nil
+    let workspace: Workspace
+    if let open = workspaces.first(where: {
+      $0.kind == kind && (kind == .scratch || $0.root == Workspace.normalize(state.root))
+    }) {
+      workspace = open
+    } else {
+      guard kind == .scratch || FileManager.default.fileExists(atPath: state.root) else { return }
+      workspace = Workspace(kind: kind, root: state.root, customName: state.name)
+      workspace.isExpanded = state.expanded ?? false
+      workspaces.insert(workspace, at: min(info.position, workspaces.count))
+      resolveRepository(for: workspace)
+    }
+    remapClosedTabs(fromWorkspace: info.workspaceID, to: workspace.id)
+    let projectDirectory = kind == .folder ? workspace.root : nil
+    var restored: [Int?] = []
+    for tab in state.tabs {
+      var panes: [Int: TabEntry] = [:]
+      for (id, surface) in tab.panes.enumerated() {
+        if let entry = makeRestoredSurface(surface, contents: contents, projectDirectory: projectDirectory) {
+          panes[id] = entry
+        }
+      }
+      restored.append(
+        appendRestoredTab(
+          panes: panes, layout: tab.layout, focusedPane: tab.focusedPane, pinned: tab.pinned,
+          workspaceID: workspace.id))
+    }
+    let saved = state.activeTabIndex.flatMap { restored.indices.contains($0) ? restored[$0] : nil }
+    if let index = saved ?? restored.compactMap({ $0 }).first {
+      selectTab(index: index)
+    } else {
+      activateWorkspace(workspace.id)
+    }
+    if let placeholder, placeholder.id != workspace.id, activeWorkspaceID == workspace.id {
+      closeWorkspace(placeholder.id, recordForUndo: false)
+    }
+    syncToWindowModel()
   }
 
   private func insertReopened(
@@ -1119,17 +1231,31 @@ final class TabManager: NSObject {
     syncToWindowModel()
   }
 
+  /// Put restored workspaces in their saved order: Scratch is there before
+  /// the restore (and reused), and the folders are appended after it.
+  func arrangeWorkspaces(inOrder ids: [UUID]) {
+    let arranged = GroupedOrder.arranging(workspaces, inOrder: ids, id: \.id)
+    guard arranged.map(\.id) != workspaces.map(\.id) else { return }
+    workspaces = arranged
+    syncToWindowModel()
+  }
+
   /// Close a workspace and every tab in it (callers confirm first). Closing
   /// the last folder workspace goes back to Scratch; the last Scratch stays,
-  /// with a fresh terminal. Without `recordForUndo` the tabs are dropped
-  /// quietly (no Undo Close).
+  /// with a fresh terminal. It's remembered as one item, so Undo Close (and
+  /// Reopen Closed Tab) brings the whole workspace back; without
+  /// `recordForUndo` it's dropped quietly.
   func closeWorkspace(_ id: UUID, recordForUndo: Bool = true) {
-    guard workspace(id) != nil else { return }
+    guard let closing = workspace(id) else { return }
+    var closedItem: UUID?
+    if recordForUndo, let position = workspaces.firstIndex(where: { $0.id == id }) {
+      closedItem = rememberClosed(
+        .workspace(
+          ClosedWorkspaceInfo(
+            state: sessionState(of: closing, withScrollback: true), position: position, workspaceID: id)))
+    }
     for index in tabIndices(inWorkspace: id).reversed() {
       let record = records[index]
-      if recordForUndo {
-        recordClosedTab(record.entry, pinned: record.pinned, workspaceID: record.workspaceID)
-      }
       cleanupTab(record.entry)
       untrack(record.entry)
       if index == selectedIndex {
@@ -1148,6 +1274,7 @@ final class TabManager: NSObject {
     } else {
       addTerminalTab()
     }
+    if let closedItem { onClosedWorkspaceRecorded?(closing.name, closedItem) }
   }
 
   func renameWorkspace(_ id: UUID, to name: String?) {
@@ -1163,11 +1290,14 @@ final class TabManager: NSObject {
     syncToWindowModel()
   }
 
-  /// Move workspace `id` before the one at `index` in sidebar order.
-  func moveWorkspace(_ id: UUID, to index: Int) {
-    guard let from = workspaces.firstIndex(where: { $0.id == id }) else { return }
-    let workspace = workspaces.remove(at: from)
-    workspaces.insert(workspace, at: max(0, min(index, workspaces.count)))
+  /// Move a workspace one row up (-1) or down (+1) as the sidebar shows them
+  /// (worktrees of a repository together). The order is saved with the
+  /// session.
+  func moveWorkspace(_ id: UUID, by step: Int) {
+    guard let index = workspaces.firstIndex(where: { $0.id == id }),
+      let order = GroupedOrder.moving(workspaces, at: index, by: step, key: \.sidebarGroup)
+    else { return }
+    workspaces = order
     syncToWindowModel()
   }
 
@@ -1434,29 +1564,32 @@ final class TabManager: NSObject {
       focusedPane: idMap[split.focusedPane])
   }
 
+  /// A workspace and its saveable tabs (session file, closed workspaces).
+  private func sessionState(of workspace: Workspace, withScrollback: Bool) -> SessionWorkspaceState {
+    var tabs: [SessionTab] = []
+    var activeTab: Int?
+    for index in tabIndices(inWorkspace: workspace.id) {
+      let record = records[index]
+      guard let tab = sessionTab(for: record.entry, pinned: record.pinned, withScrollback: withScrollback)
+      else { continue }
+      if index == selectedIndex || (activeTab == nil && record.uid == workspace.lastSelectedUID) {
+        activeTab = tabs.count
+      }
+      tabs.append(tab)
+    }
+    return SessionWorkspaceState(
+      kind: workspace.kind.rawValue, root: workspace.root, name: workspace.customName,
+      expanded: workspace.isExpanded ? true : nil, tabs: tabs, activeTabIndex: activeTab,
+      fileTreeRoot: nil)
+  }
+
   /// The window's workspaces and tabs for the session file.
   func sessionWorkspaces() -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
     var result: [SessionWorkspaceState] = []
     for workspace in workspaces {
-      var tabs: [SessionTab] = []
-      var activeTab: Int?
-      for index in tabIndices(inWorkspace: workspace.id) {
-        let record = records[index]
-        guard
-          let tab = sessionTab(
-            for: record.entry, pinned: record.pinned, withScrollback: settings.restoreScrollback)
-        else { continue }
-        if index == selectedIndex || (activeTab == nil && record.uid == workspace.lastSelectedUID) {
-          activeTab = tabs.count
-        }
-        tabs.append(tab)
-      }
-      if workspace.kind == .scratch, tabs.isEmpty, workspaces.count > 1 { continue }
-      result.append(
-        SessionWorkspaceState(
-          kind: workspace.kind.rawValue, root: workspace.root, name: workspace.customName,
-          expanded: workspace.isExpanded ? true : nil, tabs: tabs, activeTabIndex: activeTab,
-          fileTreeRoot: nil))
+      let state = sessionState(of: workspace, withScrollback: settings.restoreScrollback)
+      if workspace.kind == .scratch, state.tabs.isEmpty, workspaces.count > 1 { continue }
+      result.append(state)
     }
     let activeIndex = result.firstIndex { state in
       state.kind == activeWorkspace.kind.rawValue && state.root == activeWorkspace.root

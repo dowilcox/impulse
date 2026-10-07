@@ -26,7 +26,7 @@ enum Keybindings {
         // -- Tabs --
         BuiltinKeybinding(
             id: "new_tab",
-            description: "New Terminal Tab",
+            description: "New Tab",
             category: "Tabs",
             defaultShortcut: "Cmd+T",
             keyEquivalent: "t",
@@ -50,7 +50,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "next_tab",
-            description: "Next Tab",
+            description: "Show Next Tab",
             category: "Tabs",
             defaultShortcut: "Ctrl+Tab",
             keyEquivalent: "\t",
@@ -58,7 +58,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "prev_tab",
-            description: "Previous Tab",
+            description: "Show Previous Tab",
             category: "Tabs",
             defaultShortcut: "Ctrl+Shift+Tab",
             keyEquivalent: "\u{0019}", // backtab
@@ -99,7 +99,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "focus_pane_up",
-            description: "Focus Pane Up",
+            description: "Focus Pane Above",
             category: "Panes",
             defaultShortcut: "Cmd+Alt+Up",
             keyEquivalent: "\u{F700}",
@@ -107,7 +107,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "focus_pane_down",
-            description: "Focus Pane Down",
+            description: "Focus Pane Below",
             category: "Panes",
             defaultShortcut: "Cmd+Alt+Down",
             keyEquivalent: "\u{F701}",
@@ -171,7 +171,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "terminal_hints",
-            description: "Show Terminal Hints",
+            description: "Show Hints",
             category: "Blocks",
             defaultShortcut: "Cmd+Shift+Space",
             keyEquivalent: " ",
@@ -179,7 +179,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "toggle_block_bookmark",
-            description: "Bookmark Command Block",
+            description: "Bookmark Block",
             category: "Blocks",
             defaultShortcut: "Cmd+Shift+K",
             keyEquivalent: "k",
@@ -187,7 +187,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "previous_block_bookmark",
-            description: "Previous Bookmarked Block",
+            description: "Previous Bookmark",
             category: "Blocks",
             defaultShortcut: "",
             keyEquivalent: "",
@@ -195,7 +195,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "next_block_bookmark",
-            description: "Next Bookmarked Block",
+            description: "Next Bookmark",
             category: "Blocks",
             defaultShortcut: "",
             keyEquivalent: "",
@@ -203,7 +203,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "previous_block",
-            description: "Previous Command Block",
+            description: "Previous Block",
             category: "Blocks",
             defaultShortcut: "",
             keyEquivalent: "",
@@ -211,7 +211,25 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "next_block",
-            description: "Next Command Block",
+            description: "Next Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "last_failed_block",
+            description: "Last Failed Block",
+            category: "Blocks",
+            defaultShortcut: "",
+            keyEquivalent: "",
+            modifierFlags: []
+        ),
+        // ⌘↑ selects blocks from the input bar; as a menu shortcut it would
+        // take ⌘↑ from the editor and other text fields, so it's unbound.
+        BuiltinKeybinding(
+            id: "select_blocks",
+            description: "Select Blocks",
             category: "Blocks",
             defaultShortcut: "",
             keyEquivalent: "",
@@ -261,7 +279,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "save",
-            description: "Save File",
+            description: "Save",
             category: "Editor",
             defaultShortcut: "Cmd+S",
             keyEquivalent: "s",
@@ -269,7 +287,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "find",
-            description: "Find",
+            description: "Find…",
             category: "Editor",
             defaultShortcut: "Cmd+F",
             keyEquivalent: "f",
@@ -277,7 +295,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "go_to_line",
-            description: "Go to Line",
+            description: "Go to Line…",
             category: "Editor",
             defaultShortcut: "Cmd+G",
             keyEquivalent: "g",
@@ -285,7 +303,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "toggle_markdown_preview",
-            description: "Toggle Preview",
+            description: "Toggle Markdown Preview",
             category: "Editor",
             defaultShortcut: "Cmd+Shift+M",
             keyEquivalent: "m",
@@ -302,7 +320,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "agent_composer",
-            description: "Compose a Message to the Agent",
+            description: "Compose Message to Agent",
             category: "Terminal",
             defaultShortcut: "Cmd+I",
             keyEquivalent: "i",
@@ -318,7 +336,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "switch_workspace",
-            description: "Switch Workspace",
+            description: "Switch Workspace…",
             category: "Navigation",
             defaultShortcut: "Ctrl+Cmd+O",
             keyEquivalent: "o",
@@ -326,13 +344,13 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "switch_branch",
-            description: "Switch Branch",
+            description: "Switch Branch…",
             category: "Git",
             defaultShortcut: "Ctrl+Cmd+B",
             keyEquivalent: "b",
             modifierFlags: [.control, .command]
         ),
-        // Git remote and tag commands: unbound until you give them keys.
+        // The rest of the Git menu: unbound until you give them keys.
         BuiltinKeybinding(
             id: "git_fetch", description: "Fetch", category: "Git",
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
@@ -346,7 +364,55 @@ enum Keybindings {
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
-            id: "git_create_tag", description: "Create Tag", category: "Git",
+            id: "git_create_tag", description: "Create Tag…", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_fetch_all", description: "Fetch All Remotes", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_pull_rebase", description: "Pull (Rebase)", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_force_push", description: "Force Push (With Lease)…", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_push_tags", description: "Push All Tags", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_stash", description: "Stash All Changes", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_pop_stash", description: "Pop Latest Stash", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_undo_commit", description: "Undo Last Commit", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "pull_request", description: "Open or Create Pull Request", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "create_draft_pr", description: "Create Draft Pull Request", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "checkout_pr", description: "Check Out Pull Request as Task…", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_open_remote", description: "Open Repository in Browser", category: "Git",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
+            id: "git_open_branch_remote", description: "Open Branch in Browser", category: "Git",
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
@@ -383,7 +449,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "go_to_project_symbol",
-            description: "Go to Symbol in Project",
+            description: "Go to Symbol in Project…",
             category: "Navigation",
             defaultShortcut: "Alt+Cmd+O",
             keyEquivalent: "o",
@@ -391,7 +457,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "project_actions",
-            description: "Run Project Action",
+            description: "Run Project Action…",
             category: "Navigation",
             defaultShortcut: "Ctrl+Cmd+R",
             keyEquivalent: "r",
@@ -399,7 +465,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "new_task",
-            description: "New Task",
+            description: "New Task…",
             category: "Navigation",
             defaultShortcut: "Alt+Cmd+N",
             keyEquivalent: "n",
@@ -415,7 +481,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "open_keybindings",
-            description: "Keyboard Shortcuts",
+            description: "Keyboard Shortcuts…",
             category: "Navigation",
             defaultShortcut: "Alt+Cmd+,",
             keyEquivalent: ",",
@@ -423,7 +489,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "manage_branches",
-            description: "Manage Branches",
+            description: "Manage Branches…",
             category: "Git",
             defaultShortcut: "",
             keyEquivalent: "",
@@ -431,7 +497,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "show_changes",
-            description: "Show Changes (Git)",
+            description: "Show Changes",
             category: "Navigation",
             defaultShortcut: "Ctrl+Shift+G",
             keyEquivalent: "g",
@@ -439,7 +505,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "go_to_symbol",
-            description: "Go to Symbol in File",
+            description: "Go to Symbol in File…",
             category: "Navigation",
             defaultShortcut: "Cmd+Shift+O",
             keyEquivalent: "o",
@@ -447,7 +513,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "quick_open",
-            description: "Go to File",
+            description: "Go to File…",
             category: "Navigation",
             defaultShortcut: "Cmd+P",
             keyEquivalent: "p",
@@ -487,7 +553,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "open_settings",
-            description: "Open Settings",
+            description: "Settings…",
             category: "Navigation",
             defaultShortcut: "Cmd+,",
             keyEquivalent: ",",
@@ -529,7 +595,7 @@ enum Keybindings {
         ),
         BuiltinKeybinding(
             id: "fullscreen",
-            description: "Toggle Fullscreen",
+            description: "Toggle Full Screen",
             category: "App",
             defaultShortcut: "Ctrl+Cmd+F",
             keyEquivalent: "f",
@@ -703,13 +769,13 @@ enum Keybindings {
         return binding.defaultShortcut
     }
 
-    /// The shortcut for a binding id in macOS symbol notation ("⌘⇧P"), or nil.
+    /// The shortcut for a binding id in macOS symbol notation ("⇧⌘P"), or nil.
     static func symbolDisplay(forId id: String, overrides: [String: String] = [:]) -> String? {
         guard let shortcut = shortcutDisplay(forId: id, overrides: overrides) else { return nil }
         return symbolDisplay(shortcut: shortcut)
     }
 
-    /// "Cmd+Shift+P" → "⌘⇧P".
+    /// "Cmd+Shift+P" → "⇧⌘P".
     static func symbolDisplay(shortcut: String) -> String? {
         let parsed = parseShortcut(shortcut)
         guard !parsed.keyEquivalent.isEmpty else { return nil }

@@ -205,7 +205,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     self.windowModel.showHiddenFiles = settings.sidebarShowHidden
     self.windowModel.sidebarVisible = settings.sidebarVisible
     self.windowModel.sidebarWidth = CGFloat(settings.sidebarWidth)
-    self.windowModel.tabBarPosition = settings.tabBarPosition
+    self.windowModel.sidebarTabs = settings.sidebarTabs
     self.windowModel.contextBarEnabled = settings.terminalContextBar
     self.fileTreeData = FileTreeDataController()
 
@@ -286,8 +286,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     tabManager.onFolderOpened = { [weak self] folder in
       self?.requestTrustIfNeeded(forFolder: folder)
     }
-    tabManager.onClosedTabRecorded = { [weak self] title, isPane in
-      self?.offerUndoClose(title: title, isPane: isPane)
+    tabManager.onClosedTabRecorded = { [weak self] title, isPane, item in
+      self?.offerUndoClose(message: "Closed \(title)", actionName: isPane ? "Close Pane" : "Close Tab", item: item)
+    }
+    tabManager.onClosedWorkspaceRecorded = { [weak self] name, item in
+      self?.offerUndoClose(message: "Closed workspace \(name)", actionName: "Close Workspace", item: item)
     }
 
     // Open a default terminal tab (skipped when launching with file arguments).
@@ -717,9 +720,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       }
     }
 
-    // Re-apply tab strip placement (sidebar vertical list vs top bar).
-    if windowModel.tabBarPosition != settings.tabBarPosition {
-      windowModel.tabBarPosition = settings.tabBarPosition
+    // Re-apply where tabs are listed (titlebar strip or sidebar).
+    if windowModel.sidebarTabs != settings.sidebarTabs {
+      windowModel.sidebarTabs = settings.sidebarTabs
     }
     if windowModel.contextBarEnabled != settings.terminalContextBar {
       windowModel.contextBarEnabled = settings.terminalContextBar

@@ -267,7 +267,7 @@ class TerminalRenderer: NSView {
         var help: String {
             switch self {
             case .copyOutput: return "Copy output"
-            case .rerun: return "Run again"
+            case .rerun: return "Rerun command"
             case .sendToAgent: return "Send to agent"
             case .menu: return "More"
             }
@@ -2023,7 +2023,7 @@ class TerminalRenderer: NSView {
         menu.addItem(copyBoth)
 
         let rerun = NSMenuItem(
-            title: "Re-run Command", action: #selector(contextRerunBlock(_:)), keyEquivalent: "")
+            title: "Rerun Command", action: #selector(contextRerunBlock(_:)), keyEquivalent: "")
         rerun.target = self
         rerun.isEnabled = hasCommand && !block.isRunning
         menu.addItem(rerun)
@@ -2060,21 +2060,21 @@ class TerminalRenderer: NSView {
         let hasBlock = flags.hasCommand || flags.hasOutput
 
         let previousBlockItem = NSMenuItem(
-            title: "Previous Command Block", action: #selector(contextPreviousCommandBlock(_:)),
+            title: "Previous Block", action: #selector(contextPreviousCommandBlock(_:)),
             keyEquivalent: "")
         previousBlockItem.target = self
         previousBlockItem.isEnabled = hasBlock
         menu.addItem(previousBlockItem)
 
         let nextBlockItem = NSMenuItem(
-            title: "Next Command Block", action: #selector(contextNextCommandBlock(_:)),
+            title: "Next Block", action: #selector(contextNextCommandBlock(_:)),
             keyEquivalent: "")
         nextBlockItem.target = self
         nextBlockItem.isEnabled = hasBlock
         menu.addItem(nextBlockItem)
 
         let failedBlockItem = NSMenuItem(
-            title: "Last Failed Command", action: #selector(contextLastFailedCommandBlock(_:)),
+            title: "Last Failed Block", action: #selector(contextLastFailedCommandBlock(_:)),
             keyEquivalent: "")
         failedBlockItem.target = self
         failedBlockItem.isEnabled = flags.hasFailed
@@ -2161,7 +2161,7 @@ class TerminalRenderer: NSView {
         menu.addItem(rerunItem)
 
         let historyItem = NSMenuItem(
-            title: "Command History...", action: #selector(contextCommandHistory(_:)),
+            title: "Command History…", action: #selector(contextCommandHistory(_:)),
             keyEquivalent: "")
         historyItem.target = self
         historyItem.isEnabled = hasHistory

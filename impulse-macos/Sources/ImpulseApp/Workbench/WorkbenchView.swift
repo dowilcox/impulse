@@ -9,14 +9,13 @@ import SwiftUI
 /// ```
 /// ┌──────────────────────── titlebar (chrome bar) ────────────────────────┐
 /// ├─────────────── banner (settings load warning, when any) ──────────────┤
-/// │ left dock │ center column                         │ right dock        │
-/// │           │  (tab content + terminal input)       │                   │
-/// │           ├───────────── bottom dock ──────────────┤                   │
+/// │ left dock │ center column                                             │
+/// │ (sidebar) │  (tab content + terminal input)                           │
 /// ├──────────────────────────── status bar ───────────────────────────────┤
 /// ```
 ///
 /// AppKit owns geometry and focus; SwiftUI renders the chrome inside
-/// `NSHostingView`s. Docks resize by dragging the hairline dividers.
+/// `NSHostingView`s. The dock resizes by dragging its hairline divider.
 final class WorkbenchView: NSView {
   let model: WindowModel
 
@@ -24,33 +23,23 @@ final class WorkbenchView: NSView {
   private let bannerHost: NSView
   private let statusHost: NSView
   private let leftDock = DockContainer()
-  private let rightDock = DockContainer()
-  private let bottomDock = DockContainer()
   /// Center column: the active tab's content above the terminal input bar.
   let centerColumn = NSView()
 
   private let leftDivider = DockDivider(axis: .vertical)
-  private let rightDivider = DockDivider(axis: .vertical)
-  private let bottomDivider = DockDivider(axis: .horizontal)
 
   private var leftWidth: NSLayoutConstraint!
-  private var rightWidth: NSLayoutConstraint!
-  private var bottomHeight: NSLayoutConstraint!
 
   private var observation: ObservationLoop?
 
   static let leftDockRange: ClosedRange<CGFloat> = 180...520
-  static let rightDockRange: ClosedRange<CGFloat> = 280...1100
-  static let bottomDockRange: ClosedRange<CGFloat> = 100...700
 
   init(
     model: WindowModel,
     titlebar: NSView,
     banner: NSView,
     statusBar: NSView,
-    leftDockContent: NSView,
-    rightDockContent: NSView?,
-    bottomDockContent: NSView?
+    leftDockContent: NSView
   ) {
     self.model = model
     self.titlebarHost = titlebar
@@ -60,12 +49,9 @@ final class WorkbenchView: NSView {
     wantsLayer = true
 
     leftDock.setContent(leftDockContent)
-    if let rightDockContent { rightDock.setContent(rightDockContent) }
-    if let bottomDockContent { bottomDock.setContent(bottomDockContent) }
 
     for view in [
-      centerColumn, bottomDock, leftDock, rightDock, leftDivider, rightDivider, bottomDivider,
-      bannerHost, statusHost, titlebarHost,
+      centerColumn, leftDock, leftDivider, bannerHost, statusHost, titlebarHost,
     ] as [NSView] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
@@ -73,8 +59,6 @@ final class WorkbenchView: NSView {
     centerColumn.wantsLayer = true
 
     leftWidth = leftDock.widthAnchor.constraint(equalToConstant: model.sidebarWidth)
-    rightWidth = rightDock.widthAnchor.constraint(equalToConstant: model.rightDockWidth)
-    bottomHeight = bottomDock.heightAnchor.constraint(equalToConstant: model.bottomDockHeight)
 
     NSLayoutConstraint.activate([
       titlebarHost.topAnchor.constraint(equalTo: topAnchor),
@@ -101,30 +85,10 @@ final class WorkbenchView: NSView {
       leftDivider.centerXAnchor.constraint(equalTo: leftDock.trailingAnchor),
       leftDivider.widthAnchor.constraint(equalToConstant: DockDivider.hitThickness),
 
-      rightDock.topAnchor.constraint(equalTo: bannerHost.bottomAnchor),
-      rightDock.bottomAnchor.constraint(equalTo: statusHost.topAnchor),
-      rightDock.trailingAnchor.constraint(equalTo: trailingAnchor),
-      rightWidth,
-
-      rightDivider.topAnchor.constraint(equalTo: rightDock.topAnchor),
-      rightDivider.bottomAnchor.constraint(equalTo: rightDock.bottomAnchor),
-      rightDivider.centerXAnchor.constraint(equalTo: rightDock.leadingAnchor),
-      rightDivider.widthAnchor.constraint(equalToConstant: DockDivider.hitThickness),
-
       centerColumn.topAnchor.constraint(equalTo: bannerHost.bottomAnchor),
       centerColumn.leadingAnchor.constraint(equalTo: leftDock.trailingAnchor),
-      centerColumn.trailingAnchor.constraint(equalTo: rightDock.leadingAnchor),
-      centerColumn.bottomAnchor.constraint(equalTo: bottomDock.topAnchor),
-
-      bottomDock.leadingAnchor.constraint(equalTo: centerColumn.leadingAnchor),
-      bottomDock.trailingAnchor.constraint(equalTo: centerColumn.trailingAnchor),
-      bottomDock.bottomAnchor.constraint(equalTo: statusHost.topAnchor),
-      bottomHeight,
-
-      bottomDivider.leadingAnchor.constraint(equalTo: bottomDock.leadingAnchor),
-      bottomDivider.trailingAnchor.constraint(equalTo: bottomDock.trailingAnchor),
-      bottomDivider.centerYAnchor.constraint(equalTo: bottomDock.topAnchor),
-      bottomDivider.heightAnchor.constraint(equalToConstant: DockDivider.hitThickness),
+      centerColumn.trailingAnchor.constraint(equalTo: trailingAnchor),
+      centerColumn.bottomAnchor.constraint(equalTo: statusHost.topAnchor),
     ])
 
     configureDividers()
@@ -138,38 +102,21 @@ final class WorkbenchView: NSView {
 
   override var isFlipped: Bool { true }
 
-  /// Install the content for the right or bottom dock (e.g. Review, Problems).
-  func setRightDockContent(_ view: NSView?) { rightDock.setContent(view) }
-  func setBottomDockContent(_ view: NSView?) { bottomDock.setContent(view) }
-
   // MARK: - Model → layout
 
   private func applyModel() {
     let palette = model.palette
     let leftVisible = model.sidebarVisible
-    let rightVisible = model.rightDockVisible && rightDock.hasContent
-    let bottomVisible = model.bottomDockVisible && bottomDock.hasContent
 
     leftWidth.constant = leftVisible ? clamp(model.sidebarWidth, Self.leftDockRange) : 0
-    rightWidth.constant = rightVisible ? clamp(model.rightDockWidth, Self.rightDockRange) : 0
-    bottomHeight.constant =
-      bottomVisible ? clamp(model.bottomDockHeight, Self.bottomDockRange) : 0
     leftDock.isHidden = !leftVisible
-    rightDock.isHidden = !rightVisible
-    bottomDock.isHidden = !bottomVisible
     leftDivider.isHidden = !leftVisible
-    rightDivider.isHidden = !rightVisible
-    bottomDivider.isHidden = !bottomVisible
 
     layer?.backgroundColor = palette.nsChrome.cgColor
     centerColumn.layer?.backgroundColor = palette.nsContent.cgColor
     leftDock.backgroundColor = palette.nsChrome
-    rightDock.backgroundColor = palette.nsPanel
-    bottomDock.backgroundColor = palette.nsPanel
-    for divider in [leftDivider, rightDivider, bottomDivider] {
-      divider.lineColor = palette.nsHairline
-      divider.highlightColor = palette.nsAccent
-    }
+    leftDivider.lineColor = palette.nsHairline
+    leftDivider.highlightColor = palette.nsAccent
     needsLayout = true
   }
 
@@ -181,8 +128,6 @@ final class WorkbenchView: NSView {
 
   private func configureDividers() {
     leftDivider.lineEdge = .center
-    rightDivider.lineEdge = .center
-    bottomDivider.lineEdge = .center
 
     var leftStart: CGFloat = 0
     leftDivider.onDragBegan = { [weak self] in leftStart = self?.leftWidth.constant ?? 0 }
@@ -192,26 +137,6 @@ final class WorkbenchView: NSView {
     }
     leftDivider.onDoubleClick = { [weak self] in
       self?.model.sidebarWidth = Metrics.leftDockDefaultWidth
-    }
-
-    var rightStart: CGFloat = 0
-    rightDivider.onDragBegan = { [weak self] in rightStart = self?.rightWidth.constant ?? 0 }
-    rightDivider.onDrag = { [weak self] delta in
-      guard let self else { return }
-      self.model.rightDockWidth = self.clamp(rightStart - delta, Self.rightDockRange)
-    }
-    rightDivider.onDoubleClick = { [weak self] in
-      self?.model.rightDockWidth = Metrics.rightDockDefaultWidth
-    }
-
-    var bottomStart: CGFloat = 0
-    bottomDivider.onDragBegan = { [weak self] in bottomStart = self?.bottomHeight.constant ?? 0 }
-    bottomDivider.onDrag = { [weak self] delta in
-      guard let self else { return }
-      self.model.bottomDockHeight = self.clamp(bottomStart - delta, Self.bottomDockRange)
-    }
-    bottomDivider.onDoubleClick = { [weak self] in
-      self?.model.bottomDockHeight = Metrics.bottomDockDefaultHeight
     }
   }
 
@@ -224,8 +149,6 @@ final class WorkbenchView: NSView {
 /// Hosts one dock's content view with a themed background and clipping.
 final class DockContainer: NSView {
   private(set) var content: NSView?
-
-  var hasContent: Bool { content != nil }
 
   var backgroundColor: NSColor = .clear {
     didSet { layer?.backgroundColor = backgroundColor.cgColor }

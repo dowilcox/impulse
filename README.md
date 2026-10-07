@@ -36,24 +36,24 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 **Workbench**
 
 - Workspaces in the sidebar: one per folder, each with its own tabs, with worktrees of the same repository grouped together, plus a Scratch workspace for terminals that don't belong to a project
-- Titlebar tabs and split panes of any surface; a file tree with git status
+- Tabs in the titlebar (or listed in the sidebar) and split panes of any surface; a file tree with git status
 - Session restore of every window's workspaces, layouts and terminal output
 - Fuzzy command palette with modes: files, `>` commands, `:` line, `%` text, `@`/`#` symbols, `t:` tabs, `w:` workspaces, `b:` branches, `h:` history, `pr:` pull requests, `a:` project actions, `set:` settings (`?` lists them all)
 - Project actions and worktree setup from `.impulse/project.toml`; the `impulse` command-line tool, which also lets Impulse be your `$EDITOR`
-- An optional quick terminal on a global shortcut; ⌘⇧T reopens a closed tab (or ⌘Z right after closing it)
+- An optional quick terminal on a global shortcut; ⇧⌘T reopens a closed tab (or ⌘Z right after closing it)
 - 19 built-in themes plus user themes; Settings and Keyboard Shortcuts as searchable tabs
 - Workspace trust: language servers, formatters on save and background fetch only run in folders you trust
 
 **Terminal**
 
 - Shell integration for bash, zsh and fish; command blocks with status, duration, selection, bookmarks and actions
-- A multi-line input editor with shell highlighting, history (Ctrl-R), completions for subcommands, options, branches and scripts, and an underline on commands the shell can't run (optionally with fish's own completions)
+- A multi-line input editor with shell highlighting, history (⌃R), completions for subcommands, options, branches and scripts, and an underline on commands the shell can't run (optionally with fish's own completions)
 - Find with match counts and regex; hints mode to open URLs, paths, SHAs and ports from the keyboard
 - Persistent command history, background notifications, listening ports, the kitty keyboard protocol, OSC 8 links and iTerm2 session status
 
 **Coding agents**
 
-- Recognizes Claude Code, Codex, Gemini CLI, Aider, opencode, Amp, Copilot CLI, Cursor Agent, Goose, Qwen Code and Crush in its terminals, and shows when each is working or waiting for you (⌘⇧U jumps to the next one that needs you)
+- Recognizes Claude Code, Codex, Gemini CLI, Aider, opencode, Amp, Copilot CLI, Cursor Agent, Goose, Qwen Code and Crush in its terminals, and shows when each is working or waiting for you (⇧⌘U jumps to the next one that needs you)
 - Checkpoints every agent turn so you can review it, restore files from before it, or send review comments back
 - A composer (⌘I), a toolbelt, and "send to agent" for code, files and command output
 - Task worktrees for parallel work; hooks and resume after a restart for Claude Code and Codex
@@ -63,7 +63,7 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 - Changes panel with a commit composer and keyboard control; commit and push in one step if you like
 - Review with scopes (unstaged, staged, all uncommitted, against a branch, a commit, a range, a stash, the last agent turn, or everything since your last review), hunk and line staging, comments, and GitHub pull request threads
 - Live change marks, inline blame, and an editable side-by-side diff view in the editor
-- History (⌘⇧H) with a commit graph across branches, compare, author/path/date filters and fork-point dimming
+- History (⇧⌘H) with a commit graph across branches, compare, author/path/date filters and fork-point dimming
 - Branch switching and management, undoable stashes, merge-conflict resolution, and GitHub pull requests through `gh`
 - Fetch, pull (fast-forward, rebase or merge), push and force push with lease from the Git menu or palette, with optional background fetch
 - Tags from History or at HEAD (lightweight or annotated, optionally pushed right away); merge, rebase and "open on GitHub" (or GitLab, Bitbucket, Gitea, Azure DevOps) from History

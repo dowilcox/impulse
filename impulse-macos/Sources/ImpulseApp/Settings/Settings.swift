@@ -191,9 +191,9 @@ struct Settings: Codable {
     var terminalContextBar: Bool
 
     // -- Tabs --
-    /// Where the tab strip lives: "sidebar" (Warp-style vertical list) or
-    /// "top" (classic horizontal bar).
-    var tabBarPosition: String
+    /// List the active workspace's tabs in the sidebar instead of the
+    /// titlebar. (Replaces `tab_bar_position`, which was never applied.)
+    var sidebarTabs: Bool = false
 
     // -- Editor (additional) --
     var editorLineHeight: Int
@@ -290,7 +290,7 @@ struct Settings: Codable {
         case terminalAllowOsc52Read = "terminal_allow_osc52_read"
         case terminalBlocks = "terminal_blocks"
         case terminalContextBar = "terminal_context_bar"
-        case tabBarPosition = "tab_bar_position"
+        case sidebarTabs = "sidebar_tabs"
         case editorLineHeight = "editor_line_height"
         case editorAutoClosingBrackets = "editor_auto_closing_brackets"
         case editorCursorSurroundingLines = "editor_cursor_surrounding_lines"
@@ -312,10 +312,10 @@ struct Settings: Codable {
         Settings(
             windowWidth: 1200,
             windowHeight: 800,
-            sidebarVisible: false,
+            sidebarVisible: true,
             sidebarWidth: Int(Metrics.leftDockDefaultWidth),
             confirmCloseWarnings: true,
-            restoreSession: false,
+            restoreSession: true,
             lastDirectory: "",
             openFiles: [],
             autoSave: false,
@@ -450,7 +450,7 @@ struct Settings: Codable {
         terminalAllowOsc52Read = (try? c.decode(Bool.self, forKey: .terminalAllowOsc52Read)) ?? d.terminalAllowOsc52Read
         terminalBlocks = (try? c.decode(Bool.self, forKey: .terminalBlocks)) ?? d.terminalBlocks
         terminalContextBar = (try? c.decode(Bool.self, forKey: .terminalContextBar)) ?? d.terminalContextBar
-        tabBarPosition = (try? c.decode(String.self, forKey: .tabBarPosition)) ?? d.tabBarPosition
+        sidebarTabs = (try? c.decode(Bool.self, forKey: .sidebarTabs)) ?? d.sidebarTabs
         editorLineHeight = (try? c.decode(Int.self, forKey: .editorLineHeight)) ?? d.editorLineHeight
         editorAutoClosingBrackets = (try? c.decode(String.self, forKey: .editorAutoClosingBrackets)) ?? d.editorAutoClosingBrackets
         editorCursorSurroundingLines = (try? c.decode(Int.self, forKey: .editorCursorSurroundingLines)) ?? d.editorCursorSurroundingLines
@@ -486,7 +486,6 @@ struct Settings: Codable {
          terminalBoldIsBright: Bool, terminalMinimumContrast: Double = 3.0,
          terminalAllowOsc52Write: Bool, terminalAllowOsc52Read: Bool,
          terminalBlocks: Bool = true, terminalContextBar: Bool = true,
-         tabBarPosition: String = "sidebar",
          editorLineHeight: Int, editorAutoClosingBrackets: String,
          editorCursorSurroundingLines: Int, editorSelectionHighlight: Bool,
          editorOccurrencesHighlight: Bool, editorWordBasedSuggestions: String,
@@ -542,7 +541,6 @@ struct Settings: Codable {
         self.terminalAllowOsc52Read = terminalAllowOsc52Read
         self.terminalBlocks = terminalBlocks
         self.terminalContextBar = terminalContextBar
-        self.tabBarPosition = tabBarPosition
         self.editorLineHeight = editorLineHeight
         self.editorAutoClosingBrackets = editorAutoClosingBrackets
         self.editorCursorSurroundingLines = editorCursorSurroundingLines
@@ -593,9 +591,6 @@ extension Settings {
         case "bar", "beam", "ibeam": terminalCursorShape = "beam"
         case "underline": terminalCursorShape = "underline"
         default: terminalCursorShape = "block"
-        }
-        if tabBarPosition != "top" && tabBarPosition != "sidebar" {
-            tabBarPosition = "sidebar"
         }
         windowWidth = max(400, min(10000, windowWidth))
         windowHeight = max(300, min(10000, windowHeight))

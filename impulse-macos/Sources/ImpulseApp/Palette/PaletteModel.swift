@@ -796,8 +796,7 @@ final class PaletteModel {
     }
     built.append(
       PaletteRow(
-        id: "workspace:open", glyph: .lucide(.folderOpen), title: "Open Folder as Workspace…",
-        trailing: "⌘O"
+        id: "workspace:open", glyph: .lucide(.folderOpen), title: "Open Folder as Workspace…"
       ) { [weak self] in
         self?.host?.paletteOpenWorkspace(folder: nil)
       })

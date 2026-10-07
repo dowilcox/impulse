@@ -181,8 +181,6 @@ enum Metrics {
   static let iconLarge: CGFloat = 16
 
   static let leftDockDefaultWidth: CGFloat = 260
-  static let rightDockDefaultWidth: CGFloat = 420
-  static let bottomDockDefaultHeight: CGFloat = 220
 }
 
 /// Type roles for the chrome. UI text uses the system font (SF Pro); data and

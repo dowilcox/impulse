@@ -12,9 +12,11 @@ extension MainWindowController {
     togglePreview()
   }
 
-  /// For ten seconds after a tab or pane closes, ⌘Z (or the toast) brings it
-  /// back: its scrollback, folder and agent session, in a new shell.
-  func offerUndoClose(title: String, isPane: Bool) {
+  /// For ten seconds after a tab, pane or workspace closes, ⌘Z (or the
+  /// toast) brings it back: scrollback, folders and agent sessions, in new
+  /// shells. `item` is the closed item this notice is about, so its Undo
+  /// reopens that one even after something else closed.
+  func offerUndoClose(message: String, actionName: String, item: UUID) {
     guard let undoManager = window?.undoManager else { return }
     let token = NSObject()
     var used = false
@@ -22,17 +24,17 @@ extension MainWindowController {
       guard !used else { return }
       used = true
       undoManager?.removeAllActions(withTarget: token)
-      self?.tabManager.reopenLastClosedTab()
+      self?.tabManager.reopenClosedItem(item)
     }
     undoManager.registerUndo(withTarget: token) { _ in reopen() }
-    undoManager.setActionName(isPane ? "Close Pane" : "Close Tab")
+    undoManager.setActionName(actionName)
     DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak undoManager] in
       used = true
       undoManager?.removeAllActions(withTarget: token)
     }
     toasts.show(
       Toast(
-        kind: .info, message: "Closed \(title)", actionTitle: "Undo ⌘Z", action: reopen, lifetime: 10))
+        kind: .info, message: message, actionTitle: "Undo ⌘Z", action: reopen, lifetime: 10))
   }
 
   /// The file against its staged version in Monaco's diff editor; the

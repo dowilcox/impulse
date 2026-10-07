@@ -12,8 +12,13 @@ struct ChromeBarView: View {
   var body: some View {
     HStack(spacing: 0) {
       leadingSection
-      TitlebarTabStrip(model: model)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      // With `sidebar_tabs`, the sidebar lists the tabs (while it's open).
+      if model.showsTabsInSidebar {
+        Spacer(minLength: 0)
+      } else {
+        TitlebarTabStrip(model: model)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
       trailingSection
     }
     .frame(height: Metrics.titlebarHeight)
@@ -214,7 +219,7 @@ private struct PaletteButton: View {
         Text("Search or run a command")
           .font(ChromeFont.ui(11.5))
           .lineLimit(1)
-        KeyHint("⌘⇧P")
+        KeyHint("⇧⌘P")
       }
       .foregroundStyle(chrome.textTertiary)
       .padding(.leading, 8)
@@ -228,7 +233,7 @@ private struct PaletteButton: View {
     }
     .buttonStyle(ChromePressStyle())
     .onHover { hovering = $0 }
-    .help("Command Palette (⌘⇧P)")
+    .help("Command Palette (⇧⌘P)")
     .accessibilityLabel("Command Palette")
   }
 }
@@ -261,7 +266,7 @@ private struct DiffPill: View {
     }
     .buttonStyle(ChromePressStyle())
     .onHover { hovering = $0 }
-    .help("Review \(files) changed file\(files == 1 ? "" : "s") (⌘⇧G)")
+    .help("Review \(files) changed file\(files == 1 ? "" : "s") (⇧⌘G)")
     .accessibilityLabel("Review changes: \(files) files, \(added) added, \(removed) removed lines")
   }
 }

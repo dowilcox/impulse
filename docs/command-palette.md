@@ -12,16 +12,17 @@ The palette opens near the top of the window, already in the mode you asked for:
 | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | ⇧⌘P (**View ▸ Command Palette**)                                                                                        | Commands (`>`)               |
 | Click **Search or run a command** in the titlebar                                                                       | Commands (`>`)               |
-| ⌘G (**Edit ▸ Go to Line...**), when the selected tab is an editor                                                       | Go to line (`:`)             |
+| ⌘P (**View ▸ Go to File…**)                                                                                             | Files (no prefix)            |
+| ⌘G (**Edit ▸ Go to Line…**), when the selected tab is an editor                                                         | Go to line (`:`)             |
 | ⇧⌘O (**View ▸ Go to Symbol in File…**)                                                                                  | Symbols in this file (`@`)   |
 | ⌥⌘O (**View ▸ Go to Symbol in Project…**)                                                                               | Symbols in the project (`#`) |
 | ⌃⌘O (**File ▸ Switch Workspace…**), or click the workspace name in the titlebar                                         | Workspaces (`w:`)            |
 | ⌃⌘B (**Git ▸ Switch Branch…**), or click the branch in the titlebar, the status bar, the input bar or the Changes panel | Branches (`b:`)              |
 | ⌃⌘R (**View ▸ Run Project Action…**)                                                                                    | Project actions (`a:`)       |
-| ⌃R in the input bar, the input bar's history button, or **Command History...** in a terminal's context menu             | Command history (`h:`)       |
+| ⌃R in the input bar, the input bar's history button, or **Command History…** in a terminal's context menu               | Command history (`h:`)       |
 | **Git ▸ Check Out Pull Request as Task…**                                                                               | Pull requests (`pr:`)        |
 
-Some palette commands also just open the palette in another mode: **Quick Open File** (files), **Switch Tab…** (`t:`), **Search Text in Project…** (`%`), **Search Command History…** (`h:`), **Find a Setting…** (`set:`), **Go to Symbol in File…** (`@`), **Go to Symbol in Project…** (`#`) and **Run Project Action…** (`a:`).
+Some palette commands also just open the palette in another mode: **Go to File…** (files), **Switch Tab…** (`t:`), **Search Text in Project…** (`%`), **Command History…** (`h:`), **Find a Setting…** (`set:`), **Go to Symbol in File…** (`@`), **Go to Symbol in Project…** (`#`) and **Run Project Action…** (`a:`).
 
 Whichever way you open it, you can change modes by editing the prefix: delete the `>` to search files, or type `b:` in its place to switch branches.
 
@@ -72,7 +73,7 @@ With no prefix, the palette finds files in the project by name. The project is t
 
 In a git repository the list is what git knows about: tracked files plus untracked files that aren't ignored, so `.impulse/project.toml` is there but an ignored `.env` and `node_modules` aren't. Outside a repository Impulse walks the folder, skipping dot files. When you open the palette, Impulse rebuilds the list if the folder changed or the list is more than 20 seconds old; "Indexing files…" shows while it loads.
 
-To start in this mode, open the palette and delete the `>`, or run **Quick Open File**. ⌘P (**View ▸ Go to File…**) opens the sidebar's [Search panel](workspaces-and-tabs.md#search-panel) instead, which matches file names and file contents.
+⌘P (**View ▸ Go to File…**) opens the palette in this mode; you can also open the palette and delete the `>`. To search file contents, use [`%`](#text-in-files-) or the sidebar's [Search panel](workspaces-and-tabs.md#search-panel).
 
 ## Commands (`>`)
 

@@ -67,15 +67,16 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.presentBranchManager() },
       AppCommand(
         id: "pull_request", title: "Open or Create Pull Request", category: "Git",
-        keywords: ["github", "gh", "pr", "review"], icon: .gitPullRequest
+        keywords: ["github", "gh", "pr", "review"], icon: .gitPullRequest, keybindingId: "pull_request"
       ) { [weak controller] in controller?.openOrCreatePullRequest() },
       AppCommand(
         id: "create_draft_pr", title: "Create Draft Pull Request", category: "Git",
-        keywords: ["github", "gh", "pr", "draft"], icon: .gitPullRequest
+        keywords: ["github", "gh", "pr", "draft"], icon: .gitPullRequest, keybindingId: "create_draft_pr"
       ) { [weak controller] in controller?.createDraftPullRequest() },
       AppCommand(
         id: "checkout_pr", title: "Check Out Pull Request as Task…", category: "Git",
-        keywords: ["github", "gh", "pr", "review", "worktree"], icon: .gitPullRequest
+        keywords: ["github", "gh", "pr", "review", "worktree"], icon: .gitPullRequest,
+        keybindingId: "checkout_pr"
       ) { [weak controller] in controller?.showPalette(prefix: "pr:") },
       AppCommand(
         id: "git_fetch", title: "Fetch", category: "Git",
@@ -83,7 +84,8 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.repositoryActions()?.fetch() },
       AppCommand(
         id: "git_fetch_all", title: "Fetch All Remotes", category: "Git",
-        keywords: ["git", "remote", "update", "sync", "upstream"], icon: .refreshCw
+        keywords: ["git", "remote", "update", "sync", "upstream"], icon: .refreshCw,
+        keybindingId: "git_fetch_all"
       ) { [weak controller] in controller?.repositoryActions()?.fetch(allRemotes: true) },
       AppCommand(
         id: "git_pull", title: "Pull", category: "Git",
@@ -91,7 +93,7 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.repositoryActions()?.pull() },
       AppCommand(
         id: "git_pull_rebase", title: "Pull (Rebase)", category: "Git",
-        keywords: ["git", "update", "sync", "rebase"], icon: .arrowDown
+        keywords: ["git", "update", "sync", "rebase"], icon: .arrowDown, keybindingId: "git_pull_rebase"
       ) { [weak controller] in controller?.repositoryActions()?.pull(mode: .rebase) },
       AppCommand(
         id: "git_push", title: "Push", category: "Git",
@@ -99,7 +101,8 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.repositoryActions()?.push() },
       AppCommand(
         id: "git_force_push", title: "Force Push (With Lease)…", category: "Git",
-        keywords: ["git", "overwrite", "rebase", "force-with-lease"], icon: .arrowUp
+        keywords: ["git", "overwrite", "rebase", "force-with-lease"], icon: .arrowUp,
+        keybindingId: "git_force_push"
       ) { [weak controller] in controller?.repositoryActions()?.forcePush() },
       AppCommand(
         id: "git_create_tag", title: "Create Tag…", category: "Git",
@@ -107,27 +110,29 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.createTagAtHead() },
       AppCommand(
         id: "git_push_tags", title: "Push All Tags", category: "Git",
-        keywords: ["git", "release", "version", "upload"], icon: .tag
+        keywords: ["git", "release", "version", "upload"], icon: .tag, keybindingId: "git_push_tags"
       ) { [weak controller] in controller?.repositoryActions()?.pushAllTags() },
       AppCommand(
         id: "git_stash", title: "Stash All Changes", category: "Git",
-        keywords: ["git", "save", "shelve", "wip"], icon: .archive
+        keywords: ["git", "save", "shelve", "wip"], icon: .archive, keybindingId: "git_stash"
       ) { [weak controller] in controller?.repositoryActions()?.stashAll() },
       AppCommand(
         id: "git_pop_stash", title: "Pop Latest Stash", category: "Git",
-        keywords: ["git", "restore", "unshelve", "apply"], icon: .archive
+        keywords: ["git", "restore", "unshelve", "apply"], icon: .archive, keybindingId: "git_pop_stash"
       ) { [weak controller] in controller?.popLatestStash() },
       AppCommand(
         id: "git_undo_commit", title: "Undo Last Commit", category: "Git",
-        keywords: ["git", "uncommit", "reset", "soft"], icon: .undo2
+        keywords: ["git", "uncommit", "reset", "soft"], icon: .undo2, keybindingId: "git_undo_commit"
       ) { [weak controller] in controller?.repositoryActions()?.undoLastCommit() },
       AppCommand(
         id: "git_open_remote", title: "Open Repository in Browser", category: "Git",
-        keywords: ["git", "github", "gitlab", "bitbucket", "web", "remote"], icon: .externalLink
+        keywords: ["git", "github", "gitlab", "bitbucket", "web", "remote"], icon: .externalLink,
+        keybindingId: "git_open_remote"
       ) { [weak controller] in controller?.repositoryActions()?.openOnRemote(.repository) },
       AppCommand(
         id: "git_open_branch_remote", title: "Open Branch in Browser", category: "Git",
-        keywords: ["git", "github", "gitlab", "web", "remote", "compare"], icon: .externalLink
+        keywords: ["git", "github", "gitlab", "web", "remote", "compare"], icon: .externalLink,
+        keybindingId: "git_open_branch_remote"
       ) { [weak controller] in
         guard let actions = controller?.repositoryActions() else { return }
         guard let branch = actions.repository.snapshot?.branch else {
@@ -152,7 +157,7 @@ enum CommandRegistry {
         keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus, keybindingId: "new_task"
       ) { [weak controller] in controller?.presentNewTaskSheet() },
       AppCommand(
-        id: "archive_task", title: "Archive This Task…", category: "Workspaces",
+        id: "archive_task", title: "Archive Task…", category: "Workspaces",
         keywords: ["worktree", "remove", "done"], icon: .archive
       ) { [weak controller] in
         guard let controller else { return }
@@ -173,11 +178,11 @@ enum CommandRegistry {
         keybindingId: "agent_composer"
       ) { [weak controller] in controller?.toggleAgentComposer() },
       AppCommand(
-        id: "next_agent", title: "Go to Next Agent Needing You", category: "Agents",
+        id: "next_agent", title: "Next Agent Needing You", category: "Agents",
         keywords: ["claude", "codex", "inbox", "waiting"], icon: .bot, keybindingId: "next_agent"
       ) { [weak controller] in controller?.revealNextWaitingAgent() },
       AppCommand(
-        id: "command_history", title: "Search Command History…", category: "Terminal",
+        id: "command_history", title: "Command History…", category: "Terminal",
         keywords: ["history", "recent", "ctrl-r"], icon: .history
       ) { [weak controller] in controller?.showPalette(prefix: "h:") },
       AppCommand(
@@ -228,7 +233,7 @@ enum CommandRegistry {
         keywords: ["dropdown", "hotkey", "quake", "global"], icon: .squareTerminal
       ) { QuickTerminal.shared.toggle() },
       AppCommand(
-        id: "open_keybindings", title: "Keyboard Shortcuts", category: "Impulse",
+        id: "open_keybindings", title: "Keyboard Shortcuts…", category: "Impulse",
         keywords: ["keybindings", "shortcuts", "keys", "hotkeys"], icon: .keyboard,
         keybindingId: "open_keybindings"
       ) { [weak controller] in controller?.openKeybindings() },
@@ -241,17 +246,11 @@ enum CommandRegistry {
         keywords: ["preferences", "search"], icon: .settings
       ) { [weak controller] in controller?.showPalette(prefix: "set:") },
       AppCommand(
-        id: "terminal_hints", title: "Show Terminal Hints", category: "Terminal",
+        id: "terminal_hints", title: "Show Hints", category: "Terminal",
         keywords: ["link", "url", "path", "sha", "port", "open", "copy"], icon: .keyboard,
         keybindingId: "terminal_hints"
       ) { [weak controller] in
         controller?.tabManager.selectedTerminal?.activeTerminal?.performBlockCommand("terminal_hints")
-      },
-      AppCommand(
-        id: "select_blocks", title: "Select Command Blocks", category: "Terminal",
-        keywords: ["block", "copy", "output"], icon: .squareTerminal, shortcut: "⌘↑"
-      ) { [weak controller] in
-        _ = controller?.tabManager.selectedTerminal?.activeTerminal?.beginBlockSelection()
       },
       AppCommand(
         id: "import_shell_history", title: "Import Shell History", category: "Terminal",
@@ -299,6 +298,10 @@ enum CommandRegistry {
       ("focus_pane_down", "Focus Pane Below", ["pane", "move"], .chevronDown),
       ("next_pane", "Next Pane", ["pane", "cycle"], .chevronRight),
       ("prev_pane", "Previous Pane", ["pane", "cycle"], .chevronLeft),
+      ("resize_pane_left", "Grow Pane Left", ["pane", "resize", "wider"], .chevronLeft),
+      ("resize_pane_right", "Grow Pane Right", ["pane", "resize", "wider"], .chevronRight),
+      ("resize_pane_up", "Grow Pane Up", ["pane", "resize", "taller"], .chevronUp),
+      ("resize_pane_down", "Grow Pane Down", ["pane", "resize", "taller"], .chevronDown),
       ("zoom_pane", "Zoom Pane", ["pane", "maximize", "fullscreen"], .maximize2),
       ("equalize_panes", "Even Out Panes", ["pane", "equalize", "balance"], .columns2),
       ("move_pane_to_tab", "Move Pane to New Tab", ["pane", "pop out", "detach"], .externalLink),
@@ -310,6 +313,27 @@ enum CommandRegistry {
           id: id, title: command.title, category: "Panes", keywords: command.keywords,
           icon: command.icon, keybindingId: id
         ) { [weak controller] in controller?.performPaneCommand(id) })
+    }
+
+    // View ▸ Command Blocks (Show Hints is above), on the focused terminal.
+    let blockCommands: [(id: String, title: String, keywords: [String], icon: LucideIcon)] = [
+      ("select_blocks", "Select Blocks", ["block", "copy", "output"], .squareTerminal),
+      ("previous_block", "Previous Block", ["block", "command", "scroll"], .chevronUp),
+      ("next_block", "Next Block", ["block", "command", "scroll"], .chevronDown),
+      ("last_failed_block", "Last Failed Block", ["block", "error", "exit"], .triangleAlert),
+      ("toggle_block_bookmark", "Bookmark Block", ["block", "mark", "pin"], .bookmark),
+      ("previous_block_bookmark", "Previous Bookmark", ["block", "mark"], .chevronUp),
+      ("next_block_bookmark", "Next Bookmark", ["block", "mark"], .chevronDown),
+    ]
+    for command in blockCommands {
+      let id = command.id
+      result.append(
+        AppCommand(
+          id: id, title: command.title, category: "Terminal", keywords: command.keywords,
+          icon: command.icon, keybindingId: id
+        ) { [weak controller] in
+          controller?.tabManager.selectedTerminal?.activeTerminal?.performBlockCommand(id)
+        })
     }
 
     if AppState.isDev {
