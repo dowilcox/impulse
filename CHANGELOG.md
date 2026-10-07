@@ -2,6 +2,80 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.31.0
+
+**Documentation.** `docs/` now explains every part of Impulse, with
+screenshots: getting started, workspaces and tabs, tasks, the terminal,
+agents, git, review, history, the editor, the command palette, project
+configuration, the `impulse` CLI, settings and themes, keyboard shortcuts
+and accessibility. Help ▸ Impulse Help opens it. The screenshots are
+generated from a mock project by `scripts/docs/capture.py`.
+
+### Workbench
+
+- ⌘P (**Go to File…**) opens the palette's file mode from the menu and the palette alike.
+- New setting `sidebar_tabs` lists the active workspace's tabs in the sidebar instead of the titlebar. It replaces `tab_bar_position`, which did nothing.
+- The sidebar is shown and the previous session restored by default (`sidebar_visible`, `restore_session`).
+- The workspaces section resizes by dragging the hairline under it; double-click goes back to fitting the rows.
+- Workspaces can be reordered with **Move Up** / **Move Down** in a row's context menu, and the order (Scratch included) comes back with the session.
+- Closing a workspace is one undoable step: Undo, ⌘Z or ⇧⌘T reopen it with its tabs. Each "Closed …" notice's Undo reopens its own item.
+- Every command has one name in the menus, the palette and Keyboard Shortcuts, and the Git menu commands, Select Blocks and Last Failed Block can be given shortcuts.
+- Shortcut hints use the Mac order (⇧⌘P) and menu titles use "…" throughout.
+- The New Task, Branches and Agent Hooks sheets fit their content and use the theme's colors.
+
+### Terminal
+
+- Clicking into a terminal, or its input bar, clears its attention mark.
+- Typing in the terminal at a prompt goes to the input bar instead of the shell's hidden line.
+- While a command runs, the input bar sends what you type as is, and Return on its own answers "press Enter" prompts.
+- ⌃C and other control keys reach a running program even right after selecting command blocks.
+- → at the end of the line accepts the whole suggestion; ⌥→ accepts one word.
+- zsh: history goes to your own `.zsh_history` again (it was written to a temporary file and lost when the tab closed), and a `ZDOTDIR` set in `.zshenv` no longer turns off shell integration.
+- The input bar follows the terminal font size, and a program's OSC 21337 status color shows on its tab.
+
+### Editor
+
+- Tab width and indentation from Settings ▸ Automation ▸ File types now apply.
+- Commands and formatters on save run with your login shell's `PATH`, accept a `{file}` placeholder, and report failures; quitting waits for them.
+- Save & Close and Save when quitting run the whole save (formatter, commands on save, language servers).
+- Impulse's shortcuts, such as ⌘D and ⌘G, work while the editor has focus.
+- Vim mode understands `:w`, `:q`, `:wq` and `:x`.
+- A project's `.impulse/lsp.json` applies to that project and reloads without a restart.
+- Vue and Svelte files are highlighted, `.fish` files aren't sent to the bash language server, and `sourcekit-lsp` is listed among the system servers.
+- Replace All in the project covers every match, not only the first 500.
+- The change peek's Stage saves the file first, as its tooltip says.
+
+### Git, Review and History
+
+- Review can show more or less context: the `review_context_lines` setting and a Context menu in the header (changed lines only up to the whole file).
+- Agent turns survive a relaunch: Review Last Agent Turn and Review's "Last agent turn" still work.
+- Cherry-Pick, Revert, Keep Current and Take Incoming can be undone.
+- Manage Branches ▸ Show History shows that branch.
+- Review's comment count, Send and Copy cover the files on screen; Delete All Comments in Repository says how many are elsewhere.
+- Folder history lists every commit under the folder.
+- Publishing a branch and pushing tags use the branch's remote, named in the menus.
+- ⌘↩ and ⇧⌘↩ commit (and push) from the commit message field.
+- Old safety snapshots under `refs/impulse/oplog/` are pruned (two weeks, newest 200).
+- The diff font follows the editor's font size.
+
+### Tasks and agents
+
+- New Task… started from a task's row branches from the main checkout and puts the folder beside it.
+- Check Out Pull Request as Task… copies the same files as New Task… and asks before running the pull request's setup script.
+- Archive Task… warns about ignored files it will delete, and its Undo lasts 15 seconds.
+- Codex hooks can be removed from the Agent Hooks sheet, and project hooks (`.claude/settings.local.json`) are copied into new tasks.
+- A finished agent shows a check mark, so it's told apart from one that needs input without relying on color.
+- `impulse status` messages show in the agent list and toolbelt, `impulse split` no longer refuses to run, and the CLI rejects unknown options.
+- Forget Trusted Folders and Restrict This Folder also forget trust in `.impulse/project.toml`.
+
+### Settings and themes
+
+- Run in Terminal shortcuts run the command line as typed (pipes, `&&`) in the focused terminal.
+- Editing `color_scheme` in `settings.json` applies at once, user theme files with capital letters load, a theme file with a mistake says what's wrong, and the Theme menu shows each theme's name.
+- Font zoom (⌘= / ⌘- / ⌘0) applies to every window.
+- Keyboard Shortcuts warns about clashes with fixed shortcuts and explains why a key can't be used.
+- Out-of-range numbers in `settings.json` are clamped the same way the Settings tab limits them.
+
 ## 0.30.0
 
 **Impulse is now a native Mac app.** It was rewritten in Swift (AppKit +
