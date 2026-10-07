@@ -75,7 +75,7 @@ Impulse's window doesn't use translucent materials, so **Reduce transparency** h
 | Terminal only                | **Settings › Terminal › Font size** (`terminal_font_size`).                                                                                                    |
 | Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your Mac.                                                      |
 
-The terminal's input bar follows the terminal's font size (a point smaller) and zoom. Some text doesn't follow these settings: the window's sidebar, tabs and panels use fixed sizes, the composer uses 13-point text, and the Review and History diffs use the editor's font family at a fixed 12 points.
+The terminal's input bar follows the terminal's font size (a point smaller) and zoom, and the Review and History diffs follow the editor's font family and size (slightly smaller: 12 points at the default 14). Some text doesn't follow these settings: the window's sidebar, tabs and panels use fixed sizes, and the composer uses 13-point text.
 
 ### Contrast in the terminal
 

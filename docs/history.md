@@ -13,7 +13,7 @@ History shows a repository's commits as a graph, with the selected commit's mess
 | File tree      | Right-click a file or folder ▸ **Show History**                                  | That file's or folder's history                                                            |
 | Editor         | Click a line's inline blame, or right-click ▸ **Show Commit for This Line**      | The commit that last changed that line, selected (see [Editor](editor.md))                 |
 | Terminal       | Pick a commit hash with terminal hints (⇧⌘Space)                                 | That commit, selected (see [Terminal](terminal.md))                                        |
-| Branch Manager | **⋯ ▸ Show History**                                                             | The repository's history                                                                   |
+| Branch Manager | **⋯ ▸ Show History**                                                             | That branch's history                                                                      |
 
 The tab is titled "History · trailhead", or "History · cache.ts" for one file. Each repository has one History tab, plus one per file or folder whose history you open; opening the same one again brings its tab forward and reloads it. History tabs are restored with your session.
 
@@ -33,9 +33,11 @@ The header's **Current branch** / **All branches** switch decides which commits 
 - **Current branch** shows the history of `HEAD`: the commits your checked-out branch is built on.
 - **All branches** shows every local branch, remote branch and tag, so you can see how `feature/forecast-cache`, `main` and `origin/main` relate. (Impulse's own refs under `refs/impulse/` are never included.)
 
+Opened from the Branch Manager's **Show History** on another branch, History lists that branch's commits, and the switch gets a third choice named after the branch. Click **Current branch** or **All branches** to leave it.
+
 ![History with All branches selected: two lanes in the graph; origin/main and origin/HEAD as remote chips; main, fix-elevation and add-trail-photos on one commit; feature/forecast-cache two commits ahead of origin/feature/forecast-cache; and the v0.2.0 tag](images/history-all-branches.png)
 
-For a file or folder's history, the header shows its path instead of the switch, and the list is that path's commits on the current branch. A single file's history follows it through renames.
+For a file or folder's history, the header shows its path instead of the switch, and the list is that path's commits on the current branch. A single file's history follows it through renames; a folder's lists every commit that touched anything in it.
 
 ## The commit list
 
@@ -157,7 +159,7 @@ Right-click a ref chip on a commit for its actions (the same ones are in the com
 | Remote branch          | **Check Out trail-search** (creates a local branch tracking it), **Merge into main**, **Rebase main onto origin/trail-search**, **Copy Name** |
 | Tag                    | **Push to origin**, **Open on GitHub**, **Merge into main**, **Copy Name**, **Delete Tag**, **Delete from origin…**                           |
 
-**Push to origin** and **Delete from origin…** appear when the repository has a remote, and use `origin` if there is one. **Open on GitHub** appears when the remote has a web address. Deleting a branch or a local tag can be undone from the toast; deleting a tag from the remote asks first and can't be undone there. See [Git](git.md#pushing-and-deleting-tags).
+**Push to origin** and **Delete from origin…** appear when the repository has a remote, and name the remote they use: the current branch's remote, else `origin`, else the only one. **Open on GitHub** appears when the remote has a web address. Deleting a branch or a local tag can be undone from the toast; deleting a tag from the remote asks first and can't be undone there. See [Git](git.md#pushing-and-deleting-tags).
 
 ### Merge and rebase
 
@@ -177,7 +179,7 @@ Every reset records a safety snapshot (a hard reset doesn't run without one), an
 
 ### Cherry-pick and revert
 
-Cherry-Pick and Revert each make a new commit on the current branch. If the change doesn't apply cleanly, git stops with conflicts and the Changes panel's banner offers **Continue**, **Skip** and **Abort** (see [Merge conflicts](git.md#merge-conflicts)). A safety snapshot is taken first, but there's no Undo button; to take the new commit back, use **Git ▸ Undo Last Commit** and discard its changes, or revert it.
+Cherry-Pick and Revert each make a new commit on the current branch. If the change doesn't apply cleanly, git stops with conflicts and the Changes panel's banner offers **Continue**, **Skip** and **Abort** (see [Merge conflicts](git.md#merge-conflicts)). A safety snapshot is taken first, and the toast ("Cherry-picked 4e1b9c2", "Reverted 4e1b9c2") offers **Undo** for about 15 seconds, which takes the new commit back off and puts your files back as they were.
 
 ## Tags in History
 

@@ -152,15 +152,22 @@ public enum PatchBuilder {
       // position, shifted by the emitted hunks being undone — never from
       // the old position, which is off by every unselected earlier hunk and
       // can land the change in an identical block elsewhere.
+      // A hunk with nothing to match (a zero-context insertion, or reverting
+      // a zero-context deletion) goes exactly there, and an empty range's
+      // start names the line before it: insert after that line.
       let oldStart: Int
       let newStart: Int
       if reverse {
         newStart = hunk.newStart
-        oldStart = oldCount == 0 ? max(hunk.newStart - 1 + offset, 0) : hunk.newStart + offset
+        if newCount == 0 {
+          oldStart = hunk.newStart + 1 + offset
+        } else {
+          oldStart = oldCount == 0 ? max(hunk.newStart - 1 + offset, 0) : hunk.newStart + offset
+        }
         offset += oldCount - newCount
       } else {
         oldStart = hunk.oldStart
-        newStart = oldCount == 0 && hunk.oldStart == 0 ? max(hunk.newStart, 1) : oldStart + offset
+        newStart = oldCount == 0 ? hunk.oldStart + 1 + offset : oldStart + offset
         offset += newCount - oldCount
       }
       output.append(

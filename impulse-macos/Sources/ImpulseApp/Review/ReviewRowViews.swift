@@ -20,8 +20,8 @@ enum ReviewRowContent {
       content = AnyView(
         ReviewHunkHeaderRow(
           path: path, hunk: hunk, header: diff.hunks[hunk].header, selectedLines: selected,
-          capabilities: context.capabilities, focused: context.isFocused(path, hunk: hunk), busy: file.busy,
-          handler: context.handler))
+          capabilities: context.capabilities, truncated: diff.truncated,
+          focused: context.isFocused(path, hunk: hunk), busy: file.busy, handler: context.handler))
     case .notice(_, let notice):
       content = AnyView(ReviewNoticeRow(notice: notice))
     case .outdatedTitle:
@@ -192,12 +192,15 @@ struct ReviewHunkHeaderRow: View {
   let header: String
   let selectedLines: Int
   let capabilities: ReviewCapabilities
+  /// The file's diff was cut short: only whole-file actions apply.
+  let truncated: Bool
   let focused: Bool
   let busy: Bool
   weak var handler: ReviewDiffHandler?
 
   var body: some View {
     let what = selectedLines > 0 ? "\(selectedLines) line\(selectedLines == 1 ? "" : "s")" : "hunk"
+    let capabilities = truncated ? ReviewCapabilities(stage: false, unstage: false, revert: false) : self.capabilities
     HStack(spacing: 6) {
       Text(header)
         .font(ChromeFont.mono(11))
@@ -205,18 +208,24 @@ struct ReviewHunkHeaderRow: View {
         .lineLimit(1)
         .truncationMode(.tail)
         .frame(maxWidth: .infinity, alignment: .leading)
+      if truncated, self.capabilities.stage || self.capabilities.unstage || self.capabilities.revert {
+        Text("Whole file only")
+          .font(ChromeFont.ui(11))
+          .foregroundStyle(chrome.textTertiary)
+          .help(GitOperations.truncatedDiffMessage)
+      }
       if capabilities.stage {
         ReviewActionButton(title: "Stage \(what)", kind: .primary, help: "Stage (s / ⌘Y)") {
           handler?.reviewHunkAction(.stage, path: path, hunk: hunk)
         }
       }
       if capabilities.unstage {
-        ReviewActionButton(title: "Unstage \(what)", kind: .primary, help: "Unstage (u / ⌘⇧Y)") {
+        ReviewActionButton(title: "Unstage \(what)", kind: .primary, help: "Unstage (u / ⇧⌘Y)") {
           handler?.reviewHunkAction(.unstage, path: path, hunk: hunk)
         }
       }
       if capabilities.revert {
-        ReviewActionButton(title: "Revert \(what)", kind: .danger, help: "Revert in the working tree (x / ⌘⌥Z)") {
+        ReviewActionButton(title: "Revert \(what)", kind: .danger, help: "Revert in the working tree (x / ⌥⌘Z)") {
           handler?.reviewHunkAction(.revert, path: path, hunk: hunk)
         }
       }

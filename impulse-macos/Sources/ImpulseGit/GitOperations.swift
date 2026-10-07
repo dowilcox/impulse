@@ -40,13 +40,19 @@ public enum PatchTarget: Sendable {
 
   var sourceScope: DiffScope { self == .unstage ? .staged : .unstaged }
   var reverse: Bool { self != .stage }
-  var applyArguments: [String] {
+  /// `contextLines` is the context the patch was built with: without any,
+  /// `git apply` needs `--unidiff-zero` or it takes every hunk to sit at the
+  /// start or end of the file.
+  func applyArguments(contextLines: Int) -> [String] {
+    var arguments: [String]
     switch self {
-    case .stage: return ["apply", "--cached", "--recount", "--whitespace=nowarn", "-"]
-    case .unstage:
-      return ["apply", "--cached", "--reverse", "--recount", "--whitespace=nowarn", "-"]
-    case .discard: return ["apply", "--reverse", "--recount", "--whitespace=nowarn", "-"]
+    case .stage: arguments = ["apply", "--cached"]
+    case .unstage: arguments = ["apply", "--cached", "--reverse"]
+    case .discard: arguments = ["apply", "--reverse"]
     }
+    arguments += ["--recount", "--whitespace=nowarn"]
+    if contextLines <= 0 { arguments.append("--unidiff-zero") }
+    return arguments + ["-"]
   }
 }
 
@@ -121,6 +127,11 @@ public enum GitOperations {
 
   // MARK: - Hunk / line selections
 
+  /// Why a file whose diff was cut short (`FileDiff.truncated`) can't be
+  /// acted on by hunk or line.
+  public static let truncatedDiffMessage =
+    "This file's diff is too long to show in full, so its hunks and lines can't be staged, unstaged or reverted on their own. Use the whole file instead."
+
   /// Stage, unstage or discard a selection of hunks/lines of one file.
   ///
   /// `expectedHunkIds` (hunk index → id from the `FileDiff` the user saw)
@@ -135,6 +146,9 @@ public enum GitOperations {
         let current = try? GitClient.fileDiff(
           repoPath: root, path: path, oldPath: oldPath, scope: scope, options: options)
       else { return .failure(.stale("The file's diff couldn't be read. Refresh and try again.")) }
+      // A diff cut short ends partway through a hunk (with the whole file
+      // as context, its only one): the hunk would carry changes nobody saw.
+      if current.truncated { return .failure(.invalid(truncatedDiffMessage)) }
       for (index, id) in expectedHunkIds {
         guard current.hunkIds.indices.contains(index), current.hunkIds[index] == id else {
           return .failure(.stale("The file changed since it was shown. Refresh and try again."))
@@ -153,7 +167,8 @@ public enum GitOperations {
     } catch {
       return .failure(.invalid("\(error)"))
     }
-    return void(git(target.applyArguments, in: root, stdin: Data(patch.utf8)))
+    return void(
+      git(target.applyArguments(contextLines: options.contextLines), in: root, stdin: Data(patch.utf8)))
   }
 
   // MARK: - Commit
@@ -494,20 +509,44 @@ public enum GitOperations {
     return name.isEmpty ? nil : name
   }
 
-  /// The remote to push tags to and browse: the current branch's remote,
-  /// else `origin`, else the first one.
-  public static func defaultRemote(root: String) -> String? {
+  /// The remote a branch publishes to, and tags are pushed to and browsed
+  /// on: `branch`'s configured remote (the checked-out branch's when nil),
+  /// else `origin`, else the first one. Nil without remotes.
+  public static func defaultRemote(root: String, branch: String? = nil) -> String? {
     let remotes = remotes(root: root)
-    if case .success(let head) = git(["symbolic-ref", "--quiet", "--short", "HEAD"], in: root),
-      case .success(let config) = git(
-        ["config", "--get", "branch.\(head.stdout.trimmingCharacters(in: .whitespacesAndNewlines)).remote"],
-        in: root),
+    if let name = branch ?? currentBranch(root: root),
+      case .success(let config) = git(["config", "--get", "branch.\(name).remote"], in: root),
       case let remote = config.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
       remotes.contains(remote)
     {
       return remote
     }
     return remotes.contains("origin") ? "origin" : remotes.first
+  }
+
+  /// `defaultRemote` for each of `branches`, from two git processes however
+  /// many branches there are. Empty without remotes.
+  public static func defaultRemotes(root: String, branches: [String]) -> [String: String] {
+    let remotes = remotes(root: root)
+    guard !branches.isEmpty, let fallback = remotes.contains("origin") ? "origin" : remotes.first else {
+      return [:]
+    }
+    // "branch.<name>.remote\n<remote>\0" (names may contain dots); no
+    // match at all is exit status 1.
+    var configured: [String: String] = [:]
+    if case .success(let result) = git(["config", "-z", "--get-regexp", #"^branch\..*\.remote$"#], in: root) {
+      for entry in result.stdout.split(separator: "\0") {
+        let parts = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[0].hasPrefix("branch."), parts[0].hasSuffix(".remote") else { continue }
+        configured[String(parts[0].dropFirst(7).dropLast(7))] = String(parts[1])
+      }
+    }
+    var result: [String: String] = [:]
+    for branch in branches {
+      let remote = configured[branch]
+      result[branch] = remote.flatMap { remotes.contains($0) ? $0 : nil } ?? fallback
+    }
+    return result
   }
 
   /// The URL `remote` fetches from.
@@ -657,6 +696,48 @@ public enum GitOperations {
       return .failure(error)
     }
     return void(git(literal(["add", "--"] + paths), in: root))
+  }
+
+  /// Where conflicts were resolved: HEAD and the operation in progress.
+  public struct ConflictPoint: Equatable, Sendable {
+    public let head: String?
+    public let operation: RepoOperation?
+  }
+
+  /// Record before `resolveConflicts`, for `reopenConflicts`.
+  public static func conflictPoint(root: String) -> ConflictPoint {
+    ConflictPoint(
+      head: GitClient.resolveCommit(repoPath: root, revision: "HEAD"),
+      operation: GitClient.currentOperation(repoPath: root))
+  }
+
+  /// Put resolved files back in conflict, markers and all (`git checkout
+  /// -m`, from the index's record of the resolved conflict): the undo of
+  /// `resolveConflicts`. Refused once the operation has moved on from
+  /// `point` (committed, continued, skipped or aborted): git keeps that
+  /// record past the commit, and the conflict would come back into an index
+  /// with no operation left to finish.
+  public static func reopenConflicts(_ paths: [String], at point: ConflictPoint, root: String) -> GitResult {
+    guard !paths.isEmpty else { return .success(()) }
+    let now = conflictPoint(root: root)
+    if now != point {
+      let name: String
+      switch point.operation {
+      case .merge: name = "merge"
+      case .rebase: name = "rebase"
+      case .cherryPick: name = "cherry-pick"
+      case .revert: name = "revert"
+      case .bisect: name = "bisect"
+      case .applyMailbox: name = "patch series"
+      case nil:
+        return .failure(.stale("The repository has moved on since the conflict was resolved, so it can't be put back."))
+      }
+      if now.operation == nil {
+        return .failure(.stale("The \(name) is no longer in progress, so the conflict can't be put back."))
+      }
+      return .failure(.stale("The \(name) has moved on since the conflict was resolved, so it can't be put back."))
+    }
+    return void(git(literal(["checkout", "-m", "--"] + paths), in: root))
   }
 
   /// `keep` moves HEAD and updates files the move changes, but stops rather

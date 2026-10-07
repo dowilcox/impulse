@@ -130,6 +130,14 @@ extension GitClient {
 
   // MARK: - Operation state
 
+  /// The operation in progress in the repository containing `repoPath`
+  /// (nil when there is none or no repository).
+  public static func currentOperation(repoPath: String) -> RepoOperation? {
+    guard let repo = try? openRepo(at: repoPath) else { return nil }
+    let gitDir = trimTrailingSlash(String(cString: git_repository_path(repo.raw)))
+    return readOperation(repo: repo, gitDir: gitDir)
+  }
+
   static func readOperation(repo: GitRepo, gitDir: String) -> RepoOperation? {
     let state = git_repository_state(repo.raw)
     func readInt(_ relative: String) -> Int? {

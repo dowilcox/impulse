@@ -373,16 +373,18 @@ struct GitActions {
     pull(mode: rebase ? .rebase : .fastForwardOnly)
   }
 
-  /// Push; publishes the branch to the first remote when it has no upstream.
-  /// `then` runs after a successful push.
+  /// Push; publishes the branch when it has no upstream (to its remote, else
+  /// origin, else the first: `GitOperations.defaultRemote`). `then` runs
+  /// after a successful push.
   func push(forceWithLease: Bool = false, then: (() -> Void)? = nil) {
     let repository = self.repository
     let snapshot = repository.snapshot
     let needsUpstream = snapshot?.upstream == nil
     let branch = snapshot?.branch
     let followTags = SettingsStore.shared.settings.gitPushFollowTags
+    var remote = "origin"
     repository.run(needsUpstream ? "Publishing…" : forceWithLease ? "Force pushing…" : "Pushing…") { root in
-      let remote = GitOperations.defaultRemote(root: root) ?? "origin"
+      remote = GitOperations.defaultRemote(root: root, branch: branch) ?? "origin"
       return GitOperations.push(
         setUpstream: needsUpstream, remote: remote, branch: branch,
         forceWithLease: forceWithLease, followTags: followTags, root: root
@@ -393,7 +395,8 @@ struct GitActions {
         host?.toasts.show(
           Toast(
             kind: .success,
-            message: needsUpstream ? "Published \(branch ?? "branch")" : forceWithLease ? "Force pushed" : "Pushed"))
+            message: needsUpstream
+              ? "Published \(branch ?? "branch") to \(remote)" : forceWithLease ? "Force pushed" : "Pushed"))
         then?()
       case .failure(let error):
         host?.gitPresentError(error, title: needsUpstream ? "Couldn't publish" : "Couldn't push")
@@ -795,20 +798,42 @@ struct GitActions {
     }
   }
 
-  /// Take one side of every conflict in these files (snapshot first).
+  /// Take one side of every conflict in these files (snapshot first). Undo
+  /// puts the files back in conflict, with any edits made to them before.
   func resolve(_ changes: [FileChange], takeOurs: Bool) {
     let paths = changes.map(\.path)
+    var point: GitOperations.ConflictPoint?
     repository.run(
       takeOurs ? "Keeping current…" : "Taking incoming…",
       snapshotReason: takeOurs ? "keep current side" : "take incoming side", requireSnapshot: true
-    ) {
-      GitOperations.resolveConflicts(paths, takeOurs: takeOurs, root: $0)
-    } completion: { [repository] result, _ in
+    ) { root in
+      point = GitOperations.conflictPoint(root: root)
+      return GitOperations.resolveConflicts(paths, takeOurs: takeOurs, root: root)
+    } completion: { [repository, host] result, snapshot in
       if case .failure(let error) = result {
         host?.gitPresentError(error, title: "Couldn't resolve the conflict")
-      } else {
-        GitActions.notifyEditors(root: repository.root, paths: paths)
+        return
       }
+      GitActions.notifyEditors(root: repository.root, paths: paths)
+      // Undo refuses once the merge/rebase has moved on from `point`.
+      guard let snapshot, let point else { return }
+      let names = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) files"
+      host?.toasts.show(
+        Toast(
+          kind: .success, message: takeOurs ? "Kept current in \(names)" : "Took incoming in \(names)",
+          actionTitle: "Undo",
+          action: {
+            repository.run(snapshotReason: "before undo") { root in
+              let reopened = GitOperations.reopenConflicts(paths, at: point, root: root)
+              guard case .success = reopened else { return reopened }
+              // The conflict as it was, edits included (the snapshot has no
+              // index: it can't be recorded while files are in conflict).
+              return SafetySnapshots.restore(snapshot, paths: paths, root: root)
+            } completion: { result, _ in
+              if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't undo") }
+              GitActions.notifyEditors(root: repository.root, paths: paths)
+            }
+          }, lifetime: 15))
     }
   }
 
@@ -831,20 +856,33 @@ struct GitActions {
   }
 
   /// Apply a commit on top of HEAD. Conflicts leave the operation open (the
-  /// Changes panel offers Continue / Abort).
+  /// Changes panel offers Continue / Abort); otherwise Undo takes the new
+  /// commit back off.
   func cherryPick(_ sha: String) {
-    repository.run("Cherry-picking \(sha.prefix(7))…", snapshotReason: "cherry-pick \(sha.prefix(7))") {
-      GitOperations.cherryPick(sha, root: $0)
-    } completion: { result, _ in
-      report(result, failure: "Cherry-pick stopped")
+    var before: String?
+    repository.run("Cherry-picking \(sha.prefix(7))…", snapshotReason: "cherry-pick \(sha.prefix(7))") { root in
+      before = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      return GitOperations.cherryPick(sha, root: root)
+    } completion: { result, snapshot in
+      guard case .success = result else { return report(result, failure: "Cherry-pick stopped") }
+      guard let before, headMoved(from: before) else { return }
+      offerHeadUndo(
+        "Cherry-picked \(sha.prefix(7))", previousHead: before, snapshot: snapshot,
+        failure: "Couldn't undo the cherry-pick")
     }
   }
 
+  /// A new commit undoing `sha`; Undo takes it back off.
   func revert(_ sha: String) {
-    repository.run("Reverting \(sha.prefix(7))…", snapshotReason: "revert \(sha.prefix(7))") {
-      GitOperations.revert(sha, root: $0)
-    } completion: { result, _ in
-      report(result, failure: "Revert stopped")
+    var before: String?
+    repository.run("Reverting \(sha.prefix(7))…", snapshotReason: "revert \(sha.prefix(7))") { root in
+      before = GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      return GitOperations.revert(sha, root: root)
+    } completion: { result, snapshot in
+      guard case .success = result else { return report(result, failure: "Revert stopped") }
+      guard let before, headMoved(from: before) else { return }
+      offerHeadUndo(
+        "Reverted \(sha.prefix(7))", previousHead: before, snapshot: snapshot, failure: "Couldn't undo the revert")
     }
   }
 

@@ -234,6 +234,9 @@ struct SessionSurface: Codable {
   var scrollback: String?
   /// Terminal: a command that resumes the agent that was running in it.
   var resume: String?
+  /// Terminal: its agents' recorded turns (Review's "Last agent turn", the
+  /// turns menu), by checkpoint ref.
+  var agentTurns: [AgentCheckpoints.SavedTurn]?
   /// Terminal output carried in memory (closed tabs, or loaded from
   /// `scrollback` on restore). Not written to the session file.
   var transcript: String?
@@ -244,6 +247,7 @@ struct SessionSurface: Codable {
 
   enum CodingKeys: String, CodingKey {
     case kind, path, cwd, title, shell, line, column, scrollback, resume, scope, subpath
+    case agentTurns = "agent_turns"
   }
 
   static func terminal(cwd: String, title: String?, shell: String?, transcript: String? = nil)

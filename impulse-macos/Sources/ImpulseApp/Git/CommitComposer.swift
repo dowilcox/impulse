@@ -19,6 +19,7 @@ struct CommitComposer: View {
   /// The message ↑ last put in the field.
   @State private var recalledMessage = ""
   @State private var isCommitting = false
+  @State private var commitKeys = CommitKeyMonitor()
   @FocusState private var focused: Bool
 
   private var subject: String {
@@ -53,6 +54,24 @@ struct CommitComposer: View {
             commit(thenPush: pushesByDefault != press.modifiers.contains(.shift))
             return .handled
           }
+          // ⇧⌘↩ is also View ▸ Zoom Pane, and the menu would take it before
+          // the field sees it: while the field has focus, ⌘↩ and ⇧⌘↩ are
+          // caught first.
+          .onChange(of: focused) { _, isFocused in
+            if isFocused {
+              commitKeys.start { shift in commit(thenPush: pushesByDefault != shift) }
+            } else {
+              commitKeys.stop()
+            }
+          }
+          // The monitor's action holds this view's repository: when a
+          // Scratch workspace's repository changes under the focused field,
+          // restart it so the keys commit in the new one.
+          .onChange(of: repository.root) { _, _ in
+            guard focused else { return }
+            commitKeys.start { shift in commit(thenPush: pushesByDefault != shift) }
+          }
+          .onDisappear { commitKeys.stop() }
           .onKeyPress(.upArrow) {
             guard message.isEmpty || historyIndex >= 0 else { return .ignored }
             recallHistory(step: 1)
@@ -184,4 +203,46 @@ struct CommitComposer: View {
       message = history[next]
     }
   }
+}
+
+/// Catches ⌘↩ / ⇧⌘↩ for the commit message field before menu key
+/// equivalents (⇧⌘↩ is Zoom Pane), while that field is the first responder.
+final class CommitKeyMonitor {
+  private var monitor: Any?
+  private weak var field: NSResponder?
+  /// Bumped by every start and stop, so a start that's overtaken does
+  /// nothing.
+  private var generation = 0
+
+  /// `commit(shift)` runs for ⌘↩ (false) and ⇧⌘↩ (true).
+  func start(commit: @escaping (Bool) -> Void) {
+    stop()
+    let started = generation
+    // The text view becomes first responder before SwiftUI reports focus;
+    // read it once that's settled.
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.generation == started,
+        let field = NSApp.keyWindow?.firstResponder as? NSTextView
+      else { return }
+      self.field = field
+      self.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard let field = self?.field, event.window?.firstResponder === field,
+          event.keyCode == 36 || event.keyCode == 76,  // Return, keypad Enter
+          flags == .command || flags == [.command, .shift]
+        else { return event }
+        commit(flags.contains(.shift))
+        return nil
+      }
+    }
+  }
+
+  func stop() {
+    generation += 1
+    if let monitor { NSEvent.removeMonitor(monitor) }
+    monitor = nil
+    field = nil
+  }
+
+  deinit { stop() }
 }

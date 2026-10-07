@@ -314,6 +314,9 @@ enum SettingsCatalog {
     toggle(
       "git_push_tags_on_create", "Push new tags to the remote", \.gitPushTagsOnCreate, .git, "Tags",
       detail: "Creating a tag pushes it right away. The Create Tag sheet's checkbox starts from this."),
+    integer(
+      "review_context_lines", "Context lines", \.reviewContextLines, .git, "Review", range: 0...100,
+      detail: "Unchanged lines shown around each change in Review and History. The review header's context menu shows more for one review."),
   ]
 
   private static let appearance: [SettingItem] = [

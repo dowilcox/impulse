@@ -158,5 +158,113 @@
       #expect(error.kind == .mergeConflict)
       #expect(GitClient.snapshot(forPath: repo.root)?.operation == .merge)
     }
+
+    @Test func takingASideCanBeReopened() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["m.txt": "base\n"], message: "base")
+      try repo.git("switch", "-q", "-c", "clash")
+      try repo.commit(["m.txt": "theirs\n"], message: "theirs")
+      try repo.git("switch", "-q", "main")
+      try repo.commit(["m.txt": "ours\n"], message: "ours")
+      guard case .failure = GitOperations.merge("clash", root: repo.root) else {
+        Issue.record("expected a conflict")
+        return
+      }
+      let stages = try repo.git("ls-files", "-u", "--", "m.txt")
+      // Half-resolved by hand before taking a side.
+      let edited = try repo.read("m.txt").replacingOccurrences(of: "ours\n", with: "ours, edited\n")
+      try repo.write("m.txt", edited)
+      let snapshot = try SafetySnapshots.create(reason: "take incoming side", root: repo.root).get()
+      #expect(snapshot.indexTree == nil, "no index tree while files are in conflict")
+
+      let point = GitOperations.conflictPoint(root: repo.root)
+      #expect(point.operation == .merge)
+      _ = try GitOperations.resolveConflicts(["m.txt"], takeOurs: false, root: repo.root).get()
+      #expect(try repo.read("m.txt") == "theirs\n")
+      #expect(try repo.git("ls-files", "-u").isEmpty, "resolved and staged")
+
+      // Undo: the conflict is back in the index, markers in the file.
+      _ = try GitOperations.reopenConflicts(["m.txt"], at: point, root: repo.root).get()
+      #expect(try repo.git("ls-files", "-u", "--", "m.txt") == stages)
+      #expect(try repo.read("m.txt").contains("<<<<<<<"))
+      #expect(GitClient.snapshot(forPath: repo.root)?.conflicted.map(\.path) == ["m.txt"])
+      // …and the snapshot brings back the hand edits.
+      _ = try SafetySnapshots.restore(snapshot, paths: ["m.txt"], root: repo.root).get()
+      #expect(try repo.read("m.txt") == edited)
+      #expect(try repo.git("ls-files", "-u", "--", "m.txt") == stages)
+    }
+
+    @Test func reopeningIsRefusedOnceTheOperationMovedOn() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["m.txt": "base\n", "n.txt": "base\n"], message: "base")
+      try repo.git("switch", "-q", "-c", "clash")
+      try repo.commit(["m.txt": "theirs\n"], message: "theirs m")
+      try repo.commit(["n.txt": "theirs\n"], message: "theirs n")
+      try repo.git("switch", "-q", "main")
+      try repo.commit(["m.txt": "ours\n", "n.txt": "ours\n"], message: "ours")
+      func resolve(_ paths: [String], after start: () -> GitResult) throws -> GitOperations.ConflictPoint {
+        guard case .failure = start() else { throw GitOperationError.invalid("expected a conflict") }
+        let point = GitOperations.conflictPoint(root: repo.root)
+        _ = try GitOperations.resolveConflicts(paths, takeOurs: false, root: repo.root).get()
+        return point
+      }
+      func expectRefused(_ paths: [String], at point: GitOperations.ConflictPoint, _ phrase: String) throws {
+        let result = GitOperations.reopenConflicts(paths, at: point, root: repo.root)
+        guard case .failure(.stale(let message)) = result else {
+          Issue.record("expected a refusal, got \(result)")
+          return
+        }
+        #expect(message.contains(phrase), "\(message)")
+        #expect(try repo.git(["ls-files", "-u", "--"] + paths).isEmpty, "the conflict stayed resolved")
+      }
+
+      // The merge was committed.
+      var point = try resolve(["m.txt", "n.txt"]) { GitOperations.merge("clash", root: repo.root) }
+      #expect(point.operation == .merge)
+      try repo.git("commit", "-q", "--no-edit")
+      try expectRefused(["m.txt", "n.txt"], at: point, "merge is no longer in progress")
+
+      // The merge was aborted (HEAD didn't move).
+      try repo.git("reset", "-q", "--hard", "HEAD~1")
+      point = try resolve(["m.txt", "n.txt"]) { GitOperations.merge("clash", root: repo.root) }
+      try repo.git("merge", "--abort")
+      try expectRefused(["m.txt", "n.txt"], at: point, "merge is no longer in progress")
+
+      // The rebase went on to its next step, which stopped on a conflict too.
+      try repo.git("switch", "-q", "clash")
+      point = try resolve(["m.txt"]) { GitOperations.rebase(onto: "main", root: repo.root) }
+      _ = try? repo.git("-c", "core.editor=true", "rebase", "--continue")
+      #expect(GitClient.currentOperation(repoPath: repo.root) == .rebase(step: 2, total: 2))
+      try expectRefused(["m.txt"], at: point, "rebase has moved on")
+    }
+
+    @Test func defaultRemoteFollowsTheBranch() throws {
+      let (repo, origin, seed) = try cloneWithOrigin()
+      defer { [repo, origin, seed].forEach { $0.destroy() } }
+      try repo.git("remote", "add", "fork", origin.root + "/.git")
+      try repo.git("branch", "-q", "topic")
+      try repo.git("config", "branch.topic.remote", "fork")
+      try repo.git("branch", "-q", "loose")
+
+      #expect(GitOperations.defaultRemote(root: repo.root) == "origin", "main tracks origin")
+      #expect(GitOperations.defaultRemote(root: repo.root, branch: "topic") == "fork")
+      #expect(GitOperations.defaultRemote(root: repo.root, branch: "loose") == "origin", "no remote of its own")
+      try repo.git("switch", "-q", "topic")
+      #expect(GitOperations.defaultRemote(root: repo.root) == "fork", "the checked-out branch's")
+
+      // All at once, the same answers.
+      try repo.git("branch", "-q", "release.1.2")
+      try repo.git("config", "branch.release.1.2.remote", "fork")
+      try repo.git("branch", "-q", "orphaned")
+      try repo.git("config", "branch.orphaned.remote", "gone")
+      let names = ["main", "topic", "loose", "release.1.2", "orphaned"]
+      let all = GitOperations.defaultRemotes(root: repo.root, branches: names)
+      #expect(all == ["main": "origin", "topic": "fork", "loose": "origin", "release.1.2": "fork", "orphaned": "origin"])
+      for name in names {
+        #expect(all[name] == GitOperations.defaultRemote(root: repo.root, branch: name), "\(name)")
+      }
+    }
   }
 #endif

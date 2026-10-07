@@ -176,7 +176,7 @@ git diff refs/impulse/checkpoints/manual/1791382210345-before-units-refactor
 git restore --source=refs/impulse/checkpoints/manual/1791382210345-before-units-refactor -- src/lib/units.ts
 ```
 
-Manual checkpoints don't appear in an agent's **Turns** menu. Like agent checkpoints, they're not sent by a normal `git push`, and they're pruned along with them: when Impulse records an agent turn in the repository, checkpoints older than 14 days are deleted. Outside a git repository, the command prints `Not in a git repository.` and exits with status 1.
+Manual checkpoints don't appear in an agent's **Turns** menu. Like agent checkpoints, they're not sent by a normal `git push`, and they're pruned along with them: each time `impulse checkpoint` records one, and the first time in each session that Impulse records an agent turn in the repository, checkpoints older than 14 days, and any beyond the newest 200, are deleted. Outside a git repository, the command prints `Not in a git repository.` and exits with status 1.
 
 ### `impulse hook`
 

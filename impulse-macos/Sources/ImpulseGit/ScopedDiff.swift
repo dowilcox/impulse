@@ -503,11 +503,19 @@ extension GitClient {
   /// Stable identity for a hunk: its changed lines (not positions, which
   /// shift when hunks above it are staged).
   public static func hunkIdentity(_ hunk: DiffHunk) -> String {
+    changeIdentity([hunk])
+  }
+
+  /// The same identity over every changed line of `hunks`, however they're
+  /// grouped (more context lines merge neighboring hunks).
+  public static func changeIdentity(_ hunks: [DiffHunk]) -> String {
     var hasher = SHA256()
-    for line in hunk.lines where line.kind != .context {
-      hasher.update(data: Data((line.kind == .added ? "+" : "-").utf8))
-      hasher.update(data: Data(line.content.utf8))
-      hasher.update(data: Data([0x0A]))
+    for hunk in hunks {
+      for line in hunk.lines where line.kind != .context {
+        hasher.update(data: Data((line.kind == .added ? "+" : "-").utf8))
+        hasher.update(data: Data(line.content.utf8))
+        hasher.update(data: Data([0x0A]))
+      }
     }
     return hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
   }

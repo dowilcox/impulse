@@ -130,9 +130,6 @@ public enum SafetySnapshots {
       let fields = chunk.trimmingCharacters(in: .newlines).components(separatedBy: "\0")
       guard fields.count >= 4 else { return nil }
       let ref = fields[0]
-      // <millis>-<reason> is the last path component.
-      let leaf = ref.split(separator: "/").last ?? ""
-      let millis = leaf.split(separator: "-").first.flatMap { Double($0) } ?? 0
       let subject = fields[2]
       let reason =
         subject.hasPrefix("impulse snapshot: ")
@@ -141,8 +138,7 @@ public enum SafetySnapshots {
         .first { $0.hasPrefix("index-tree ") }
         .map { String($0.dropFirst("index-tree ".count)) }
       return SafetySnapshot(
-        ref: ref, commit: fields[1], indexTree: indexTree,
-        date: Date(timeIntervalSince1970: millis / 1000), reason: reason)
+        ref: ref, commit: fields[1], indexTree: indexTree, date: date(ofRef: ref), reason: reason)
     }.sorted { $0.date > $1.date }
   }
 
@@ -186,16 +182,42 @@ public enum SafetySnapshots {
     return false
   }
 
-  /// Delete snapshots beyond `keep` or older than `maxAge`.
+  /// How long `prune` keeps snapshots by default.
+  public static let defaultMaxAge: TimeInterval = 14 * 24 * 3600
+
+  /// Delete snapshots beyond the newest `keep` or older than `maxAge`, in
+  /// one ref transaction (thousands of old refs take one git process, not
+  /// one each). Returns the refs deleted.
+  @discardableResult
   public static func prune(
     root: String, prefix: String = oplogPrefix, keep: Int = 200,
-    maxAge: TimeInterval = 14 * 24 * 3600
-  ) {
+    maxAge: TimeInterval = defaultMaxAge
+  ) -> [String] {
+    guard
+      case .success(let result) = GitOperations.git(
+        ["for-each-ref", "--format=%(refname)", prefix], in: root, timeout: 30)
+    else { return [] }
     let cutoff = Date().addingTimeInterval(-maxAge)
-    for (index, snapshot) in list(root: root, prefix: prefix).enumerated()
-    where index >= keep || snapshot.date < cutoff {
-      _ = GitOperations.git(["update-ref", "-d", snapshot.ref], in: root, timeout: 30)
-    }
+    let refs = result.stdout.split(separator: "\n").map { String($0) }
+      .map { (ref: $0, date: date(ofRef: $0)) }
+      .sorted { $0.date > $1.date }
+    let doomed = refs.enumerated()
+      .filter { $0.offset >= keep || $0.element.date < cutoff }
+      .map(\.element.ref)
+    guard !doomed.isEmpty else { return [] }
+    let commands = doomed.map { "delete \($0)\n" }.joined()
+    guard
+      case .success = GitOperations.git(
+        ["update-ref", "--stdin"], in: root, stdin: Data(commands.utf8), timeout: 60)
+    else { return [] }
+    return doomed
+  }
+
+  /// A snapshot's time, from the `<millis>-<reason>` last path component.
+  static func date(ofRef ref: String) -> Date {
+    let leaf = ref.split(separator: "/").last ?? ""
+    let millis = leaf.split(separator: "-").first.flatMap { Double($0) } ?? 0
+    return Date(timeIntervalSince1970: millis / 1000)
   }
 
   static func slug(_ reason: String) -> String {

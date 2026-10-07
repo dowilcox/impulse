@@ -288,7 +288,13 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 | --------------------------- | ------------------------- | -------- | ------- | -------------------------------------------------------------------------------------- |
 | Push new tags to the remote | `git_push_tags_on_create` | on / off | off     | Creating a tag pushes it right away. The Create Tag sheet's checkbox starts from this. |
 
-See [Git](git.md) for committing, pulling and tags.
+#### Review
+
+| Setting       | Key                    | Values | Default | What it does                                                                                                                |
+| ------------- | ---------------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Context lines | `review_context_lines` | 0–100  | 3       | Unchanged lines shown around each change in Review and History. The review header's context menu shows more for one review. |
+
+See [Git](git.md) for committing, pulling and tags, and [Review](review.md) for the diff view.
 
 ### Automation
 

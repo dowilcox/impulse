@@ -103,6 +103,26 @@
       #expect(files == [FileChange(path: "a.txt", status: .modified, added: 2, removed: 1)])
     }
 
+    @Test func moreContextMergesHunksButKeepsTheChangeIdentity() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let lines = (1...30).map { "line \($0)" }
+      try repo.commit(["a.txt": lines.joined(separator: "\n") + "\n"])
+      var edited = lines
+      edited[2] = "changed 3"
+      edited[20] = "changed 21"
+      try repo.write("a.txt", edited.joined(separator: "\n") + "\n")
+
+      let narrow = try GitClient.fileDiff(repoPath: repo.root, path: "a.txt", scope: .unstaged)
+      let wide = try GitClient.fileDiff(
+        repoPath: repo.root, path: "a.txt", scope: .unstaged, options: DiffOptions(contextLines: 25))
+      #expect(narrow.hunks.count == 2)
+      #expect(wide.hunks.count == 1)
+      #expect(wide.hunks[0].lines.count == 32, "the whole file, both changes")
+      #expect(GitClient.changeIdentity(narrow.hunks) == GitClient.changeIdentity(wide.hunks))
+      #expect(GitClient.hunkIdentity(wide.hunks[0]) == GitClient.changeIdentity(wide.hunks))
+    }
+
     @Test func branchScopeComparesAgainstMergeBase() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }
@@ -316,6 +336,104 @@
       #expect(try repo.git("diff") == "")
     }
 
+    @Test func zeroContextHunksAndLinesStageUnstageAndRevertInPlace() throws {
+      // "Changed Lines Only": hunks carry no context, so pure insertions and
+      // deletions have nothing to match and must land at their own line.
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let base = (1...30).map { "line \($0)" }
+      try repo.commit(["f.txt": base.joined(separator: "\n") + "\n"])
+      func inserting(_ line: String, after anchor: String, in lines: [String]) -> [String] {
+        var result = lines
+        result.insert(line, at: result.firstIndex(of: anchor)! + 1)
+        return result
+      }
+      var working = base
+      working[1] = "line 2 changed"
+      working = inserting("inserted after 10", after: "line 10", in: working)
+      working.removeAll { $0 == "line 20" }
+      working[working.firstIndex(of: "line 25")!] = "line 25 changed"
+      working = inserting("inserted after 25", after: "line 25 changed", in: working)
+      try repo.write("f.txt", working.joined(separator: "\n") + "\n")
+
+      let zero = DiffOptions(contextLines: 0)
+      func hunk(_ scope: DiffScope, containing text: String) throws -> (index: Int, diff: FileDiff) {
+        let diff = try GitClient.fileDiff(repoPath: repo.root, path: "f.txt", scope: scope, options: zero)
+        let index = try #require(diff.hunks.firstIndex { $0.lines.contains { $0.content == text } })
+        #expect(diff.hunks[index].lines.allSatisfy { $0.kind != .context })
+        return (index, diff)
+      }
+      func run(_ target: PatchTarget, _ selection: PatchSelection) {
+        let result = GitOperations.apply(target, selection: selection, path: "f.txt", options: zero, root: repo.root)
+        #expect(throws: Never.self) { try result.get() }
+      }
+      func index() throws -> String { try repo.git("show", ":f.txt") }
+
+      // Stage a pure insertion, one line of a mixed hunk, and a pure deletion.
+      var expected = inserting("inserted after 10", after: "line 10", in: base)
+      run(.stage, .wholeHunks([try hunk(.unstaged, containing: "inserted after 10").index]))
+      #expect(try index() == expected.joined(separator: "\n"))
+
+      let mixed = try hunk(.unstaged, containing: "inserted after 25")
+      let line = try #require(mixed.diff.hunks[mixed.index].lines.firstIndex { $0.content == "inserted after 25" })
+      run(.stage, .lines([line], inHunk: mixed.index))
+      expected = inserting("inserted after 25", after: "line 25", in: expected)
+      #expect(try index() == expected.joined(separator: "\n"))
+
+      run(.stage, .wholeHunks([try hunk(.unstaged, containing: "line 20").index]))
+      expected.removeAll { $0 == "line 20" }
+      #expect(try index() == expected.joined(separator: "\n"))
+
+      // Unstage the deletion and the insertion again.
+      run(.unstage, .wholeHunks([try hunk(.staged, containing: "line 20").index]))
+      expected = inserting("line 20", after: "line 19", in: expected)
+      #expect(try index() == expected.joined(separator: "\n"))
+      run(.unstage, .wholeHunks([try hunk(.staged, containing: "inserted after 10").index]))
+      expected.removeAll { $0 == "inserted after 10" }
+      #expect(try index() == expected.joined(separator: "\n"))
+
+      // Revert the working tree's deletion and modification.
+      run(.discard, .wholeHunks([try hunk(.unstaged, containing: "line 20").index]))
+      working = inserting("line 20", after: "line 19", in: working)
+      #expect(try repo.read("f.txt") == working.joined(separator: "\n") + "\n")
+      run(.discard, .wholeHunks([try hunk(.unstaged, containing: "line 2 changed").index]))
+      working[1] = "line 2"
+      #expect(try repo.read("f.txt") == working.joined(separator: "\n") + "\n")
+      #expect(try index() == expected.joined(separator: "\n"), "reverting leaves the index alone")
+    }
+
+    @Test func hunksOfACutShortDiffAreRefused() throws {
+      // With the whole file as context the one hunk ends where the diff was
+      // cut, so staging it would take changes past what was shown.
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      let base = (1...(maxDiffTotalLines + 100)).map { "line \($0)" }
+      try repo.commit(["big.txt": base.joined(separator: "\n") + "\n"])
+      var edited = base
+      edited[0] = "first changed"
+      edited[edited.count - 1] = "last changed"
+      try repo.write("big.txt", edited.joined(separator: "\n") + "\n")
+      let whole = DiffOptions(contextLines: 100_000)  // the review's "Whole File"
+      let diff = try GitClient.fileDiff(repoPath: repo.root, path: "big.txt", scope: .unstaged, options: whole)
+      try #require(diff.truncated && diff.hunks.count == 1)
+
+      for target in [PatchTarget.stage, .discard] {
+        let result = GitOperations.apply(
+          target, selection: .wholeHunks([0]), path: "big.txt", expectedHunkIds: [0: diff.hunkIds[0]],
+          options: whole, root: repo.root)
+        guard case .failure(.invalid(let message)) = result else {
+          Issue.record("expected \(target) to be refused, got \(result)")
+          continue
+        }
+        #expect(message == GitOperations.truncatedDiffMessage)
+      }
+      #expect(try repo.git("diff", "--cached", "--name-only") == "", "nothing staged")
+      #expect(try repo.read("big.txt") == edited.joined(separator: "\n") + "\n", "nothing reverted")
+      // The whole file still stages.
+      _ = try GitOperations.stage(paths: ["big.txt"], root: repo.root).get()
+      #expect(try repo.git("diff", "--name-only") == "")
+    }
+
     @Test func partialSelectionOfNewFileIsRefused() throws {
       let patch = """
         diff --git a/n.txt b/n.txt
@@ -474,8 +592,30 @@
       #expect(listed.map(\.ref) == [end.ref, start.ref])
       #expect(abs(listed[1].date.timeIntervalSince(start.date)) < 1)
       // Fresh checkpoints aren't mistaken for ancient ones.
-      SafetySnapshots.prune(root: repo.root, prefix: SafetySnapshots.checkpointPrefix)
+      #expect(SafetySnapshots.prune(root: repo.root, prefix: SafetySnapshots.checkpointPrefix).isEmpty)
       #expect(SafetySnapshots.list(root: repo.root, prefix: SafetySnapshots.checkpointPrefix).count == 2)
+    }
+
+    @Test func pruningDeletesOldAndExcessSnapshotsInOneBatch() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"])
+      let head = try repo.git("rev-parse", "HEAD")
+      let now = Int(Date().timeIntervalSince1970 * 1000)
+      let day = 24 * 3600 * 1000
+      // 30 ancient snapshots, 12 recent ones, and one outside the prefix.
+      let old = (0..<30).map { SafetySnapshots.oplogPrefix + "\(now - 20 * day - $0)-discard" }
+      let recent = (0..<12).map { SafetySnapshots.oplogPrefix + "\(now - $0 * 1000)-discard" }
+      let other = SafetySnapshots.checkpointPrefix + "\(now - 20 * day)-turn-start"
+      let commands = (old + recent + [other]).map { "create \($0) \(head)\n" }.joined()
+      try repo.git(["update-ref", "--stdin"], stdin: commands)
+      try repo.git("pack-refs", "--all")
+
+      let deleted = SafetySnapshots.prune(root: repo.root, keep: 10)
+      #expect(Set(deleted) == Set(old + recent.suffix(2)), "the old ones, and the recent ones past the newest 10")
+      let left = try repo.git("for-each-ref", "--format=%(refname)", "refs/impulse/").split(separator: "\n")
+      #expect(Set(left.map(String.init)) == Set(recent.prefix(10) + [other]))
+      #expect(SafetySnapshots.prune(root: repo.root, keep: 10).isEmpty)
     }
 
     @Test func snapshotRestoresDiscardedAndUntrackedWork() throws {
@@ -738,6 +878,61 @@
       try repo.git("checkout", "-q", "-")
       let all = try GitLog.entries(root: repo.root, scope: .all).get()
       #expect(all.count == 1, "the snapshot commit isn't history")
+    }
+
+    @Test func folderHistoryMatchesGitLog() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["src/a.txt": "one\n"], message: "add a")
+      try repo.commit(["README.md": "readme\n"], message: "outside src")
+      try repo.commit(["src/b.txt": "two\n"], message: "add b")
+      try repo.git("mv", "src/a.txt", "src/c.txt")
+      try repo.git("commit", "-q", "-m", "rename a")
+      try repo.commit(["src/c.txt": "three\n"], message: "edit c")
+
+      // A folder (as the file tree passes it, without a trailing slash) gets
+      // every commit that touched anything in it.
+      let expected = try repo.git("log", "--format=%H", "--", "src").split(separator: "\n").map(String.init)
+      #expect(expected.count == 4)
+      #expect(try GitLog.entries(root: repo.root, path: "src").get().map(\.sha) == expected)
+      #expect(try GitLog.entries(root: repo.root, path: "src/").get().map(\.sha) == expected)
+
+      // A deleted folder is still a folder.
+      try repo.git("rm", "-q", "-r", "src")
+      try repo.git("commit", "-q", "-m", "drop src")
+      let deleted = try repo.git("log", "--format=%H", "--", "src").split(separator: "\n").map(String.init)
+      #expect(try GitLog.entries(root: repo.root, path: "src").get().map(\.sha) == deleted)
+    }
+
+    @Test func fileHistoryFollowsRenames() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["old.txt": "a\nb\nc\nd\n"], message: "add old")
+      try repo.git("mv", "old.txt", "new.txt")
+      try repo.git("commit", "-q", "-m", "rename")
+      try repo.commit(["new.txt": "a\nb\nc\nd\ne\n"], message: "edit new")
+      let expected = try repo.git("log", "--follow", "--format=%H", "--", "new.txt")
+        .split(separator: "\n").map(String.init)
+      #expect(expected.count == 3)
+      #expect(try GitLog.entries(root: repo.root, path: "new.txt").get().map(\.sha) == expected)
+    }
+
+    @Test func branchScopeListsThatBranch() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "base")
+      try repo.git("checkout", "-q", "-b", "topic")
+      try repo.commit(["b.txt": "topic\n"], message: "topic work")
+      try repo.git("checkout", "-q", "main")
+      try repo.commit(["a.txt": "two\n"], message: "main work")
+      // A file named like the branch doesn't make the revision ambiguous.
+      try repo.write("topic", "not a branch\n")
+
+      let topic = try GitLog.entries(root: repo.root, scope: .branch("topic")).get()
+      #expect(topic.map(\.subject) == ["topic work", "base"])
+      let expected = try repo.git("log", "--format=%H", "topic", "--").split(separator: "\n").map(String.init)
+      #expect(topic.map(\.sha) == expected)
+      #expect(try GitLog.entries(root: repo.root).get().map(\.subject) == ["main work", "base"])
     }
   }
 

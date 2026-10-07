@@ -81,6 +81,8 @@ final class HistoryModel {
   struct Context: Equatable {
     var branch: String?
     var remotes: [String] = []
+    /// Where tags are pushed to and deleted from (`GitOperations.defaultRemote`).
+    var tagRemote: String?
     var webHost: String?
   }
   private(set) var context = Context()
@@ -283,7 +285,9 @@ final class HistorySurface: NSView {
   /// Focus asked for before the view was in a window (a new History tab).
   private var focusWhenInWindow = false
 
-  init(repository: GitRepositoryState, path: String?, theme: Theme, host: GitPanelHost?) {
+  init(
+    repository: GitRepositoryState, path: String?, scope: GitLog.Scope = .head, theme: Theme, host: GitPanelHost?
+  ) {
     self.repository = repository
     self.host = host
     self.model = HistoryModel(palette: ChromePalette(theme: theme))
@@ -291,18 +295,20 @@ final class HistorySurface: NSView {
       repository: repository, scope: .commit(sha: "HEAD"), focusPath: nil, theme: theme, host: host)
     super.init(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
     model.path = path
+    model.scope = scope
     let root = repository.root
     model.loader = { request, skip, limit in
       GitLog.entries(
         root: root, scope: request.scope, path: request.path, query: request.query, skip: skip, limit: limit)
     }
     model.contextLoader = {
-      let web = GitOperations.defaultRemote(root: root)
+      let remote = GitOperations.defaultRemote(root: root)
+      let web = remote
         .flatMap { GitOperations.remoteURL($0, root: root) }
         .flatMap { RemoteWebURL(remote: $0) }
       return HistoryModel.Context(
         branch: GitOperations.currentBranch(root: root), remotes: GitOperations.remotes(root: root),
-        webHost: web?.displayName)
+        tagRemote: remote, webHost: web?.displayName)
     }
     model.onSelect = { [weak self] entry in
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
@@ -397,6 +403,15 @@ final class HistorySurface: NSView {
   }
 
   func refresh() {
+    model.reload()
+  }
+
+  /// Show another branch's history (or HEAD's, or all), from its newest
+  /// commit.
+  func show(scope: GitLog.Scope) {
+    guard scope != model.scope else { return refresh() }
+    model.scope = scope
+    model.selectedSha = nil
     model.reload()
   }
 
@@ -649,6 +664,14 @@ struct HistoryListView: View {
     }
   }
 
+  /// Current branch / All branches, plus the branch shown when History was
+  /// opened on another one (Branch Manager ▸ Show History).
+  private var scopeOptions: [(value: Int, label: String)] {
+    var options = [(value: 0, label: "Current branch"), (value: 1, label: "All branches")]
+    if case .branch(let name) = model.scope { options.append((value: 2, label: name)) }
+    return options
+  }
+
   private var header: some View {
     let chrome = model.palette
     return HStack(spacing: 8) {
@@ -658,10 +681,17 @@ struct HistoryListView: View {
           .truncationMode(.middle)
       } else {
         ChromeSegmented(
-          options: [(0, "Current branch"), (1, "All branches")],
+          options: scopeOptions,
           selection: Binding(
-            get: { model.scope == .all ? 1 : 0 },
+            get: {
+              switch model.scope {
+              case .head: return 0
+              case .all: return 1
+              case .branch: return 2
+              }
+            },
             set: { value in
+              guard value != 2 else { return }
               model.scope = value == 1 ? .all : .head
               model.reload()
             }))
@@ -840,10 +870,9 @@ private struct RefMenuItems: View {
 
   var body: some View {
     let current = model.context.branch ?? "HEAD"
-    let remote = model.context.remotes.contains("origin") ? "origin" : model.context.remotes.first ?? "origin"
     switch ref {
     case .tag(let name):
-      if !model.context.remotes.isEmpty {
+      if let remote = model.context.tagRemote {
         Button("Push to \(remote)") { model.onAction?(.pushTag(name), entry) }
       }
       if let host = model.context.webHost {
@@ -853,7 +882,7 @@ private struct RefMenuItems: View {
       Button("Copy Name") { model.onAction?(.copyName(name), entry) }
       Divider()
       Button("Delete Tag") { model.onAction?(.deleteTag(name), entry) }
-      if !model.context.remotes.isEmpty {
+      if let remote = model.context.tagRemote {
         Button("Delete from \(remote)…") { model.onAction?(.deleteRemoteTag(name), entry) }
       }
     case .localBranch(let name):

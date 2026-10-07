@@ -22,6 +22,8 @@ public enum GitLog {
     case head
     /// Every branch, remote branch and tag (not Impulse's private refs).
     case all
+    /// One local branch's history.
+    case branch(String)
   }
 
   /// A page of history, newest first in topological order. `path` limits it
@@ -39,14 +41,37 @@ public enum GitLog {
     switch scope {
     case .head: args.append("HEAD")
     case .all: args += ["--branches", "--tags", "--remotes", "HEAD"]
+    case .branch(let name): args.append("refs/heads/\(name)")
     }
     if let path {
-      if scope == .head, !path.hasSuffix("/") { args.insert("--follow", at: 1) }
+      // --follow only works for a single file; on a folder it follows
+      // whichever file git happens to pick.
+      if scope != .all, !isDirectory(path, root: root) { args.insert("--follow", at: 1) }
       args += ["--", path]
     } else if let path = query.path {
       args += ["--", path]
+    } else {
+      // Revisions only, even when a file has the same name.
+      args.append("--")
     }
     return GitOperations.git(args, in: root, timeout: 60).map { parse($0.stdout) }
+  }
+
+  /// `path` is a folder: on disk, or (once deleted) in history — a pathspec
+  /// ending in "/" only matches folders.
+  static func isDirectory(_ path: String, root: String) -> Bool {
+    if path.hasSuffix("/") || path.isEmpty || path == "." { return true }
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(
+      atPath: (root as NSString).appendingPathComponent(path), isDirectory: &isDirectory)
+    {
+      return isDirectory.boolValue
+    }
+    guard
+      case .success(let result) = GitOperations.git(
+        GitOperations.literal(["rev-list", "-1", "HEAD", "--", path + "/"]), in: root)
+    else { return false }
+    return !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   /// Everything about one commit, for its details header.

@@ -595,8 +595,9 @@ final class DiffLineCellView: NSView {
 
   private func columns() -> [Columns] {
     let card = self.card
-    let g = ReviewMetrics.gutterWidth
-    let m = ReviewMetrics.markerWidth
+    let metrics = context?.metrics ?? ReviewMetrics(fontFamily: "JetBrains Mono")
+    let g = metrics.gutterWidth
+    let m = metrics.markerWidth
     switch row {
     case .split:
       let half = (card.width / 2).rounded(.down)
@@ -859,10 +860,13 @@ final class DiffLineCellView: NSView {
     menu.addItem(ClosureMenuItem(title: "Comment on This Line") {
       handler.reviewOpenComposer(path: path, hunk: hunk, line: index)
     })
-    let caps = context.capabilities
+    // A diff cut short can only be acted on as a whole file.
+    let caps =
+      context.files[path]?.diff?.truncated == true
+      ? ReviewCapabilities(stage: false, unstage: false, revert: false) : context.capabilities
     if caps.stage { menu.addItem(ClosureMenuItem(title: "Stage Hunk") { handler.reviewHunkAction(.stage, path: path, hunk: hunk) }) }
     if caps.unstage { menu.addItem(ClosureMenuItem(title: "Unstage Hunk") { handler.reviewHunkAction(.unstage, path: path, hunk: hunk) }) }
-    if caps.revert { menu.addItem(ClosureMenuItem(title: "Revert Hunk…") { handler.reviewHunkAction(.revert, path: path, hunk: hunk) }) }
+    if caps.revert { menu.addItem(ClosureMenuItem(title: "Revert Hunk") { handler.reviewHunkAction(.revert, path: path, hunk: hunk) }) }
     menu.addItem(.separator())
     menu.addItem(ClosureMenuItem(title: "Copy Line") {
       NSPasteboard.general.clearContents()

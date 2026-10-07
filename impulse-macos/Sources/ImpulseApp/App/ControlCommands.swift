@@ -151,6 +151,7 @@ extension MainWindowController {
         {
         case .success(let snapshot):
           reply(ControlResponse(ok: true, message: snapshot.ref))
+          AgentCheckpoints.shared.prune(root: root)
         case .failure(let error):
           reply(ControlResponse(ok: false, message: error.message))
         }

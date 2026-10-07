@@ -662,11 +662,11 @@ final class TabManager: NSObject {
     insertTab(TabEntry.diffReview(repoRoot: repository.root, view: review))
   }
 
-  /// Open (or show) the history of a repository, or of one path in it.
-  /// Open (or bring back) the repository's History, optionally with a
-  /// commit selected.
+  /// Open (or bring back) the repository's History, or one path's,
+  /// optionally on one branch (`scope`) or with a commit selected.
   func addHistoryTab(
-    repository: GitRepositoryState, path: String? = nil, host: GitPanelHost?, reveal sha: String? = nil
+    repository: GitRepositoryState, path: String? = nil, scope: GitLog.Scope? = nil, host: GitPanelHost?,
+    reveal sha: String? = nil
   ) {
     if let location = locate(where: {
       if case .history(let root, let view) = $0 { return root == repository.root && view.model.path == path }
@@ -674,11 +674,12 @@ final class TabManager: NSObject {
     }) {
       reveal(location)
       if case .history(_, let view) = tabs[location.tabIndex].focused {
-        if let sha { view.reveal(sha: sha) } else { view.refresh() }
+        if let scope { view.show(scope: scope) }
+        if let sha { view.reveal(sha: sha) } else if scope == nil { view.refresh() }
       }
       return
     }
-    let view = HistorySurface(repository: repository, path: path, theme: theme, host: host)
+    let view = HistorySurface(repository: repository, path: path, scope: scope ?? .head, theme: theme, host: host)
     if let sha { view.reveal(sha: sha) }
     insertTab(.history(repoRoot: repository.root, view: view))
   }
@@ -1417,6 +1418,9 @@ final class TabManager: NSObject {
       if let resume = surface.resume {
         container.activeTerminal?.inputDraft = resume
       }
+      if let turns = surface.agentTurns, let terminal = container.activeTerminal {
+        AgentCheckpoints.shared.restore(turns, terminalID: terminal.id)
+      }
       return .terminal(container)
     case "file":
       guard let path = surface.path, !openFilePaths.contains(path),
@@ -1524,6 +1528,8 @@ final class TabManager: NSObject {
         if terminal.agent != nil, let session = terminal.agentSession {
           state.resume = KnownAgents.resumeCommand(agentID: session.agentID, session: session.id)
         }
+        let turns = AgentCheckpoints.shared.savedTurns(terminalID: terminal.id)
+        state.agentTurns = turns.isEmpty ? nil : turns
         return state
       case .editor(let editor):
         guard let path = editor.filePath, FileManager.default.fileExists(atPath: path) else {

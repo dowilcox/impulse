@@ -71,7 +71,8 @@ enum ReviewNotice: Hashable {
     case .binary: return "Binary file — no diff shown"
     case .tooLarge: return "File too large to display — open it in the editor"
     case .noChanges: return "No textual changes"
-    case .truncated: return "Diff truncated — the file has more changes than shown."
+    case .truncated:
+      return "Diff truncated — the file has more changes than shown. Stage or revert it as a whole file."
     case .error(let message): return message
     }
   }
@@ -231,11 +232,13 @@ struct ReviewMetrics {
   let charWidth: CGFloat
   let lineHeight: CGFloat
   let tabWidth = 4
+  /// A line-number column: five digits and a margin (wider for big fonts).
+  let gutterWidth: CGFloat
+  /// The +/− column.
+  let markerWidth: CGFloat
 
   /// Page margin on each side of a file card.
   static let cardInset: CGFloat = 12
-  static let gutterWidth: CGFloat = 46
-  static let markerWidth: CGFloat = 18
   static let codeTrailing: CGFloat = 12
   static let fileHeaderHeight: CGFloat = 34
   static let hunkHeaderHeight: CGFloat = 26
@@ -256,6 +259,19 @@ struct ReviewMetrics {
     gutterFont = NSFont(descriptor: font.fontDescriptor, size: size - 1) ?? font
     charWidth = max(1, ("M" as NSString).size(withAttributes: [.font: font]).width)
     lineHeight = ceil(max(19, font.ascender - font.descender + font.leading + 4))
+    let digit = ("0" as NSString).size(withAttributes: [.font: gutterFont]).width
+    gutterWidth = max(46, ceil(digit * 5 + 12))
+    markerWidth = max(18, ceil(charWidth + 8))
+  }
+
+  /// The editor's font family, at a size that follows the editor's font
+  /// size (and zoom): 12 pt at the default 14.
+  init(settings: Settings) {
+    self.init(fontFamily: settings.fontFamily, size: Self.codeSize(editorFontSize: settings.fontSize))
+  }
+
+  static func codeSize(editorFontSize: Int) -> CGFloat {
+    max(8, (CGFloat(editorFontSize) * 6 / 7).rounded())
   }
 
   /// A code line's own height; the rest of `lineHeight` is split around it.
@@ -273,9 +289,9 @@ struct ReviewMetrics {
     let card = max(200, tableWidth - Self.cardInset * 2)
     switch layout {
     case .unified:
-      return max(40, card - Self.gutterWidth * 2 - Self.markerWidth - Self.codeTrailing)
+      return max(40, card - gutterWidth * 2 - markerWidth - Self.codeTrailing)
     case .split:
-      return max(40, card / 2 - Self.gutterWidth - Self.markerWidth - Self.codeTrailing)
+      return max(40, card / 2 - gutterWidth - markerWidth - Self.codeTrailing)
     }
   }
 

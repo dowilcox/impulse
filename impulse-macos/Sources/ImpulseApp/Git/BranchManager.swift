@@ -11,6 +11,9 @@ final class BranchManagerModel {
   let repository: GitRepositoryState
   private(set) var branches: [GitOperations.BranchInfo] = []
   private(set) var base: String?
+  /// Where each unpublished branch would be published (none without a
+  /// remote).
+  private(set) var publishRemotes: [String: String] = [:]
   private(set) var isLoading = true
   var filter = ""
 
@@ -25,9 +28,12 @@ final class BranchManagerModel {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let base = GitClient.defaultBaseBranch(repoPath: root).map { $0.hasPrefix("origin/") ? String($0.dropFirst(7)) : $0 }
       let list = GitOperations.branchDetails(root: root, base: base)
+      let remotes = GitOperations.defaultRemotes(
+        root: root, branches: list.filter { $0.upstream == nil }.map(\.name))
       DispatchQueue.main.async {
         self?.base = base
         self?.branches = list
+        self?.publishRemotes = remotes
         self?.isLoading = false
       }
     }
@@ -140,8 +146,8 @@ struct BranchManagerView: View {
         }
         items.append(ChromeMenuItem("Show History") { onAction(.history, branch) })
         items.append(ChromeMenuItem("Rename…") { onAction(.rename, branch) })
-        if branch.upstream == nil {
-          items.append(ChromeMenuItem("Publish to origin") { onAction(.publish, branch) })
+        if branch.upstream == nil, let remote = model.publishRemotes[branch.name] {
+          items.append(ChromeMenuItem("Publish to \(remote)") { onAction(.publish, branch) })
         }
         items.append(.separator)
         items.append(ChromeMenuItem("Delete…", isEnabled: !branch.isCurrent) { onAction(.delete, branch) })
@@ -206,12 +212,18 @@ extension MainWindowController {
     case .compare:
       gitOpenReview(scope: .branch(base: branch.name), focusPath: nil)
     case .history:
-      tabManager.addHistoryTab(repository: repository, host: self)
+      tabManager.addHistoryTab(
+        repository: repository, scope: branch.isCurrent ? .head : .branch(branch.name), host: self)
     case .publish:
+      guard let remote = model.publishRemotes[branch.name] else { return }
       repository.run("Publishing \(branch.name)…") {
-        GitOperations.push(setUpstream: true, branch: branch.name, root: $0)
+        GitOperations.push(setUpstream: true, remote: remote, branch: branch.name, root: $0)
       } completion: { result, _ in
-        if case .failure(let error) = result { host.gitPresentError(error, title: "Couldn't publish") }
+        if case .failure(let error) = result {
+          host.gitPresentError(error, title: "Couldn't publish")
+        } else {
+          host.toasts.show(Toast(kind: .success, message: "Published \(branch.name) to \(remote)"))
+        }
         model.reload()
       }
     case .rename:

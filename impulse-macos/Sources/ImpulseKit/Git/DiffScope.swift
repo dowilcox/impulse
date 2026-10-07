@@ -50,7 +50,7 @@ public enum DiffScope: Codable, Hashable, Sendable {
     case .staged: return "Staged"
     case .branch(let base): return "vs \(base)"
     case .commit(let sha): return "Commit \(sha.prefix(7))"
-    case .range(let from, let to): return "\(from.prefix(10))…\(to.prefix(10))"
+    case .range(let from, let to): return "\(Self.shortRevision(from))…\(Self.shortRevision(to))"
     case .stash(let index): return "stash@{\(index)}"
     case .snapshot(let from, let to):
       if let reviewed = Self.checkpointDate(from, folder: "reviews") {
@@ -75,7 +75,14 @@ public enum DiffScope: Codable, Hashable, Sendable {
   }
 
   private static func shortRef(_ ref: String) -> String {
-    ref.split(separator: "/").last.map(String.init) ?? ref
+    shortRevision(ref.split(separator: "/").last.map(String.init) ?? ref)
+  }
+
+  /// A full commit ID shortened to 7 characters, as git shows it; branch
+  /// and tag names stay whole.
+  static func shortRevision(_ revision: String) -> String {
+    let isObjectID = revision.count >= 40 && revision.allSatisfy(\.isHexDigit)
+    return isObjectID ? String(revision.prefix(7)) : revision
   }
 }
 

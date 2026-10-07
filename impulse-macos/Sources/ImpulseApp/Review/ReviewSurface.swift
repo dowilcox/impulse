@@ -12,7 +12,10 @@ final class ReviewSurfaceModel {
   var options = ReviewOptions()
   var fileCount = 0
   var viewedCount = 0
+  /// Comments on the files this scope shows (what Send and Copy take).
   var commentCount = 0
+  /// Every comment in the repository (what Delete All removes).
+  var repositoryCommentCount = 0
   var totalAdded = 0
   var totalRemoved = 0
   var isLoading = false
@@ -31,6 +34,10 @@ final class ReviewSurfaceModel {
   @ObservationIgnored var onSelectScope: ((DiffScope) -> Void)?
   @ObservationIgnored var onSetLayout: ((String) -> Void)?
   @ObservationIgnored var onToggleWhitespace: (() -> Void)?
+  @ObservationIgnored var onSetContextLines: ((Int) -> Void)?
+  /// `review_context_lines`: what the context menu offers besides its
+  /// fixed choices.
+  var defaultContextLines = 3
   @ObservationIgnored var onCopyPrompt: (() -> Void)?
   @ObservationIgnored var onListAgents: (() -> [AgentSummary])?
   @ObservationIgnored var onSendToAgent: ((UUID) -> Void)?
@@ -92,10 +99,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     self.model = ReviewSurfaceModel(scope: scope ?? Self.defaultScope(repository.snapshot), palette: palette)
     self.navigator = ReviewNavigatorModel(palette: palette)
     let settings = SettingsStore.shared.settings
-    self.diffContext = ReviewDiffContext(theme: theme, metrics: ReviewMetrics(fontFamily: settings.fontFamily))
+    self.diffContext = ReviewDiffContext(theme: theme, metrics: ReviewMetrics(settings: settings))
     self.diffList = ReviewDiffController(context: diffContext)
     self.pendingFocus = focusPath
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    model.options.contextLines = settings.reviewContextLines
+    model.defaultContextLines = settings.reviewContextLines
     wantsLayer = true
     layer?.backgroundColor = NSColor(hex: theme.bg).cgColor
     diffContext.handler = self
@@ -121,6 +130,45 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     ) { [weak self] _ in
       self?.updateAgentTurn()
     }
+    settingsObserver = NotificationCenter.default.addObserver(
+      forName: .impulseSettingsDidChange, object: nil, queue: .main
+    ) { [weak self] _ in
+      self?.applySettings()
+    }
+  }
+
+  private var settingsObserver: NSObjectProtocol?
+  /// The context menu picked this review's context; the setting no longer
+  /// moves it.
+  private var contextPicked = false
+
+  /// The code font follows the editor's (family and size); the context
+  /// follows `review_context_lines` until the header picks one.
+  private func applySettings() {
+    let settings = SettingsStore.shared.settings
+    let metrics = ReviewMetrics(settings: settings)
+    if metrics.codeFont != diffContext.metrics.codeFont {
+      diffContext.metrics = metrics
+      scheduleRows()
+    }
+    model.defaultContextLines = settings.reviewContextLines
+    if !contextPicked { setContextLines(settings.reviewContextLines) }
+  }
+
+  /// Show `lines` of unchanged context around each change: every diff is
+  /// read again (hunks merge or split, so selections and focus go).
+  private func setContextLines(_ lines: Int) {
+    guard lines != model.options.contextLines else { return }
+    model.options.contextLines = lines
+    diffContext.focus = nil
+    for file in files {
+      file.diff = nil
+      file.syntax = nil
+      file.selection = nil
+      file.stale = true
+    }
+    scheduleRows()
+    refreshFiles()
   }
 
   private func updateAgentTurn() {
@@ -216,6 +264,10 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       self.scheduleRows()
       self.refreshFiles()
     }
+    model.onSetContextLines = { [weak self] lines in
+      self?.contextPicked = true
+      self?.setContextLines(lines)
+    }
     model.onCopyPrompt = { [weak self] in self?.copyCommentsAsPrompt() }
     model.onListAgents = { [weak self] in self?.host?.agentTargets ?? [] }
     model.onSendToAgent = { [weak self] id in self?.sendCommentsToAgent(id) }
@@ -238,6 +290,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     changeListener = nil
     if let checkpointObserver { NotificationCenter.default.removeObserver(checkpointObserver) }
     checkpointObserver = nil
+    if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
+    settingsObserver = nil
     refreshWork?.cancel()
   }
 
@@ -592,7 +646,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     }
     model.fileCount = files.count
     model.viewedCount = files.filter(\.viewed).count
-    model.commentCount = comments.comments.count
+    model.commentCount = scopedComments.count
+    model.repositoryCommentCount = comments.comments.count
     model.totalAdded = files.compactMap { $0.change.added }.reduce(0, +)
     model.totalRemoved = files.compactMap { $0.change.removed }.reduce(0, +)
     let showEmpty = files.isEmpty && !model.isLoading && !emptyMessage.isEmpty
@@ -659,6 +714,10 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     case .stage: guard capabilities.stage else { return }
     case .unstage: guard capabilities.unstage else { return }
     case .revert: guard capabilities.revert else { return }
+    }
+    if diff.truncated {
+      host.toasts.show(Toast(kind: .info, message: GitOperations.truncatedDiffMessage))
+      return
     }
     let lines = file.selection.flatMap { $0.hunk == hunk ? $0.lines.sorted() : nil }
     file.selection = nil
@@ -827,7 +886,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   // MARK: Keyboard
 
   /// j/k hunks, n/p files (N: next unviewed), s/u/x stage/unstage/revert
-  /// (also ⌘Y, ⌘⇧Y, ⌘⌥Z), v viewed, c comment, o open, ⏎/space expand,
+  /// (also ⌘Y, ⇧⌘Y, ⌥⌘Z), v viewed, c comment, o open, ⏎/space expand,
   /// Esc clear the selection, t or / filter.
   func reviewKey(_ event: NSEvent) -> Bool {
     let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -975,10 +1034,17 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   // MARK: - Comments
 
+  /// The comments on files this scope shows. Comments on other files stay
+  /// in the repository's store, out of this review's count and prompt.
+  private var scopedComments: [ReviewComment] {
+    comments.comments.filter { filesByPath[$0.path] != nil }
+  }
+
   private func copyCommentsAsPrompt() {
-    let prompt = ReviewCommentAnchoring.prompt(for: comments.comments)
+    let scoped = scopedComments
+    let prompt = ReviewCommentAnchoring.prompt(for: scoped)
     guard !prompt.isEmpty else {
-      host?.toasts.show(Toast(kind: .info, message: "There are no review comments yet."))
+      host?.toasts.show(Toast(kind: .info, message: "There are no review comments in this view yet."))
       return
     }
     NSPasteboard.general.clearContents()
@@ -986,13 +1052,13 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     host?.toasts.show(
       Toast(
         kind: .success,
-        message: "Copied \(comments.comments.count) comment\(comments.comments.count == 1 ? "" : "s") as a prompt"))
+        message: "Copied \(scoped.count) comment\(scoped.count == 1 ? "" : "s") as a prompt"))
   }
 
   private func sendCommentsToAgent(_ terminalID: UUID) {
-    let prompt = ReviewCommentAnchoring.prompt(for: comments.comments)
+    let prompt = ReviewCommentAnchoring.prompt(for: scopedComments)
     guard !prompt.isEmpty else {
-      host?.toasts.show(Toast(kind: .info, message: "There are no review comments yet."))
+      host?.toasts.show(Toast(kind: .info, message: "There are no review comments in this view yet."))
       return
     }
     host?.sendToAgent(prompt, terminalID: terminalID)
@@ -1045,10 +1111,13 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   }
 
   private func clearComments() {
-    guard !comments.comments.isEmpty else { return }
+    let total = comments.comments.count
+    guard total > 0 else { return }
+    let elsewhere = total - scopedComments.count
     host?.gitConfirm(
-      title: "Delete all review comments?",
-      message: "\(comments.comments.count) comment(s) in this repository will be removed.",
+      title: "Delete every review comment in this repository?",
+      message: "\(total) comment\(total == 1 ? "" : "s") will be removed"
+        + (elsewhere > 0 ? ", including \(elsewhere) on files this view doesn't show." : "."),
       confirmTitle: "Delete", destructive: true
     ) { [weak self] proceed in
       guard proceed, let self else { return }
@@ -1078,9 +1147,20 @@ extension Array {
 
 // MARK: - Header
 
-/// Native header: scope, layout, whitespace, progress, comment actions.
+/// Native header: scope, layout, whitespace, context, progress, comment
+/// actions.
 struct ReviewHeaderBar: View {
   var model: ReviewSurfaceModel
+
+  /// "3 Lines of Context", "Whole File" (the current one is disabled).
+  static func contextTitle(_ lines: Int) -> String {
+    switch lines {
+    case ReviewOptions.wholeFile...: return "Whole File"
+    case 0: return "Changed Lines Only"
+    case 1: return "1 Line of Context"
+    default: return "\(lines) Lines of Context"
+    }
+  }
 
   var body: some View {
     let chrome = model.palette
@@ -1143,6 +1223,18 @@ struct ReviewHeaderBar: View {
         isActive: model.options.ignoreWhitespace
       ) { model.onToggleWhitespace?() }
 
+      ChromeMenuButton(help: "Context: \(Self.contextTitle(model.options.contextLines))") {
+        Set([model.defaultContextLines, 3, 10, 25, ReviewOptions.wholeFile]).sorted().map { lines in
+          ChromeMenuItem(Self.contextTitle(lines), isEnabled: lines != model.options.contextLines) {
+            model.onSetContextLines?(lines)
+          }
+        }
+      } label: {
+        Icon(.chevronsUpDown, size: 13)
+          .foregroundStyle(
+            model.options.contextLines > model.defaultContextLines ? chrome.accent : chrome.textSecondary)
+      }
+
       ChromeMenuButton(help: "Review comments") {
         var items: [ChromeMenuItem] = []
         let agents = model.onListAgents?() ?? []
@@ -1165,7 +1257,7 @@ struct ReviewHeaderBar: View {
             model.onCopyPrompt?()
           },
           .separator,
-          ChromeMenuItem("Delete All Comments…", isEnabled: model.commentCount > 0) {
+          ChromeMenuItem("Delete All Comments in Repository…", isEnabled: model.repositoryCommentCount > 0) {
             model.onClearComments?()
           },
         ]

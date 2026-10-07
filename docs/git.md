@@ -164,7 +164,7 @@ Other things the composer does:
 
 ### Commit and push in one step
 
-Turn on **Commit and push** in Settings ▸ Git (`git_commit_and_push`) to make the commit button and ⌘↩ push right after committing. Either way, ⇧⌘↩ does the other one: with the setting off, ⇧⌘↩ commits and pushes; with it on, ⇧⌘↩ only commits.
+Turn on **Commit and push** in Settings ▸ Git (`git_commit_and_push`) to make the commit button and ⌘↩ push right after committing. Either way, ⇧⌘↩ does the other one: with the setting off, ⇧⌘↩ commits and pushes; with it on, ⇧⌘↩ only commits. (⇧⌘↩ is also **View ▸ Zoom Pane**; while the commit message field has the keyboard, it commits instead.)
 
 Amending never pushes by default, because pushing a rewritten commit would need a force push. Use **Commit & Push** from the chevron menu if you really mean it.
 
@@ -217,15 +217,15 @@ Each row shows:
 - **Switch**, for every branch except the current one.
 - **⋯**, a menu with:
 
-  | Item                        | What it does                                                                                                                                              |
-  | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | Merge into main             | Merges the branch into the current branch (named in the item). See [Merging and rebasing](#merging-and-rebasing). Not on the current branch.              |
-  | Rebase main onto This       | Rebases the current branch onto this branch. Not on the current branch.                                                                                   |
-  | Compare with Current Branch | Opens [Review](review.md) showing what the current branch (uncommitted work included) changed since it split from this branch. Not on the current branch. |
-  | Show History                | Opens [History](history.md) for the repository.                                                                                                           |
-  | Rename…                     | Asks for a new name and renames the branch.                                                                                                               |
-  | Publish to origin           | Pushes the branch to `origin` and sets it as the upstream. Only for branches without an upstream.                                                         |
-  | Delete…                     | Deletes the branch. Disabled for the current branch.                                                                                                      |
+  | Item                        | What it does                                                                                                                                                                                                                                                               |
+  | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Merge into main             | Merges the branch into the current branch (named in the item). See [Merging and rebasing](#merging-and-rebasing). Not on the current branch.                                                                                                                               |
+  | Rebase main onto This       | Rebases the current branch onto this branch. Not on the current branch.                                                                                                                                                                                                    |
+  | Compare with Current Branch | Opens [Review](review.md) showing what the current branch (uncommitted work included) changed since it split from this branch. Not on the current branch.                                                                                                                  |
+  | Show History                | Opens [History](history.md) on that branch's commits.                                                                                                                                                                                                                      |
+  | Rename…                     | Asks for a new name and renames the branch.                                                                                                                                                                                                                                |
+  | Publish to origin           | Pushes the branch and sets it as the upstream. The item names the remote: the branch's configured remote, else `origin`, else the only remote there is (the same rule as [Push](#push-and-publish)). Only for branches without an upstream, in a repository with a remote. |
+  | Delete…                     | Deletes the branch. Disabled for the current branch.                                                                                                                                                                                                                       |
 
 Type in **Filter** to narrow the list by name. Click **Done** (or press ↩) to close the sheet. Switching, comparing, merging, rebasing and showing history close the sheet first; renaming, publishing and deleting keep it open so you can tidy several branches in a row.
 
@@ -276,7 +276,7 @@ The toast says "Pulled 3 commits" or "Already up to date". A pull that rebases o
 
 **Push** pushes the current branch to its upstream. If the remote has commits you don't have, it fails with "The remote has commits you don't have. Pull before pushing."
 
-If the branch has no upstream yet, Push publishes it: it pushes to the branch's configured remote (or `origin`, or the only remote there is) and sets the upstream, then says "Published feature/forecast-cache". The **Publish** button in the Changes panel does the same.
+If the branch has no upstream yet, Push publishes it: it pushes to the branch's configured remote (or `origin`, or the only remote there is) and sets the upstream, then says "Published feature/forecast-cache to origin". The **Publish** button in the Changes panel does the same, and so does **Publish to …** in the [Branch Manager](#managing-branches). Tags are pushed to, and deleted from, the current branch's remote chosen the same way.
 
 With **Push annotated tags with commits** on (`git_push_follow_tags`), Push uses `git push --follow-tags`, so annotated tags on the commits you push go along with them.
 
@@ -329,11 +329,11 @@ Before an action that could throw work away, Impulse records your working tree (
 | --------------------------------------------------------- | ------------------------------- | ---------------------------------- |
 | Discard changes to files (Changes panel, Review)          | Yes, required                   | Undo                               |
 | Revert a hunk or lines (Review)                           | Yes, required                   | Undo                               |
-| Keep Current (HEAD) / Take Incoming for a conflicted file | Yes, required                   | none                               |
+| Keep Current (HEAD) / Take Incoming for a conflicted file | Yes, required                   | Undo                               |
 | Pull with rebase or merge                                 | Yes                             | Undo                               |
 | Merge, Rebase                                             | Yes                             | Undo                               |
 | Reset (History)                                           | Yes (required for a hard reset) | Undo                               |
-| Cherry-pick, Revert (History)                             | Yes                             | none                               |
+| Cherry-pick, Revert (History)                             | Yes                             | Undo                               |
 | Pop a stash                                               | Yes                             | Undo                               |
 | Drop a stash                                              | The stash commit is kept        | Undo                               |
 | Delete a branch                                           | The branch's commit is kept     | Undo                               |
@@ -342,14 +342,14 @@ Before an action that could throw work away, Impulse records your working tree (
 | Undo Last Commit                                          | —                               | Redo                               |
 | Switch branch with Stash & Switch                         | The changes are in the stash    | Pop Stash                          |
 
-Each toast's Undo lasts about 10 to 15 seconds. After that, the snapshots are still in the repository. To dig one out by hand:
+Each toast's Undo lasts about 10 to 15 seconds. After that, the snapshots are still in the repository: Impulse keeps the newest 200 for up to two weeks, and deletes older ones whenever it takes a new snapshot. To dig one out by hand:
 
 ```bash
 git for-each-ref --sort=-creatordate refs/impulse/oplog
 git restore --source=refs/impulse/oplog/1767225600123-discard-forecast-ts -- src/forecast.ts
 ```
 
-Two other folders under `refs/impulse/` hold the agent-turn checkpoints (`refs/impulse/checkpoints/`, see [Agents](agents.md)) and your "reviewed up to here" marks (`refs/impulse/reviews/`, see [Review](review.md#marking-files-viewed)).
+Two other folders under `refs/impulse/` hold the agent-turn checkpoints (`refs/impulse/checkpoints/`, see [Agents](agents.md)) and your "reviewed up to here" marks (`refs/impulse/reviews/`, see [Review](review.md#marking-files-viewed)). Checkpoints are pruned the same way as snapshots each time an agent turn or `impulse checkpoint` records one; the last 20 review marks are kept.
 
 ## Merge conflicts
 
@@ -374,7 +374,7 @@ When a merge, rebase, cherry-pick, revert or pull stops with conflicts, the Chan
 3. When the last conflict marker is gone, a toast says "No conflicts left in units.ts." with **Save & Mark Resolved**. Click it to save the file and stage it.
 4. Repeat for the other files, then click **Continue** in the banner.
 
-To resolve a whole file in one step instead, hover it in the Conflicts section and click **Keep Current (HEAD) for the whole file** or **Take Incoming for the whole file** (or use the context menu). This takes one side for every conflict in the file and marks it resolved. A safety snapshot is taken first.
+To resolve a whole file in one step instead, hover it in the Conflicts section and click **Keep Current (HEAD) for the whole file** or **Take Incoming for the whole file** (or use the context menu). This takes one side for every conflict in the file and marks it resolved. A safety snapshot is taken first, and the toast ("Took incoming in units.ts") offers **Undo** for about 15 seconds, which puts the file back in conflict, with any edits you had made to it. Undo only works while the merge (or rebase, cherry-pick or revert) is still where it was: once you've committed, continued, skipped or aborted, it leaves the file resolved and says the operation is no longer in progress or has moved on.
 
 To mark a file resolved after editing it yourself, click **Mark Resolved** (or select it and press Space). This stages the file.
 
@@ -401,7 +401,7 @@ If no conflict markers are left in the files, a toast says "No conflict markers 
 2. In the sheet ("New tag on the current commit", with the commit's subject underneath):
    - **Name** starts with a suggestion: your newest version-like tag with its last number bumped. With `v0.2.0` as the newest tag, it suggests `v0.2.1`. Tags with a pre-release suffix such as `v1.0.0-rc1` aren't bumped.
    - **Message** is optional. With a message, the tag is annotated (it records who tagged, when and why); without one, it's a lightweight tag (just a name for the commit).
-   - **Push to origin** pushes the tag right away. It starts checked when **Push new tags to the remote** (`git_push_tags_on_create`) is on, and is hidden when the repository has no remote.
+   - **Push to origin** pushes the tag right away (the checkbox names the remote: the current branch's, else `origin`, else the only one). It starts checked when **Push new tags to the remote** (`git_push_tags_on_create`) is on, and is hidden when the repository has no remote.
 3. Click **Create Tag**.
 
 ![The Create Tag sheet on the current commit, with v0.2.1 suggested as the name, an empty message field and the Push to origin checkbox](images/git-create-tag.png)
@@ -496,6 +496,7 @@ These are in Settings ▸ Git, and in `settings.json` under the keys shown. See 
 | `git_push_follow_tags`    | Push annotated tags with commits | Off       | Push uses `--follow-tags`.                                                                                                  |
 | `git_auto_fetch_minutes`  | Fetch in the background          | `0` (Off) | Minutes between background fetches, 0 to 120.                                                                               |
 | `git_push_tags_on_create` | Push new tags to the remote      | Off       | Where the Create Tag sheet's **Push to origin** checkbox starts.                                                            |
+| `review_context_lines`    | Context lines                    | `3`       | Unchanged lines shown around each change in [Review](review.md) and [History](history.md), 0 to 100.                        |
 
 Background fetch also depends on **Ask before trusting folders** (`workspace_trust`, in Settings ▸ General): while it's on, only trusted folders are fetched in the background. Turning it off trusts every folder.
 

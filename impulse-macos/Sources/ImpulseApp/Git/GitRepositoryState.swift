@@ -185,6 +185,10 @@ final class GitRepositoryState {
           name: .gitRepositoryDidChange, object: self, userInfo: ["root": root])
         completion?(result, safety)
       }
+      // After the operation, not before it: older than two weeks, or beyond
+      // the newest 200, go. Still on the queue, so it never races the next
+      // operation for the refs.
+      if safety != nil { SafetySnapshots.prune(root: root) }
     }
   }
 

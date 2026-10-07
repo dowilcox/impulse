@@ -161,6 +161,8 @@ struct Settings: Codable {
     var gitPullMode: String = "ff-only"
     /// Fetch open repositories in the background every N minutes (0 = off).
     var gitAutoFetchMinutes: Int = 0
+    /// Unchanged lines shown around each change in Review and History.
+    var reviewContextLines: Int = 3
     var lastDirectory: String
     var openFiles: [String]
 
@@ -272,6 +274,7 @@ struct Settings: Codable {
         case gitPushFollowTags = "git_push_follow_tags"
         case gitPullMode = "git_pull_mode"
         case gitAutoFetchMinutes = "git_auto_fetch_minutes"
+        case reviewContextLines = "review_context_lines"
         case lastDirectory = "last_directory"
         case openFiles = "open_files"
         case autoSave = "auto_save"
@@ -432,6 +435,7 @@ struct Settings: Codable {
         gitPushFollowTags = (try? c.decode(Bool.self, forKey: .gitPushFollowTags)) ?? d.gitPushFollowTags
         gitPullMode = (try? c.decode(String.self, forKey: .gitPullMode)) ?? d.gitPullMode
         gitAutoFetchMinutes = (try? c.decode(Int.self, forKey: .gitAutoFetchMinutes)) ?? d.gitAutoFetchMinutes
+        reviewContextLines = (try? c.decode(Int.self, forKey: .reviewContextLines)) ?? d.reviewContextLines
         lastDirectory = (try? c.decode(String.self, forKey: .lastDirectory)) ?? d.lastDirectory
         openFiles = (try? c.decode([String].self, forKey: .openFiles)) ?? d.openFiles
         autoSave = (try? c.decode(Bool.self, forKey: .autoSave)) ?? d.autoSave

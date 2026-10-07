@@ -48,8 +48,8 @@ The scope decides what is compared with what. Pick it from the menu at the left 
 | All uncommitted        | Uncommitted changes                          | The last commit with the working tree (staged and unstaged together)                                                                       | Scope menu: **All uncommitted changes**                                                   | —              |
 | Against a branch       | vs origin/main                               | The point where your branch split from the other branch, with your working tree: everything your branch changed, uncommitted work included | Scope menu: **Compare with origin/main**; Branch Manager: **Compare with Current Branch** | —              |
 | A commit               | Commit 4e1b9c2 (Commit HEAD for Last commit) | One commit with its first parent                                                                                                           | Scope menu: **Last commit**; selecting a commit in [History](history.md)                  | —              |
-| A range                | 4e1b9c2d0a…9a8b7c6d5e                        | One commit's files with another's                                                                                                          | History: **Select for Compare**, then **Compare with …** on another commit                | —              |
-| Since a commit         | Since and the commit ID                      | A commit with your working tree                                                                                                            | History: **Compare with Working Tree**                                                    | —              |
+| A range                | 4e1b9c2…9a8b7c6                              | One commit's files with another's                                                                                                          | History: **Select for Compare**, then **Compare with …** on another commit                | —              |
+| Since a commit         | Since and the short commit ID                | A commit with your working tree                                                                                                            | History: **Compare with Working Tree**                                                    | —              |
 | A stash                | stash@{0}                                    | A stash with the commit it was made on                                                                                                     | Click a stash in the Changes panel                                                        | —              |
 | Last agent turn        | Agent turn at 3:41 PM                        | The repository when the agent started its turn with when it finished (with the working tree while the turn is still running)               | Scope menu: **Last agent turn (Claude Code)**; ⇧⌘I and the other agent entry points       | —              |
 | Since your last review | Since your review at 3:41 PM                 | The repository when you last finished a review with your working tree                                                                      | Scope menu: the "Since your review at …" item                                             | —              |
@@ -58,7 +58,7 @@ Notes:
 
 - **The base branch** for "Compare with" is the remote's default branch (`origin/main` when `origin/HEAD` is set), or else a local `main`, `master`, `trunk` or `develop`. If none exists, the item isn't in the menu.
 - **Last commit** always means the current `HEAD`, so after you commit again it shows the new commit.
-- **Agent turns.** The menu item appears once an agent has recorded a turn in this repository since Impulse started (see [Agents](agents.md)). If you open a turn while it's still running, Review follows it and switches to the finished diff when the turn ends.
+- **Agent turns.** The menu item appears once an agent has recorded a turn in this repository (see [Agents](agents.md)). Turns are saved with each terminal in your session, so the item is still there after a relaunch, as long as the turn had finished and its checkpoints haven't been pruned (they're kept for 14 days at most). If you open a turn while it's still running, Review follows it and switches to the finished diff when the turn ends.
 - **Since your last review** appears after you've finished a review once (see [Marking files viewed](#marking-files-viewed)).
 - Only **Unstaged** and **Staged** change your files or index. Every other scope is read-only: you can read, mark viewed and comment, but not stage or revert.
 
@@ -71,7 +71,8 @@ From left to right:
 - **"2/4 viewed"**: how many files you've marked viewed. It turns green when all are.
 - **Unified / Split**: the layout of the diff.
 - **Whitespace** (the space-bar icon): hide changes that only touch whitespace. Click again to show them.
-- **Comments** (the speech-bubble icon, with the number of comments): send, copy, import or delete comments. See [Comments](#comments).
+- **Context** (the up-and-down chevrons): how many unchanged lines show around each change: 3, 10 or 25 lines, or the whole file. It starts from **Context lines** in Settings ▸ Git (`review_context_lines`, 3 by default); a choice here lasts for this tab.
+- **Comments** (the speech-bubble icon, with the number of comments on the files in this view): send, copy, import or delete comments. See [Comments](#comments).
 - **Show Changes panel to commit** (the branch icon): show the [Changes panel](git.md#the-changes-panel), where you commit (⌃⇧G does the same).
 - **Refresh**: read the changes again now.
 
@@ -104,16 +105,16 @@ Each file is a card. Its header stays pinned at the top while you scroll through
 
 Right-click a file header for **Copy Path**, **Open File**, **Open in Diff Editor** (Unstaged only) and **Collapse** / **Expand**.
 
-Inside the card, each hunk starts with its `@@ … @@` header line and its buttons. Hunks show three lines of unchanged context around each change; to see more of the file, open it.
+Inside the card, each hunk starts with its `@@ … @@` header line and its buttons. Hunks show three lines of unchanged context around each change (`review_context_lines`); to see more, pick more context in the header, or open the file.
 
 Instead of hunks, a file can show a notice:
 
-| Notice                                                 | Why                                                                                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Binary file — no diff shown                            | The file isn't text.                                                                                                                  |
-| File too large to display — open it in the editor      | The diff is too big to show.                                                                                                          |
-| No textual changes                                     | There are no changed lines to show: for example only the file's mode changed, or every change is whitespace and whitespace is hidden. |
-| Diff truncated — the file has more changes than shown. | The file has more changes than Review shows; open it to see the rest.                                                                 |
+| Notice                                                                                     | Why                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binary file — no diff shown                                                                | The file isn't text.                                                                                                                                                                                           |
+| File too large to display — open it in the editor                                          | The diff is too big to show.                                                                                                                                                                                   |
+| No textual changes                                                                         | There are no changed lines to show: for example only the file's mode changed, or every change is whitespace and whitespace is hidden.                                                                          |
+| Diff truncated — the file has more changes than shown. Stage or revert it as a whole file. | The file's diff runs past 30,000 lines, more than Review shows; open the file to see the rest. Its hunks and lines can't be staged, unstaged or reverted on their own (see [What to expect](#what-to-expect)). |
 
 ### Unified and split layouts
 
@@ -122,7 +123,7 @@ Instead of hunks, a file can show a notice:
 
 ![The same hunk of src/forecast.ts in the split layout: removed lines on the left, added lines on the right](images/review-split.png)
 
-Long lines wrap rather than scroll sideways. Code uses the editor's font family (`font_family`).
+Long lines wrap rather than scroll sideways. Code uses the editor's font family (`font_family`), at a size that follows the editor's font size (`font_size`, and ⌘= / ⌘-): 12 points at the default 14.
 
 ### Syntax colors and word-level highlights
 
@@ -152,7 +153,7 @@ Each hunk header has **Stage hunk** and **Revert hunk** (Unstaged) or **Unstage 
 | U or ⇧⌘Y | Unstage the focused hunk (Staged)                      |
 | X or ⌥⌘Z | Revert the focused hunk in the working tree (Unstaged) |
 
-Right-clicking any line also offers **Stage Hunk**, **Unstage Hunk** or **Revert Hunk…** for its hunk.
+Right-clicking any line also offers **Stage Hunk**, **Unstage Hunk** or **Revert Hunk** for its hunk.
 
 ### Individual lines
 
@@ -170,6 +171,7 @@ A selection lives in one hunk at a time; selecting a line in another hunk starts
 - Reverting a hunk or lines doesn't ask first. Impulse records a [safety snapshot](git.md#safety-snapshots-and-undo) before it, and the toast ("Reverted changes in forecast.ts") offers **Undo** for about 10 seconds. Editors showing the file reload it.
 - If the file changed after the diff was drawn and the hunk you acted on no longer matches, Impulse refuses rather than apply the wrong lines ("Couldn't stage the selection"), and the diff is read again so you can try once more.
 - A file being staged or reverted is dimmed until the change is done.
+- A file whose diff is truncated (one with more than 30,000 lines of diff, which **Whole File** context reaches soonest) can only be staged, unstaged or reverted whole, with the file header's buttons: its hunk headers show "Whole file only" instead of their buttons, and S, U and X explain why instead of acting.
 - To commit what you've staged, open the Changes panel with the branch icon in the header (or ⌃⇧G). See [Committing](git.md#committing).
 
 ## Marking files viewed
@@ -209,18 +211,19 @@ A comment remembers the text of the lines it was written on. If those lines chan
 
 - Comments belong to the repository, not to a scope or a tab: the same comments show in every scope where their file and lines appear.
 - They're saved in Impulse's own data folder, never inside the repository, and survive restarts.
-- The count in the header, and sending or copying comments, cover every comment in the repository, including ones on files the current scope doesn't show.
+- The count in the header, and sending or copying comments, cover the comments on the files the current scope shows. Comments on other files stay saved, and come back in any scope that shows their files.
+- **Delete All Comments in Repository…** is the exception: it deletes every comment in the repository, and its confirmation says how many are on files the current view doesn't show.
 
 ### Sending comments to an agent
 
 The comments menu in the header (the speech-bubble icon) has:
 
-| Item                                     | What it does                                                                            |
-| ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| Send Comments to Claude Code · trailhead | One item per running agent. Types all comments into that agent's prompt as one message. |
-| Import Review Threads from #12           | When the branch has a GitHub pull request. See below.                                   |
-| Copy Comments as Prompt                  | Copies the same message to the clipboard, for an agent running somewhere else.          |
-| Delete All Comments…                     | Deletes every comment in the repository, after asking.                                  |
+| Item                                     | What it does                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Send Comments to Claude Code · trailhead | One item per running agent. Types the comments on this view's files into that agent's prompt as one message. |
+| Import Review Threads from #12           | When the branch has a GitHub pull request. See below.                                                        |
+| Copy Comments as Prompt                  | Copies the same message to the clipboard, for an agent running somewhere else.                               |
+| Delete All Comments in Repository…       | Deletes every comment in the repository, including ones on files this view doesn't show, after asking.       |
 
 Sending types the prompt but doesn't press Return, so you can read it and add to it in the agent's terminal; if the agent is in the middle of a turn, the prompt is queued and sent when the turn ends. Sending also records "reviewed up to here", so when the agent is done you can choose "Since your review at …" to see exactly what it changed.
 
@@ -244,7 +247,7 @@ const TTL_MS = 60_000;
 Ten minutes is a big jump from one. Was that on purpose?
 ````
 
-Comments stay after you send them, so you can check each one against what the agent did. Delete them (one by one, or with **Delete All Comments…**) once they're addressed.
+Comments stay after you send them, so you can check each one against what the agent did. Delete them (one by one, or with **Delete All Comments in Repository…**) once they're addressed.
 
 Impulse never calls an AI model itself: sending comments only types text into an agent CLI you're already running. See [Agents](agents.md).
 
