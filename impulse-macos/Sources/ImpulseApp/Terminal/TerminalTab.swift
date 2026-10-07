@@ -262,6 +262,11 @@ class TerminalTab: NSView {
       self.clearAttention()
       self.onFocused?(self)
     }
+    // Clicks that leave focus alone (the grid already had it, or a read-only
+    // grid hands it to the input bar) still mean the user is here.
+    renderer.onMouseDown = { [weak self] in
+      self?.clearAttention()
+    }
   }
 
   private func handleBackendEvent(_ event: TerminalBackendEvent) {

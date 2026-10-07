@@ -63,6 +63,9 @@ extension MainWindowController {
     windowModel.onFocusTerminal = { [weak self] in
       self?.tabManager.selectedTerminal?.activeTerminal?.focus()
     }
+    windowModel.onInputBarClicked = { [weak self] in
+      self?.tabManager.selectedTerminal?.activeTerminal?.clearAttention()
+    }
     windowModel.onSelectBlocks = { [weak self] in
       self?.tabManager.selectedTerminal?.activeTerminal?.beginBlockSelection() ?? false
     }

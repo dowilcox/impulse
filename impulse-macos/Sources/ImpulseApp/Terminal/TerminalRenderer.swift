@@ -398,6 +398,9 @@ class TerminalRenderer: NSView {
     /// the read-only grid at a prompt).
     var onRequestInputFocus: (() -> Void)?
 
+    /// Any click in the grid, whether or not it moves keyboard focus.
+    var onMouseDown: (() -> Void)?
+
     /// Warp model: the input bar replaces the shell's in-grid prompt, so the
     /// live prompt region is not rendered at all and the last output line is
     /// anchored directly above the bar. Driven by the context-bar setting;
@@ -3147,6 +3150,7 @@ class TerminalRenderer: NSView {
     // MARK: Mouse Input
 
     override func mouseDown(with event: NSEvent) {
+        onMouseDown?()
         endHints()
         // Hover-toolbar buttons take priority over selection.
         let point = convert(event.locationInWindow, from: nil)

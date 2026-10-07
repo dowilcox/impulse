@@ -310,7 +310,8 @@ struct TerminalContextBarView: View {
             focusToken: focusRequest,
             onSubmit: handleSubmit,
             onKey: handleEditorKey,
-            onFocusChange: { editorFocused = $0 }
+            onFocusChange: { editorFocused = $0 },
+            onMouseDown: { model.onInputBarClicked?() }
           )
           .onChange(of: model.completionRequestToken) { _, _ in requestCompletionsFromTab() }
           .onChange(of: text) { _, newValue in

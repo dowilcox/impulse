@@ -44,6 +44,8 @@ struct CommandEditor: NSViewRepresentable {
   /// Return true when handled (the editor then ignores the key).
   var onKey: (CommandEditorKey) -> Bool
   var onFocusChange: (Bool) -> Void = { _ in }
+  /// Any click in the editor, whether or not it moves keyboard focus.
+  var onMouseDown: () -> Void = {}
 
   func makeNSView(context: Context) -> CommandScrollView {
     let scroll = CommandScrollView()
@@ -279,6 +281,11 @@ final class CommandTextView: NSTextView {
   }
 
   // MARK: Focus
+
+  override func mouseDown(with event: NSEvent) {
+    coordinator?.parent.onMouseDown()
+    super.mouseDown(with: event)
+  }
 
   override func becomeFirstResponder() -> Bool {
     let became = super.becomeFirstResponder()

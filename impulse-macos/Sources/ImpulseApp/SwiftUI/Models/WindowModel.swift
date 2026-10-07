@@ -360,6 +360,8 @@ final class WindowModel {
   var onSendInterrupt: (() -> Void)?
   /// Move keyboard focus into the terminal grid (Esc from the input bar).
   var onFocusTerminal: (() -> Void)?
+  /// The input bar was clicked: the user is at the active terminal.
+  var onInputBarClicked: (() -> Void)?
   /// Language-server diagnostics by file (Problems panel, status bar).
   var problemsByPath: [String: [Problem]] = [:] {
     didSet { problemCounts = Problems.counts(problemsByPath.values.flatMap { $0 }) }
