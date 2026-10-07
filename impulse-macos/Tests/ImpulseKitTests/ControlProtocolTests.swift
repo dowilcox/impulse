@@ -63,6 +63,30 @@
       }
     }
 
+    @Test func unknownOptionsAreUsageErrors() {
+      func error(_ args: [String]) -> ControlProtocol.UsageError? {
+        if case .failure(let error) = ControlProtocol.request(arguments: args, environment: env, cwd: "/repo") {
+          return error
+        }
+        return nil
+      }
+      // There's no `edit --wait`: it mustn't open a file named "--wait".
+      #expect(error(["edit", "--wait", "notes.md"])?.message.hasPrefix("impulse edit: unknown option '--wait'") == true)
+      #expect(error(["open", "notes.md", "-n"])?.isHelp == false)
+      #expect(error(["tab", "--new"]) != nil)
+      #expect(error(["split", "down", "-x"]) != nil)
+      #expect(error(["notify", "-t", "Build"]) != nil)
+      #expect(error(["checkpoint", "--all"]) != nil)
+      // Help after a command is a request for usage, not a mistake.
+      #expect(error(["edit", "--help"])?.isHelp == true)
+      #expect(error(["review", "-h"])?.isHelp == true)
+      // `--` ends options; a command's own options pass through.
+      #expect(parse(["open", "--", "-odd-name.txt"])?.arguments["path"] == "/repo/sub/-odd-name.txt")
+      #expect(parse(["tab", "ls", "-la"])?.arguments == ["command": "ls -la"])
+      #expect(parse(["split", "right", "npm", "test", "--", "--watch"])?.arguments["command"] == "npm test -- --watch")
+      #expect(parse(["checkpoint", "--", "-v2 rework"])?.arguments["message"] == "-v2 rework")
+    }
+
     @Test func linesRoundTrip() throws {
       let request = ControlRequest(command: "open", token: "t", cwd: "/x", arguments: ["path": "/x/y"], wait: true)
       let line = try ControlProtocol.encodeLine(request)

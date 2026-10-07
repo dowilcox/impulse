@@ -68,6 +68,8 @@ struct AgentSummary: Identifiable {
   let since: Date
   /// Whether it has recorded turns to review.
   var hasTurns: Bool = false
+  /// What the program said with its last `impulse status`, if anything.
+  var message: String? = nil
 }
 
 extension AgentState {

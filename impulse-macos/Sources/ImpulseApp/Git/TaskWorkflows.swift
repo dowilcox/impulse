@@ -26,6 +26,8 @@ final class TaskSheetModel {
   var copies: [String] = []
   /// Agents found on PATH: (display name, command).
   var agents: [(name: String, command: String)] = []
+  /// Taken branches, copies and agents are still being looked up.
+  var isLoading = true
   var isCreating = false
   var error: String?
 
@@ -80,7 +82,11 @@ struct TaskSheetView: View {
       VStack(alignment: .leading, spacing: 4) {
         detail("Branch", model.draft.title.isEmpty ? "—" : model.branch)
         detail("Folder", model.draft.title.isEmpty ? "—" : TabManager.abbreviateHomePath(model.path))
-        detail("Copies", model.copies.isEmpty ? "nothing (add patterns to .worktreeinclude)" : model.copies.joined(separator: ", "))
+        detail(
+          "Copies",
+          model.isLoading
+            ? "…"
+            : model.copies.isEmpty ? "nothing (add patterns to .worktreeinclude)" : model.copies.joined(separator: ", "))
       }
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -110,8 +116,10 @@ struct TaskSheetView: View {
     .onAppear { titleFocused = true }
   }
 
+  /// Not before the lookups finish: the branch name must be checked against
+  /// the taken ones, and the copies known.
   private var canCreate: Bool {
-    !model.isCreating && !model.draft.title.trimmingCharacters(in: .whitespaces).isEmpty
+    !model.isLoading && !model.isCreating && !model.draft.title.trimmingCharacters(in: .whitespaces).isEmpty
   }
 
   private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -157,26 +165,28 @@ extension MainWindowController {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository to start a task."))
       return
     }
-    // Tasks branch from the main checkout, even when started from a task.
-    let root = repository.root
-    let model = TaskSheetModel(repoRoot: root, base: base ?? repository.snapshot?.branch ?? "HEAD")
+    // Tasks branch from the main checkout, even when started from a task:
+    // their folders go beside it, and its branch is the default base.
+    let root = Self.mainCheckoutRoot(of: repository.root)
+    let fromTask = root != repository.root
+    let model = TaskSheetModel(
+      repoRoot: root, base: base ?? (fromTask ? "" : repository.snapshot?.branch ?? "HEAD"))
     model.draft.title = title
     model.draft.command = command
     DispatchQueue.global(qos: .userInitiated).async {
+      let mainBranch = fromTask && base == nil ? GitOperations.currentBranch(root: root) ?? "HEAD" : nil
       let taken = Set(GitOperations.branches(root: root).local)
-      let include = try? String(
-        contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
-      let projectCopies = ProjectConfig.load(root: root).flatMap { try? $0.config.get().worktreeCopy } ?? []
-      let copies = WorktreeTasks.matchingFiles(
-        patterns: WorktreeTasks.includePatterns(fromFile: include) + projectCopies, root: root)
+      let copies = Self.taskCopies(root: root)
       let agents = KnownAgents.builtIn.compactMap { kind -> (name: String, command: String)? in
         guard let name = kind.names.first, LoginShell.which(name) != nil else { return nil }
         return (kind.displayName, name)
       }
       DispatchQueue.main.async {
+        if let mainBranch, model.draft.base.isEmpty { model.draft.base = mainBranch }
         model.takenBranches = taken
         model.copies = copies
         model.agents = agents
+        model.isLoading = false
       }
     }
 
@@ -203,16 +213,37 @@ extension MainWindowController {
       NSLog("DebugSnapshot: no repository for a task")
       return
     }
-    let model = TaskSheetModel(repoRoot: repository.root, base: repository.snapshot?.branch ?? "HEAD")
+    let root = Self.mainCheckoutRoot(of: repository.root)
+    let base =
+      root == repository.root ? repository.snapshot?.branch : GitOperations.currentBranch(root: root)
+    let model = TaskSheetModel(repoRoot: root, base: base ?? "HEAD")
     model.draft.title = title
     model.draft.command = command
-    let include = try? String(
-      contentsOfFile: (repository.root as NSString).appendingPathComponent(".worktreeinclude"),
-      encoding: .utf8)
-    model.copies = WorktreeTasks.matchingFiles(
-      patterns: WorktreeTasks.includePatterns(fromFile: include), root: repository.root)
-    model.takenBranches = Set(GitOperations.branches(root: repository.root).local)
+    model.copies = Self.taskCopies(root: root)
+    model.takenBranches = Set(GitOperations.branches(root: root).local)
+    model.isLoading = false
     createTask(model) {}
+  }
+
+  /// The main checkout of the repository `root` is in: for a task (a
+  /// linked worktree), the folder its repository's `.git` is in; otherwise
+  /// `root` itself.
+  static func mainCheckoutRoot(of root: String) -> String {
+    guard let gitDirectory = GitClient.gitDirectory(forPath: root),
+      let common = GitClient.commonGitDirectory(forPath: root), gitDirectory != common,
+      (common as NSString).lastPathComponent == ".git"
+    else { return root }
+    return (common as NSString).deletingLastPathComponent
+  }
+
+  /// The untracked files a new task gets from `root`: `.worktreeinclude`'s
+  /// patterns (or the defaults) plus project.toml's `[worktrees] copy`.
+  static func taskCopies(root: String) -> [String] {
+    let include = try? String(
+      contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
+    let projectCopies = ProjectConfig.load(root: root).flatMap { try? $0.config.get().worktreeCopy } ?? []
+    return WorktreeTasks.matchingFiles(
+      patterns: WorktreeTasks.includePatterns(fromFile: include) + projectCopies, root: root)
   }
 
   private func createTask(_ model: TaskSheetModel, done: @escaping () -> Void) {
@@ -263,17 +294,19 @@ extension MainWindowController {
   }
 
   /// A pull request as a task: a worktree beside the repository with the
-  /// PR checked out by gh (which also sets up fork remotes), opened as a
-  /// workspace.
+  /// PR checked out by gh (which also sets up fork remotes), set up and
+  /// opened like New Task… (copies, then the setup script if the user says
+  /// so for this pull request).
   func checkOutPullRequestAsTask(_ pullRequest: PullRequestSummary) {
     guard let repository = taskRepository(from: nil) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository first."))
       return
     }
-    let root = repository.root
+    let root = Self.mainCheckoutRoot(of: repository.root)
     toasts.show(Toast(kind: .info, message: "Checking out #\(pullRequest.number)…"))
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let taken = Set(GitOperations.branches(root: root).local)
+      let copies = Self.taskCopies(root: root)
       let branch = pullRequest.localBranch(taken: taken)
       let path = WorktreeTasks.worktreePath(repoRoot: root, branch: branch)
       var failure: String?
@@ -304,14 +337,46 @@ extension MainWindowController {
             self.toasts.show(Toast(kind: .warning, message: "gh: \(message)", lifetime: 12))
             return
           }
-          let include = try? String(
-            contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
-          Self.copyFiles(
-            WorktreeTasks.matchingFiles(patterns: WorktreeTasks.includePatterns(fromFile: include), root: root),
-            from: root, to: path)
-          self.tabManager.openWorkspace(folder: path)
-          self.toasts.show(Toast(kind: .success, message: "Checked out #\(pullRequest.number) as \(branch)."))
+          Self.copyFiles(copies, from: root, to: path)
+          // The setup script comes from the pull request's own checkout.
+          self.confirmPullRequestSetup(pullRequest, root: path) { [weak self] setup in
+            self?.tabManager.openWorkspace(folder: path, initialCommand: setup)
+            self?.toasts.show(Toast(kind: .success, message: "Checked out #\(pullRequest.number) as \(branch)."))
+          }
         }
+      }
+    }
+  }
+
+  /// A pull request's setup script, once the user says to run it. Always
+  /// asked, whatever the repository's trusted project.toml: the pull
+  /// request can change what the script runs (package.json scripts, say)
+  /// without touching that file. The answer isn't remembered. Nil when
+  /// there's no script or the user declines.
+  private func confirmPullRequestSetup(
+    _ pullRequest: PullRequestSummary, root: String, completion: @escaping (String?) -> Void
+  ) {
+    guard let setup = projectConfig(root: root)?.setupScript else { return completion(nil) }
+    let author = pullRequest.author.isEmpty ? "" : " by \(pullRequest.author)"
+    let title = pullRequest.title.isEmpty ? "" : " (“\(pullRequest.title)”)"
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "Run the setup script of #\(pullRequest.number)?"
+    alert.informativeText = """
+      Pull request #\(pullRequest.number)\(author)\(title) sets up its task with this script \
+      from \(ProjectConfig.relativePath):
+
+        \(setup)
+
+      It runs in the pull request's checkout, where the pull request decides what these commands \
+      do (a changed package.json script, for example). Run it only if you trust the pull \
+      request's changes. The task opens either way.
+      """
+    alert.addButton(withTitle: "Run Setup Script")
+    alert.addButton(withTitle: "Don't Run")
+    presentWhenNoSheet { window in
+      alert.beginSheetModal(for: window) { response in
+        completion(response == .alertFirstButtonReturn ? setup : nil)
       }
     }
   }
@@ -333,37 +398,91 @@ extension MainWindowController {
   }
 
   /// "Archive Task…": close the workspace, snapshot any uncommitted work,
-  /// remove the worktree folder, keep the branch. Undo brings it back.
+  /// remove the worktree folder, keep the branch. Undo brings it back. A
+  /// second request while one is under way is ignored.
   func archiveTask(_ id: UUID) {
-    guard let workspace = tabManager.workspace(id), isTaskWorkspace(id) else {
+    // A workspace that's gone was most likely archived by an earlier request.
+    guard !archivingTasks.contains(id), let workspace = tabManager.workspace(id) else { return }
+    guard workspace.isTask else {
       toasts.show(Toast(kind: .info, message: "Only task worktrees can be archived."))
       return
     }
+    archivingTasks.insert(id)
     let root = workspace.root
-    let snapshot = workspace.repository?.snapshot
+    let name = workspace.name
+    // Ignored files (.env, node_modules) go with the folder for good: the
+    // snapshot only holds what git would track. Say so before asking.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let ignored = GitOperations.ignoredEntries(root: root)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        guard let workspace = self.tabManager.workspace(id) else {
+          self.archivingTasks.remove(id)
+          return
+        }
+        self.confirmArchiveTask(id, root: root, name: name, snapshot: workspace.repository?.snapshot, ignored: ignored)
+      }
+    }
+  }
+
+  /// Whether the task workspace `id` is still open on `root`, and its folder
+  /// still there (it can go while a confirmation waits).
+  private func isArchivableTask(_ id: UUID, root: String) -> Bool {
+    guard let workspace = tabManager.workspace(id), workspace.isTask, workspace.root == root else { return false }
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory) && isDirectory.boolValue
+  }
+
+  private func confirmArchiveTask(_ id: UUID, root: String, name: String, snapshot: RepoSnapshot?, ignored: [String]) {
     let branch = snapshot?.branch ?? (root as NSString).lastPathComponent
     let dirty = snapshot?.changedFileCount ?? 0
     var message = "The folder \(TabManager.abbreviateHomePath(root)) is removed; branch \(branch) is kept."
     if dirty > 0 {
       message += " \(dirty) uncommitted file\(dirty == 1 ? "" : "s") will be saved in a snapshot that Undo restores."
     }
+    if !ignored.isEmpty {
+      let shown = ignored.prefix(3).joined(separator: ", ") + (ignored.count > 3 ? ", …" : "")
+      message += " Ignored files in it (\(shown)) are deleted, and Undo can't bring them back."
+    }
     if let snapshot, snapshot.ahead > 0 || snapshot.upstream == nil {
       message += " The branch has commits that aren't pushed."
     }
-    gitConfirm(title: "Archive \(workspace.name)?", message: message, confirmTitle: "Archive", destructive: true) {
+    gitConfirm(title: "Archive \(name)?", message: message, confirmTitle: "Archive", destructive: true) {
       [weak self] confirmed in
-      guard let self, confirmed else { return }
+      guard let self else { return }
+      guard confirmed, self.stillArchivable(id, root: root, name: name) else {
+        self.archivingTasks.remove(id)
+        return
+      }
       // The project's archive script (once trusted) runs before removal.
       self.trustProjectConfig(root: root) { [weak self] config in
         guard let self else { return }
+        guard self.stillArchivable(id, root: root, name: name) else {
+          self.archivingTasks.remove(id)
+          return
+        }
         self.tabManager.ensureScratchWorkspace()
         // Close the workspace first (it confirms unsaved files and running
         // processes), then remove the folder once it's gone.
-        self.requestCloseWorkspace(id) { [weak self] in
-          self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0, archiveScript: config?.archiveScript)
-        }
+        self.requestCloseWorkspace(
+          id, recordForUndo: false,
+          then: { [weak self] in
+            self?.archivingTasks.remove(id)
+            self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0, archiveScript: config?.archiveScript)
+          },
+          cancelled: { [weak self] in self?.archivingTasks.remove(id) })
       }
     }
+  }
+
+  /// `isArchivableTask`, saying so when the workspace is still open but its
+  /// folder went away (a request that lost to another just stops).
+  private func stillArchivable(_ id: UUID, root: String, name: String) -> Bool {
+    if isArchivableTask(id, root: root) { return true }
+    if tabManager.workspace(id) != nil {
+      toasts.show(Toast(kind: .info, message: "\(name) wasn't archived: its folder is gone."))
+    }
+    return false
   }
 
   private func removeTaskWorktree(root: String, branch: String, dirty: Bool, archiveScript: String? = nil) {
@@ -405,7 +524,8 @@ extension MainWindowController {
         self.toasts.show(
           Toast(
             kind: .success, message: "Archived \(branch). The branch is kept.", actionTitle: "Undo",
-            action: { [weak self] in self?.restoreTask(root: root, branch: branch, snapshot: saved, mainRoot: mainRoot) }))
+            action: { [weak self] in self?.restoreTask(root: root, branch: branch, snapshot: saved, mainRoot: mainRoot) },
+            lifetime: 15))
       }
     }
   }

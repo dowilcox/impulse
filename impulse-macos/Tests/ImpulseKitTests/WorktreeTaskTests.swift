@@ -25,8 +25,9 @@
           == "/Users/me/Code/app.worktrees/fix")
     }
 
-    @Test func includePatternsDefaultToEnvFiles() {
-      #expect(WorktreeTasks.includePatterns(fromFile: nil) == [".env", ".env.local"])
+    @Test func includePatternsDefaultToEnvFilesAndProjectHooks() {
+      #expect(
+        WorktreeTasks.includePatterns(fromFile: nil) == [".env", ".env.local", ".claude/settings.local.json"])
       #expect(
         WorktreeTasks.includePatterns(fromFile: "# secrets\n.env*\n\n/config/local.json\n")
           == [".env*", "config/local.json"])
@@ -49,6 +50,19 @@
       #expect(
         WorktreeTasks.matchingFiles(patterns: ["../\(outside)/.env", "/etc/hosts", "config/../.env"], root: root)
           .isEmpty)
+    }
+
+    @Test func defaultsCopyProjectAgentHooks() throws {
+      let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("impulse-wt-\(UUID().uuidString)").path
+      defer { try? FileManager.default.removeItem(atPath: root) }
+      try FileManager.default.createDirectory(atPath: root + "/.claude", withIntermediateDirectories: true)
+      for file in [".env", ".claude/settings.local.json", ".claude/settings.json"] {
+        try Data("x".utf8).write(to: URL(fileURLWithPath: root + "/" + file))
+      }
+      #expect(
+        WorktreeTasks.matchingFiles(patterns: WorktreeTasks.includePatterns(fromFile: nil), root: root)
+          == [".env", ".claude/settings.local.json"])
     }
   }
 #endif

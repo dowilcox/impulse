@@ -90,6 +90,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// The agent state last announced to VoiceOver, per terminal.
   var announcedAgentStates: [UUID: AgentState] = [:]
   var reviewingDirtyWindowClose = false
+  /// Task workspaces with an Archive Task… under way (asked, closing).
+  var archivingTasks: Set<UUID> = []
 
   /// Local event monitor for custom keybinding interception.
   private var customKeybindingMonitor: Any?

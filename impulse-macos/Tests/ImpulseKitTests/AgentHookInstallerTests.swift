@@ -65,6 +65,20 @@
           == .failure(.notifyInUse("config.toml already sets notify; add Impulse's command by hand")))
     }
 
+    @Test func codexNotifyRemovalRestoresTheFile() throws {
+      let config = "model = \"o3\"\n\n[profiles.fast]\nmodel = \"mini\"\n"
+      let installed = try AgentHookInstaller.installingCodexNotify(into: config).get()
+      let removed = AgentHookInstaller.removingCodexNotify(from: installed)
+      #expect(removed == config)
+      #expect(!AgentHookInstaller.codexNotifyInstalled(removed))
+      // A file that only had Impulse's notify ends up empty.
+      let onlyOurs = try AgentHookInstaller.installingCodexNotify(into: nil).get()
+      #expect(AgentHookInstaller.removingCodexNotify(from: onlyOurs) == "")
+      // Someone else's notify program stays.
+      let other = "notify = [\"growl\"]\nmodel = \"o3\"\n"
+      #expect(AgentHookInstaller.removingCodexNotify(from: other) == other)
+    }
+
     @Test func diffShowsAddedAndRemovedLines() {
       let lines = AgentHookInstaller.diffLines(before: "a\nb\nc", after: "a\nB\nc\nd")
       #expect(lines == ["  a", "- b", "+ B", "  c", "+ d"])

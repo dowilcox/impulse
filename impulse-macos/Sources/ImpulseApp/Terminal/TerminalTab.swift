@@ -34,6 +34,9 @@ class TerminalTab: NSView {
   /// The agent's session (from its hooks), so a restored terminal can
   /// offer to resume it.
   var agentSession: (agentID: String, id: String)?
+  /// The message from the last `impulse status` (shown with the agent's
+  /// state), cleared when the agent ends.
+  var agentStatusMessage: String?
 
   /// The coding agent running in this terminal, if any, and what it's doing
   /// (maintained by TerminalTab+Agent).

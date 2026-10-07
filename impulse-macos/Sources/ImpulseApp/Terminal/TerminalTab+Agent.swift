@@ -85,6 +85,7 @@ extension TerminalTab {
     agent = nil
     agentFromHooks = false
     agentSession = nil
+    agentStatusMessage = nil
     agentTickTimer?.invalidate()
     agentTickTimer = nil
     agentTickDeadline = nil

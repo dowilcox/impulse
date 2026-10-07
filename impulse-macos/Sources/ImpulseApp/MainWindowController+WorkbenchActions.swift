@@ -307,7 +307,7 @@ extension MainWindowController {
     }
   }
 
-  /// ⌘⇧U: the next agent waiting on the user (needs input first), cycling
+  /// ⇧⌘U: the next agent waiting on the user (needs input first), cycling
   /// past the one already in front.
   func revealNextWaitingAgent() {
     let waiting = windowModel.agents.filter { $0.state.wantsUser }

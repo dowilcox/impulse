@@ -18,6 +18,12 @@ struct AgentComposerView: View {
   /// Position while browsing sent messages with ↑/↓.
   @State private var historyIndex: Int?
 
+  /// Follows the terminal font size (and zoom) like the input bar: a point
+  /// smaller, 13 beside the terminal's default 14.
+  private var fontSize: CGFloat {
+    CGFloat(max(6, SettingsStore.shared.settings.terminalFontSize - 1))
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       if !mentions.isEmpty {
@@ -40,7 +46,7 @@ struct AgentComposerView: View {
         placeholder: "Describe the change… (@ mentions a file)",
         suggestion: nil,
         colors: CommandEditorColors(theme: model.theme),
-        font: NSFont.systemFont(ofSize: 13),
+        font: NSFont.systemFont(ofSize: fontSize),
         shellSyntax: false,
         returnSubmits: false,
         focusToken: focusRequest + model.composerFocusToken,

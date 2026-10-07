@@ -114,11 +114,16 @@ The first time something would run a command from the file (an action, a task's 
 - **Trust and Run** remembers your answer and runs the command.
 - **Cancel** runs nothing from the file. Impulse asks again next time.
 
-What you trust is the file's exact content (a SHA-256 hash of it) in that repository. Any change to the file, even a comment, makes Impulse ask again, so you see new commands before they run. Task worktrees share their repository's trust: a task whose copy of the file is identical to the one you trusted doesn't ask again.
+What you trust is the file's exact content (a SHA-256 hash of it) in that repository. Any change to the file, even a comment, makes Impulse ask again, so you see new commands before they run. Task worktrees share their repository's trust: a task whose copy of the file is identical to the one you trusted doesn't ask again. The exception is the setup script of a pull request checked out as a task, which asks every time (see [Setup script](#setup-script)).
 
 Some things don't need trust: listing the actions in the palette, and copying the files named in `[worktrees] copy`. A file with no actions and no scripts never asks.
 
-Trusting `project.toml` is separate from [workspace trust](getting-started.md), which controls language servers, formatters on save and background fetch. Trusting one doesn't trust the other, and **Forget Trusted Folders** doesn't reset `project.toml` trust. To be asked again about a file you trusted, change it.
+Trusting `project.toml` is separate from [workspace trust](getting-started.md), which controls language servers, formatters on save and background fetch: trusting one doesn't trust the other. Taking trust back covers both, though:
+
+- **Restrict This Folder** (command palette) also forgets the trusted `project.toml` of the folder's repository and of every repository inside the folder.
+- **Forget Trusted Folders** also forgets every trusted `project.toml`.
+
+After either, Impulse asks again before running a command from the file. Editing the file asks again too.
 
 ## Project actions
 
@@ -144,7 +149,7 @@ The last row of the list is **Add project actions…** when the file has no acti
 - If you chose an agent under **Start**, the agent runs after it, as one command joined with `&&` (for example `npm ci && claude`). If setup fails, the agent doesn't start; fix the problem in that terminal and start the agent yourself.
 - Impulse reads the script from the new task's own copy of `.impulse/project.toml`, which is whatever is committed on the base branch. Commit changes to the file before relying on them in new tasks.
 - If you haven't trusted the file, Impulse asks first. If you cancel, the script doesn't run, and the task's terminal still opens (and starts the agent, if you chose one).
-- **Check Out Pull Request as Task…** doesn't run the setup script.
+- **Check Out Pull Request as Task…** reads it from the pull request's own copy of the file and always asks before running it, showing the script and the pull request's number and author, even if you trusted the file: a pull request can change what the script runs (a `package.json` script, for example) without changing the file. The answer isn't remembered, and **Don't Run** opens the task without it.
 
 ## Archive script
 
@@ -158,7 +163,7 @@ The last row of the list is **Add project actions…** when the file has no acti
 
 A new task worktree contains only the files git tracks. Untracked files your project needs, such as `.env`, are copied in from the repository when the task is created. Two sources decide which:
 
-- `.worktreeinclude` at the repository root, or, when that file doesn't exist, the defaults `.env` and `.env.local`;
+- `.worktreeinclude` at the repository root, or, when that file doesn't exist, the defaults `.env`, `.env.local` and `.claude/settings.local.json` (Claude Code's project-only settings, so new tasks keep the project's [agent hooks](agents.md#agent-hooks));
 - plus `[worktrees] copy` in `.impulse/project.toml`.
 
 The New Task sheet's **Copies** line lists exactly which files will be copied. See [Tasks](tasks.md#which-files-are-copied).
@@ -181,7 +186,7 @@ The rules:
 - Only files are copied. A pattern that names a folder copies nothing, and folders aren't searched recursively.
 - Patterns that start with `~` or contain `..` are ignored, so nothing outside the repository can be copied.
 - A file is only copied when it exists in the repository and doesn't already exist in the new task.
-- When `.worktreeinclude` exists, the defaults (`.env`, `.env.local`) no longer apply: list them if you want them. An empty `.worktreeinclude` turns copying off (apart from `[worktrees] copy`).
+- When `.worktreeinclude` exists, the defaults (`.env`, `.env.local`, `.claude/settings.local.json`) no longer apply: list them if you want them. An empty `.worktreeinclude` turns copying off (apart from `[worktrees] copy`).
 
 | Pattern               | Copies                                               |
 | --------------------- | ---------------------------------------------------- |
@@ -201,7 +206,7 @@ The rules:
 copy = [".env", "config/*.local.json"]
 ```
 
-Use whichever file suits your project: `.worktreeinclude` keeps the list in a file of its own, `copy` keeps everything about tasks in `project.toml`. **Check Out Pull Request as Task…** only uses `.worktreeinclude` (or the defaults).
+Use whichever file suits your project: `.worktreeinclude` keeps the list in a file of its own, `copy` keeps everything about tasks in `project.toml`. **New Task…** and **Check Out Pull Request as Task…** both use the two together.
 
 ## Related
 

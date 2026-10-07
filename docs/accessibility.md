@@ -75,7 +75,7 @@ Impulse's window doesn't use translucent materials, so **Reduce transparency** h
 | Terminal only                | **Settings › Terminal › Font size** (`terminal_font_size`).                                                                                                    |
 | Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your Mac.                                                      |
 
-The terminal's input bar follows the terminal's font size (a point smaller) and zoom, and the Review and History diffs follow the editor's font family and size (slightly smaller: 12 points at the default 14). Some text doesn't follow these settings: the window's sidebar, tabs and panels use fixed sizes, and the composer uses 13-point text.
+The terminal's input bar and the agent composer follow the terminal's font size (a point smaller) and zoom, and the Review and History diffs follow the editor's font family and size (slightly smaller: 12 points at the default 14). The window's sidebar, tabs and panels use fixed sizes.
 
 ### Contrast in the terminal
 
@@ -95,7 +95,7 @@ Impulse pairs colors with text or shapes in most places:
 - The agent inbox spells out each agent's state in words.
 - A command that the shell can't run gets a dashed underline in the input bar, with a tooltip saying "command not found".
 
-The small dot on an agent's icon uses the theme's orange when the agent needs you and its green when the agent has finished; open the inbox to see the state in words, or use VoiceOver, which reads it.
+The badge on an agent's icon differs in shape as well as color: a dot in the theme's orange when the agent needs you, a check mark in its green when the agent has finished. Open the inbox to see the state in words, or use VoiceOver, which reads it with the tab.
 
 ### Cursors and motion in the editor and terminal
 

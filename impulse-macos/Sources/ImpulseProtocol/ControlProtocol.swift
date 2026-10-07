@@ -67,6 +67,8 @@ public enum ControlProtocol {
       impulse tab [command…]                new tab in this workspace
       impulse notify <title> [message…]     flag this pane and notify
       impulse status <working|waiting|done|idle> [message…]
+                                            report an agent state from a program running
+                                            in this pane (it lasts while that program runs)
       impulse checkpoint [message…]         snapshot the repository
       impulse hook <claude|codex> [event]   for agent hooks (reads hook input on stdin)
 
@@ -75,7 +77,43 @@ public enum ControlProtocol {
 
   public struct UsageError: Error, Equatable {
     public let message: String
-    public init(_ message: String) { self.message = message }
+    /// `-h` / `--help`: the usage was asked for (not a mistake).
+    public let isHelp: Bool
+    public init(_ message: String, isHelp: Bool = false) {
+      self.message = message
+      self.isHelp = isHelp
+    }
+  }
+
+  /// A word where an option could go: `-h`/`--help` asks for the usage, and
+  /// any other `-x` is an option `impulse` doesn't have (rather than, say, a
+  /// file named `--wait`). A lone `-` isn't an option.
+  static func optionError(_ word: String?, command: String) -> UsageError? {
+    guard let word, word.hasPrefix("-"), word != "-" else { return nil }
+    if word == "-h" || word == "--help" { return UsageError(usage, isHelp: true) }
+    return UsageError("impulse \(command): unknown option '\(word)'\n\n" + usage)
+  }
+
+  /// A command's arguments without the `--` that ends options, or the first
+  /// option among them as an error. Only the first word is checked unless
+  /// `checkAll` (the rest may be a command with options of its own).
+  static func operands(_ args: [String], command: String, checkAll: Bool = false) -> Result<[String], UsageError> {
+    guard let first = args.first else { return .success([]) }
+    if first == "--" { return .success(Array(args.dropFirst())) }
+    guard checkAll else {
+      return optionError(first, command: command).map { .failure($0) } ?? .success(args)
+    }
+    var operands: [String] = []
+    var optionsEnded = false
+    for word in args {
+      if !optionsEnded, word == "--" {
+        optionsEnded = true
+        continue
+      }
+      if !optionsEnded, let error = optionError(word, command: command) { return .failure(error) }
+      operands.append(word)
+    }
+    return .success(operands)
   }
 
   /// Turn command-line arguments into a request. `stdin` is read only by
@@ -85,9 +123,23 @@ public enum ControlProtocol {
     stdin: () -> Data? = { nil }
   ) -> Result<ControlRequest, UsageError> {
     guard let command = args.first else { return .failure(UsageError(usage)) }
-    let rest = Array(args.dropFirst())
+    var rest = Array(args.dropFirst())
     var request = ControlRequest(
       command: command, token: environment[tokenKey], cwd: cwd, arguments: [:])
+
+    if command != "hook", let first = rest.first, first == "-h" || first == "--help" {
+      return .failure(UsageError(usage, isHelp: true))
+    }
+    // Commands whose arguments are free words: an option among them is a
+    // mistake (`impulse edit --wait file` mustn't open a file named
+    // `--wait`), and `--` lets a word start with a dash. (`split` checks
+    // after its direction.)
+    if ["open", "edit", "tab", "notify", "checkpoint"].contains(command) {
+      switch operands(rest, command: command, checkAll: command == "open" || command == "edit") {
+      case .success(let words): rest = words
+      case .failure(let error): return .failure(error)
+      }
+    }
 
     switch command {
     case "open", "edit":
@@ -112,6 +164,10 @@ public enum ControlProtocol {
       if let first = words.first, first == "right" || first == "down" {
         direction = first
         words.removeFirst()
+      }
+      switch operands(words, command: command) {
+      case .success(let operands): words = operands
+      case .failure(let error): return .failure(error)
       }
       request.arguments["direction"] = direction
       if !words.isEmpty { request.arguments["command"] = words.joined(separator: " ") }

@@ -108,10 +108,12 @@ extension MainWindowController {
     presentTrustPrompt(for: folder)
   }
 
-  /// "Restrict This Folder".
+  /// "Restrict This Folder". Also forgets the folder's trusted project.toml
+  /// files, so their commands ask again.
   func restrictActiveFolder() {
     guard let folder = trustFolderForActiveContext() else { return }
     let name = (folder as NSString).lastPathComponent
+    Self.forgetProjectTrust(within: folder)
     if let above = Trust.shared.revoke(folder) {
       let aboveName = (above as NSString).lastPathComponent
       toasts.show(
@@ -119,6 +121,7 @@ extension MainWindowController {
           kind: .info, message: "“\(name)” is trusted as part of “\(aboveName)”.", actionTitle: "Restrict \(aboveName)",
           action: {
             Trust.shared.revoke(above)
+            Self.forgetProjectTrust(within: above)
             Self.trustDidChange()
           }, lifetime: 10))
       return
@@ -129,11 +132,27 @@ extension MainWindowController {
       Toast(kind: .info, message: "“\(name)” is restricted: language servers, formatters and background fetch are off."))
   }
 
-  /// "Forget Trusted Folders".
+  /// "Forget Trusted Folders": every folder, and every project.toml.
   func forgetTrustedFolders() {
     Trust.shared.revokeAll()
+    var projectTrust = ProjectTrustStore.current
+    projectTrust.revokeAll()
+    ProjectTrustStore.current = projectTrust
     Self.trustDidChange()
-    toasts.show(Toast(kind: .info, message: "Every folder is restricted until you trust it again."))
+    toasts.show(
+      Toast(
+        kind: .info,
+        message: "Every folder is restricted until you trust it again, and project files ask before running commands."))
+  }
+
+  /// Forget trusted project.toml files in `folder`: those of repositories
+  /// inside it, and of the repository it's in (trust is kept per main
+  /// repository, so a task's folder names its repository's).
+  static func forgetProjectTrust(within folder: String) {
+    var projectTrust = ProjectTrustStore.current
+    projectTrust.revoke(within: folder)
+    projectTrust.revoke(root: trustKey(for: folder))
+    ProjectTrustStore.current = projectTrust
   }
 
   func trustFolderForActiveContext() -> String? {

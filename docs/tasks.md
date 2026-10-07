@@ -44,9 +44,9 @@ When you're done, **Archive Task…** removes the folder and keeps the branch, w
 
 The menu, shortcut and palette start a task from the repository of the active workspace (in the Scratch workspace, the repository of the active tab's directory). The **+** button and the context menu start it from that row's repository, so you can start a task for `trailhead` while you're looking at another workspace. The **+** and context-menu items only appear on rows that are in a git repository.
 
-If there's no repository to start from, Impulse shows "Open a folder in a git repository to start a task." Open the repository as a workspace first (see [Workspaces and tabs](workspaces-and-tabs.md)).
+Tasks always come from the repository's main checkout. Started from a task's row, or with a task workspace active, the new task's folder still goes beside the repository (`~/Code/trailhead.worktrees/…`), and **From** defaults to the main checkout's branch, not the task's.
 
-> Start tasks from the main checkout's row (`trailhead`), not from a task's row. New Task… uses the repository of the workspace you start it from: started from a task, the new task branches from that task's branch by default, and its folder goes beside the task's folder (the sheet's **Folder** line shows something like `~/Code/trailhead.worktrees/fix-elevation.worktrees/…`).
+If there's no repository to start from, Impulse shows "Open a folder in a git repository to start a task." Open the repository as a workspace first (see [Workspaces and tabs](workspaces-and-tabs.md)).
 
 ### The New Task sheet
 
@@ -56,11 +56,11 @@ The sheet has three fields and a preview.
 
 #### Task
 
-A short description of the work, for example "Fix elevation". Impulse turns it into the branch name (see [How the branch name is made](#how-the-branch-name-is-made)). The title is only used for the name; it isn't stored anywhere else. **Create Task** stays disabled until you type something, and Return in this field creates the task.
+A short description of the work, for example "Fix elevation". Impulse turns it into the branch name (see [How the branch name is made](#how-the-branch-name-is-made)). The title is only used for the name; it isn't stored anywhere else. **Create Task** stays disabled until you type something and Impulse has finished looking up the repository's branches and the files to copy (a moment after the sheet opens). Return in this field creates the task.
 
 #### From
 
-The base the new branch starts from. It's filled in with the branch checked out in the workspace you started from (or `HEAD` if that checkout is on a detached HEAD). You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`.
+The base the new branch starts from. It's filled in with the branch checked out in the repository's main checkout, even when you start from a task (or `HEAD` if the main checkout is on a detached HEAD). You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`.
 
 #### Start
 
@@ -70,11 +70,11 @@ What runs in the task's first terminal. **Just a terminal** (the default) opens 
 
 The box below the fields shows what will happen before you commit to it:
 
-| Line       | Shows                                                                                                                                               |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Branch** | The branch name made from the title, already made unique. Shows `—` until you type a title.                                                         |
-| **Folder** | Where the task's folder will be, for example `~/Code/trailhead.worktrees/fix-elevation`. Shows `—` until you type a title.                          |
-| **Copies** | The untracked files that will be copied into the task, for example `.env`. Shows "nothing (add patterns to .worktreeinclude)" when nothing matches. |
+| Line       | Shows                                                                                                                                                                                    |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Branch** | The branch name made from the title, already made unique. Shows `—` until you type a title.                                                                                              |
+| **Folder** | Where the task's folder will be, for example `~/Code/trailhead.worktrees/fix-elevation`. Shows `—` until you type a title.                                                               |
+| **Copies** | The untracked files that will be copied into the task, for example `.env`. Shows `…` while Impulse looks them up, and "nothing (add patterns to .worktreeinclude)" when nothing matches. |
 
 Click **Create Task** (it reads **Creating…** while it works) or press Return. **Cancel** or Esc closes the sheet without creating anything. If creation fails, the sheet stays open and shows the reason in red, so you can fix the title or base and try again.
 
@@ -115,7 +115,7 @@ Only local branch names are checked. If you want a specific name, type it as the
 A new worktree only contains tracked files. Files you keep out of git, such as `.env` with local secrets, aren't there, and your app may not run without them. Impulse copies them for you, based on:
 
 - **`.worktreeinclude`** at the repository root, if the file exists: one pattern per line.
-- **No `.worktreeinclude`**: the defaults `.env` and `.env.local`.
+- **No `.worktreeinclude`**: the defaults `.env`, `.env.local` and `.claude/settings.local.json` (Claude Code's project-only settings, where "This project only" [agent hooks](agents.md#agent-hooks) live, so a new task keeps the project's hooks).
 - **`[worktrees] copy`** in `.impulse/project.toml`: extra patterns, added to whichever of the two above applies.
 
 In the trailhead project, `.worktreeinclude` contains:
@@ -190,14 +190,14 @@ You can't check out the task's branch in your main checkout while the task exist
 Archiving removes the task's folder and closes its workspace, and keeps its branch and commits. Use it when the work is merged, or when you want to put it aside.
 
 1. Choose **Archive Task…** from the task row's context menu, or, with the task workspace active, run **Archive Task…** from the command palette.
-2. Read the confirmation and click **Archive**. It says what will happen, for example: "The folder `~/Code/trailhead.worktrees/fix-elevation` is removed; branch fix-elevation is kept." It also warns when the task has uncommitted files ("3 uncommitted files will be saved in a snapshot that Undo restores.") and when "The branch has commits that aren't pushed."
+2. Read the confirmation and click **Archive**. It says what will happen, for example: "The folder `~/Code/trailhead.worktrees/fix-elevation` is removed; branch fix-elevation is kept." It also warns when the task has uncommitted files ("3 uncommitted files will be saved in a snapshot that Undo restores."), when the folder has ignored files, naming up to three of them ("Ignored files in it (.env, node_modules/, …) are deleted, and Undo can't bring them back."), and when "The branch has commits that aren't pushed."
 3. If the task's `.impulse/project.toml` has commands you haven't trusted yet, Impulse asks about the file (see [Project configuration](project-config.md#trusting-the-project-file)).
 4. The workspace closes. As when closing any workspace, Impulse first asks about unsaved files and running processes in its tabs; if you cancel there, nothing is removed.
 5. If the project file has an archive script and you trusted it, Impulse runs it in the task folder. If the script fails or runs longer than two minutes, a toast says "The archive script failed; archiving anyway."
 6. Impulse saves any uncommitted work (modified and untracked files that aren't ignored) in a safety snapshot, then removes the worktree folder. If the snapshot can't be made, the task is not archived and Impulse tells you why.
 7. A toast says "Archived fix-elevation. The branch is kept." with an **Undo** button.
 
-**Undo** recreates the folder on the same branch, puts back the uncommitted files from the snapshot, trusts the folder again if the repository is trusted, and reopens the workspace. The toast disappears after a few seconds, so click it right away if you didn't mean to archive.
+**Undo** recreates the folder on the same branch, puts back the uncommitted files from the snapshot, trusts the folder again if the repository is trusted, and reopens the workspace. The toast stays for 15 seconds, so click it right away if you didn't mean to archive.
 
 ![The Archive confirmation for fix-elevation, saying the folder is removed and the branch is kept, with Cancel and Archive buttons](images/tasks-archive-confirm.png)
 
@@ -219,22 +219,21 @@ Archiving never deletes the branch. Once the work is merged, delete it from **Gi
 
 ## Check out a pull request as a task
 
-**Git ▸ Check Out Pull Request as Task…** opens the command palette in pull request mode (`pr:`), listing the repository's open pull requests through the GitHub CLI (`gh`). Choose one, and Impulse creates a worktree beside the repository, has `gh` check out the pull request into it (setting up a fork's remote if needed), copies the files from `.worktreeinclude` (or the default `.env` and `.env.local`), and opens it as a workspace. The local branch is the pull request's branch name, or `pr-<number>-<branch>` when that name is taken locally or is a default branch name such as `main`. See [Git](git.md).
+**Git ▸ Check Out Pull Request as Task…** opens the command palette in pull request mode (`pr:`), listing the repository's open pull requests through the GitHub CLI (`gh`). Choose one, and Impulse creates a worktree beside the repository's main checkout, has `gh` check out the pull request into it (setting up a fork's remote if needed), copies the same untracked files as **New Task…** (see [Which files are copied](#which-files-are-copied)), and opens it as a workspace. If the pull request's own `.impulse/project.toml` has a setup script, Impulse shows it, with the pull request's number, author and title, and asks whether to run it in the first terminal. It asks every time, even when you've trusted the repository's project file, because a pull request can change what the script does (a `package.json` script that `npm ci` runs, for example) without touching that file, and your answer isn't remembered. Choose **Don't Run** to open the task without it. The local branch is the pull request's branch name, or `pr-<number>-<branch>` when that name is taken locally or is a default branch name such as `main`. See [Git](git.md).
 
-Unlike **New Task…**, checking out a pull request doesn't run the setup script, start an agent, or add the `[worktrees] copy` patterns from `.impulse/project.toml`.
+Unlike **New Task…**, checking out a pull request doesn't start an agent, and the folder doesn't inherit the repository's workspace trust: a pull request can come from someone else's fork, so you're asked about the folder like any other you open (unless a parent folder you trusted already covers it).
 
 ## Gotchas
 
 - **"… already exists."** A folder with the task's name is already in `trailhead.worktrees`. Pick a different title, or move the folder away.
 - **Deleting a task folder by hand.** If you remove a task's folder in Finder or with `rm` instead of archiving it, git still considers its branch checked out there, so you can't switch to or delete that branch. Run `git worktree prune` in the repository to clear it.
 - **`node_modules` and build output aren't copied.** Only files matching `.worktreeinclude` (or the defaults) are copied, and folders never are. Add a setup script such as `npm ci` to `.impulse/project.toml`.
-- **A `.worktreeinclude` replaces the defaults.** Once the file exists, `.env` and `.env.local` are only copied if a pattern in it matches them. An empty `.worktreeinclude` copies nothing (except `[worktrees] copy` patterns).
+- **A `.worktreeinclude` replaces the defaults.** Once the file exists, `.env`, `.env.local` and `.claude/settings.local.json` are only copied if a pattern in it matches them. An empty `.worktreeinclude` copies nothing (except `[worktrees] copy` patterns).
 - **The setup script comes from the task's own checkout.** Impulse reads `.impulse/project.toml` from the new task folder, which contains what's committed on the base branch. An uncommitted or untracked project file in your main checkout doesn't reach the task (unless you copy it with `.worktreeinclude`).
 - **A failing setup script stops the agent from starting**, because the two are joined with `&&`. The error is right there in the task's first terminal; fix it and start the agent yourself.
-- **Archiving deletes ignored files.** `.env`, `node_modules` and other ignored files in the task folder are removed with it, and Undo doesn't bring them back (the snapshot only holds files git would track). Copy anything you edited by hand before archiving.
-- **Undo is short-lived.** If you miss the **Undo** button, the branch still exists and you can make a new worktree for it with `git worktree add ~/Code/trailhead.worktrees/fix-elevation fix-elevation`. The uncommitted files are in a commit under `refs/impulse/oplog/` in the repository (list them with `git for-each-ref refs/impulse/oplog`); the newest one ending in `archive-fix-elevation` holds them, and `git restore --overlay --source=<that ref> --worktree -- .` in the recreated folder puts them back.
+- **Archiving deletes ignored files.** `.env`, `node_modules` and other ignored files in the task folder are removed with it, and Undo doesn't bring them back (the snapshot only holds files git would track). The confirmation names some of them when there are any. Copy anything you edited by hand before archiving.
+- **Undo is short-lived.** If you miss the **Undo** button, the branch still exists and you can make a new worktree for it with `git worktree add ~/Code/trailhead.worktrees/fix-elevation fix-elevation`. The uncommitted files are in a commit under `refs/impulse/oplog/` in the repository (list them with `git for-each-ref refs/impulse/oplog`); the newest one ending in `archive-fix-elevation` holds them, and `git restore --overlay --source=<that ref> --worktree -- .` in the recreated folder puts them back. Don't wait too long: Impulse keeps these snapshots for two weeks at most, and only the newest 200 in the repository, deleting older ones whenever it takes a new snapshot there (see [Safety snapshots and Undo](git.md#safety-snapshots-and-undo)).
 - **Branches checked out in a task can't be used elsewhere.** git refuses to switch your main checkout (or another task) to a branch that a task has checked out, and refuses to delete it. Archive the task first.
-- **Starting a task from a task** branches from that task and nests its folder (see [Where to start it](#where-to-start-it)). Start from the main checkout's row.
 - **Tasks need a git repository.** In a folder that isn't in a repository, New Task… only shows "Open a folder in a git repository to start a task."
 
 ## Related

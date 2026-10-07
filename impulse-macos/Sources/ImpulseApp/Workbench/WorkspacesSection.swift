@@ -337,7 +337,14 @@ private struct WorkspaceRow: View {
   private var newWorkspaceItems: [ChromeMenuItem] {
     var items: [ChromeMenuItem] = []
     if workspace.repository != nil {
-      let repo = workspace.repository?.snapshot.map { ($0.root as NSString).lastPathComponent } ?? workspace.name
+      // Named for the main checkout: a task's row makes tasks from there too.
+      let repo =
+        workspace.repository?.snapshot.map { snapshot -> String in
+          let main =
+            snapshot.gitDir != snapshot.commonDir && (snapshot.commonDir as NSString).lastPathComponent == ".git"
+            ? (snapshot.commonDir as NSString).deletingLastPathComponent : snapshot.root
+          return (main as NSString).lastPathComponent
+        } ?? workspace.name
       items.append(ChromeMenuItem("New Task from \(repo)…") { model.onNewTask?(workspace.id) })
     }
     items.append(ChromeMenuItem("Open Folder as Workspace…") { model.onOpenWorkspace?() })

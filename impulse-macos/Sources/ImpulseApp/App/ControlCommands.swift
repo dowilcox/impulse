@@ -83,7 +83,7 @@ extension MainWindowController {
         reply(ControlResponse(ok: true))
       }
 
-    case "split", "tab" where terminal == nil:
+    case "split" where terminal == nil, "tab" where terminal == nil:
       // These start commands, which then run as Impulse (with whatever
       // privacy access it has), so only a pane's own token may ask — not
       // any process that can reach the socket.
@@ -119,8 +119,24 @@ extension MainWindowController {
       case "done": hook = .stopped
       default: hook = .sessionStarted
       }
+      // Each report replaces the message (none clears it).
+      let message = args["message"].flatMap { $0.isEmpty ? nil : $0 }
+      let messageChanged = terminal.agentStatusMessage != message
+      terminal.agentStatusMessage = message
       terminal.agentHook(hook, agentID: nil)
-      reply(ControlResponse(ok: true))
+      if messageChanged { NotificationCenter.default.post(name: .terminalAgentChanged, object: terminal) }
+      // Typed at a prompt, the report ends with this very command.
+      let command = terminal.currentCommand ?? ""
+      let words = command.split(separator: " ")
+      let alone =
+        words.count >= 2 && (words[0] == "impulse" || words[0].hasSuffix("/impulse")) && words[1] == "status"
+        && !command.contains(where: { ";&|".contains($0) })
+      reply(
+        ControlResponse(
+          ok: true,
+          message: alone
+            ? "impulse status lasts only while the program that runs it does, so at a prompt it ends right away. Call it from a script or wrapper running in this pane."
+            : nil))
 
     case "hook":
       guard let terminal else { return reply(ControlResponse(ok: true)) }  // not ours: ignore quietly

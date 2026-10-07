@@ -161,11 +161,11 @@ In Scratch, trust applies file by file: a file belongs to its repository's folde
 
 These commands are in the [command palette](command-palette.md):
 
-| Command                    | What it does                                                                                                                                                                      |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Trust This Folder…**     | Shows the trust prompt for the active folder workspace, or for the open file's repository or folder in Scratch.                                                                   |
-| **Restrict This Folder**   | Stops trusting the folder and anything trusted inside it; its language servers stop. If the folder is trusted because a parent folder is, a notice offers to restrict the parent. |
-| **Forget Trusted Folders** | Restricts every folder until you trust it again.                                                                                                                                  |
+| Command                    | What it does                                                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Trust This Folder…**     | Shows the trust prompt for the active folder workspace, or for the open file's repository or folder in Scratch.                                                                                                                                              |
+| **Restrict This Folder**   | Stops trusting the folder and anything trusted inside it; its language servers stop, and its repositories' trusted `.impulse/project.toml` files are forgotten. If the folder is trusted because a parent folder is, a notice offers to restrict the parent. |
+| **Forget Trusted Folders** | Restricts every folder until you trust it again, and forgets every trusted `.impulse/project.toml` (see [Project configuration](project-config.md#trusting-the-project-file)).                                                                               |
 
 ### Turning trust off
 

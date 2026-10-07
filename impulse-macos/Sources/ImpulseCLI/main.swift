@@ -24,7 +24,7 @@ switch ControlProtocol.request(
 case .success(let value):
   request = value
 case .failure(let error):
-  let wantsHelp = arguments.first.map { ["-h", "--help", "help"].contains($0) } ?? true
+  let wantsHelp = error.isHelp || (arguments.first.map { ["-h", "--help", "help"].contains($0) } ?? true)
   if wantsHelp {
     print(error.message)
     exit(0)

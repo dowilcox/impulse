@@ -107,4 +107,12 @@ public struct ProjectTrust: Codable, Equatable, Sendable {
   public mutating func trust(root: String, digest: String) { trusted[root] = digest }
 
   public mutating func revoke(root: String) { trusted[root] = nil }
+
+  /// Forget the files of `folder` and of every repository inside it.
+  public mutating func revoke(within folder: String) {
+    let folder = WorkspaceTrust.normalize(folder)
+    trusted = trusted.filter { !WorkspaceTrust.contains(folder, WorkspaceTrust.normalize($0.key)) }
+  }
+
+  public mutating func revokeAll() { trusted = [:] }
 }

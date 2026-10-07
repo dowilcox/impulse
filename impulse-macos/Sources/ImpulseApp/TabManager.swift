@@ -1977,7 +1977,8 @@ final class TabManager: NSObject {
           id: terminal.id, agentName: agent.displayName, tabTitle: terminal.tabTitle,
           workspaceName: names[record.workspaceID] ?? "", state: state,
           since: terminal.agentStateSince,
-          hasTurns: AgentCheckpoints.shared.turnCount(terminalID: terminal.id) > 0)
+          hasTurns: AgentCheckpoints.shared.turnCount(terminalID: terminal.id) > 0,
+          message: terminal.agentStatusMessage)
       }
     }.sorted {
       $0.state.urgency != $1.state.urgency ? $0.state.urgency > $1.state.urgency : $0.since > $1.since

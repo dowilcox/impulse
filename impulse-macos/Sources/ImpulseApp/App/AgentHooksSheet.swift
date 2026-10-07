@@ -22,6 +22,9 @@ final class AgentHooksModel {
   var scope: Scope = .user { didSet { reload() } }
   /// The project for project-local Claude hooks, if any.
   let projectRoot: String?
+  /// The repository's main checkout, when `projectRoot` is a task worktree
+  /// (whose project hooks go away when it's archived).
+  let mainCheckout: String?
 
   private(set) var path = ""
   private(set) var before = ""
@@ -29,8 +32,9 @@ final class AgentHooksModel {
   private(set) var installed = false
   private(set) var error: String?
 
-  init(projectRoot: String?) {
+  init(projectRoot: String?, mainCheckout: String? = nil) {
     self.projectRoot = projectRoot
+    self.mainCheckout = mainCheckout
     reload()
   }
 
@@ -66,7 +70,9 @@ final class AgentHooksModel {
     case .codex:
       installed = AgentHookInstaller.codexNotifyInstalled(before)
       if installed {
-        after = nil
+        let removed = AgentHookInstaller.removingCodexNotify(from: before)
+        after = removed == before ? nil : removed
+        if after == nil { error = "Impulse's notify isn't on a line of its own; remove it from config.toml by hand." }
       } else {
         switch AgentHookInstaller.installingCodexNotify(into: data == nil ? nil : before) {
         case .success(let text): after = text
@@ -152,6 +158,18 @@ struct AgentHooksSheetView: View {
           .truncationMode(.middle)
       }
 
+      if model.agent == .claude, model.scope == .project, let main = model.mainCheckout {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Icon(.info, size: 11).foregroundStyle(chrome.warning)
+          Text(
+            "This is a task folder: project hooks installed here are deleted when the task is archived. To keep them, install them in the main checkout (\(TabManager.abbreviateHomePath(main))); new tasks copy them from there unless a .worktreeinclude leaves them out."
+          )
+          .font(ChromeFont.ui(11.5))
+          .foregroundStyle(chrome.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
           ForEach(Array(model.diff.enumerated()), id: \.offset) { _, line in
@@ -204,7 +222,10 @@ struct AgentHooksSheetView: View {
 extension MainWindowController {
   func presentAgentHooksSheet() {
     guard let window else { return }
-    let model = AgentHooksModel(projectRoot: windowModel.repository?.root)
+    let projectRoot = windowModel.repository?.root
+    let mainCheckout = projectRoot.map(Self.mainCheckoutRoot(of:))
+    let model = AgentHooksModel(
+      projectRoot: projectRoot, mainCheckout: mainCheckout == projectRoot ? nil : mainCheckout)
     let palette = windowModel.palette
     let sheet = NSWindow.themedSheet(palette: palette)
     window.beginThemedSheet(

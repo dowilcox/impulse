@@ -153,9 +153,16 @@ extension MainWindowController {
     }
     windowModel.onShowProblems = { [weak self] in self?.showProblems() }
     windowModel.onOpenComposer = { [weak self] in self?.toggleAgentComposer() }
-    windowModel.agentTurns = { id in
-      AgentCheckpoints.shared.turns(terminalID: id).enumerated().reversed().map {
-        AgentTurnItem(id: $0.offset, started: $0.element.start.date, finished: $0.element.end != nil)
+    windowModel.agentTurns = { [weak self] id in
+      let turns = AgentCheckpoints.shared.turns(terminalID: id)
+      // Only the newest turn of an agent that's mid-turn is running; one
+      // restored from a session that ended mid-turn isn't.
+      let state = self?.agentTerminal(id: id)?.agentState
+      let busy = state == .working || state == .needsInput
+      return turns.enumerated().reversed().map {
+        AgentTurnItem(
+          id: $0.offset, started: $0.element.start.date,
+          finished: $0.element.end != nil || !(busy && $0.offset == turns.count - 1))
       }
     }
     windowModel.onReviewAgentTurnAt = { [weak self] id, index in

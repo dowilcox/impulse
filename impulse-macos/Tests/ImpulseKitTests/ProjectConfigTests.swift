@@ -63,5 +63,17 @@
       let edited = try #require(ProjectConfig.load(root: root.path))
       #expect(!trust.isTrusted(root: root.path, digest: edited.digest), "editing asks again")
     }
+
+    @Test func trustCanBeRevokedByFolderOrAll() {
+      var trust = ProjectTrust(trusted: [
+        "/Users/me/Code/app": "a", "/Users/me/Code/api": "b", "/Users/me/Code/apps": "c", "/Users/me/Other/x": "d",
+      ])
+      trust.revoke(within: "/Users/me/Code/app")
+      #expect(trust.trusted.keys.sorted() == ["/Users/me/Code/api", "/Users/me/Code/apps", "/Users/me/Other/x"])
+      trust.revoke(within: "/Users/me/Code/")
+      #expect(trust.trusted.keys.sorted() == ["/Users/me/Other/x"])
+      trust.revokeAll()
+      #expect(trust.trusted.isEmpty)
+    }
   }
 #endif

@@ -2,7 +2,9 @@ import ImpulseKit
 import SwiftUI
 
 /// A coding agent's state at a glance: a spinner while it works, a bot
-/// with a colored dot when it wants the user, a quiet bot otherwise.
+/// with a badge when it wants the user, a quiet bot otherwise. The badges
+/// differ in shape as well as color: a solid dot asks for input, a check
+/// mark says it finished.
 struct AgentStatusGlyph: View {
   @Environment(\.chrome) private var chrome
   let state: AgentState
@@ -17,9 +19,17 @@ struct AgentStatusGlyph: View {
       Icon(.bot, size: size)
         .foregroundStyle(chrome.textSecondary)
         .overlay(alignment: .topTrailing) {
-          StatusDot(color: state == .needsInput ? chrome.attention : chrome.success, size: size * 0.45)
-            .offset(x: size * 0.18, y: -size * 0.12)
+          Group {
+            if state == .needsInput {
+              StatusDot(color: chrome.attention, size: size * 0.45)
+            } else {
+              Icon(.check, size: size * 0.6, strokeWidth: 3.5)
+                .foregroundStyle(chrome.success)
+            }
+          }
+          .offset(x: size * 0.18, y: -size * 0.12)
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(state == .needsInput ? "Agent needs input" : "Agent finished")
     case .idle, .exited:
       Icon(.bot, size: size)
@@ -61,7 +71,7 @@ struct AgentInboxView: View {
           .font(ChromeFont.ui(12, weight: .semibold))
           .foregroundStyle(chrome.text)
         Spacer()
-        KeyHint("⌘⇧U").help("Go to the next agent that needs you")
+        KeyHint("⇧⌘U").help("Go to the next agent that needs you")
       }
       .padding(.horizontal, 12)
       .frame(height: 30)
@@ -136,8 +146,11 @@ private struct AgentInboxRow: View {
             .lineLimit(1)
             .truncationMode(.middle)
           Text(
-            [agent.workspaceName, agent.state.label, relative.localizedString(for: agent.since, relativeTo: Date())]
-              .filter { !$0.isEmpty }.joined(separator: " · ")
+            [
+              agent.workspaceName, agent.state.label, agent.message ?? "",
+              relative.localizedString(for: agent.since, relativeTo: Date()),
+            ]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
           )
           .font(ChromeFont.ui(10.5))
           .foregroundStyle(agent.state == .needsInput ? chrome.attention : chrome.textTertiary)
@@ -158,7 +171,9 @@ private struct AgentInboxRow: View {
     }
     .buttonStyle(ChromePressStyle())
     .onHover { hovering = $0 }
-    .accessibilityLabel("\(agent.agentName), \(agent.tabTitle), \(agent.state.label)")
+    .accessibilityLabel(
+      [agent.agentName, agent.tabTitle, agent.state.label, agent.message ?? ""].filter { !$0.isEmpty }
+        .joined(separator: ", "))
   }
 }
 
@@ -194,7 +209,7 @@ struct AgentInboxButton: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(ChromePressStyle())
-    .help("Agents (⌘⇧U jumps to the next one that needs you)")
+    .help("Agents (⇧⌘U jumps to the next one that needs you)")
     .accessibilityLabel("Agents: \(working) working, \(waiting) waiting")
     .popover(isPresented: $showing, arrowEdge: compact ? .top : .bottom) {
       AgentInboxView(model: model) { showing = false }
@@ -216,6 +231,18 @@ struct AgentToolbelt: View {
     formatter.timeStyle = .short
     return formatter
   }()
+  /// Turns restored from an earlier session can be from another day.
+  private static let dayAndTime: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    formatter.doesRelativeDateFormatting = true
+    return formatter
+  }()
+
+  private static func started(_ date: Date) -> String {
+    Calendar.current.isDateInToday(date) ? time.string(from: date) : dayAndTime.string(from: date)
+  }
 
   var body: some View {
     HStack(spacing: 8) {
@@ -224,6 +251,11 @@ struct AgentToolbelt: View {
       TimelineView(.periodic(from: .now, by: 1)) { context in
         Text(statusText(now: context.date)).font(ChromeFont.ui(11)).foregroundStyle(chrome.textSecondary)
           .monospacedDigit()
+      }
+      if let message = agent.message {
+        Text(message).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+          .lineLimit(1).truncationMode(.tail)
+          .help(message)
       }
       Spacer(minLength: 8)
       button("Compose", icon: .messageSquarePlus, hint: "⌘I") { model.onOpenComposer?() }
@@ -235,7 +267,7 @@ struct AgentToolbelt: View {
         guard !turns.isEmpty else { return [ChromeMenuItem("No turns yet", isEnabled: false) {}] }
         var items: [ChromeMenuItem] = []
         for turn in turns.prefix(12) {
-          let label = "Turn \(turn.id + 1) · \(Self.time.string(from: turn.started))\(turn.finished ? "" : " (running)")"
+          let label = "Turn \(turn.id + 1) · \(Self.started(turn.started))\(turn.finished ? "" : " (running)")"
           items.append(ChromeMenuItem("Review \(label)") { model.onReviewAgentTurnAt?(agent.id, turn.id) })
           items.append(ChromeMenuItem("Restore Files to Before \(label)…") { model.onRestoreAgentTurn?(agent.id, turn.id) })
           items.append(.separator)

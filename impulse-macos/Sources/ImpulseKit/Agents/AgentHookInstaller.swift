@@ -118,9 +118,30 @@ public enum AgentHookInstaller {
     }
     let array = codexNotify.map { "\"" + $0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
       .joined(separator: ", ")
-    let line = "# Tells Impulse when Codex finishes a turn (no-op outside Impulse).\nnotify = [\(array)]\n"
+    let line = "\(codexComment)\nnotify = [\(array)]\n"
     return .success(text.isEmpty ? line : line + "\n" + text)
   }
+
+  /// config.toml without Impulse's `notify` line, the comment above it and
+  /// the blank line installing put after it. Another program's `notify` is
+  /// left alone.
+  public static func removingCodexNotify(from toml: String) -> String {
+    var lines = toml.components(separatedBy: "\n")
+    guard
+      var index = lines.firstIndex(where: {
+        $0.trimmingCharacters(in: .whitespaces).hasPrefix("notify") && $0.contains("hook codex")
+      })
+    else { return toml }
+    lines.remove(at: index)
+    if index > 0, lines[index - 1] == codexComment {
+      index -= 1
+      lines.remove(at: index)
+    }
+    if index == 0, lines.count > 1, lines[0].isEmpty { lines.removeFirst() }
+    return lines.joined(separator: "\n")
+  }
+
+  private static let codexComment = "# Tells Impulse when Codex finishes a turn (no-op outside Impulse)."
 
   // MARK: Preview
 

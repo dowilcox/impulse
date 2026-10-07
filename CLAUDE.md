@@ -26,8 +26,9 @@ impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
                           registry, document cache, managed npm installs
   Sources/ImpulseProtocol control-socket messages shared by app and CLI
   Sources/ImpulseCLI      the `impulse` command-line tool (bundled in
-                          Contents/Resources/bin): open, edit --wait, review,
-                          split, tab, notify, status, checkpoint, hook
+                          Contents/Resources/bin): open, edit (waits for the
+                          tab to close), review, split, tab, notify, status,
+                          checkpoint, hook
   Clibgit2/               module map for the vendored static libgit2
   CImpulseFFI/            C header for the Rust terminal FFI
   web/                    editor.html/js (Monaco glue)

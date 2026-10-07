@@ -34,12 +34,14 @@ If your shell startup files replace `PATH` outright (rather than adding to it), 
 | `impulse split [right\|down] [command…]`                    | Split this pane, optionally running a command in the new pane.                   |
 | `impulse tab [command…]`                                    | Open a new terminal tab, optionally running a command.                           |
 | `impulse notify <title> [message…]`                         | Flag this pane and send a desktop notification.                                  |
-| `impulse status <working\|waiting\|done\|idle> [message…]`  | Report an agent state for this pane.                                             |
+| `impulse status <working\|waiting\|done\|idle> [message…]`  | Report an agent state from a program running in this pane.                       |
 | `impulse checkpoint [message…]`                             | Snapshot the repository's files.                                                 |
 | `impulse hook <claude\|codex> [event]`                      | Used by agent hooks.                                                             |
 | `impulse help`                                              | Print the usage summary. `-h` and `--help` do the same, as does `impulse` alone. |
 
 Relative paths are resolved against your current directory, and `~` is expanded.
+
+`impulse` has no options other than `-h` and `--help`, which print the usage summary after any command too (`impulse edit --help`). Any other word starting with `-` where an option could go is a usage error: `impulse edit --wait notes.md` prints `impulse edit: unknown option '--wait'` and exits with status 2, rather than opening a file named `--wait`. For `open` and `edit` that's every argument; for `split`, `tab`, `notify` and `checkpoint` only the first word, so a command you run keeps its own options (`impulse tab ls -la`). Put `--` before a name that starts with a dash: `impulse open -- -notes.md`.
 
 ### `impulse open`
 
@@ -143,9 +145,11 @@ Reports an agent state for this pane, for agents that Impulse doesn't recognize 
 | `done`    | **Finished**         |
 | `idle`    | **Idle**             |
 
-If no agent was recognized in the pane, Impulse starts tracking one called "Agent". `waiting` and `done` flag the pane and notify you like any agent; see [Agents](agents.md#agent-states). Once a pane has reported a status, Impulse stops guessing that agent's state from its output. A message may follow the state; Impulse doesn't currently display it.
+If no agent was recognized in the pane, Impulse starts tracking one called "Agent". `waiting` and `done` flag the pane and notify you like any agent; see [Agents](agents.md#agent-states). Once a pane has reported a status, Impulse stops guessing that agent's state from its output.
 
-Call it from the program running in the pane (a wrapper script around your agent, for example). Impulse stops tracking an agent when the pane's current command ends, so running `impulse status` by itself at the prompt has no lasting effect.
+A message may follow the state, for example `impulse status working running migrations`. It's shown after the state in the [agent list](agents.md#the-agent-list) and on the [toolbelt](agents.md#the-toolbelt). Each `impulse status` replaces the message; one without a message clears it.
+
+Call it from the program running in the pane (a wrapper script around your agent, for example). Impulse stops tracking an agent when the pane's current command ends, so running `impulse status` by itself at the prompt has no lasting effect; when you do, it prints a note saying so.
 
 ```sh
 #!/bin/sh
@@ -198,11 +202,11 @@ Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does 
 
 ## Exit status
 
-| Status | Meaning                                                                                                  |
-| ------ | -------------------------------------------------------------------------------------------------------- |
-| 0      | Success. For `edit`, the tab was closed.                                                                 |
-| 1      | Impulse reported an error, couldn't be reached, or the command isn't running inside an Impulse terminal. |
-| 2      | A usage error: an unknown command or a missing argument. The usage summary is printed to standard error. |
+| Status | Meaning                                                                                                                     |
+| ------ | --------------------------------------------------------------------------------------------------------------------------- |
+| 0      | Success. For `edit`, the tab was closed.                                                                                    |
+| 1      | Impulse reported an error, couldn't be reached, or the command isn't running inside an Impulse terminal.                    |
+| 2      | A usage error: an unknown command, an unknown option or a missing argument. The usage summary is printed to standard error. |
 
 Messages from Impulse are printed to standard output on success (such as the ref from `checkpoint`) and to standard error on failure.
 

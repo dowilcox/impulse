@@ -41,11 +41,16 @@ public enum WorktreeTasks {
       .appendingPathComponent(folder)
   }
 
+  /// What's copied when a repository has no `.worktreeinclude`: local
+  /// secrets, and project-only agent hooks (so a task keeps the project's
+  /// hooks, and archiving it doesn't take the only copy with it).
+  public static let defaultIncludePatterns = [".env", ".env.local", ".claude/settings.local.json"]
+
   /// Files to copy into a new worktree: the patterns in `.worktreeinclude`
-  /// (one per line, `#` comments), or `.env` and `.env.local` when there's
+  /// (one per line, `#` comments), or `defaultIncludePatterns` when there's
   /// no such file.
   public static func includePatterns(fromFile text: String?) -> [String] {
-    guard let text else { return [".env", ".env.local"] }
+    guard let text else { return defaultIncludePatterns }
     return text.split(whereSeparator: \.isNewline)
       .map { $0.trimmingCharacters(in: .whitespaces) }
       .filter { !$0.isEmpty && !$0.hasPrefix("#") }

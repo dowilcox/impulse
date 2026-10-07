@@ -92,8 +92,8 @@ extension MainWindowController {
 
   /// Walks the surfaces' unsaved editors one sheet at a time, then confirms
   /// running terminal processes, then calls `proceed`. Cancelling anywhere
-  /// stops.
-  func confirmClosing(_ surfaces: [TabEntry], proceed: @escaping () -> Void) {
+  /// stops (and calls `cancelled`).
+  func confirmClosing(_ surfaces: [TabEntry], proceed: @escaping () -> Void, cancelled: (() -> Void)? = nil) {
     var dirty = surfaces.compactMap { surface -> EditorTab? in
       if case .editor(let editor) = surface, editor.isModified { return editor }
       return nil
@@ -109,7 +109,7 @@ extension MainWindowController {
         return
       }
       confirmClosingTerminalsIfNeeded(terminals) { shouldClose in
-        if shouldClose { proceed() }
+        if shouldClose { proceed() } else { cancelled?() }
       }
     }
 
@@ -120,7 +120,7 @@ extension MainWindowController {
       }
       let editor = dirty.removeFirst()
       confirmClosingEditor(editor) { shouldClose in
-        if shouldClose { next() }
+        if shouldClose { next() } else { cancelled?() }
       }
     }
     next()

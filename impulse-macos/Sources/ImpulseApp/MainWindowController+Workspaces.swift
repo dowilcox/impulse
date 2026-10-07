@@ -174,15 +174,21 @@ extension MainWindowController {
   }
 
   /// Close a workspace after confirming its unsaved files and running
-  /// processes.
-  func requestCloseWorkspace(_ id: UUID, then closed: (() -> Void)? = nil) {
+  /// processes. Without `recordForUndo` there's no Undo Close (archiving a
+  /// task has its own Undo). `cancelled` runs when the user keeps it open.
+  func requestCloseWorkspace(
+    _ id: UUID, recordForUndo: Bool = true, then closed: (() -> Void)? = nil, cancelled: (() -> Void)? = nil
+  ) {
     let surfaces = tabManager.tabIndices(inWorkspace: id).flatMap { tabManager.tabs[$0].surfaces }
-    confirmClosing(surfaces) { [weak self] in
-      guard let self else { return }
-      for surface in surfaces { self.willCloseSurface(surface) }
-      self.tabManager.closeWorkspace(id)
-      closed?()
-    }
+    confirmClosing(
+      surfaces,
+      proceed: { [weak self] in
+        guard let self else { return }
+        for surface in surfaces { self.willCloseSurface(surface) }
+        self.tabManager.closeWorkspace(id, recordForUndo: recordForUndo)
+        closed?()
+      },
+      cancelled: cancelled)
   }
 
   func presentRenameWorkspace(_ id: UUID) {
