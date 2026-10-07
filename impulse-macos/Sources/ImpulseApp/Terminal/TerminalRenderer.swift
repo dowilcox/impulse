@@ -398,6 +398,26 @@ class TerminalRenderer: NSView {
     /// the read-only grid at a prompt).
     var onRequestInputFocus: (() -> Void)?
 
+    /// Text typed in the grid that belongs in the input bar (see
+    /// `typingGoesToInputBar`): the bar takes it and the keyboard.
+    var onTypeIntoInputBar: ((String) -> Void)?
+
+    /// The shell reports its prompts (OSC 133), so `commandRunning` false
+    /// means it's waiting at a prompt. Set when the first prompt arrives.
+    var tracksPrompts = false
+
+    /// At a shell prompt with the input bar on, nothing typed in the grid may
+    /// reach the shell: it would sit unseen in the shell's own line and run
+    /// with the next command from the bar. Text goes to the bar instead.
+    var typingGoesToInputBar: Bool {
+        !keyboardInteractive && !commandRunning && tracksPrompts
+    }
+
+    /// Set while handling a key the input bar takes: at a prompt, and the
+    /// key that ends a block selection (even while a command runs, since
+    /// leaving the selection gives the bar the keyboard back).
+    private var routingKeyToInputBar = false
+
     /// Any click in the grid, whether or not it moves keyboard focus.
     var onMouseDown: (() -> Void)?
 
@@ -2740,7 +2760,8 @@ class TerminalRenderer: NSView {
 
     override func keyDown(with event: NSEvent) {
         if !hintTargets.isEmpty, handleHintKey(event) { return }
-        if !selectedBlockIds.isEmpty, handleBlockSelectionKey(event) { return }
+        let endingSelection = !selectedBlockIds.isEmpty
+        if endingSelection, handleBlockSelectionKey(event) { return }
         if eventMatchesKeybinding(event, id: "paste") {
             paste(event)
             return
@@ -2751,11 +2772,29 @@ class TerminalRenderer: NSView {
         }
 
         if event.modifierFlags.contains(.command) {
+            // ⌘↑ selects blocks from the grid too, as it does in the input bar.
+            if !lastInteractive, event.keyCode == 126,
+                event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+            {
+                onBlockSelectionKey?(.up(extend: false))
+                return
+            }
             super.keyDown(with: event)
             return
         }
 
         onUserKey?(event.keyCode == 36 || event.keyCode == 76)
+
+        if keyGoesToInputBar(event, endingSelection: endingSelection) {
+            // Through the input manager, so dead keys and IME composition
+            // arrive as whole text (see insertText and doCommand).
+            routingKeyToInputBar = true
+            currentKeyEvent = event
+            interpretKeyEvents([event])
+            currentKeyEvent = nil
+            routingKeyToInputBar = false
+            return
+        }
 
         // A program that asked for the kitty keyboard protocol gets keys it
         // can tell apart (Ctrl-I vs Tab, Esc vs Alt); plain typing still goes
@@ -2789,6 +2828,24 @@ class TerminalRenderer: NSView {
         currentKeyEvent = nil
     }
 
+    /// Whether a key typed in the grid belongs to the input bar: at a prompt,
+    /// and the key that ends a block selection. While a command runs, ⌃
+    /// keys (⌃C) and keys that aren't text (arrows, Tab, Return) still reach
+    /// the program when they end a selection; only text goes to the bar.
+    func keyGoesToInputBar(_ event: NSEvent, endingSelection: Bool) -> Bool {
+        if typingGoesToInputBar { return true }
+        guard endingSelection, !keyboardInteractive else { return false }
+        return !(commandRunning && Self.isProgramKey(event))
+    }
+
+    /// A ⌃ key, or one that types no text (arrows, function keys, Tab,
+    /// Return, Delete).
+    private static func isProgramKey(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.control) { return true }
+        guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return true }
+        return CharacterSet.controlCharacters.contains(scalar) || (0xF700...0xF8FF).contains(scalar.value)
+    }
+
     override func keyUp(with event: NSEvent) {
         // Releases, for programs that asked for kitty event types.
         if let backend, !event.modifierFlags.contains(.command),
@@ -2806,7 +2863,14 @@ class TerminalRenderer: NSView {
 
     override func doCommand(by selector: Selector) {
         // Special keys fall back to KeyEncoder using the current keyDown event.
-        guard let event = currentKeyEvent, let backend else { return }
+        guard let event = currentKeyEvent else { return }
+        if routingKeyToInputBar {
+            // Return and Esc go back to the bar; other keys (arrows, Tab, ⌃
+            // keys) mean nothing here and mustn't reach the shell's line.
+            if [36, 76, 53].contains(event.keyCode) { onRequestInputFocus?() }
+            return
+        }
+        guard let backend else { return }
         let mode = backend.mode()
         let bytes = KeyEncoder.encode(
             event: event,
@@ -2823,9 +2887,10 @@ class TerminalRenderer: NSView {
         }
     }
 
-    /// Keys while blocks are selected: ↑/↓ (⇧ extends), ⌘C copies, ⌘⇧A sends
+    /// Keys while blocks are selected: ↑/↓ (⇧ extends), ⌘C copies, ⇧⌘A sends
     /// to an agent, Esc returns to the input. Anything else (typing) leaves
-    /// the selection and goes to the input as usual.
+    /// the selection and goes to the input bar (the shell's prompt when the
+    /// bar is off; see keyDown).
     private func handleBlockSelectionKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         switch (event.keyCode, flags) {
@@ -3583,6 +3648,16 @@ extension TerminalRenderer: NSTextInputClient {
         } else if let attr = string as? NSAttributedString {
             text = attr.string
         } else {
+            return
+        }
+        if routingKeyToInputBar || typingGoesToInputBar {
+            markedText = ""
+            markedSelection = NSRange(location: 0, length: 0)
+            needsDisplay = true
+            // An unbound ⌃ key can arrive as its control character: drop it.
+            let typed = String(
+                String.UnicodeScalarView(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+            if !typed.isEmpty { onTypeIntoInputBar?(typed) }
             return
         }
         guard !text.isEmpty, let backend else { return }

@@ -327,14 +327,14 @@ final class WindowModel {
   var onTabPinToggled: ((Int) -> Void)?
   var onNewTab: (() -> Void)?
   var onShowCommandHistory: (() -> Void)?
-  var onClearTerminal: (() -> Void)?
   /// Run a command from the input bar in the active terminal.
   var onRunCommand: ((String) -> Void)?
   /// Switch the current repository to a branch (runs `git switch` off the
   /// main thread; errors are reported by the window).
   var onSwitchBranch: ((String) -> Void)?
-  /// Send a password-prompt reply verbatim (no trimming; empty allowed).
-  var onSendSecureInput: ((String) -> Void)?
+  /// Send a line to the running program as typed (no trimming; empty
+  /// allowed): input for a running command, password replies.
+  var onSendLine: ((String) -> Void)?
   /// Synchronously resolve a history ghost suggestion for the typed prefix.
   var onInputSuggestion: ((String) -> String?)?
   /// The slower part of the ghost suggestion, to run off the main thread.

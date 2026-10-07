@@ -122,8 +122,8 @@ struct TitlebarTabStrip: View {
     } else if let progress = tab.progress {
       ProgressRing(
         progress: progress.fraction, color: progressColor(progress), size: 12, lineWidth: 1.6)
-    } else if let indicator = tab.sessionStatus?.indicator {
-      StatusDot(color: Color(nsColor: NSColor(hex: indicator)), size: 8)
+    } else if let dotColor = tab.sessionStatus?.dotColor {
+      StatusDot(color: Color(nsColor: NSColor(hex: dotColor)), size: 8)
         .frame(width: 13, height: 13)
     } else if tab.isTerminal {
       Icon(tab.isDirectInteractionActive ? .squareTerminal : .terminal, size: 13)

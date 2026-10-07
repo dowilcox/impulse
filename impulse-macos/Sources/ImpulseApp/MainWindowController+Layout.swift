@@ -28,17 +28,14 @@ extension MainWindowController {
     windowModel.onShowCommandHistory = { [weak self] in
       self?.showPalette(prefix: "h:")
     }
-    windowModel.onClearTerminal = { [weak self] in
-      self?.tabManager.selectedTerminal?.activeTerminal?.clearScreen()
-    }
     windowModel.onRunCommand = { [weak self] command in
       self?.tabManager.selectedTerminal?.activeTerminal?.runCommand(command)
     }
     windowModel.onSwitchBranch = { [weak self] branch in
       self?.switchBranch(to: branch)
     }
-    windowModel.onSendSecureInput = { [weak self] text in
-      self?.tabManager.selectedTerminal?.activeTerminal?.sendSecureLine(text)
+    windowModel.onSendLine = { [weak self] text in
+      self?.tabManager.selectedTerminal?.activeTerminal?.sendLine(text)
     }
     windowModel.onInputSuggestion = { [weak self] text in
       self?.tabManager.selectedTerminal?.activeTerminal?.historySuggestion(for: text)

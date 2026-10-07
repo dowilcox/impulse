@@ -320,10 +320,12 @@ extension MainWindowController {
     revealTerminal(id: waiting[start % waiting.count].id)
   }
 
-  /// Append text to the input bar's draft (a space apart) and focus it.
-  func insertIntoInputBar(_ text: String) {
+  /// Append text to the input bar's draft (a space apart, unless it was
+  /// `typed` — keys pressed in the grid continue the draft) and focus it.
+  func insertIntoInputBar(_ text: String, typed: Bool = false) {
     let draft = windowModel.inputDraft
-    windowModel.inputDraft = draft.isEmpty || draft.hasSuffix(" ") ? draft + text : draft + " " + text
+    windowModel.inputDraft =
+      typed || draft.isEmpty || draft.hasSuffix(" ") ? draft + text : draft + " " + text
     windowModel.inputDraftRestoreToken += 1
     windowModel.inputBarFocusToken += 1
   }

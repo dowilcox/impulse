@@ -109,10 +109,14 @@ struct TerminalSessionStatus: Equatable {
     var status = ""
     /// Hex color of the indicator dot (`#RRGGBB`), when set.
     var indicator: String?
+    /// Hex color of the status itself, when set.
     var statusColor: String?
     var detail = ""
 
-    var isEmpty: Bool { status.isEmpty && indicator == nil && detail.isEmpty }
+    var isEmpty: Bool { status.isEmpty && indicator == nil && statusColor == nil && detail.isEmpty }
+
+    /// The tab's status dot: the indicator's color, else the status's.
+    var dotColor: String? { indicator ?? statusColor }
 
     /// Apply an update: keys present replace (empty clears), others stay.
     mutating func apply(_ fields: [String: String]) {

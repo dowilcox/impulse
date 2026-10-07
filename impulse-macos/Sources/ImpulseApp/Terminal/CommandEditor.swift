@@ -7,8 +7,10 @@ enum CommandEditorKey {
   /// ↑ on the first line / ↓ on the last line (history, dropdown).
   case up, down
   case tab
-  /// → at the end of the text (accept part of the suggestion).
+  /// → at the end of the text (accept the suggestion).
   case right
+  /// ⌥→ at the end of the text (accept the suggestion's next word).
+  case wordRight
   case escape
   case controlC
   case controlR
@@ -94,11 +96,14 @@ struct CommandEditor: NSViewRepresentable {
       textView.needsDisplay = true
     }
     if textView.colors != colors || textView.font != font || textView.shellSyntax != shellSyntax {
+      let resized = textView.font != font
       textView.colors = colors
       textView.font = font
       textView.shellSyntax = shellSyntax
       textView.insertionPointColor = colors.caret
       textView.highlight()
+      // A new font size changes the line height the editor sizes to.
+      if resized { textView.enclosingScrollView?.invalidateIntrinsicContentSize() }
     }
   }
 
@@ -152,6 +157,8 @@ struct CommandEditor: NSViewRepresentable {
         return true  // never move focus out
       case #selector(NSResponder.moveRight(_:)):
         return view.isAtEnd ? parent.onKey(.right) : false
+      case #selector(NSResponder.moveWordRight(_:)):
+        return view.isAtEnd ? parent.onKey(.wordRight) : false
       case #selector(NSResponder.cancelOperation(_:)):
         return parent.onKey(.escape)
       default:

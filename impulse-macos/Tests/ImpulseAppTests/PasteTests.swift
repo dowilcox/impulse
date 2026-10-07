@@ -14,6 +14,13 @@
       #expect(TerminalTab.bracketedPasteBody("naïve 日本 🚀") == "naïve 日本 🚀")
     }
 
+    @Test func aSentLineEndsEachLineWithOneReturn() {
+      #expect(TerminalTab.typedLine("") == "\r")
+      #expect(TerminalTab.typedLine(" secret ") == " secret \r")
+      #expect(TerminalTab.typedLine("a\nb") == "a\rb\r")
+      #expect(TerminalTab.typedLine("a\r\nb\r\n") == "a\rb\r\r")
+    }
+
     @Test func pastedImagesBecomePNGFiles() throws {
       let pasteboard = NSPasteboard(name: NSPasteboard.Name("impulse-test-\(UUID().uuidString)"))
       defer { pasteboard.releaseGlobally() }

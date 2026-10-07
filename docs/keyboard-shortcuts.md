@@ -97,23 +97,23 @@ What you type at the start of the query picks the mode, for example `>` for comm
 
 ### Commands
 
-| Shortcut              | Command                                                                                                                                          | Menu                  | ID                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------- |
-| ⌘C                    | Copy                                                                                                                                             | Edit                  | `copy`                    |
-| ⌘V                    | Paste                                                                                                                                            | Edit                  | `paste`                   |
-| ⌘F                    | Find…: in a terminal, opens the find bar                                                                                                         | Edit                  | `find`                    |
-| ⇧⌘Space               | Show Hints                                                                                                                                       | View › Command Blocks | `terminal_hints`          |
-| ⌘↑ (in the input bar) | Select Blocks: selects the most recent command block                                                                                             | View › Command Blocks | `select_blocks`           |
-| Unbound               | Previous Block                                                                                                                                   | View › Command Blocks | `previous_block`          |
-| Unbound               | Next Block                                                                                                                                       | View › Command Blocks | `next_block`              |
-| Unbound               | Last Failed Block                                                                                                                                | View › Command Blocks | `last_failed_block`       |
-| ⇧⌘K                   | Bookmark Block                                                                                                                                   | View › Command Blocks | `toggle_block_bookmark`   |
-| Unbound               | Previous Bookmark                                                                                                                                | View › Command Blocks | `previous_block_bookmark` |
-| Unbound               | Next Bookmark                                                                                                                                    | View › Command Blocks | `next_block_bookmark`     |
-| ⌘A                    | Select All: selects the visible screen when the terminal output has the keyboard                                                                 | Edit                  | —                         |
-| ⌘-click               | Open a link or file path under the pointer (when **Clickable links** is on); on a command block, add it to or remove it from the block selection | —                     | —                         |
+| Shortcut         | Command                                                                                                                                          | Menu                  | ID                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------- |
+| ⌘C               | Copy                                                                                                                                             | Edit                  | `copy`                    |
+| ⌘V               | Paste                                                                                                                                            | Edit                  | `paste`                   |
+| ⌘F               | Find…: in a terminal, opens the find bar                                                                                                         | Edit                  | `find`                    |
+| ⇧⌘Space          | Show Hints                                                                                                                                       | View › Command Blocks | `terminal_hints`          |
+| ⌘↑ in a terminal | Select Blocks: selects the most recent command block                                                                                             | View › Command Blocks | `select_blocks`           |
+| Unbound          | Previous Block                                                                                                                                   | View › Command Blocks | `previous_block`          |
+| Unbound          | Next Block                                                                                                                                       | View › Command Blocks | `next_block`              |
+| Unbound          | Last Failed Block                                                                                                                                | View › Command Blocks | `last_failed_block`       |
+| ⇧⌘K              | Bookmark Block                                                                                                                                   | View › Command Blocks | `toggle_block_bookmark`   |
+| Unbound          | Previous Bookmark                                                                                                                                | View › Command Blocks | `previous_block_bookmark` |
+| Unbound          | Next Bookmark                                                                                                                                    | View › Command Blocks | `next_block_bookmark`     |
+| ⌘A               | Select All: selects the visible screen when the terminal output has the keyboard                                                                 | Edit                  | —                         |
+| ⌘-click          | Open a link or file path under the pointer (when **Clickable links** is on); on a command block, add it to or remove it from the block selection | —                     | —                         |
 
-⌘↑ in the input bar selects blocks. It's fixed; the menu's **Select Blocks** has no shortcut until you give it one.
+⌘↑ selects blocks from the input bar or the terminal output, except while a full-screen program owns the terminal. It's fixed; the menu's **Select Blocks** has no shortcut until you give it one.
 
 See [Terminal](terminal.md) for command blocks, hints and find.
 
@@ -128,7 +128,8 @@ The input bar is where you type commands below the terminal output.
 | ↑ on the first line      | The previous command from history (with the completion list open, move up in it)                                                  |
 | ↓ on the last line       | The next command from history, then back to what you were typing (with the completion list open, move down in it)                 |
 | ⇥                        | Complete: opens the completion list when there are several candidates, inserts a single candidate, or accepts the gray suggestion |
-| → at the end of the text | Accept the next word of the gray suggestion                                                                                       |
+| → at the end of the text | Accept the gray suggestion                                                                                                        |
+| ⌥→ at the end of text    | Accept the next word of the gray suggestion                                                                                       |
 | ⌃R                       | Search command history (the palette in `h:` mode)                                                                                 |
 | ⌃C                       | Interrupt the running command                                                                                                     |
 | ⌘↑                       | Select the most recent command block                                                                                              |
@@ -166,7 +167,7 @@ After ⌘↑ (or **View › Command Blocks › Select Blocks**):
 | ⇧⌘A           | Send the selected blocks to an agent                                               |
 | ⇧⌘K           | Bookmark the selected blocks                                                       |
 | Esc           | Return to the input bar                                                            |
-| Any other key | Leave the selection and return to the input bar                                    |
+| Any other key | Leave the selection; what you type goes to the input bar                           |
 
 ### Hints mode
 

@@ -438,8 +438,8 @@ private struct WorkspaceTabRow: View {
       AgentStatusGlyph(state: state, size: 12)
     } else if let progress = tab.progress {
       ProgressRing(progress: progress.fraction, color: chrome.working, size: 11, lineWidth: 1.5)
-    } else if let indicator = tab.sessionStatus?.indicator {
-      StatusDot(color: Color(nsColor: NSColor(hex: indicator)), size: 7)
+    } else if let dotColor = tab.sessionStatus?.dotColor {
+      StatusDot(color: Color(nsColor: NSColor(hex: dotColor)), size: 7)
         .frame(width: 12, height: 12)
     } else if tab.isTerminal {
       Icon(tab.isDirectInteractionActive ? .squareTerminal : .terminal, size: 12)

@@ -37,11 +37,11 @@ Impulse loads your usual startup files first and the integration last, so your c
 
 | Shell | How it starts                                                                                                                                                                                                                                                                                                               |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| zsh   | A login shell with `ZDOTDIR` pointing at a temporary folder. Its startup files source your `~/.zshenv`, `~/.zprofile`, `~/.zshrc` and `~/.zlogin`, set `ZDOTDIR` back to your home folder, and load the integration after your `.zshrc`.                                                                                    |
+| zsh   | A login shell with `ZDOTDIR` pointing at a temporary folder. Its startup files source your `.zshenv`, `.zprofile` and `.zshrc` from your own `ZDOTDIR` (your home folder unless you set one), load the integration after your `.zshrc` and give `ZDOTDIR` back to you, so your `.zlogin` runs as usual. If your `.zshenv` sets `ZDOTDIR`, the rest of your files are read from there.                                                                                    |
 | bash  | `bash --rcfile` with a temporary file that sources `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` (or `~/.bashrc` when none of those exists), then the integration. This is what a login shell reads, so if your `~/.bash_profile` doesn't source `~/.bashrc`, `.bashrc` isn't read. |
 | fish  | `fish --login --init-command <integration>`.                                                                                                                                                                                                                                                                                |
 
-The temporary files are removed when the terminal closes.
+The temporary files are removed when the terminal closes. zsh still keeps its history in your own `.zsh_history` (in your `ZDOTDIR`, or your home folder), not in the temporary folder.
 
 ### What the integration reports
 
@@ -156,12 +156,12 @@ Right-clicking outside any block shows the same menu without the first group.
 
 Select blocks to copy several commands with their output at once, or to send them to an agent.
 
-1. In the input bar, press ⌘↑. The newest block is selected and the keyboard moves to the blocks. (You can also choose **View ▸ Command Blocks ▸ Select Blocks**, or **Select Blocks** in the command palette.)
+1. In the input bar or the grid, press ⌘↑. The newest block is selected and the keyboard moves to the blocks. (You can also choose **View ▸ Command Blocks ▸ Select Blocks**, or **Select Blocks** in the command palette.)
 2. Press ↑ and ↓ to move to another block. Hold ⇧ to extend the selection over a range. ⌘-click a block to add it to the selection or remove it (⌘-click on a link opens the link instead).
 3. Act on the selection:
    - ⌘C copies every selected block as `$ command` followed by its output, with a blank line between blocks.
    - ⇧⌘A sends the selected blocks to an agent.
-4. Press Esc, or ↓ past the newest block, to go back to the input bar.
+4. Press Esc, or ↓ past the newest block, to go back to the input bar. Typing also leaves the selection, and what you type goes to the input bar. While a command is running, ⌃ keys such as ⌃C, and keys that don't type text (arrows, Tab, Return), leave the selection and go to the running program instead.
 
 ![Two command blocks selected, each with an accent stripe and tint](images/terminal-block-selection.png)
 
@@ -174,7 +174,7 @@ The **View ▸ Command Blocks** menu moves through blocks: the target block is h
 | Menu item             | Shortcut | What it does                                                                                                            |
 | --------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------- |
 | **Show Hints**        | ⇧⌘Space  | Labels links, files, commits and ports on screen. See [Hints mode](#hints-mode).                                        |
-| **Select Blocks**     |          | Selects the newest block (⌘↑ from the input bar).                                                                       |
+| **Select Blocks**     |          | Selects the newest block (⌘↑ from the input bar or the grid).                                                           |
 | **Previous Block**    |          | The block before the highlighted one, or the newest block when none is highlighted.                                     |
 | **Next Block**        |          | The block after the highlighted one, or the oldest block when none is. Past the newest block, it returns to the bottom. |
 | **Last Failed Block** |          | The most recent block whose command failed.                                                                             |
@@ -182,7 +182,7 @@ The **View ▸ Command Blocks** menu moves through blocks: the target block is h
 | **Previous Bookmark** |          | The previous bookmarked block, wrapping around.                                                                         |
 | **Next Bookmark**     |          | The next bookmarked block, wrapping around.                                                                             |
 
-**Select Blocks**, **Previous Block**, **Next Block**, **Last Failed Block**, **Previous Bookmark** and **Next Bookmark** have no shortcut by default (⌘↑ is a key of the input bar, not a menu shortcut, so it stays free in the editor and other text fields). You can give them one in Keyboard Shortcuts (see [Settings and themes](settings-and-themes.md)).
+**Select Blocks**, **Previous Block**, **Next Block**, **Last Failed Block**, **Previous Bookmark** and **Next Bookmark** have no shortcut by default (⌘↑ is a key of the input bar and the grid, not a menu shortcut, so it stays free in the editor and other text fields). You can give them one in Keyboard Shortcuts (see [Settings and themes](settings-and-themes.md)); it works whether the input bar or the grid has the keyboard.
 
 ### Bookmarks
 
@@ -238,7 +238,7 @@ Type a command and press Return to run it. The terminal scrolls to the bottom an
 - **Several lines.** Press ⇧↩ or ⌥↩ to start a new line. The bar grows to 8 lines and then scrolls. When you run a multi-line command, it reaches the shell as a single paste and runs as a whole, rather than line by line.
 - **Pasting.** Pasted text keeps its newlines. Copied files paste as their paths, escaped for the shell. A copied image is saved as a PNG under `~/Library/Caches/Impulse/Pasted Images/` and its path is inserted.
 - **Dropping files.** Drop files from Finder onto the terminal to insert their escaped paths into the input bar.
-- **Paste while the grid has focus.** Text pasted with ⌘V into the grid at a prompt also goes to the input bar, so it never sits unseen in the shell's own line.
+- **Typing or pasting while the grid has focus.** At a prompt, text you type or paste (⌘V) in the grid goes to the input bar, which takes the keyboard back, so it never sits unseen in the shell's own line.
 
 When text is in the bar, a `⏎ run` hint shows at its right end.
 
@@ -259,8 +259,8 @@ As you type, the rest of a likely command appears in dim text after the cursor:
 
 The suggestion only shows when the cursor is at the end of the text, and not while a command runs.
 
-- Press → at the end of the line to accept the next word of the suggestion (up to the next space or `/`).
-- Press Tab to accept the whole suggestion when there's nothing else to complete. When several completions match, Tab opens the [completion menu](#completions) instead.
+- Press → at the end of the line to accept the whole suggestion, or ⌥→ to accept its next word (up to the next space or `/`), as in fish.
+- Tab also accepts the whole suggestion when there's nothing else to complete. When several completions match, Tab opens the [completion menu](#completions) instead.
 
 ### Recalling recent commands
 
@@ -271,8 +271,8 @@ Press ↑ (on the first line of the bar) to step back through your 50 most recen
 While a command runs, the bar's leading chevron becomes a spinner, the placeholder reads "Send input to the running command…", and a red **Stop** button (a square) appears at the right.
 
 - **Stop** (or ⌃C in the bar) sends an interrupt (⌃C) to the program.
-- Text you type and send with Return goes to the program as a line of input, which answers prompts like `Proceed? (y/N)` or feeds a REPL.
-- Return on an empty bar sends nothing, and leading and trailing spaces are trimmed. For a program that waits for a bare Return or a single key press, press Esc to move the keyboard into the grid and type there.
+- Text you type and send with Return goes to the program as a line of input, exactly as typed (spaces included), which answers prompts like `Proceed? (y/N)` or feeds a REPL.
+- Return on an empty bar sends a bare Return, for prompts like "Press Enter to continue". For a program that waits for a single key press, press Esc to move the keyboard into the grid and type there.
 
 When the shell is back at a prompt, the bar takes the keyboard again.
 
@@ -289,7 +289,7 @@ Some programs need every key: full-screen programs on the alternate screen (vim,
 - The tab's terminal icon changes to show that a program has the keyboard.
 - When the program exits, the input bar comes back and takes the keyboard.
 
-Outside direct interaction, clicking in the grid selects text but leaves the keyboard in the input bar. Press Esc in the input bar (with the completion menu closed) to move the keyboard into the grid when you need to send keys straight to the running program.
+Outside direct interaction, clicking in the grid selects text but leaves the keyboard in the input bar. Press Esc in the input bar (with the completion menu closed) to move the keyboard into the grid when you need to send keys straight to the running program. At a prompt, nothing you type in the grid reaches the shell: text goes to the input bar, Return or Esc moves back to the bar, and other keys do nothing.
 
 To write a longer prompt for an agent that owns the terminal, use the composer (⌘I); see [Agents](agents.md).
 
@@ -306,12 +306,13 @@ The [quick terminal](workspaces-and-tabs.md) always uses the shell's own prompt.
 | ↩      | Run the command (or accept the highlighted completion when the menu is open)                      |
 | ⇧↩, ⌥↩ | New line                                                                                          |
 | Tab    | Open the completion menu; accept the highlighted completion; or accept the ghost suggestion       |
-| →      | At the end of the line: accept the next word of the ghost suggestion                              |
+| →      | At the end of the line: accept the ghost suggestion                                               |
+| ⌥→     | At the end of the line: accept the next word of the ghost suggestion                              |
 | ↑, ↓   | On the first or last line: previous or next command from history; in the menu: move the highlight |
 | Esc    | Close the completion menu; otherwise move the keyboard into the grid                              |
 | ⌃C     | Interrupt the running program                                                                     |
 | ⌃R     | Search command history                                                                            |
-| ⌘↑     | Select the newest command block                                                                   |
+| ⌘↑     | Select the newest command block (from the grid too)                                               |
 | ⌘V     | Paste (files as paths, images as a saved PNG's path)                                              |
 
 ## Completions
@@ -450,7 +451,7 @@ Hints cover only what's visible on screen. When there's nothing to label, Impuls
 
 Each terminal keeps **Scrollback lines** (`terminal_scrollback`, 10,000 by default, up to 1,000,000) of output. A change applies to terminals you open afterward.
 
-- Scroll with the trackpad or wheel. While you're scrolled up, new output doesn't move the view; scroll back to the bottom to follow it again. Typing in the grid or running a command jumps to the bottom.
+- Scroll with the trackpad or wheel. While you're scrolled up, new output doesn't move the view; scroll back to the bottom to follow it again. Running a command, or typing to a program in the grid, jumps to the bottom.
 - **Scroll to bottom on output** (`terminal_scroll_on_output`, on by default) keeps the view at the newest output.
 - In a full-screen program that doesn't use the mouse, scrolling sends Page Up and Page Down to it.
 
@@ -461,7 +462,7 @@ When Impulse restores your session, each terminal starts a fresh shell in its pr
 ## Font, cursor and colors
 
 - **Zoom.** **View ▸ Increase Font Size** (⌘=), **Decrease Font Size** (⌘-) and **Reset Font Size** (⌘0) change the terminal and editor font sizes together, one point at a time between 6 and 72. Reset returns both to 14.
-- **Font family** (`terminal_font_family`) defaults to JetBrains Mono, which comes with Impulse. **Font size** is `terminal_font_size`.
+- **Font family** (`terminal_font_family`) defaults to JetBrains Mono, which comes with Impulse. **Font size** is `terminal_font_size`; the input bar's text follows it (and zoom), one point smaller, in the system's monospaced font.
 - **Bold text uses bright colors** (`terminal_bold_is_bright`, on): bold text in one of the 8 basic colors uses its bright variant.
 - **Minimum contrast** (`terminal_minimum_contrast`, 3 by default): Impulse lifts text colors that are too close to their background to at least this contrast ratio. Set it to 1 to turn it off.
 - **Cursor shape** (`terminal_cursor_shape`: block, underline or beam) and **Blinking cursor** (`terminal_cursor_blink`).
@@ -469,7 +470,7 @@ When Impulse restores your session, each terminal starts a fresh shell in its pr
 
 ## Clearing, interrupting and exiting
 
-- **Interrupt.** Click **Stop** in the input bar or press ⌃C there. With the grid focused, ⌃C goes to the program as usual.
+- **Interrupt.** Click **Stop** in the input bar or press ⌃C there. With the grid focused, ⌃C goes to the running program as usual.
 - **Clear.** Right-click the terminal and choose **Clear** (it sends ⌃L to the shell), or run `clear`.
 - **Exit.** When the shell exits (for example after you run `exit`), its pane closes, and the tab with it if it was the only pane. Closing a terminal whose command is still running asks first while **Warn before closing active work** is on; see [Workspaces and tabs](workspaces-and-tabs.md).
 
@@ -510,7 +511,7 @@ For coding agents (working, waiting for input, done), see [Agents](agents.md).
 Programs can report progress and a status line, and Impulse shows them on the terminal's tab.
 
 - **Progress (OSC 9;4).** The tab's icon becomes a progress ring (red for an error state, the warning color when paused), and the workspace row shows it too. `printf '\e]9;4;1;40\a'` sets 40%; `printf '\e]9;4;0\a'` clears it.
-- **Session status (iTerm2 OSC 21337).** `status`, `indicator` and `detail` keys: the indicator (`#RRGGBB` or `rgb:RR/GG/BB`) becomes a colored dot as the tab's icon (unless the tab is showing an agent's state or a progress ring), and the status and detail appear in the tab's tooltip and its VoiceOver label.
+- **Session status (iTerm2 OSC 21337).** `status`, `indicator`, `status-color` and `detail` keys: the indicator's color (`#RRGGBB` or `rgb:RR/GG/BB`), or `status-color` when there's no indicator, becomes a colored dot as the tab's icon (unless the tab is showing an agent's state or a progress ring), and the status and detail appear in the tab's tooltip and its VoiceOver label.
 
   ```sh
   printf '\e]21337;status=Building;indicator=#ffa500;detail=step 2 of 5\a'

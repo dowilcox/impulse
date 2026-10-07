@@ -175,6 +175,11 @@ class TerminalTab: NSView {
       guard let self else { return }
       NotificationCenter.default.post(name: .terminalRequestInputFocus, object: self)
     }
+    renderer.onTypeIntoInputBar = { [weak self] text in
+      guard let self else { return }
+      NotificationCenter.default.post(
+        name: .terminalInsertIntoInputBar, object: self, userInfo: ["text": text, "typed": true])
+    }
     renderer.onEvent = { [weak self] event in
       guard let self else { return }
       self.handleBackendEvent(event)
@@ -341,6 +346,7 @@ class TerminalTab: NSView {
       // otherwise keep the gate stuck true.
       isCommandRunning = false
       renderer.commandRunning = false
+      renderer.tracksPrompts = true
       // Back at the prompt no program is reading a password; defensively drop
       // the mask in case the echo-restore flip was missed.
       setPasswordInput(false)
@@ -840,7 +846,7 @@ class TerminalTab: NSView {
     showCommandHistory()
   }
 
-  /// Send SIGINT (Ctrl+C) to the foreground process.
+  /// Send SIGINT (⌃C) to the foreground process.
   func sendInterrupt() {
     backend?.write(bytes: [0x03])
   }
@@ -863,12 +869,21 @@ class TerminalTab: NSView {
     }
   }
 
-  /// Send a line to the running program verbatim (password prompts): no
-  /// trimming — passwords may begin or end with whitespace — and an empty
-  /// line is a valid empty password.
-  func sendSecureLine(_ text: String) {
+  /// Send a line to the running program as typed (input for a running
+  /// command, password replies): no trimming — spaces can matter, and
+  /// passwords may begin or end with them — and an empty line is a bare
+  /// Return ("Press Enter to continue", an empty password). Line ends go as
+  /// CR, what the Return key sends, so programs reading raw keys see Return.
+  func sendLine(_ text: String) {
+    agentEvent(.submit)
     backend?.scrollToBottom()
-    backend?.write(text + "\n")
+    backend?.write(Self.typedLine(text))
+  }
+
+  /// A line as the Return key would end it: every line end (LF or CRLF)
+  /// becomes one CR, plus the final Return.
+  static func typedLine(_ text: String) -> String {
+    text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r") + "\r"
   }
 
   /// Best inline completion for `text` (input-bar ghost text): history
@@ -997,11 +1012,6 @@ class TerminalTab: NSView {
   /// the screen, or the input bar is disabled (classic shell prompt mode).
   var wantsGridFocus: Bool {
     isDirectInteraction || !(currentSettings?.terminalContextBar ?? true)
-  }
-
-  /// Ask the shell to clear the screen (context-bar Clear button).
-  func clearScreen() {
-    backend?.write(bytes: [0x0C])
   }
 
   /// Open the history panel (the window's palette in history mode).
@@ -1373,7 +1383,6 @@ class TerminalTab: NSView {
       }
     } else if shellType == "zsh" {
       if let script = shellIntegrationScript(forShell: shellType) {
-        let home = NSHomeDirectory()
         let zdotdir = FileManager.default.temporaryDirectory
           .appendingPathComponent(
             "impulse-zsh-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
@@ -1381,27 +1390,13 @@ class TerminalTab: NSView {
           try FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
           shellIntegrationTempPaths.append(zdotdir)
 
-          let zshenv = "if [ -f '\(home)/.zshenv' ]; then\n    source '\(home)/.zshenv'\nfi\n"
-          try zshenv.write(
-            to: zdotdir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
-
-          let zprofile = "if [ -f '\(home)/.zprofile' ]; then\n    source '\(home)/.zprofile'\nfi\n"
-          try zprofile.write(
-            to: zdotdir.appendingPathComponent(".zprofile"), atomically: true, encoding: .utf8)
-
-          let zlogin = "if [ -f '\(home)/.zlogin' ]; then\n    source '\(home)/.zlogin'\nfi\n"
-          try zlogin.write(
-            to: zdotdir.appendingPathComponent(".zlogin"), atomically: true, encoding: .utf8)
-
-          let zshrc = """
-            export ZDOTDIR='\(home)'
-            if [ -f '\(home)/.zshrc' ]; then
-                source '\(home)/.zshrc'
-            fi
-            \(script)
-            """
-          try zshrc.write(
-            to: zdotdir.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+          // Startup files that read the user's (from their ZDOTDIR, which
+          // Impulse may have inherited, else home) and then the integration.
+          let files = ShellIntegration.zshStartupFiles(
+            integration: script, userZdotdir: envDict["ZDOTDIR"].flatMap { $0.isEmpty ? nil : $0 })
+          for (name, contents) in files {
+            try contents.write(to: zdotdir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+          }
 
           envDict["ZDOTDIR"] = zdotdir.path
           args.append("--login")

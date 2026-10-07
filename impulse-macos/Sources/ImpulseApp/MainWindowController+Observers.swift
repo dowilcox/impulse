@@ -218,7 +218,7 @@ extension MainWindowController {
           let text = notification.userInfo?["text"] as? String
         else { return }
         if let location = self.tabManager.location(ofTerminal: terminal) { self.tabManager.reveal(location) }
-        self.insertIntoInputBar(text)
+        self.insertIntoInputBar(text, typed: notification.userInfo?["typed"] as? Bool ?? false)
       }
     )
     notificationObservers.append(

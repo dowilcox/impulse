@@ -106,7 +106,7 @@ struct ReviewChip: View {
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
-    .help("Review \(fileCount) changed file\(fileCount == 1 ? "" : "s") (⌘⇧G)")
+    .help("Review \(fileCount) changed file\(fileCount == 1 ? "" : "s") (⇧⌘G)")
     .accessibilityLabel("Review Changes")
   }
 }

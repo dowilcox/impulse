@@ -57,7 +57,12 @@ struct TerminalContextBarView: View {
   /// The dropdown is open exactly when there are candidates to show.
   private var isDropdownOpen: Bool { !completions.isEmpty }
 
-  private var monoFont: Font { .system(size: 13, design: .monospaced) }
+  /// The command text follows the terminal font size (and zoom), a point
+  /// smaller: SF Mono at 13 sits with the terminal's 14.
+  private var inputFontSize: CGFloat {
+    CGFloat(max(6, SettingsStore.shared.settings.terminalFontSize - 1))
+  }
+  private var monoFont: Font { .system(size: inputFontSize, design: .monospaced) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -305,7 +310,7 @@ struct TerminalContextBarView: View {
             placeholder: inputPlaceholder,
             suggestion: model.commandRunning ? nil : suggestion,
             colors: CommandEditorColors(theme: model.theme),
-            font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            font: NSFont.monospacedSystemFont(ofSize: inputFontSize, weight: .regular),
             isKnownCommand: model.onIsKnownCommand,
             focusToken: focusRequest,
             onSubmit: handleSubmit,
@@ -346,7 +351,7 @@ struct TerminalContextBarView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(model.theme.colorRed)
-        .help("Stop (Ctrl+C)")
+        .help("Stop (⌃C)")
       } else if !text.isEmpty {
         Text("⏎ run")
           .font(.system(size: 10))
@@ -381,7 +386,7 @@ struct TerminalContextBarView: View {
     if model.passwordInputActive {
       // Password replies go through verbatim: no trimming (passwords may
       // carry whitespace) and an empty line is a valid empty password.
-      model.onSendSecureInput?(text)
+      model.onSendLine?(text)
       text = ""
       return
     }
@@ -396,9 +401,15 @@ struct TerminalContextBarView: View {
   }
 
   private func runCurrentCommand() {
-    let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !command.isEmpty else { return }
-    model.onRunCommand?(command)
+    if model.commandRunning {
+      // The running program gets the line as typed: spaces kept, and Return
+      // on an empty bar answers "Press Enter to continue".
+      model.onSendLine?(text)
+    } else {
+      let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !command.isEmpty else { return }
+      model.onRunCommand?(command)
+    }
     text = ""
     suggestion = nil
     historyIndex = nil
@@ -662,6 +673,9 @@ struct TerminalContextBarView: View {
       }
       return true
     case .right:
+      // Like fish: → takes the whole suggestion, ⌥→ its next word.
+      return acceptSuggestion() == .handled
+    case .wordRight:
       return acceptSuggestionWord() == .handled
     case .escape:
       // First Esc closes the dropdown; a second moves focus into the grid.
@@ -693,8 +707,9 @@ struct TerminalContextBarView: View {
     return .handled
   }
 
-  /// → accepts the next word of the suggestion (up to and including the next
-  /// space or `/`). When no suggestion is showing, → moves the cursor normally.
+  /// ⌥→ accepts the next word of the suggestion (up to and including the
+  /// next space or `/`). When no suggestion is showing, ⌥→ moves the cursor
+  /// normally.
   private func acceptSuggestionWord() -> KeyPress.Result {
     guard let suggestion, suggestion.hasPrefix(text), suggestion != text, !text.isEmpty else {
       return .ignored
