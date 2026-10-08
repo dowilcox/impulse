@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · Impulse docs</title>
+<meta name="description" content="{{description}}">
+<link rel="canonical" href="{{canonical}}">
+<meta property="og:title" content="{{title}} · Impulse">
+<meta property="og:description" content="{{description}}">
+<meta property="og:type" content="article">
+<meta property="og:image" content="{{site_url}}/docs/images/getting-started-window-tour.png">
+<meta name="theme-color" content="#0c0c13">
+<link rel="icon" href="{{root}}favicon.svg" type="image/svg+xml">
+<link rel="preload" href="{{root}}assets/fonts/Inter-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="{{root}}assets/site.css">
+</head>
+<body data-section="{{section}}">
+{{topbar}}
+<div class="docs-shell">
+  <aside class="docs-sidebar" aria-label="Documentation">
+    <nav>{{nav}}</nav>
+  </aside>
+  <div>
+    <div class="docs-main" data-docs-main>
+      <main class="prose" id="main">
+{{content}}
+        {{pager}}
+        <footer class="docs-footer">
+          <a href="{{edit_url}}">Edit this page on GitHub</a>
+          <span>Impulse is free software under the GPL-3.0 license.</span>
+        </footer>
+      </main>
+      {{toc}}
+    </div>
+    <div class="statusbar" aria-hidden="true">
+      <span class="sb-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5V21M18 10.5c0 4-6 3-11.2 7"/></svg>main</span>
+      <span class="sb-item sb-hide-sm">Impulse {{version}}</span>
+      <span class="sb-item sb-right"><a href="{{edit_url}}" tabindex="-1">Edit on GitHub</a></span>
+    </div>
+  </div>
+</div>
+<div class="lightbox" data-lightbox><img alt=""></div>
+{{search}}
+</body>
+</html>

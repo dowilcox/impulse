@@ -14,3 +14,6 @@ impulse-macos/.libgit2/
 
 # The user docs page for agents (a global AGENTS.md ignore would hide it)
 !docs/agents.md
+
+# Website build output (scripts/build-site.py)
+website/_site/

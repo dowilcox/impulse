@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>document.documentElement.classList.add("js")</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Impulse · The terminal IDE for the Mac</title>
+<meta name="description" content="Impulse is a terminal IDE for the Mac: a fast terminal with command blocks, a code editor, deep git tools and first-class support for the coding agents you run in it. Native Swift, free and open source.">
+<link rel="canonical" href="{{site_url}}/">
+<meta property="og:title" content="Impulse · The terminal IDE for the Mac">
+<meta property="og:description" content="A terminal with command blocks, a code editor, git review and history, and the coding agents you already run, in one native Mac window.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{site_url}}/">
+<meta property="og:image" content="{{site_url}}/docs/images/getting-started-window-tour.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0c0c13">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/Inter-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="assets/fonts/JetBrainsMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="assets/home.css">
+</head>
+<body data-section="home" class="home">
+{{topbar}}
+
+<main id="main">
+  <section class="hero">
+    <canvas class="pulses" aria-hidden="true"></canvas>
+    <div class="hero-inner">
+      <a class="hero-badge reveal" href="changelog/"><span class="dot"></span>What’s new in {{version}}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      <h1 class="hero-title"><span class="reveal">The terminal IDE</span> <span class="reveal grad">for the Mac.</span></h1>
+      <p class="hero-sub reveal">A fast terminal with command blocks, a code editor, git review and history, and first-class support for the coding agents you already run. One native window.</p>
+      <div class="hero-cta reveal">
+        <a class="btn btn-primary btn-lg" href="{{repo}}/releases/latest">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6M5 21h14"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn btn-lg" href="docs/">Read the docs</a>
+      </div>
+      <p class="hero-meta reveal">Version {{version}} · macOS 26 Tahoe or later · Apple silicon · Free and open source</p>
+    </div>
+
+    <div class="demo-stage" data-demo-stage>
+      <div class="win" data-demo tabindex="-1" aria-label="Interactive demo of an Impulse window">
+        <div class="win-titlebar">
+          <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+          <button class="tb-btn" type="button" data-act="sidebar" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+          </button>
+          <div class="tb-ws"><b>trailhead</b><span class="tb-branch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5V21M18 10.5c0 4-6 3-11.2 7"/></svg>feat…ache</span></div>
+          <div class="tb-tabs" role="tablist" data-tabs></div>
+          <button class="tb-btn tb-new" type="button" data-act="new-tab" title="New terminal tab (⌘T)" aria-label="New terminal tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="tb-spacer"></div>
+          <button class="tb-agents" type="button" data-agents hidden></button>
+          <button class="tb-palette" type="button" data-act="palette" title="Search or run a command (⇧⌘P)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <span>Search or run a command</span><kbd>⇧⌘P</kbd>
+          </button>
+          <button class="tb-changes" type="button" data-act="review" title="Review changes (⇧⌘G)" data-changes></button>
+        </div>
+        <div class="win-body">
+          <aside class="win-sidebar" data-sidebar>
+            <div class="ws-list">
+              <div class="ws-row ws-repo"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6c5 0 7.5 2 7.5 6"/></svg>trailhead</div>
+              <button class="ws-row ws-task" type="button" data-act="task"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>fix-elevation<span class="ws-counts"><i class="add">+1</i> <i class="del">−1</i></span></button>
+              <div class="ws-row ws-active"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg><b>trailhead</b><span class="ws-branch">feat…cache</span><span class="ws-counts" data-ws-counts></span></div>
+            </div>
+            <div class="files-head"><span class="files-tab">Files</span></div>
+            <div class="files" data-files role="tree" aria-label="Files"></div>
+          </aside>
+          <div class="win-main" data-panes></div>
+          <div class="win-overlay" data-overlay hidden>
+            <div class="dpal" role="dialog" aria-label="Command palette">
+              <div class="dpal-input"><input type="text" spellcheck="false" autocomplete="off" aria-label="Command palette" data-pal-input></div>
+              <div class="dpal-list" data-pal-list role="listbox"></div>
+              <div class="dpal-foot" data-pal-foot></div>
+            </div>
+          </div>
+          <div class="win-toasts" data-toasts aria-live="polite"></div>
+        </div>
+        <div class="win-status">
+          <span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5V21M18 10.5c0 4-6 3-11.2 7"/></svg>feature/forecast-cache</span>
+          <span data-status-changes></span>
+          <span data-status-cwd class="hide-sm"></span>
+          <span class="st-right" data-status-right>fish</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-under">
+      <div class="demo-hints" aria-label="Things to try">
+        <span>Try it:</span>
+        <button type="button" class="hint" data-try="git log --oneline --graph">git log</button>
+        <button type="button" class="hint" data-try="npm test">npm test</button>
+        <button type="button" class="hint" data-try="claude">claude</button>
+        <button type="button" class="hint" data-act="palette"><kbd>⇧⌘P</kbd> palette</button>
+        <button type="button" class="hint" data-act="review">Review changes</button>
+        <button type="button" class="hint" data-try="help">help</button>
+      </div>
+      <div class="themes">
+        <span class="themes-label">19 built-in themes. Pick one:</span>
+        <div class="theme-strip" data-theme-strip role="radiogroup" aria-label="Demo theme"></div>
+      </div>
+      <p class="demo-note">A scripted demo running in your browser. The real thing runs your own shell.</p>
+    </div>
+  </section>
+
+  <section class="feature" id="terminal">
+    <div class="feature-text reveal">
+      <div class="eyebrow">Terminal</div>
+      <h2>Every command is a block.</h2>
+      <p>Each command and its output stay together, with how it exited and how long it took. Copy one, run it again, bookmark it, or hand it to an agent. A failed command is marked in red, so you find it when you scroll back.</p>
+      <ul class="checks">
+        <li>An input bar with shell highlighting, history (⌃R) and completions for subcommands, options, branches and scripts</li>
+        <li>An underline under commands your shell can’t run, before you press Return</li>
+        <li>Find with regex, hints mode for URLs, paths, SHAs and ports, and notifications when long commands finish</li>
+        <li>Shell integration for zsh, bash and fish that never touches your dotfiles</li>
+      </ul>
+      <a class="more" href="docs/terminal/">The terminal in the docs →</a>
+    </div>
+    <figure class="feature-shot reveal"><img src="docs/images/terminal-blocks.png" alt="Command blocks: a successful git status with a check mark, a failed npm test with a red stripe, and a bookmarked block" loading="lazy" width="2040" height="860"></figure>
+  </section>
+
+  <section class="feature flip" id="agents">
+    <div class="feature-text reveal">
+      <div class="eyebrow">Agents</div>
+      <h2>Made for the agents you already use.</h2>
+      <p>Impulse sees when a coding agent is working in one of its terminals and when it’s waiting for you. Every turn is checkpointed, so you can review exactly what it changed, put files back the way they were, or send review comments back to it.</p>
+      <div class="agent-chips" aria-label="Recognized agents">
+        <span><i class="st working"></i>Claude Code</span><span><i class="st waiting"></i>Codex</span><span><i class="st done"></i>Gemini CLI</span><span><i class="st"></i>Aider</span><span><i class="st"></i>opencode</span><span><i class="st"></i>Amp</span><span><i class="st"></i>Copilot CLI</span><span><i class="st"></i>Cursor Agent</span><span><i class="st"></i>Goose</span><span><i class="st"></i>Qwen Code</span><span><i class="st"></i>Crush</span>
+      </div>
+      <p class="fine">Impulse never calls an AI service itself. It runs the agent tools you install, in your terminals.</p>
+      <a class="more" href="docs/agents/">Agents in the docs →</a>
+    </div>
+    <figure class="feature-shot narrow reveal"><img src="docs/images/agents-inbox.png" alt="The agents list: Codex needs your input, one Claude Code session finished with a Review button, another is working" loading="lazy" width="828" height="528"></figure>
+  </section>
+
+  <section class="feature" id="review">
+    <div class="feature-text reveal">
+      <div class="eyebrow">Review</div>
+      <h2>Read every change before it lands.</h2>
+      <p>Review your uncommitted work, a branch, a commit, a stash, or just the last agent turn. Stage hunks or single lines, mark files as viewed, and leave comments on lines that you can send straight to the agent that wrote them.</p>
+      <ul class="checks">
+        <li>Unified or split diffs with word-level highlighting and syntax colors</li>
+        <li>GitHub pull request threads beside the code, through <code>gh</code></li>
+        <li>Destructive git operations take a snapshot first, so you can undo them</li>
+      </ul>
+      <a class="more" href="docs/review/">Review in the docs →</a>
+    </div>
+    <figure class="feature-shot reveal"><img src="docs/images/review-overview.png" alt="Review: a file list beside a unified diff with a comment on a line" loading="lazy" width="2784" height="1824"></figure>
+  </section>
+
+  <section class="feature flip" id="history">
+    <div class="feature-text reveal">
+      <div class="eyebrow">Git</div>
+      <h2>History you can actually follow.</h2>
+      <p>A commit graph across every branch, with filters by author, path and date, and the selected commit’s diff underneath. Compare any two points, then merge, rebase, tag or open the commit on GitHub without leaving the window.</p>
+      <ul class="checks">
+        <li>A Changes panel with a commit composer you can drive from the keyboard</li>
+        <li>Branches, stashes, merge conflicts, fetch, pull and push from the Git menu or the palette</li>
+        <li>Live change marks and inline blame in the editor</li>
+      </ul>
+      <a class="more" href="docs/history/">History in the docs →</a>
+    </div>
+    <figure class="feature-shot reveal"><img src="docs/images/history-all-branches.png" alt="History: a commit graph across all branches" loading="lazy" width="2040" height="800"></figure>
+  </section>
+
+  <section class="feature" id="editor">
+    <div class="feature-text reveal">
+      <div class="eyebrow">Editor</div>
+      <h2>A real editor, right next to your shell.</h2>
+      <p>The Monaco editor with language servers for TypeScript, Rust, Python, C and a dozen more, project-wide find and replace, Problems, Markdown preview and an editable side-by-side diff. Vim mode is a setting away.</p>
+      <a class="more" href="docs/editor/">The editor in the docs →</a>
+    </div>
+    <figure class="feature-shot reveal"><img src="docs/images/editor-overview.png" alt="The editor with a TypeScript file open beside the file tree" loading="lazy" width="2784" height="1824"></figure>
+  </section>
+
+  <section class="grid-section">
+    <h2 class="reveal">And the rest of the workbench.</h2>
+    <div class="cards">
+      <a class="card reveal" href="docs/command-palette/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 4 4-4 4M12 16h7"/></svg>
+        <h3>Command palette</h3><p>Files, <code>&gt;</code> commands, <code>:</code> lines, <code>@</code> symbols, tabs, branches, history, pull requests and settings in one field.</p>
+      </a>
+      <a class="card reveal" href="docs/tasks/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6c5 0 7.5 2 7.5 6"/></svg>
+        <h3>Tasks</h3><p>A branch in its own worktree, opened as its own workspace. Run two agents side by side without stashing anything.</p>
+      </a>
+      <a class="card reveal" href="docs/workspaces-and-tabs/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16M12 12h9"/></svg>
+        <h3>Splits and sessions</h3><p>Split any tab into panes. Quit and come back to every window, workspace, layout and terminal’s output.</p>
+      </a>
+      <a class="card reveal" href="docs/cli/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+        <h3>The <code>impulse</code> command</h3><p>Open files, start a review, split panes and post notifications from any terminal. Make it your <code>$EDITOR</code>.</p>
+      </a>
+      <a class="card reveal" href="docs/settings-and-themes/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18M12 3c4 3 4 15 0 18"/></svg>
+        <h3>Themes and settings</h3><p>19 built-in themes plus your own TOML themes. Every setting searchable, every shortcut yours to change.</p>
+      </a>
+      <a class="card reveal" href="docs/getting-started/#workspace-trust">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>Workspace trust</h3><p>Language servers, formatters and background fetch only run in folders you’ve said you trust.</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="native">
+    <div class="native-item reveal"><div class="big">Swift</div><p>AppKit and SwiftUI, built for macOS Tahoe. No Electron, no web view for the terminal.</p></div>
+    <div class="native-item reveal"><div class="big">Rust</div><p>Terminal emulation on <code>alacritty_terminal</code>, drawn with Core Text.</p></div>
+    <div class="native-item reveal"><div class="big">Yours</div><p>No account, no telemetry. Impulse never calls an AI service itself. GPL-3.0.</p></div>
+  </section>
+
+  <section class="final reveal">
+    <img src="assets/impulse-logo.svg" alt="" width="88" height="88" class="final-logo">
+    <h2>Get Impulse.</h2>
+    <p>Download the disk image, drag Impulse to Applications, and open a folder.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary btn-lg" href="{{repo}}/releases/latest">Download Impulse {{version}}</a>
+      <a class="btn btn-lg" href="docs/getting-started/">Getting started</a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="sf-brand"><img src="assets/impulse-logo.svg" alt="" width="22" height="22">Impulse</div>
+  <nav>
+    <a href="docs/">Docs</a>
+    <a href="changelog/">Changelog</a>
+    <a href="{{repo}}/releases">Releases</a>
+    <a href="{{repo}}">GitHub</a>
+    <a href="{{repo}}/blob/main/LICENSE">GPL-3.0</a>
+  </nav>
+</footer>
+
+{{search}}
+<script src="assets/themes.js" defer></script>
+<script src="assets/home.js" defer></script>
+<script src="assets/demo-files.js" defer></script>
+<script src="assets/demo.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+# Builds impulse-terminal.app (the homepage, docs/ and CHANGELOG.md) with
+# scripts/build-site.py and publishes it to GitHub Pages. Runs on every push to
+# main that changes one of the site's inputs, and by hand from the Actions tab.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "website/**"
+      - "CHANGELOG.md"
+      - "VERSION"
+      - "assets/impulse-logo.svg"
+      - "vendor/fonts/**"
+      - "vendor/highlight/**"
+      - "impulse-macos/Sources/ImpulseKit/Resources/Themes/**"
+      - "scripts/build-site.py"
+      - ".github/workflows/website.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "website/**"
+      - "CHANGELOG.md"
+      - "scripts/build-site.py"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: website/requirements.txt
+      - run: pip install -r website/requirements.txt
+      # --check fails the build on a broken link, anchor or image in the docs.
+      - run: python3 scripts/build-site.py --check
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: website/_site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

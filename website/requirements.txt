@@ -1,0 +1,4 @@
+# Python packages scripts/build-site.py needs (pip install -r website/requirements.txt)
+markdown-it-py==3.0.0
+mdurl==0.1.2
+tomli==2.2.1; python_version < "3.11"

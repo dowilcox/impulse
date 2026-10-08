@@ -36,6 +36,8 @@ impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
                           OSC 133/7/6973 scanning, command blocks, history
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
 vendor/                   Monaco editor, fonts, highlight.js (committed)
+website/                  impulse-terminal.app: homepage + demo, docs page
+                          template (built by scripts/build-site.py)
 scripts/                  build-libgit2.sh, vendor-*.sh, release.sh
 ```
 
@@ -112,6 +114,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
 - **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon).
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
+- **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
 - **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first.
 
 ## History
