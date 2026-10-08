@@ -162,6 +162,39 @@ public struct ProjectConfig: Equatable, Sendable {
     parseLayer(text).map { resolve([$0]) }
   }
 
+  /// The settings of several files' texts, later ones winning key by key,
+  /// as `load` layers the local file over the committed one.
+  public static func parse(layers texts: [String]) -> Result<ProjectConfig, LoadError> {
+    var layers: [Layer] = []
+    for text in texts {
+      switch parseLayer(text) {
+      case .success(let layer): layers.append(layer)
+      case .failure(let error): return .failure(error)
+      }
+    }
+    return .success(resolve(layers))
+  }
+
+  /// The settings that differ from `other`'s, named as Project Setup shows
+  /// them ("setup script", "ports"), in its order.
+  public func differences(from other: ProjectConfig) -> [String] {
+    let settings: [(String, Bool)] = [
+      ("files to copy", worktreeCopy == other.worktreeCopy),
+      ("folders to clone", worktreeClone == other.worktreeClone),
+      ("database", databaseFolder == other.databaseFolder && databaseService == other.databaseService),
+      ("ports", ports == other.ports && portOffset == other.portOffset && composeOverride == other.composeOverride),
+      ("values", worktreeEnv == other.worktreeEnv && envFile == other.envFile),
+      ("setup script", setupScript == other.setupScript),
+      ("check script", checkScript == other.checkScript),
+      ("archive script", archiveScript == other.archiveScript),
+      ("how tasks finish", landing == other.landing),
+      ("commands for changed files", onChange == other.onChange),
+      ("files ignored for overlaps", overlapIgnore == other.overlapIgnore),
+      ("actions", actions == other.actions),
+    ]
+    return settings.filter { !$0.1 }.map(\.0)
+  }
+
   static func parseLayer(_ text: String) -> Result<Layer, LoadError> {
     do {
       return .success(try TOMLDecoder().decode(Layer.self, from: text))

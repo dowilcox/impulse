@@ -4,9 +4,8 @@ import SwiftUI
 
 /// Project Setup as a tab: what a repository's tasks need (files to copy,
 /// folders and a database to clone, ports and values of their own, scripts,
-/// actions), proposed from what's in the repository and saved as its
-/// project settings, on this Mac (`.git/impulse/project.toml`) or committed
-/// (`.impulse/project.toml`).
+/// actions), proposed from what's in the repository and saved in its
+/// `.impulse/project.toml`, which every task reads from the main checkout.
 @Observable
 final class ProjectSetupModel {
   struct Row: Identifiable, Equatable {
@@ -15,6 +14,9 @@ final class ProjectSetupModel {
     var isOn: Bool
     var note: String?
     var size: String?
+    /// Added by the user, or saved but not found: its path is edited, and
+    /// it can be removed.
+    var isCustom = false
   }
 
   struct Pair: Identifiable, Equatable {
@@ -29,17 +31,25 @@ final class ProjectSetupModel {
     var action: ProjectConfig.Action
   }
 
-  enum Location: Hashable { case local, project }
   enum Database: Hashable { case none, clone, dump, empty }
+
+  /// The local `.git/impulse/project.toml`, when there is one. Impulse's own
+  /// (an earlier save, Finish Task's answer) is shown folded in and removed
+  /// on save; `dropped` names its settings the project's replace. One
+  /// edited by hand is left alone, and wins in `overrides`.
+  enum LocalFile: Equatable {
+    case impulses(text: String, dropped: [String])
+    case handEdited(overrides: [String])
+  }
 
   var palette: ChromePalette
   /// The repository's main checkout.
   var root = ""
   var isLoading = true
   var isSaving = false
-  var location: Location = .local
   var composeFileName: String?
-  var composeWarnings: [String] = []
+  var fixedPorts: [ProjectSuggestions.FixedPort] = []
+  var containerNames: [ProjectSuggestions.ContainerName] = []
   var composeOverride = false
   var copies: [Row] = []
   var clones: [Row] = []
@@ -60,14 +70,18 @@ final class ProjectSetupModel {
   /// What the Database row offers, and what's chosen.
   var databaseOptions: [Database] = []
   var database: Database = .none
-  var databaseFolder: String?
-  var databaseService: String?
+  /// The data folder cloned into tasks, and the Compose service stopped in
+  /// the main checkout meanwhile, as typed.
+  var databaseFolder = ""
+  var databaseService = ""
   var dumpCommand: String?
   var emptyCommand: String?
   /// Tasks Impulse made that have a slot, for Re-apply.
   var taskCount = 0
-  /// Things to know before saving ("Edited by hand…").
-  var notes: [String] = []
+  var localFile: LocalFile?
+  /// Saving drops comments in the sections of `.impulse/project.toml` the
+  /// screen manages.
+  var dropsComments = false
   /// Bumped to scroll to a section ("actions").
   var revealSection: String?
   var revealToken = 0
@@ -77,12 +91,19 @@ final class ProjectSetupModel {
   @ObservationIgnored var onReapply: (() -> Void)?
   @ObservationIgnored var onShowCompose: (() -> Void)?
   @ObservationIgnored var onOpenFile: (() -> Void)?
+  @ObservationIgnored var onOpenLocalFile: (() -> Void)?
+  /// Pick a file (or with `true`, a folder) in the repository; `done` gets
+  /// its path relative to the root.
+  @ObservationIgnored var onChoosePath: ((Bool, @escaping (String) -> Void) -> Void)?
 
   init(palette: ChromePalette) {
     self.palette = palette
   }
 
   var name: String { (root as NSString).lastPathComponent }
+
+  /// What task n adds to each port, n times.
+  var offset: Int { Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100 }
 
   /// Choose what the Database row does. Dump-and-load and an empty
   /// database are commands in the setup script, so they're shown (and can
@@ -109,11 +130,12 @@ final class ProjectSetupModel {
     }
     var config = ProjectConfig(
       actions: actions.filter(\.isOn).map(\.action).filter { !$0.name.isEmpty && !$0.command.isEmpty },
-      setupScript: text(setup), archiveScript: text(archive), worktreeCopy: copies.filter(\.isOn).map(\.path))
+      setupScript: text(setup), archiveScript: text(archive),
+      worktreeCopy: copies.filter(\.isOn).compactMap { text($0.path) })
     config.checkScript = text(check)
-    config.worktreeClone = clones.filter(\.isOn).map(\.path)
+    config.worktreeClone = clones.filter(\.isOn).compactMap { text($0.path) }
     config.envFile = text(envFile) ?? ProjectConfig().envFile
-    config.portOffset = Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100
+    config.portOffset = offset
     for pair in ports {
       let name = pair.name.trimmingCharacters(in: .whitespaces)
       if !name.isEmpty, let port = Int(pair.value.trimmingCharacters(in: .whitespaces)) { config.ports[name] = port }
@@ -122,9 +144,9 @@ final class ProjectSetupModel {
       let name = pair.name.trimmingCharacters(in: .whitespaces)
       if !name.isEmpty { config.worktreeEnv[name] = pair.value }
     }
-    if database == .clone {
-      config.databaseFolder = databaseFolder
-      config.databaseService = databaseService
+    if database == .clone, let folder = text(databaseFolder) {
+      config.databaseFolder = folder
+      config.databaseService = text(databaseService)
     }
     config.composeOverride = composeOverride
     config.landing = landing
@@ -208,16 +230,13 @@ struct ProjectSetupView: View {
     return HStack(spacing: 10) {
       VStack(alignment: .leading, spacing: 2) {
         Text("Project Setup — \(model.name)").font(ChromeFont.ui(15, weight: .semibold)).foregroundStyle(chrome.text)
-        Text("What new tasks get: files, folders, ports and values of their own, and scripts.")
+        Text("What new tasks get: files, folders, ports and values of their own, and scripts. Saved in \(ProjectConfig.relativePath).")
           .font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
       }
       Spacer()
-      Text("Save to").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
-      ChromeSegmented(
-        options: [(ProjectSetupModel.Location.local, "This Mac"), (.project, "The project")],
-        selection: Binding(get: { model.location }, set: { model.location = $0 }),
-        help: "This Mac: .git/impulse/project.toml, never committed. The project: .impulse/project.toml, to commit.")
-      ChromeButton(title: "Open File", kind: .ghost) { model.onOpenFile?() }
+      ChromeButton(title: "Open File", kind: .ghost, help: "Open \(ProjectConfig.relativePath) in the editor") {
+        model.onOpenFile?()
+      }
       ChromeButton(title: model.isSaving ? "Saving…" : "Save", icon: .check, kind: .primary) { model.onSave?() }
         .disabled(model.isLoading || model.isSaving)
     }
@@ -227,77 +246,29 @@ struct ProjectSetupView: View {
   }
 
   @ViewBuilder private var sections: some View {
-    let chrome = model.palette
     VStack(alignment: .leading, spacing: 22) {
-      ForEach(model.notes, id: \.self) { note in
-        Label(note, systemImage: "info.circle").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
-      }
+      notes
 
-      if !model.composeWarnings.isEmpty {
-        section("Docker Compose", detail: "\(model.composeFileName ?? "The Compose file") keeps two checkouts' stacks from running at once:") {
-          ForEach(model.composeWarnings, id: \.self) { warning in
-            HStack(spacing: 6) {
-              Icon(.triangleAlert, size: 12).foregroundStyle(chrome.warning)
-              Text(warning).font(ChromeFont.mono(11.5)).foregroundStyle(chrome.text)
-            }
-          }
-          HStack(spacing: 10) {
-            Toggle(isOn: Binding(get: { model.composeOverride }, set: { model.composeOverride = $0 })) {
-              Text("Handle in tasks").font(ChromeFont.ui(12, weight: .medium)).foregroundStyle(chrome.text)
-            }
-            .toggleStyle(.checkbox)
-            ChromeButton(title: "Show", kind: .ghost) { model.onShowCompose?() }
-          }
-          caption("Each new task gets an override (in .git/impulse, never committed) that renames its containers and moves these ports by its slot. Needs Docker Compose 2.24 or later.")
-        }
-      }
-
-      section("Copy into tasks", detail: "Ignored files a fresh checkout lacks, copied from the main checkout.") {
+      section("Copy into tasks", detail: "Files a fresh checkout lacks (ignored or untracked), copied from the main checkout. Patterns work: config/*.local.json.") {
         if model.copies.isEmpty { caption("No ignored files found.") }
-        ForEach(Binding(get: { model.copies }, set: { model.copies = $0 })) { $row in
-          checkRow($row)
+        paths(Binding(get: { model.copies }, set: { model.copies = $0 }), placeholder: "config/local.json", folders: false)
+        ChromeButton(title: "Add File", icon: .plus, kind: .ghost) {
+          model.copies.append(.init(path: "", isOn: true, isCustom: true))
         }
       }
 
       section("Clone into tasks", detail: "Folders cloned in at once, with no extra disk until they change.") {
         if model.clones.isEmpty { caption("No ignored dependency or build folders found.") }
-        ForEach(Binding(get: { model.clones }, set: { model.clones = $0 })) { $row in
-          checkRow($row)
+        paths(Binding(get: { model.clones }, set: { model.clones = $0 }), placeholder: "storage/app", folders: true)
+        ChromeButton(title: "Add Folder", icon: .plus, kind: .ghost) {
+          model.clones.append(.init(path: "", isOn: true, isCustom: true))
         }
       }
 
-      if !model.databaseOptions.isEmpty {
-        section("Database", detail: "Each task's own stack starts with an empty database unless it gets one.") {
-          ForEach(model.databaseOptions, id: \.self) { option in
-            Button {
-              model.choose(option)
-            } label: {
-              HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: model.database == option ? "largecircle.fill.circle" : "circle")
-                  .foregroundStyle(model.database == option ? chrome.accent : chrome.textTertiary)
-                VStack(alignment: .leading, spacing: 2) {
-                  Text(title(of: option)).font(ChromeFont.ui(12, weight: .medium)).foregroundStyle(chrome.text)
-                  Text(detail(of: option)).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-              }
-              .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-          }
-        }
-      }
+      database
 
-      section("Ports", detail: "The main checkout's ports. Task n adds n × the offset to each, written into its \(model.envFile).") {
-        pairs(Binding(get: { model.ports }, set: { model.ports = $0 }), namePlaceholder: "APP_PORT", valuePlaceholder: "8000")
-        HStack(spacing: 8) {
-          ChromeButton(title: "Add Port", icon: .plus, kind: .ghost) { model.ports.append(.init(name: "", value: "")) }
-          Spacer()
-          Text("Offset per task").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
-          TextField("100", text: Binding(get: { model.portOffset }, set: { model.portOffset = $0 }))
-            .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 70)
-        }
-      }
+      ports
+        .id("ports")
 
       section("Values for each task", detail: "Written into each new task's \(model.envFile). Use {task}, {task_}, {slot} and port names.") {
         pairs(Binding(get: { model.values }, set: { model.values = $0 }), namePlaceholder: "DB_DATABASE", valuePlaceholder: "myapp_{task_}")
@@ -316,7 +287,7 @@ struct ProjectSetupView: View {
           options: [(nil, "Ask the first time"), (ProjectConfig.Landing.merge, "Merge and push"), (.review, "Push for review")],
           selection: Binding(get: { model.landing }, set: { model.landing = $0 }))
         switch model.landing {
-        case nil: caption("The first Finish in this repository asks, and its answer is saved here.")
+        case nil: caption("The first Finish in this repository asks, and remembers the answer.")
         case .review?:
           caption("Finish pushes the branch; you open a merge request on your git host. Once it's merged there, Impulse offers to clean up.")
         case .merge?:
@@ -361,9 +332,163 @@ struct ProjectSetupView: View {
     }
   }
 
+  // MARK: Sections
+
+  @ViewBuilder private var notes: some View {
+    let local = ".git/impulse/project.toml"
+    switch model.localFile {
+    case .impulses(_, let dropped)?:
+      note(
+        "Settings kept on this Mac only, in \(local), are included here. Saving moves them into \(ProjectConfig.relativePath) and removes that file"
+          + (dropped.isEmpty ? "." : "; where the two differed (\(list(dropped))), the project's are shown."))
+    case .handEdited(let overrides)?:
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        note(
+          "On this Mac, \(local) "
+            + (overrides.isEmpty ? "has settings of its own" : "overrides the project's \(list(overrides))")
+            + ". It was edited by hand, so saving leaves it alone.")
+        ChromeButton(title: "Open", kind: .ghost) { model.onOpenLocalFile?() }
+      }
+    case nil:
+      EmptyView()
+    }
+    if model.dropsComments {
+      note("Saving rewrites the sections this screen manages in \(ProjectConfig.relativePath); comments in them are dropped.")
+    }
+  }
+
+  private var database: some View {
+    let chrome = model.palette
+    let summary =
+      model.dumpCommand != nil
+      ? "Each task's own stack starts with an empty database unless it gets one."
+      : "What a task's database starts with."
+    return section("Database", detail: summary) {
+      ForEach(model.databaseOptions, id: \.self) { option in
+        Button {
+          model.choose(option)
+        } label: {
+          HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: model.database == option ? "largecircle.fill.circle" : "circle")
+              .foregroundStyle(model.database == option ? chrome.accent : chrome.textTertiary)
+            VStack(alignment: .leading, spacing: 2) {
+              Text(title(of: option)).font(ChromeFont.ui(12, weight: .medium)).foregroundStyle(chrome.text)
+              Text(detail(of: option)).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        if option == .clone, model.database == .clone {
+          databaseFolderFields.padding(.leading, 22).padding(.bottom, 4)
+        }
+      }
+    }
+  }
+
+  private var databaseFolderFields: some View {
+    let chrome = model.palette
+    return VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Text("Folder").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary).frame(width: 52, alignment: .leading)
+        TextField("docker/data/mysql", text: Binding(get: { model.databaseFolder }, set: { model.databaseFolder = $0 }))
+          .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
+        ChromeIconButton(icon: .folderOpen, help: "Choose a folder", size: 22, iconSize: 12) {
+          model.onChoosePath?(true) { model.databaseFolder = $0 }
+        }
+      }
+      HStack(spacing: 8) {
+        Text("Service").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary).frame(width: 52, alignment: .leading)
+        TextField("mysql", text: Binding(get: { model.databaseService }, set: { model.databaseService = $0 }))
+          .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 160)
+        Text("Optional: the Compose service that writes it, stopped in the main checkout while it's cloned.")
+          .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary).fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private var ports: some View {
+    let chrome = model.palette
+    let hasCompose = !model.fixedPorts.isEmpty || !model.containerNames.isEmpty
+    return section(
+      "Ports",
+      detail: "Two checkouts can't listen on the same port, so task n moves each one up by n × \(model.offset): task 1 gets \(8000 + model.offset) for 8000."
+    ) {
+      if hasCompose { composePorts }
+      if hasCompose {
+        subheading("In \(model.envFile)", detail: "Variables each task gets its own value of, in its \(model.envFile). Compose ports written as ${NAME:-8000} come from here.")
+      } else {
+        caption("Each task gets its own value of these in its \(model.envFile).")
+      }
+      if model.ports.isEmpty { caption("None found. Add the variables your app or Compose file reads its ports from.") }
+      ForEach(Binding(get: { model.ports }, set: { model.ports = $0 })) { $pair in
+        HStack(spacing: 8) {
+          TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
+          TextField("8000", text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 90)
+          Text(Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
+            .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+          Spacer(minLength: 0)
+          ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
+            model.ports.removeAll { $0.id == pair.id }
+          }
+        }
+      }
+      HStack(spacing: 8) {
+        ChromeButton(title: "Add Port", icon: .plus, kind: .ghost) { model.ports.append(.init(name: "", value: "")) }
+        Spacer()
+        Text("Offset per task").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
+        TextField("100", text: Binding(get: { model.portOffset }, set: { model.portOffset = $0 }))
+          .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 70)
+      }
+    }
+  }
+
+  /// The Compose file's fixed ports and container names, which a task's
+  /// override moves and renames.
+  @ViewBuilder private var composePorts: some View {
+    let chrome = model.palette
+    let file = model.composeFileName ?? "the Compose file"
+    subheading("In \(file)", detail: "Written as plain numbers, so only one checkout's stack can run at a time.")
+    ForEach(Array(model.fixedPorts.enumerated()), id: \.offset) { _, fixed in
+      composeRow(fixed.service, fixed.port.raw, task: ComposeFile.moved(fixed.port, by: model.offset))
+    }
+    ForEach(Array(model.containerNames.enumerated()), id: \.offset) { _, container in
+      composeRow(container.service, "container_name \(container.name)", task: "\(container.name)-<task>")
+    }
+    HStack(spacing: 10) {
+      Toggle(isOn: Binding(get: { model.composeOverride }, set: { model.composeOverride = $0 })) {
+        Text("Move them in each task").font(ChromeFont.ui(12, weight: .medium)).foregroundStyle(chrome.text)
+      }
+      .toggleStyle(.checkbox)
+      ChromeButton(title: "Show File", kind: .ghost) { model.onShowCompose?() }
+    }
+    if model.composeOverride {
+      caption(
+        "\(file) itself isn't changed. Each task gets an override file (in .git/impulse, never committed) that moves these ports and renames the containers, and its \(model.envFile) sets COMPOSE_FILE so docker compose uses it. Needs Docker Compose 2.24 or later."
+      )
+    } else {
+      HStack(spacing: 6) {
+        Icon(.triangleAlert, size: 12).foregroundStyle(chrome.warning)
+        caption("Off: a task's stack can't start while another checkout's is running.")
+      }
+    }
+  }
+
+  private func composeRow(_ service: String, _ value: String, task: String) -> some View {
+    let chrome = model.palette
+    return HStack(spacing: 8) {
+      Text(service).font(ChromeFont.ui(12)).foregroundStyle(chrome.textSecondary).frame(width: 110, alignment: .leading)
+      Text(value).font(ChromeFont.mono(11.5)).foregroundStyle(chrome.text)
+      if model.composeOverride {
+        Text("task 1: \(task)").font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+      }
+    }
+  }
+
   private func title(of option: ProjectSetupModel.Database) -> String {
     switch option {
-    case .clone: return "Clone the data folder"
+    case .clone: return "Clone a data folder"
     case .dump: return "Dump and load"
     case .empty: return "Empty, with migrations and seed data"
     case .none: return "Nothing"
@@ -372,9 +497,7 @@ struct ProjectSetupView: View {
 
   private func detail(of option: ProjectSetupModel.Database) -> String {
     switch option {
-    case .clone:
-      let service = model.databaseService.map { ", stopping \($0) in the main checkout for a second or two" } ?? ""
-      return "\(model.databaseFolder ?? "") is cloned into each task\(service)."
+    case .clone: return "A folder holding the database's data is cloned from the main checkout into each task."
     case .dump: return "The setup script loads a dump of the main checkout's database into the task's."
     case .empty: return "The setup script runs \(model.emptyCommand ?? "the migrations")."
     case .none: return "Each task starts with an empty database."
@@ -392,22 +515,55 @@ struct ProjectSetupView: View {
     }
   }
 
+  private func subheading(_ title: String, detail: String) -> some View {
+    let chrome = model.palette
+    return VStack(alignment: .leading, spacing: 2) {
+      Text(title).font(ChromeFont.ui(12, weight: .medium)).foregroundStyle(chrome.text)
+      caption(detail)
+    }
+    .padding(.top, 4)
+  }
+
   private func caption(_ text: String) -> some View {
     Text(text).font(ChromeFont.ui(11)).foregroundStyle(model.palette.textTertiary).fixedSize(horizontal: false, vertical: true)
   }
 
-  private func checkRow(_ row: Binding<ProjectSetupModel.Row>) -> some View {
+  private func note(_ text: String) -> some View {
+    Label(text, systemImage: "info.circle").font(ChromeFont.ui(11.5)).foregroundStyle(model.palette.textSecondary)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func list(_ names: [String]) -> String {
+    ListFormatter.localizedString(byJoining: names)
+  }
+
+  /// Detected paths as checkboxes; the user's own as fields to edit, pick
+  /// with a panel or remove.
+  private func paths(_ rows: Binding<[ProjectSetupModel.Row]>, placeholder: String, folders: Bool) -> some View {
     let chrome = model.palette
-    return HStack(spacing: 8) {
-      Toggle(isOn: row.isOn) {
-        Text(row.wrappedValue.path).font(ChromeFont.mono(12)).foregroundStyle(chrome.text)
-      }
-      .toggleStyle(.checkbox)
-      if let size = row.wrappedValue.size {
-        Text(size).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
-      }
-      if let note = row.wrappedValue.note {
-        Text(note).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary).lineLimit(1)
+    return ForEach(rows) { $row in
+      HStack(spacing: 8) {
+        if row.isCustom {
+          Toggle("", isOn: $row.isOn).toggleStyle(.checkbox).labelsHidden()
+          TextField(placeholder, text: $row.path).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
+          ChromeIconButton(icon: .folderOpen, help: folders ? "Choose a folder" : "Choose a file", size: 22, iconSize: 12) {
+            model.onChoosePath?(folders) { $row.path.wrappedValue = $0 }
+          }
+          ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
+            rows.wrappedValue.removeAll { $0.id == row.id }
+          }
+        } else {
+          Toggle(isOn: $row.isOn) {
+            Text(row.path).font(ChromeFont.mono(12)).foregroundStyle(chrome.text)
+          }
+          .toggleStyle(.checkbox)
+          if let size = row.size {
+            Text(size).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+          }
+          if let note = row.note {
+            Text(note).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary).lineLimit(1)
+          }
+        }
       }
     }
   }

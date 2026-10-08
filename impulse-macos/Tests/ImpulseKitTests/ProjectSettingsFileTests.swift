@@ -103,6 +103,19 @@
       #expect(layered.archiveScript == "docker compose down -v")
     }
 
+    @Test func filesImpulseWroteAreToldFromHandEditedOnes() {
+      var committed = ProjectConfig(setupScript: "npm ci")
+      committed.landing = .merge
+      let local = ProjectConfig(archiveScript: "docker compose down -v")
+      #expect(ProjectSettingsFile.isWrittenByImpulse(ProjectSettingsFile.text(everything)))
+      #expect(ProjectSettingsFile.isWrittenByImpulse(ProjectSettingsFile.text(local, clearing: committed), over: committed))
+      #expect(ProjectSettingsFile.isWrittenByImpulse(ProjectSettingsFile.setting(.review, in: "")), "Finish's answer")
+      #expect(ProjectSettingsFile.isWrittenByImpulse(""))
+      #expect(!ProjectSettingsFile.isWrittenByImpulse("# mine\n" + ProjectSettingsFile.text(local)))
+      #expect(!ProjectSettingsFile.isWrittenByImpulse("[scripts]\nsetup = 'npm ci'\n"))
+      #expect(!ProjectSettingsFile.isWrittenByImpulse("[scripts"))
+    }
+
     @Test func finishsAnswerIsSavedWithoutDisturbingTheFile() throws {
       // A file the screen wrote is written the screen's way.
       let written = ProjectSettingsFile.text(ProjectConfig(actions: [.init(name: "dev", command: "npm run dev")], setupScript: "npm ci"))

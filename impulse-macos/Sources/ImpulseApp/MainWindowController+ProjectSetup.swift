@@ -3,9 +3,10 @@ import ImpulseGit
 import ImpulseKit
 
 /// The Project Setup tab: opening it on a repository, filling it from the
-/// repository's settings and from what's in it, then saving (which trusts
-/// exactly what it wrote), trying the settings in a new task, and
-/// re-applying values to tasks that already exist.
+/// repository's settings and from what's in it, then saving into
+/// `.impulse/project.toml` (which trusts exactly what it wrote), trying the
+/// settings in a new task, and re-applying values to tasks that already
+/// exist.
 extension MainWindowController {
   /// Open Project Setup for the repository of `workspaceID` (else the active
   /// workspace's), scrolled to `section` ("actions").
@@ -45,7 +46,15 @@ extension MainWindowController {
     }
     model.onOpenFile = { [weak self, weak model] in
       guard let model else { return }
-      self?.openProjectSettingsFile(root: model.root, location: model.location)
+      self?.openProjectSettingsFile(root: model.root)
+    }
+    model.onOpenLocalFile = { [weak self, weak model] in
+      guard let model, let common = GitClient.commonGitDirectory(forPath: model.root) else { return }
+      self?.openFile(path: ProjectConfig.localPath(commonGitDirectory: common))
+    }
+    model.onChoosePath = { [weak self, weak model] folders, done in
+      guard let model else { return }
+      self?.chooseProjectPath(in: model.root, folders: folders, then: done)
     }
     loadProjectSetup(model, root: root, section: section)
   }
@@ -55,26 +64,20 @@ extension MainWindowController {
     model.isLoading = true
     DispatchQueue.global(qos: .userInitiated).async {
       let common = GitClient.commonGitDirectory(forPath: root)
-      let loaded = Self.loadProjectConfig(root: root)
-      let existing = loaded.flatMap { try? $0.config.get() }
       let localText = common.flatMap { try? String(contentsOfFile: ProjectConfig.localPath(commonGitDirectory: $0), encoding: .utf8) }
       let committedText = try? String(
         contentsOfFile: (root as NSString).appendingPathComponent(ProjectConfig.relativePath), encoding: .utf8)
-      // The screen owns the local file: one it didn't write was edited by hand.
-      let handEdited = localText.map { text in
-        (try? ProjectConfig.parse(text).get()).map { ProjectSettingsFile.text($0) != text } ?? true
-      } ?? false
+      let saved = Self.savedSettings(committed: committedText, local: localText)
       let found = ProjectDetector.suggest(root: root, ignored: GitOperations.ignoredEntries(root: root))
       let services = ComposeFile.find(in: root).map { ComposeFile.parse($0.text).services } ?? []
       let database = ProjectDetector.databaseService(in: services)
       let dump = database.flatMap { service in service.image.flatMap { ProjectDetector.dumpAndLoad(service: service.name, image: $0) } }
-      let empty = database == nil ? nil : ProjectDetector.freshDatabase(root: root)
+      let empty = ProjectDetector.freshDatabase(root: root)
       let taskCount = TaskRegistryStore.registry(root: root)?.tasks.filter { $0.slot != nil }.count ?? 0
       DispatchQueue.main.async { [weak self] in
-        Self.fill(
-          model, existing: existing, found: found, dump: dump, empty: empty, hasLocal: localText != nil,
-          hasCommitted: committedText != nil, handEdited: handEdited,
-          committedComments: committedText.map(ProjectSettingsFile.managedSectionsHaveComments) ?? false)
+        Self.fill(model, existing: saved.config, found: found, dump: dump, empty: empty)
+        model.localFile = saved.local
+        model.dropsComments = committedText.map(ProjectSettingsFile.managedSectionsHaveComments) ?? false
         model.taskCount = taskCount
         model.isLoading = false
         if let section {
@@ -86,13 +89,30 @@ extension MainWindowController {
     }
   }
 
+  /// The saved settings the screen shows, and what it does about the local
+  /// file. Impulse's own local file (an earlier save, Finish Task's answer)
+  /// is folded in under the project's settings, which win, and goes on
+  /// save; one edited by hand stays, and the screen shows the project's
+  /// own settings beside a note of what it overrides.
+  private static func savedSettings(committed: String?, local: String?)
+    -> (config: ProjectConfig?, local: ProjectSetupModel.LocalFile?)
+  {
+    let project = committed.flatMap { try? ProjectConfig.parse($0).get() }
+    guard let local else { return (project, nil) }
+    let applied = try? ProjectConfig.parse(layers: [committed, local].compactMap { $0 }).get()
+    if ProjectSettingsFile.isWrittenByImpulse(local, over: project),
+      let folded = try? ProjectConfig.parse(layers: [local, committed].compactMap { $0 }).get()
+    {
+      return (folded, .impulses(text: local, dropped: applied?.differences(from: folded) ?? []))
+    }
+    return (project, .handEdited(overrides: applied?.differences(from: project ?? ProjectConfig()) ?? []))
+  }
+
   private static func fill(
-    _ model: ProjectSetupModel, existing: ProjectConfig?, found: ProjectSuggestions, dump: String?, empty: String?,
-    hasLocal: Bool, hasCommitted: Bool, handEdited: Bool, committedComments: Bool
+    _ model: ProjectSetupModel, existing: ProjectConfig?, found: ProjectSuggestions, dump: String?, empty: String?
   ) {
     let settings = existing ?? ProjectConfig()
     let hasSettings = existing != nil
-    model.location = hasLocal || !hasCommitted ? .local : .project
     model.copies = rows(found.copies, chosen: settings.worktreeCopy, hasSettings: hasSettings)
     model.clones = rows(found.clones, chosen: settings.worktreeClone, hasSettings: hasSettings)
     let ports = settings.ports.isEmpty ? found.ports : settings.ports
@@ -113,30 +133,18 @@ extension MainWindowController {
     model.rules = rules.keys.sorted().map { .init(name: $0, value: rules[$0]!) }
     model.overlapIgnore = settings.overlapIgnore.joined(separator: ", ")
     model.composeFileName = found.composeFileName
-    model.composeWarnings = found.composeWarnings
+    model.fixedPorts = found.fixedPorts
+    model.containerNames = found.containerNames
     model.composeOverride = settings.composeOverride
-    model.databaseFolder = settings.databaseFolder ?? found.databaseFolder
-    model.databaseService = settings.databaseFolder != nil ? settings.databaseService : found.databaseService
+    model.databaseFolder = settings.databaseFolder ?? found.databaseFolder ?? ""
+    model.databaseService = (settings.databaseFolder != nil ? settings.databaseService : found.databaseService) ?? ""
     model.dumpCommand = dump
     model.emptyCommand = empty
-    var options: [ProjectSetupModel.Database] = []
-    if model.databaseFolder != nil { options.append(.clone) }
-    if dump != nil { options.append(.dump) }
-    if empty != nil { options.append(.empty) }
-    model.databaseOptions = options.isEmpty ? [] : [.none] + options
+    model.databaseOptions = [.none, .clone] + (dump == nil ? [] : [.dump]) + (empty == nil ? [] : [.empty])
     model.database =
       settings.databaseFolder != nil
       ? .clone
       : dump.map { model.setup.contains($0) } == true ? .dump : empty.map { model.setup.contains($0) } == true ? .empty : .none
-    var notes: [String] = []
-    if hasLocal, hasCommitted {
-      notes.append("This project has settings in both .impulse/project.toml and on this Mac; they're shown together, and this Mac's win.")
-    }
-    if handEdited { notes.append("The settings on this Mac were edited by hand: saving to This Mac rewrites that file.") }
-    if committedComments {
-      notes.append("Saving to the project rewrites the sections this screen manages in .impulse/project.toml; comments in them are dropped.")
-    }
-    model.notes = notes
   }
 
   /// Rows for the detected entries plus any chosen ones not detected; ticked
@@ -149,7 +157,7 @@ extension MainWindowController {
         path: entry.path, isOn: hasSettings ? chosen.contains(entry.path) : entry.suggested, note: entry.note)
     }
     for path in chosen where !found.contains(where: { $0.path == path }) {
-      rows.append(.init(path: path, isOn: true))
+      rows.append(.init(path: path, isOn: true, isCustom: true))
     }
     return rows
   }
@@ -182,28 +190,51 @@ extension MainWindowController {
     return total
   }
 
-  /// Save what the screen has, trust exactly what was written, and reload.
+  /// Pick a file or folder inside `root` for a path field.
+  private func chooseProjectPath(in root: String, folders: Bool, then done: @escaping (String) -> Void) {
+    guard let window else { return }
+    let name = (root as NSString).lastPathComponent
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = !folders
+    panel.canChooseDirectories = folders
+    panel.allowsMultipleSelection = false
+    panel.showsHiddenFiles = true
+    panel.directoryURL = URL(fileURLWithPath: root)
+    panel.prompt = "Choose"
+    panel.message = folders ? "Choose a folder in \(name)." : "Choose a file in \(name)."
+    panel.beginSheetModal(for: window) { [weak self] response in
+      guard response == .OK, let url = panel.url else { return }
+      let base = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+      let chosen = url.resolvingSymlinksInPath().path
+      guard chosen.hasPrefix(base + "/") else {
+        self?.toasts.show(Toast(kind: .warning, message: "Choose something inside \(name)."))
+        return
+      }
+      done(String(chosen.dropFirst(base.count + 1)))
+    }
+  }
+
+  /// Save what the screen has into `.impulse/project.toml`, trust exactly
+  /// what was written, and reload. Impulse's own local file, folded into
+  /// the screen, is removed: its settings are in the project's now.
   private func saveProjectSetup(_ model: ProjectSetupModel, then: (() -> Void)? = nil) {
     let root = model.root
     let config = model.config()
-    let location = model.location
-    let replacing = location == .local
-      ? model.notes.contains { $0.hasPrefix("The settings on this Mac were edited by hand") }
-      : model.notes.contains { $0.hasPrefix("Saving to the project rewrites") }
+    var folded: String?
+    if case .impulses(let text, _)? = model.localFile { folded = text }
     let write = { [weak self] in
       model.isSaving = true
       DispatchQueue.global(qos: .userInitiated).async {
-        let result = Self.writeProjectSettings(config, root: root, location: location)
+        let result = Self.writeProjectSettings(config, root: root, removingLocal: folded)
         DispatchQueue.main.async {
           guard let self else { return }
           model.isSaving = false
           switch result {
-          case .success(let saved):
+          case .success(let digest):
             var trust = ProjectTrustStore.current
-            trust.trust(root: saved.trustKey, digest: saved.digest)
+            trust.trust(root: Self.trustKey(for: root), digest: digest)
             ProjectTrustStore.current = trust
-            self.toasts.show(
-              Toast(kind: .success, message: location == .local ? "Saved the project settings on this Mac" : "Saved \(ProjectConfig.relativePath); commit it to share"))
+            self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
             self.loadProjectSetup(model, root: root, section: nil)
             then?()
           case .failure(let error):
@@ -212,12 +243,10 @@ extension MainWindowController {
         }
       }
     }
-    if replacing {
+    if model.dropsComments {
       gitConfirm(
-        title: location == .local ? "Rewrite the settings on this Mac?" : "Rewrite .impulse/project.toml's settings?",
-        message: location == .local
-          ? "The file was edited by hand. Saving writes it again from this screen."
-          : "Comments inside the sections this screen manages are dropped; the rest of the file is kept.",
+        title: "Rewrite \(ProjectConfig.relativePath)'s settings?",
+        message: "Comments inside the sections this screen manages are dropped; the rest of the file is kept.",
         confirmTitle: "Save", destructive: false
       ) { if $0 { write() } }
     } else {
@@ -225,43 +254,33 @@ extension MainWindowController {
     }
   }
 
-  /// Write `config` where `location` says; the trust key and digest of what
-  /// was written.
+  /// Write `config` into the main checkout's `.impulse/project.toml`, and
+  /// remove the local file when it still holds `removingLocal`; the digest
+  /// of what was written.
   private static func writeProjectSettings(
-    _ config: ProjectConfig, root: String, location: ProjectSetupModel.Location
-  ) -> Result<(trustKey: String, digest: String), Error> {
-    let committedPath = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
-    let committedText = try? String(contentsOfFile: committedPath, encoding: .utf8)
-    let path: String
-    let text: String
-    let key: String
-    switch location {
-    case .local:
-      guard let common = GitClient.commonGitDirectory(forPath: root) else {
-        return .failure(CocoaError(.fileNoSuchFile))
-      }
-      path = ProjectConfig.localPath(commonGitDirectory: common)
-      let committed = committedText.flatMap { try? ProjectConfig.parse($0).get() }
-      text = ProjectSettingsFile.text(config, clearing: committed)
-      key = path
-    case .project:
-      path = committedPath
-      text = ProjectSettingsFile.merging(config, into: committedText ?? "")
-      key = trustKey(for: root)
-    }
+    _ config: ProjectConfig, root: String, removingLocal local: String?
+  ) -> Result<String, Error> {
+    let path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
+    let existing = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+    let data = Data(ProjectSettingsFile.merging(config, into: existing).utf8)
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-      let data = Data(text.utf8)
       try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-      return .success((key, ProjectConfig.digest(data)))
     } catch {
       return .failure(error)
     }
+    if let local, let common = GitClient.commonGitDirectory(forPath: root) {
+      let localPath = ProjectConfig.localPath(commonGitDirectory: common)
+      if (try? String(contentsOfFile: localPath, encoding: .utf8)) == local {
+        try? FileManager.default.removeItem(atPath: localPath)
+      }
+    }
+    return .success(ProjectConfig.digest(data))
   }
 
-  /// Write the current ports and values into every task's env file (the
-  /// tasks Impulse made, from their own settings once trusted).
+  /// Write the current ports and values into the env file of every task
+  /// Impulse made, once the settings are trusted.
   private func reapplyTaskValues(root: String) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let tasks = TaskRegistryStore.registry(root: root)?.tasks.filter { $0.slot != nil } ?? []
@@ -278,16 +297,9 @@ extension MainWindowController {
     }
   }
 
-  /// Open the settings file the screen saves to, creating it if needed.
-  private func openProjectSettingsFile(root: String, location: ProjectSetupModel.Location) {
-    let path: String
-    switch location {
-    case .local:
-      guard let common = GitClient.commonGitDirectory(forPath: root) else { return }
-      path = ProjectConfig.localPath(commonGitDirectory: common)
-    case .project:
-      path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
-    }
+  /// Open `.impulse/project.toml`, creating it if needed.
+  private func openProjectSettingsFile(root: String) {
+    let path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
     if !FileManager.default.fileExists(atPath: path) {
       try? FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)

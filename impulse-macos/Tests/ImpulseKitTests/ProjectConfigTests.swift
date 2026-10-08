@@ -106,6 +106,20 @@
       #expect(config.actions[1].command == "npm run test:run", "a local action replaces one of the same name")
     }
 
+    @Test func layersAndWhatDiffers() throws {
+      let committed = "[scripts]\nsetup = \"docker-composer install\"\n\n[worktrees]\ncompose_override = true\n"
+      let local = "[scripts]\nsetup = \"composer install\"\n\n[finish]\nland = \"merge\"\n"
+      let applied = try ProjectConfig.parse(layers: [committed, local]).get()
+      let projectWins = try ProjectConfig.parse(layers: [local, committed]).get()
+      #expect(applied.setupScript == "composer install")
+      #expect(projectWins.setupScript == "docker-composer install")
+      #expect(projectWins.landing == .merge, "a key only the earlier file sets stays")
+      #expect(applied.differences(from: projectWins) == ["setup script"])
+      #expect(applied.differences(from: try ProjectConfig.parse(committed).get()) == ["setup script", "how tasks finish"])
+      #expect(applied.differences(from: applied).isEmpty)
+      #expect(throws: ProjectConfig.LoadError.self) { try ProjectConfig.parse(layers: [committed, "[scripts"]).get() }
+    }
+
     @Test func loadsBothFilesAndNamesTheBrokenOne() throws {
       let base = FileManager.default.temporaryDirectory.appendingPathComponent("proj-\(UUID().uuidString)")
       let root = base.appendingPathComponent("repo")

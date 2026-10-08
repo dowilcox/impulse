@@ -191,7 +191,7 @@ public struct ComposeFile: Equatable, Sendable {
       if service.ports.contains(where: { $0.host != nil }) {
         body.append("    ports: !override")
         for port in service.ports {
-          body.append("      - \"\(port.host.map { Self.moving(port.raw, from: $0, by: slot * offset) } ?? port.raw)\"")
+          body.append("      - \"\(Self.moved(port, by: slot * offset))\"")
         }
       }
       guard !body.isEmpty else { continue }
@@ -206,6 +206,12 @@ public struct ComposeFile: Equatable, Sendable {
       \(lines.joined(separator: "\n"))
 
       """
+  }
+
+  /// `port` as a task's override writes it: a fixed host port moved by
+  /// `amount` (`8000:8000` → `8100:8000`), anything else as written.
+  public static func moved(_ port: Port, by amount: Int) -> String {
+    port.host.map { moving(port.raw, from: $0, by: amount) } ?? port.raw
   }
 
   /// `8000:8000` → `8100:8000`, `127.0.0.1:8000:8000` → `127.0.0.1:8100:8000`.

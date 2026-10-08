@@ -26,10 +26,12 @@ extension MainWindowController {
     tabManager.activeWorkspace.repository?.root ?? windowModel.repository?.root
   }
 
-  /// The settings of the checkout at `root`: its `.impulse/project.toml` and
-  /// the repository's local `.git/impulse/project.toml`.
+  /// The settings for the checkout at `root`, which are its repository's:
+  /// the main checkout's `.impulse/project.toml`, committed or not, so every
+  /// task gets what Project Setup saved, then the local
+  /// `.git/impulse/project.toml`.
   static func loadProjectConfig(root: String) -> ProjectConfig.Loaded? {
-    ProjectConfig.load(root: root, commonGitDirectory: GitClient.commonGitDirectory(forPath: root))
+    ProjectConfig.load(root: mainCheckoutRoot(of: root), commonGitDirectory: GitClient.commonGitDirectory(forPath: root))
   }
 
   /// The project's config if it has one and it parses (no trust needed to read).

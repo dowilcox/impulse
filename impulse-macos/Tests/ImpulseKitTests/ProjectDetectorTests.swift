@@ -28,7 +28,20 @@
               volumes:
                 - ./docker/data/mysql:/var/lib/mysql
           """,
-        "dotenv": "APP_URL=http://localhost:8000\nAPP_PORT=8000\nDB_DATABASE=pulseboard\nREDIS_PORT=nope\n",
+        "dotenv": """
+          APP_URL=http://localhost:8000
+          APP_PORT=8000
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_DATABASE=pulseboard
+          REDIS_HOST=127.0.0.1
+          REDIS_PORT=nope
+          MAIL_HOST=smtp.example.com
+          MAIL_PORT=2525
+          REVERB_HOST=localhost
+          REVERB_PORT=8080
+
+          """,
         "composer.lock": "{}",
         "package-lock.json": "{}",
         "package.json": #"{"scripts": {"dev": "vite", "build": "vite build", "test": "vitest", "typecheck": "tsc --noEmit"}}"#,
@@ -54,9 +67,12 @@
       #expect(found.clones.map(\.path) == ["vendor", "node_modules", "public/build"])
       #expect(found.clones.map(\.suggested) == [false, false, true], "the containers can't see vendor or node_modules")
       #expect(found.clones[0].note?.contains("anonymous volume") == true)
-      #expect(found.ports == ["VITE_PORT": 5173, "FORWARD_DB_PORT": 3306, "APP_PORT": 8000])
+      #expect(
+        found.ports == ["VITE_PORT": 5173, "FORWARD_DB_PORT": 3306, "APP_PORT": 8000, "REVERB_PORT": 8080],
+        "DB_PORT is inside the Compose network and MAIL_PORT on another machine: neither moves")
       #expect(found.values == ["APP_URL": "http://localhost:{APP_PORT}"], "each task runs its own database")
-      #expect(found.composeWarnings == ["app: container_name pulseboard-app", "app: fixed port 8000:8000"])
+      #expect(found.fixedPorts == [.init(service: "app", port: ComposeFile.port("8000:8000"))])
+      #expect(found.containerNames == [.init(service: "app", name: "pulseboard-app")])
       #expect(found.setup == "docker compose up -d && npm ci && composer install")
       #expect(found.archive == "docker compose down -v")
       #expect(found.onChange == ["package-lock.json": "npm ci", "composer.lock": "composer install"])

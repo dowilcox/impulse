@@ -82,6 +82,12 @@
       #expect(override.hasPrefix("# Written by Impulse for the task fix-elevation (slot 1)"))
     }
 
+    @Test func aPortAsATaskGetsIt() {
+      #expect(ComposeFile.moved(ComposeFile.port("8080:80"), by: 100) == "8180:80")
+      #expect(ComposeFile.moved(ComposeFile.port("127.0.0.1:3306:3306"), by: 200) == "127.0.0.1:3506:3306")
+      #expect(ComposeFile.moved(ComposeFile.port("${APP_PORT:-8000}:8000"), by: 100) == "${APP_PORT:-8000}:8000")
+    }
+
     @Test func nothingToOverrideWhenTheFileIsReadyAlready() {
       let ready = """
         services:

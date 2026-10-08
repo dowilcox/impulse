@@ -1,8 +1,9 @@
-// Writing project settings back as TOML, for the project setup screen. The
-// local file (`.git/impulse/project.toml`) is the screen's: it's written
-// whole. In a committed `.impulse/project.toml`, only the sections the
-// screen manages are replaced, and everything else in the file (comments,
-// keys Impulse doesn't know) stays as written.
+// Writing project settings back as TOML. Project Setup saves into
+// `.impulse/project.toml`, replacing only the sections it manages:
+// everything else in the file (comments, keys Impulse doesn't know) stays
+// as written. Finish Task remembers its answer in the local
+// `.git/impulse/project.toml`, which Impulse writes whole while it's
+// Impulse's own.
 
 import Foundation
 
@@ -127,6 +128,15 @@ public enum ProjectSettingsFile {
       lines += section + [""]
     }
     return lines.joined(separator: "\n")
+  }
+
+  /// Whether `text` is a whole file as `text(_:clearing:)` writes it (by
+  /// Project Setup, or Finish Task remembering its answer), so replacing
+  /// it loses nothing written by hand. A local file may clear settings of
+  /// the `committed` one.
+  public static func isWrittenByImpulse(_ text: String, over committed: ProjectConfig? = nil) -> Bool {
+    guard case .success(let config) = ProjectConfig.parse(text) else { return false }
+    return Self.text(config) == text || Self.text(config, clearing: committed) == text
   }
 
   /// Whether the sections a rewrite replaces hold comments it would drop.

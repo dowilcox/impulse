@@ -308,7 +308,7 @@ extension MainWindowController {
       } else if action == "project-setup" {
         openProjectSetup()
       } else if action == "project-setup-save" {
-        // Save what Project Setup proposed (this Mac), which trusts it.
+        // Save what Project Setup proposed, which trusts it.
         for case .tool(let view) in tabManager.allSurfaces {
           (view as? ProjectSetupSurface)?.model.onSave?()
         }

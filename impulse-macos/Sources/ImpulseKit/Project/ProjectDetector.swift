@@ -21,6 +21,18 @@ public struct ProjectSuggestions: Equatable, Sendable {
     }
   }
 
+  /// A host port the Compose file writes as a plain number (`"8080:80"`).
+  public struct FixedPort: Equatable, Sendable {
+    public let service: String
+    public let port: ComposeFile.Port
+  }
+
+  /// A service's `container_name`.
+  public struct ContainerName: Equatable, Sendable {
+    public let service: String
+    public let name: String
+  }
+
   /// Ignored files to copy into tasks.
   public var copies: [Entry] = []
   /// Ignored folders to clone into tasks.
@@ -29,9 +41,11 @@ public struct ProjectSuggestions: Equatable, Sendable {
   public var ports: [String: Int] = [:]
   /// Values that have to differ per task.
   public var values: [String: String] = [:]
-  /// What keeps two stacks from running at once: `container_name` and fixed
-  /// host ports, by service ("app: container_name pulseboard-app").
-  public var composeWarnings: [String] = []
+  /// What keeps two checkouts' stacks from running at once, which a task's
+  /// Compose override moves and renames: fixed host ports and
+  /// `container_name`.
+  public var fixedPorts: [FixedPort] = []
+  public var containerNames: [ContainerName] = []
   public var setup: String?
   public var archive: String?
   public var check: String?
@@ -118,27 +132,27 @@ public enum ProjectDetector {
       }
     }
 
-    // Ports: variables in the Compose file, then `_PORT` values in .env.
-    var fixed: [String] = []
+    // Ports: variables in the Compose file, then `_PORT` values in .env
+    // that are ports on this Mac. Beside `DB_HOST=mysql`, `DB_PORT` is the
+    // port inside the Compose network (or on another machine), which a
+    // task's stack keeps.
     for service in services {
       for port in service.ports {
         if let variable = port.variable, let value = port.variableDefault {
           suggestions.ports[variable] = value
         } else if port.host != nil {
-          fixed.append(port.raw)
+          suggestions.fixedPorts.append(.init(service: service.name, port: port))
         }
       }
       if let name = service.containerName {
-        suggestions.composeWarnings.append("\(service.name): container_name \(name)")
-      }
-      if !fixed.isEmpty {
-        suggestions.composeWarnings.append("\(service.name): fixed port \(fixed.joined(separator: ", "))")
-        fixed = []
+        suggestions.containerNames.append(.init(service: service.name, name: name))
       }
     }
     let env = read(".env").map(parseEnv) ?? [:]
     for (key, value) in env where key.hasSuffix("_PORT") && suggestions.ports[key] == nil {
-      if let port = Int(value), (1...65535).contains(port) { suggestions.ports[key] = port }
+      let host = env[String(key.dropLast("_PORT".count)) + "_HOST"]
+      guard host.map(isThisMac) ?? true, let port = Int(value), (1...65535).contains(port) else { continue }
+      suggestions.ports[key] = port
     }
 
     // A database whose data is a folder of the project.
@@ -238,6 +252,11 @@ public enum ProjectDetector {
   static func isDatabase(_ service: ComposeFile.Service) -> Bool {
     guard let image = service.image?.lowercased() else { return false }
     return databaseDataPaths.contains { image.hasPrefix($0.image) || image.contains("/\($0.image)") }
+  }
+
+  /// Whether a host name in an env file is this Mac.
+  static func isThisMac(_ host: String) -> Bool {
+    ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"].contains(host.lowercased())
   }
 
   /// `KEY=value` pairs of a dotenv file (quotes removed).
