@@ -2,6 +2,11 @@
 // actions to run from the palette, scripts for new and archived task
 // worktrees, and files to copy into them. Commands from it only run after
 // the user trusts that exact file.
+//
+// The same settings can also live in `.git/impulse/project.toml`, inside the
+// repository's shared git folder: settings for this Mac only, never
+// committed, seen by every worktree at once. Where both files set a key, the
+// local one wins.
 
 import CryptoKit
 import Foundation
@@ -46,9 +51,19 @@ public struct ProjectConfig: Equatable, Sendable {
     actions.map(\.command) + [setupScript, archiveScript].compactMap { $0 }
   }
 
+  /// The committed file, relative to the repository root.
   public static let relativePath = ".impulse/project.toml"
 
-  private struct File: Decodable {
+  /// The local file: settings for this Mac only, in the repository's shared
+  /// git folder (`.git/impulse/project.toml`).
+  public static func localPath(commonGitDirectory: String) -> String {
+    (TaskRegistry.directory(commonGitDirectory: commonGitDirectory) as NSString)
+      .appendingPathComponent("project.toml")
+  }
+
+  /// One file's settings. Keys the file doesn't set stay nil, so a later
+  /// file only overrides what it sets.
+  struct Layer: Decodable {
     struct Scripts: Decodable {
       var setup: String?
       var archive: String?
@@ -66,25 +81,86 @@ public struct ProjectConfig: Equatable, Sendable {
   }
 
   public static func parse(_ text: String) -> Result<ProjectConfig, LoadError> {
+    parseLayer(text).map { resolve([$0]) }
+  }
+
+  static func parseLayer(_ text: String) -> Result<Layer, LoadError> {
     do {
-      let file = try TOMLDecoder().decode(File.self, from: text)
-      return .success(
-        ProjectConfig(
-          actions: (file.actions ?? []).filter { !$0.name.isEmpty && !$0.command.isEmpty },
-          setupScript: file.scripts?.setup.flatMap { $0.isEmpty ? nil : $0 },
-          archiveScript: file.scripts?.archive.flatMap { $0.isEmpty ? nil : $0 },
-          worktreeCopy: file.worktrees?.copy ?? []))
+      return .success(try TOMLDecoder().decode(Layer.self, from: text))
     } catch {
       return .failure(.invalid(String(describing: error)))
     }
   }
 
-  /// The config in `root`, nil when there's no file.
-  public static func load(root: String) -> (config: Result<ProjectConfig, LoadError>, digest: String)? {
-    let path = (root as NSString).appendingPathComponent(relativePath)
-    guard let data = FileManager.default.contents(atPath: path) else { return nil }
-    let text = String(decoding: data, as: UTF8.self)
-    return (parse(text), digest(data))
+  /// The settings of `layers`, later layers winning key by key. Actions
+  /// are keyed by name: a later action replaces an earlier one of the same
+  /// name. An empty script (`setup = ""`) clears an earlier one.
+  static func resolve(_ layers: [Layer]) -> ProjectConfig {
+    var config = ProjectConfig()
+    var setup: String?
+    var archive: String?
+    for layer in layers {
+      for action in layer.actions ?? [] where !action.name.isEmpty && !action.command.isEmpty {
+        if let index = config.actions.firstIndex(where: { $0.name == action.name }) {
+          config.actions[index] = action
+        } else {
+          config.actions.append(action)
+        }
+      }
+      if let value = layer.scripts?.setup { setup = value }
+      if let value = layer.scripts?.archive { archive = value }
+      if let copy = layer.worktrees?.copy { config.worktreeCopy = copy }
+    }
+    config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
+    config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }
+    return config
+  }
+
+  /// One settings file as read: where it is, the SHA-256 of its bytes
+  /// (trust is for exactly this content), and the commands it can run.
+  public struct Source: Equatable, Sendable {
+    public let path: String
+    public let digest: String
+    public let commands: [String]
+  }
+
+  /// The settings for a checkout, from both files.
+  public struct Loaded: Equatable, Sendable {
+    /// Both files together, local winning; a failure names the file.
+    public let config: Result<ProjectConfig, LoadError>
+    /// `.impulse/project.toml` in the checkout.
+    public let committed: Source?
+    /// `.git/impulse/project.toml`.
+    public let local: Source?
+
+    /// The files that can run commands, for the trust prompt.
+    public var sources: [Source] { [committed, local].compactMap { $0 }.filter { !$0.commands.isEmpty } }
+  }
+
+  /// The settings for the checkout at `root`: its own `.impulse/project.toml`
+  /// and, given the repository's shared git folder, the local file. Nil
+  /// when neither exists.
+  public static func load(root: String, commonGitDirectory: String?) -> Loaded? {
+    let committedPath = (root as NSString).appendingPathComponent(relativePath)
+    let localPath = commonGitDirectory.map { localPath(commonGitDirectory: $0) }
+    var layers: [Layer] = []
+    var sources: [Source?] = [nil, nil]
+    var failure: LoadError?
+    for (index, path) in [committedPath, localPath].enumerated() {
+      guard let path, let data = FileManager.default.contents(atPath: path) else { continue }
+      switch parseLayer(String(decoding: data, as: UTF8.self)) {
+      case .success(let layer):
+        layers.append(layer)
+        sources[index] = Source(path: path, digest: digest(data), commands: resolve([layer]).commands)
+      case .failure(.invalid(let message)):
+        let name = index == 0 ? relativePath : ".git/impulse/project.toml"
+        failure = failure ?? .invalid("\(name): \(message)")
+        sources[index] = Source(path: path, digest: digest(data), commands: [])
+      }
+    }
+    guard sources.contains(where: { $0 != nil }) else { return nil }
+    return Loaded(
+      config: failure.map { .failure($0) } ?? .success(resolve(layers)), committed: sources[0], local: sources[1])
   }
 
   /// SHA-256 of the file's bytes: trust is for exactly this content.

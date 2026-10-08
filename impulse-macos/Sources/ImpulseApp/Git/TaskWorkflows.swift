@@ -237,11 +237,11 @@ extension MainWindowController {
   }
 
   /// The untracked files a new task gets from `root`: `.worktreeinclude`'s
-  /// patterns (or the defaults) plus project.toml's `[worktrees] copy`.
+  /// patterns (or the defaults) plus the project settings' `[worktrees] copy`.
   static func taskCopies(root: String) -> [String] {
     let include = try? String(
       contentsOfFile: (root as NSString).appendingPathComponent(".worktreeinclude"), encoding: .utf8)
-    let projectCopies = ProjectConfig.load(root: root).flatMap { try? $0.config.get().worktreeCopy } ?? []
+    let projectCopies = loadProjectConfig(root: root).flatMap { try? $0.config.get().worktreeCopy } ?? []
     return WorktreeTasks.matchingFiles(
       patterns: WorktreeTasks.includePatterns(fromFile: include) + projectCopies, root: root)
   }
@@ -270,6 +270,7 @@ extension MainWindowController {
       }
       if failure == nil {
         Self.copyFiles(copies, from: root, to: path)
+        TaskRegistryStore.recordCreated(path: path, branch: branch, base: base, root: root)
       }
       DispatchQueue.main.async {
         model.isCreating = false
@@ -515,6 +516,8 @@ extension MainWindowController {
         }
       }
       let result = GitOperations.removeWorktree(path: root, force: dirty, root: mainRoot)
+      let record: TaskRecord? =
+        if case .success = result { TaskRegistryStore.remove(path: root, root: mainRoot) } else { nil }
       DispatchQueue.main.async {
         guard let self else { return }
         if case .failure(let error) = result {
@@ -524,17 +527,24 @@ extension MainWindowController {
         self.toasts.show(
           Toast(
             kind: .success, message: "Archived \(branch). The branch is kept.", actionTitle: "Undo",
-            action: { [weak self] in self?.restoreTask(root: root, branch: branch, snapshot: saved, mainRoot: mainRoot) },
+            action: { [weak self] in
+              self?.restoreTask(root: root, branch: branch, snapshot: saved, record: record, mainRoot: mainRoot)
+            },
             lifetime: 15))
       }
     }
   }
 
-  private func restoreTask(root: String, branch: String, snapshot: SafetySnapshot?, mainRoot: String) {
+  private func restoreTask(
+    root: String, branch: String, snapshot: SafetySnapshot?, record: TaskRecord?, mainRoot: String
+  ) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let added = GitOperations.addWorktree(path: root, branch: branch, newBranch: false, root: mainRoot)
       if case .success = added, let snapshot {
         _ = SafetySnapshots.restore(snapshot, root: root)
+      }
+      if case .success = added, let record {
+        TaskRegistryStore.restore(record, root: mainRoot)
       }
       DispatchQueue.main.async {
         guard let self else { return }

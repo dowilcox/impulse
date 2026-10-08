@@ -26,15 +26,19 @@ extension MainWindowController {
     tabManager.activeWorkspace.repository?.root ?? windowModel.repository?.root
   }
 
+  /// The settings of the checkout at `root`: its `.impulse/project.toml` and
+  /// the repository's local `.git/impulse/project.toml`.
+  static func loadProjectConfig(root: String) -> ProjectConfig.Loaded? {
+    ProjectConfig.load(root: root, commonGitDirectory: GitClient.commonGitDirectory(forPath: root))
+  }
+
   /// The project's config if it has one and it parses (no trust needed to read).
   func projectConfig(root: String) -> ProjectConfig? {
-    guard let loaded = ProjectConfig.load(root: root) else { return nil }
+    guard let loaded = Self.loadProjectConfig(root: root) else { return nil }
     switch loaded.config {
     case .success(let config): return config
-    case .failure(let error):
-      if case .invalid(let message) = error {
-        toasts.show(Toast(kind: .warning, message: "\(ProjectConfig.relativePath): \(message)", lifetime: 12))
-      }
+    case .failure(.invalid(let message)):
+      toasts.show(Toast(kind: .warning, message: message, lifetime: 12))
       return nil
     }
   }
@@ -43,6 +47,18 @@ extension MainWindowController {
   /// doesn't ask again.
   static func trustKey(for root: String) -> String {
     GitClient.commonGitDirectory(forPath: root).map { ($0 as NSString).deletingLastPathComponent } ?? root
+  }
+
+  /// What a settings file is trusted under: the committed file per main
+  /// repository (`trustKey`), the local file by its own path.
+  private static func trustKey(for source: ProjectConfig.Source, in loaded: ProjectConfig.Loaded, root: String)
+    -> String
+  {
+    source == loaded.local ? source.path : trustKey(for: root)
+  }
+
+  private static func displayName(of source: ProjectConfig.Source, in loaded: ProjectConfig.Loaded) -> String {
+    source == loaded.local ? ".git/impulse/project.toml" : ProjectConfig.relativePath
   }
 
   /// Run `body` with the project's config once the user trusts this exact
@@ -54,25 +70,37 @@ extension MainWindowController {
   }
 
   /// The project's config once trusted; nil when there's none, it doesn't
-  /// parse, or the user declined.
+  /// parse, or the user declined. Each settings file with commands is
+  /// trusted on its own, for exactly its content.
   func trustProjectConfig(root: String, completion: @escaping (ProjectConfig?) -> Void) {
-    guard let loaded = ProjectConfig.load(root: root), case .success(let config) = loaded.config else {
+    guard let loaded = Self.loadProjectConfig(root: root), case .success(let config) = loaded.config else {
       return completion(nil)
     }
-    let key = Self.trustKey(for: root)
-    if config.commands.isEmpty || ProjectTrustStore.current.isTrusted(root: key, digest: loaded.digest) {
-      return completion(config)
+    let store = ProjectTrustStore.current
+    let untrusted = loaded.sources.filter {
+      !store.isTrusted(root: Self.trustKey(for: $0, in: loaded, root: root), digest: $0.digest)
     }
-    let list = config.commands.prefix(8).map { "  \($0)" }.joined(separator: "\n")
-    let more = config.commands.count > 8 ? "\n  …and \(config.commands.count - 8) more" : ""
+    if untrusted.isEmpty { return completion(config) }
+    let commands = untrusted.flatMap(\.commands)
+    let list = commands.prefix(8).map { "  \($0)" }.joined(separator: "\n")
+    let more = commands.count > 8 ? "\n  …and \(commands.count - 8) more" : ""
+    let name = (root as NSString).lastPathComponent
+    let title =
+      untrusted.count == 1
+      ? "Trust \(Self.displayName(of: untrusted[0], in: loaded)) in \(name)?"
+      : "Trust the project settings in \(name)?"
+    let what = untrusted.count == 1 ? "It" : "\(ProjectConfig.relativePath) and .git/impulse/project.toml"
     gitConfirm(
-      title: "Trust \(ProjectConfig.relativePath) in \((root as NSString).lastPathComponent)?",
-      message: "It can run these commands on your Mac:\n\(list)\(more)\n\nYou'll be asked again if the file changes.",
+      title: title,
+      message: "\(what) can run these commands on your Mac:\n\(list)\(more)\n\nYou'll be asked again if the "
+        + (untrusted.count == 1 ? "file changes." : "files change."),
       confirmTitle: "Trust and Run", destructive: false
     ) { trusted in
       guard trusted else { return completion(nil) }
       var trust = ProjectTrustStore.current
-      trust.trust(root: key, digest: loaded.digest)
+      for source in untrusted {
+        trust.trust(root: Self.trustKey(for: source, in: loaded, root: root), digest: source.digest)
+      }
       ProjectTrustStore.current = trust
       completion(config)
     }

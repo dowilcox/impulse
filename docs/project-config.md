@@ -2,7 +2,7 @@
 
 A repository can tell Impulse about itself in `.impulse/project.toml`: commands to run from the command palette (project actions), scripts that set up and clean up task worktrees, and extra files to copy into new tasks. A second file, `.worktreeinclude`, lists the untracked files that new tasks need. Commands from `project.toml` only run after you trust the file.
 
-Both files live at the root of a git repository and are meant to be committed, so everyone who works on the project (and every task worktree) gets them.
+Both files live at the root of a git repository and are meant to be committed, so everyone who works on the project (and every task worktree) gets them. To keep the settings to yourself instead, put them in `.git/impulse/project.toml`, which is never committed; see [Settings for this Mac only](#settings-for-this-mac-only).
 
 ## Create the file
 
@@ -95,11 +95,50 @@ An empty string means no script.
 
 ### When the file has a mistake
 
-If the file isn't valid TOML, or a key has the wrong type (for example `copy = ".env"` instead of `copy = [".env"]`), Impulse ignores the whole file. When you open the project actions list, a warning toast shows `.impulse/project.toml:` followed by the error. Fix the file and open the list again.
+If the file isn't valid TOML, or a key has the wrong type (for example `copy = ".env"` instead of `copy = [".env"]`), Impulse ignores the project's settings until it's fixed, including the other file when there are two. When you open the project actions list, a warning toast names the file (`.impulse/project.toml:` or `.git/impulse/project.toml:`) followed by the error. Fix the file and open the list again.
+
+## Settings for this Mac only
+
+When a project's settings shouldn't be committed (the other people on the project don't use Impulse, or the setup only suits your Mac), put them in `.git/impulse/project.toml` instead. It takes the same keys as `.impulse/project.toml`.
+
+- It's inside the repository's `.git` folder, so git never sees it: it can't be committed or pushed, and a clone doesn't bring one with it.
+- Every task uses it straight away, because all of a repository's worktrees share that folder. You don't commit it first, as you would `.impulse/project.toml` (see [Setup script](#setup-script)).
+- Its commands need trusting like the committed file's (see [Trusting the project file](#trusting-the-project-file)), and separately: trusting one file doesn't trust the other.
+
+Create it from a terminal in the main checkout (in a task, `.git` is a file; `git rev-parse --git-common-dir` prints the folder to use), then open it in Impulse:
+
+```sh
+mkdir -p .git/impulse && touch .git/impulse/project.toml
+impulse open .git/impulse/project.toml
+```
+
+The trailhead project keeps its Docker setup there:
+
+```toml
+[scripts]
+setup = "docker compose up -d && npm ci"
+archive = "docker compose down -v"
+
+[[actions]]
+name = "test"
+command = "docker compose exec web npm test"
+```
+
+### When both files exist
+
+Impulse reads both, and `.git/impulse/project.toml` wins key by key:
+
+| In `.git/impulse/project.toml`     | Result                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| A key the committed file also sets | The local value is used.                                               |
+| A key it doesn't set               | The committed file's value is used.                                    |
+| An empty script (`setup = ""`)     | The committed file's script is turned off.                             |
+| `[worktrees] copy`                 | Replaces the committed file's list.                                    |
+| An action with the same `name`     | Replaces the committed file's action; the others from both files stay. |
 
 ## Trusting the project file
 
-A `project.toml` is part of the repository, so anyone who can commit to it can put commands in it. Impulse never runs those commands until you've trusted that exact file.
+A `project.toml` is part of the repository, so anyone who can commit to it can put commands in it. Impulse never runs those commands until you've trusted that exact file. The same goes for `.git/impulse/project.toml`, which is trusted on its own: when both files have commands you haven't trusted, one prompt lists both files' commands.
 
 The first time something would run a command from the file (an action, a task's setup script or a task's archive script), Impulse asks:
 
@@ -147,7 +186,7 @@ The last row of the list is **Add project actions…** when the file has no acti
 
 - It runs in the task's first terminal, in the task folder, where you can watch it. Its output is a command block like any other.
 - If you chose an agent under **Start**, the agent runs after it, as one command joined with `&&` (for example `npm ci && claude`). If setup fails, the agent doesn't start; fix the problem in that terminal and start the agent yourself.
-- Impulse reads the script from the new task's own copy of `.impulse/project.toml`, which is whatever is committed on the base branch. Commit changes to the file before relying on them in new tasks.
+- Impulse reads the script from the new task's own copy of `.impulse/project.toml`, which is whatever is committed on the base branch. Commit changes to the file before relying on them in new tasks, or put the script in [`.git/impulse/project.toml`](#settings-for-this-mac-only), which every new task sees as soon as you save it.
 - If you haven't trusted the file, Impulse asks first. If you cancel, the script doesn't run, and the task's terminal still opens (and starts the agent, if you chose one).
 - **Check Out Pull Request as Task…** reads it from the pull request's own copy of the file and always asks before running it, showing the script and the pull request's number and author, even if you trusted the file: a pull request can change what the script runs (a `package.json` script, for example) without changing the file. The answer isn't remembered, and **Don't Run** opens the task without it.
 
