@@ -451,6 +451,10 @@ final class WindowModel {
   var onOpenOverlapFile: ((String) -> Void)?
   /// Archive Merged Tasks… for a workspace's repository.
   var onArchiveMergedTasks: ((UUID) -> Void)?
+  /// Finish Task… for a task workspace.
+  var onFinishTask: ((UUID) -> Void)?
+  /// Pull a workspace's branch (its row's "behind" count).
+  var onPullWorkspace: ((UUID) -> Void)?
 
   // MARK: Methods
 

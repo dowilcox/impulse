@@ -30,7 +30,7 @@ When you create a task, Impulse:
 - Notes the task in the repository's `.git/impulse/tasks.json`, with the branch it started from. That list is how Impulse knows which worktrees are its tasks; worktrees in `<repo>.worktrees/` from before Impulse kept it count too.
 - Runs the project's setup script, then starts the agent you picked, in the task's first terminal.
 
-When you're done, **Archive Task…** removes the folder and keeps the branch, with Undo. Impulse marks tasks whose work has landed "merged", and **Archive Merged Tasks…** clears them all out at once.
+When you're done, **Finish Task…** lands the work and cleans up: it syncs the task with its base, runs the project's checks, merges the branch and pushes it (or pushes it for review), and archives the task. **Archive Task…** removes the folder and keeps the branch, with Undo. Impulse marks tasks whose work has landed "merged", and **Archive Merged Tasks…** clears them all out at once.
 
 ## Start a task
 
@@ -156,6 +156,7 @@ Each row shows, from left to right:
 - "merged" when the task's branch is merged into its base, so the task can go (see [Archive merged tasks](#archive-merged-tasks)).
 - A warning sign with a count when the workspace changes files that another workspace of the repository also changes (see [When workspaces change the same files](#when-workspaces-change-the-same-files)).
 - Listening ports from the task's terminals (`:3000`), for example its dev server.
+- ↓ and a count when the workspace's branch is behind its upstream (after a fetch). Click it to pull.
 - A spinner while an agent in the workspace is working, and a bot icon with a count when agents are waiting for you.
 - The workspace's uncommitted changes as added and removed lines.
 - A badge with the number of tabs that need attention, or the tab count.
@@ -171,7 +172,7 @@ Tasks keep work apart on disk, but two of them (or a task and the main checkout)
 - **A notification, once.** When two workspaces that didn't overlap start to, Impulse says so once: "fix-elevation and trailhead now change the same 3 files" (a toast, or a desktop notification when Impulse is in the background). More files between the same two don't notify again. Turn it off with **Notify when tasks change the same files** (`task_overlap_notify`) in Settings ▸ Terminal ▸ Agents.
 - **What counts.** Every file, lock files included: a lock file changed on both sides is one of the worst conflicts to sort out. The task's own env file never counts. To leave out files that are only noise in a project, list them in **Ignore when tasks overlap** in [Project Setup](project-config.md#project-setup) (`overlap_ignore`).
 
-The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
+The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Finish Task…** (on task rows, first in the menu), **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
 
 Impulse treats any workspace that is a linked git worktree as a task, including worktrees you created yourself with `git worktree add`. They get **Archive Task…** too.
 
@@ -212,9 +213,29 @@ Tasks keep agents' files apart, but not everything else: two agents can still ch
 
 ## Finish a task
 
-### Merge the work back
+### Finish Task
 
-Two common ways:
+**Finish Task…** takes a task from done to landed in one tab. Choose it from the task row's context menu, from **File ▸ Finish Task…**, or from the command palette with the task's workspace active. The Finish tab lists the steps and goes through them when you click **Finish**. Each step says what it did; one that stops says why and what to do, and **Continue** picks up from there.
+
+1. **Commit.** Everything in the task has to be committed, and no agent there may be working. Otherwise Finish stops ("3 uncommitted files. Commit (or stash) them, then Continue.") with **Show Changes**.
+2. **Sync.** Fetches, then merges the base's new commits (`origin/main`) into the task's branch, in the task's folder. Never a rebase, which would rewrite commits you may have pushed. If the merge conflicts, Finish stops: resolve the conflicts in the Changes panel and commit the merge (or ask the task's agent to, since it knows the branch), then **Continue**.
+3. **Check.** Runs the project's [check script](project-config.md#scripts) (`npm run typecheck && npm test`) in a new terminal tab in the task, and reads pass or fail from its exit status. A failure stops Finish: fix it, commit, and **Continue**, which checks again. While it runs, **Skip Check** skips it. Without a check script the step is skipped, and **Set Up a Check…** opens Project Setup.
+4. **Land.** Merge and push, or push for review; see below.
+5. **Update the main checkout.** When the main checkout is on the base branch with nothing uncommitted, Finish fast-forwards it to the new `origin/main`. Otherwise it's left alone; its row shows how far behind it is (↓3), and clicking that pulls.
+6. **Clean up.** The task's workspace closes (asking about unsaved files and running processes, as usual), its archive script runs and its folder is removed. With **Delete fix-elevation once it's merged** ticked (the default), its branch is deleted too, and on the remote with **…and on origin**. A toast sums it up, "Finished fix-elevation: merged into origin/main as 4c1e9a2.", with **Restore Task**, which brings back the folder and the local branch (not the merge).
+
+#### Merge and push, or push for review
+
+The first Finish in a repository asks how work lands there, and remembers the answer in the [settings on this Mac](project-config.md#settings-for-this-mac-only) (**Finishing tasks** in Project Setup changes it):
+
+- **Merge into origin/main and push.** Impulse merges the branch with a merge commit ("Merge branch 'fix-elevation'"), so `main`'s first-parent history has one entry per task, and pushes `main`. The merge is made in a throwaway folder on `origin/main` that's removed afterwards, so your main checkout isn't touched, whatever state it's in. If someone pushed to `main` since the sync, Finish merges their commits too and pushes once more; if the merge conflicts or the push still fails, nothing is pushed and Finish stops. Hooks run as for any merge and push. If the server turns the push down (a protected branch, say), Finish says so and offers **Push for Review Instead**. Without a remote, the merge goes into the main checkout, and only when it's on the base branch with nothing uncommitted.
+- **Push for review.** Impulse pushes the branch (setting its upstream) and shows what the server said back, with any link in it as a button: GitLab, for example, sends a link for creating a merge request. Open the merge request on your git host as usual; Finish stops there. When a fetch shows the branch merged (squash merges included), the task's row says "merged" and, while the task's workspace is open, a toast offers **Clean Up…**, which opens Finish to update the main checkout and archive the task.
+
+Finish never looks at CI, which isn't part of git; the check step is its local stand-in.
+
+### Merge by hand
+
+Without Finish, two common ways:
 
 - **Through a merge request.** Push the task's branch and open a merge request (pull request) on your git host (see [Work in a task](#work-in-a-task)). Merge it there as usual, then archive the task.
 - **Locally.** Switch to the `trailhead` workspace (the main checkout, on `main`), choose **Git ▸ Manage Branches…**, open the **…** menu on the `fix-elevation` row and choose **Merge into main**. You can also merge from History (⇧⌘H): right-click the `fix-elevation` branch label (or its latest commit) and choose **Merge into main**. See [Git](git.md) and [History](history.md).

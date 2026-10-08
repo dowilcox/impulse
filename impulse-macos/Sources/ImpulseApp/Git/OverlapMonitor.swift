@@ -6,6 +6,9 @@ extension Notification.Name {
   /// A repository's overlaps changed (userInfo: "newPairs": [TaskOverlap.Pair]
   /// that just started overlapping).
   static let taskOverlapsChanged = Notification.Name("impulse.taskOverlapsChanged")
+  /// Tasks Finish pushed for review are merged now (`paths`), and no
+  /// window has offered to clean them up yet.
+  static let reviewedTasksMerged = Notification.Name("impulse.reviewedTasksMerged")
 }
 
 /// Where each repository's workspaces change the same files: the main
@@ -25,6 +28,8 @@ final class OverlapMonitor {
   /// Tasks whose branch's upstream was deleted on the remote (a hint that
   /// it was merged there), per repository (main thread).
   private(set) var upstreamGone: [String: Set<String>] = [:]
+  /// Reviewed tasks already offered a clean-up (this launch).
+  private var offeredCleanUp = Set<String>()
   private var pending: [String: DispatchWorkItem] = [:]
   private let queue = DispatchQueue(label: "impulse.overlap", qos: .utility)
 
@@ -49,6 +54,12 @@ final class OverlapMonitor {
     return upstreamGone.values.contains { $0.contains(path) }
   }
 
+  /// Claim the one clean-up offer for the reviewed task at `path`: true
+  /// the first time (that window shows it), false after.
+  func claimCleanUpOffer(_ path: String) -> Bool {
+    offeredCleanUp.insert(path).inserted
+  }
+
   /// The pairs a workspace at `path` is part of.
   func pairs(involving path: String) -> [TaskOverlap.Pair] {
     let path = TaskRegistry.canonical(path)
@@ -61,10 +72,16 @@ final class OverlapMonitor {
     let settings = (try? MainWindowController.loadProjectConfig(root: root)?.config.get()) ?? ProjectConfig()
     let ignore = settings.overlapIgnore + [settings.envFile]
     let found = changes.count < 2 ? [] : TaskOverlap.pairs(changes, ignoring: ignore)
-    let mergedNow = Self.mergedTasks(root: root)
+    let mergedRecords = Self.mergedRecords(root: root)
+    let mergedNow = Set(mergedRecords.map { TaskRegistry.canonical($0.path) })
+    let reviewed = Set(mergedRecords.filter { $0.pushedForReview != nil }.map { TaskRegistry.canonical($0.path) })
     let goneNow = Self.upstreamGoneTasks(root: root)
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      let unoffered = reviewed.subtracting(self.offeredCleanUp)
+      if !unoffered.isEmpty {
+        NotificationCenter.default.post(name: .reviewedTasksMerged, object: nil, userInfo: ["paths": Array(unoffered)])
+      }
       let finishedChanged = self.merged[commonDir] ?? [] != mergedNow || self.upstreamGone[commonDir] ?? [] != goneNow
       self.merged[commonDir] = mergedNow
       self.upstreamGone[commonDir] = goneNow
@@ -122,18 +139,19 @@ final class OverlapMonitor {
   /// Tasks whose branch has work of its own (it moved past where it
   /// started) and is merged into its base, squash merges included.
   static func mergedTasks(root: String) -> Set<String> {
+    Set(mergedRecords(root: root).map { TaskRegistry.canonical($0.path) })
+  }
+
+  static func mergedRecords(root: String) -> [TaskRecord] {
     let main = MainWindowController.mainCheckoutRoot(of: root)
     guard let registry = TaskRegistryStore.registry(root: main) else { return [] }
-    var merged = Set<String>()
-    for task in registry.tasks {
+    return registry.tasks.filter { task in
       let branch = "refs/heads/\(task.branch)"
       guard let start = task.start, let base = task.baseRef,
-        let tip = GitClient.resolveCommit(repoPath: main, revision: branch), tip != start,
-        GitOperations.isMerged(branch, into: base, root: main)
-      else { continue }
-      merged.insert(TaskRegistry.canonical(task.path))
+        let tip = GitClient.resolveCommit(repoPath: main, revision: branch), tip != start
+      else { return false }
+      return GitOperations.isMerged(branch, into: base, root: main)
     }
-    return merged
   }
 
   /// Tasks whose branch tracked a remote branch that's gone (deleted on

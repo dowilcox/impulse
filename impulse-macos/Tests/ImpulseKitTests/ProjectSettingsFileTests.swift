@@ -23,6 +23,7 @@
       config.databaseService = "mysql"
       config.composeOverride = true
       config.onChange = ["composer.lock": "composer install", "package-lock.json": "npm ci"]
+      config.landing = .review
       return config
     }
 
@@ -86,6 +87,7 @@
       committed.worktreeClone = ["vendor"]
       committed.databaseFolder = "docker/data/mysql"
       committed.composeOverride = true
+      committed.landing = .merge
       let local = ProjectConfig(archiveScript: "docker compose down -v")
       let text = ProjectSettingsFile.text(local, clearing: committed)
       let layered = ProjectConfig.resolve([
@@ -97,7 +99,37 @@
       #expect(layered.worktreeClone.isEmpty)
       #expect(layered.databaseFolder == nil)
       #expect(!layered.composeOverride)
+      #expect(layered.landing == nil, "Finish asks again")
       #expect(layered.archiveScript == "docker compose down -v")
+    }
+
+    @Test func finishsAnswerIsSavedWithoutDisturbingTheFile() throws {
+      // A file the screen wrote is written the screen's way.
+      let written = ProjectSettingsFile.text(ProjectConfig(actions: [.init(name: "dev", command: "npm run dev")], setupScript: "npm ci"))
+      let saved = ProjectSettingsFile.setting(.merge, in: written)
+      #expect(saved == ProjectSettingsFile.text(try ProjectConfig.parse(saved).get()), "still the screen's own")
+      #expect(saved.contains("[finish]\nland = \"merge\"\n\n[[actions]]"))
+
+      // Anything else keeps its comments and order; an earlier answer is replaced.
+      let edited = """
+        # by hand
+        [scripts]
+        setup = "npm ci" # install
+
+        [finish]
+        land = "review"
+
+        [[actions]]
+        name = "dev"
+        command = "npm run dev"
+        """
+      let changed = ProjectSettingsFile.setting(.merge, in: edited)
+      #expect(changed.contains("# by hand\n[scripts]\nsetup = \"npm ci\" # install"))
+      #expect(changed.components(separatedBy: "[finish]").count == 2)
+      let parsed = try ProjectConfig.parse(changed).get()
+      #expect(parsed.landing == .merge)
+      #expect(parsed.actions.map(\.name) == ["dev"])
+      #expect(ProjectSettingsFile.setting(.review, in: "") == "[finish]\nland = \"review\"\n")
     }
 
     @Test func mergingIntoAFileWithoutManagedSectionsAppends() {

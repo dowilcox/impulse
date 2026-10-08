@@ -55,6 +55,8 @@ final class ProjectSetupModel {
   var rules: [Pair] = []
   /// `overlap_ignore`, comma-separated.
   var overlapIgnore = ""
+  /// How Finish Task lands work (nil: it asks the first time).
+  var landing: ProjectConfig.Landing?
   /// What the Database row offers, and what's chosen.
   var databaseOptions: [Database] = []
   var database: Database = .none
@@ -125,6 +127,7 @@ final class ProjectSetupModel {
       config.databaseService = databaseService
     }
     config.composeOverride = composeOverride
+    config.landing = landing
     config.overlapIgnore = overlapIgnore.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
       .filter { !$0.isEmpty }
     for pair in rules {
@@ -305,6 +308,20 @@ struct ProjectSetupView: View {
         script("Setup", "Runs in a new task's first terminal, before the agent", Binding(get: { model.setup }, set: { model.setup = $0 }))
         script("Check", "Checks a task is ready to land (types, tests)", Binding(get: { model.check }, set: { model.check = $0 }))
         script("Archive", "Runs before a task's folder is removed", Binding(get: { model.archive }, set: { model.archive = $0 }))
+      }
+      .id("scripts")
+
+      section("Finishing tasks", detail: "How Finish Task lands a task's branch.") {
+        ChromeSegmented(
+          options: [(nil, "Ask the first time"), (ProjectConfig.Landing.merge, "Merge and push"), (.review, "Push for review")],
+          selection: Binding(get: { model.landing }, set: { model.landing = $0 }))
+        switch model.landing {
+        case nil: caption("The first Finish in this repository asks, and its answer is saved here.")
+        case .review?:
+          caption("Finish pushes the branch; you open a merge request on your git host. Once it's merged there, Impulse offers to clean up.")
+        case .merge?:
+          caption("Finish merges the branch into its base with a merge commit, made in a throwaway folder, and pushes the base. The main checkout isn't touched.")
+        }
       }
 
       section("When files change", detail: "After a pull, merge or checkout brings in a change to one of these files, Impulse offers to run its command.") {

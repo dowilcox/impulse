@@ -81,17 +81,19 @@ The **+** on a row (shown on hover) offers:
 
 Control-click a row for its context menu:
 
-| Item                          | What it does                                                                |
-| ----------------------------- | --------------------------------------------------------------------------- |
-| **New Task…**                 | Start a task worktree from this workspace's repository (repositories only). |
-| **Open Folder as Workspace…** | Choose another folder to open.                                              |
-| **Rename…**                   | Give the workspace a name of its own.                                       |
-| **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                |
-| **Copy Path**                 | Copy the folder's path (not for Scratch).                                   |
-| **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                            |
-| **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                  |
-| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                          |
-| **Close Workspace**           | Close the workspace and all its tabs.                                       |
+| Item                          | What it does                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| **New Task…**                 | Start a task worktree from this workspace's repository (repositories only).                 |
+| **Open Folder as Workspace…** | Choose another folder to open.                                                              |
+| **Rename…**                   | Give the workspace a name of its own.                                                       |
+| **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                                |
+| **Copy Path**                 | Copy the folder's path (not for Scratch).                                                   |
+| **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                                            |
+| **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                                  |
+| **Finish Task…**              | For a task: land its work and archive it. See [Tasks](tasks.md#finish-a-task).              |
+| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                                          |
+| **Archive Merged Tasks…**     | Archive the repository's merged tasks together. See [Tasks](tasks.md#archive-merged-tasks). |
+| **Close Workspace**           | Close the workspace and all its tabs.                                                       |
 
 ### Renaming a workspace
 
@@ -317,21 +319,21 @@ Files that git ignores, such as `node_modules` or an ignored `.env`, are shown d
 
 Control-click an item:
 
-| Item                                | Shown for     | What it does                                                                                                                                                                                            |
-| ----------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **New File…** / **New Folder…**     | Folders       | Create an item inside the folder.                                                                                                                                                                       |
-| **Open to the Side**                | Files         | Open in a pane to the right.                                                                                                                                                                            |
-| **Mention in Agent**                | Files         | Send `@` and the file's path to the coding agent most likely meant. See [Agents](agents.md).                                                                                                            |
-| **Show History**                    | Both          | The file's or folder's commits in [History](history.md).                                                                                                                                                |
-| **Reveal in Finder**                | Both          | Show it in Finder.                                                                                                                                                                                      |
-| **Copy Path**                       | Both          | Copy the full path.                                                                                                                                                                                     |
-| **Copy Relative Path**              | Both          | Copy the path relative to the top of the tree, such as `src/lib/cache.ts`.                                                                                                                              |
-| **Open with Default App**           | Files         | Open in the app macOS uses for it.                                                                                                                                                                      |
-| **Open Changes**                    | Changed files | Open [Review](review.md) on the file's uncommitted changes.                                                                                                                                             |
-| **Stage**                           | Changed files | Stage the file.                                                                                                                                                                                         |
-| **Discard Changes…**                | Changed files | After you confirm, restore a tracked file to its last commit (staged and unstaged changes) or move an untracked file to the Trash; you can undo it right after. A newly added file is unstaged instead. |
-| **Rename…**                         | Both          | Rename it in place.                                                                                                                                                                                     |
-| **Move to Trash**                   | Both          | Move it to the Trash; the notice that follows has **Undo**.                                                                                                                                             |
+| Item                            | Shown for     | What it does                                                                                                                                                                                            |
+| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **New File…** / **New Folder…** | Folders       | Create an item inside the folder.                                                                                                                                                                       |
+| **Open to the Side**            | Files         | Open in a pane to the right.                                                                                                                                                                            |
+| **Mention in Agent**            | Files         | Send `@` and the file's path to the coding agent most likely meant. See [Agents](agents.md).                                                                                                            |
+| **Show History**                | Both          | The file's or folder's commits in [History](history.md).                                                                                                                                                |
+| **Reveal in Finder**            | Both          | Show it in Finder.                                                                                                                                                                                      |
+| **Copy Path**                   | Both          | Copy the full path.                                                                                                                                                                                     |
+| **Copy Relative Path**          | Both          | Copy the path relative to the top of the tree, such as `src/lib/cache.ts`.                                                                                                                              |
+| **Open with Default App**       | Files         | Open in the app macOS uses for it.                                                                                                                                                                      |
+| **Open Changes**                | Changed files | Open [Review](review.md) on the file's uncommitted changes.                                                                                                                                             |
+| **Stage**                       | Changed files | Stage the file.                                                                                                                                                                                         |
+| **Discard Changes…**            | Changed files | After you confirm, restore a tracked file to its last commit (staged and unstaged changes) or move an untracked file to the Trash; you can undo it right after. A newly added file is unstaged instead. |
+| **Rename…**                     | Both          | Rename it in place.                                                                                                                                                                                     |
+| **Move to Trash**               | Both          | Move it to the Trash; the notice that follows has **Undo**.                                                                                                                                             |
 
 #### Drag and drop
 

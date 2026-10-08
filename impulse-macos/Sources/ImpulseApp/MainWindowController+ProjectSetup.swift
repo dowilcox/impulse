@@ -104,6 +104,7 @@ extension MainWindowController {
     model.setup = settings.setupScript ?? found.setup ?? ""
     model.check = settings.checkScript ?? found.check ?? ""
     model.archive = settings.archiveScript ?? found.archive ?? ""
+    model.landing = settings.landing
     let names = Set(settings.actions.map(\.name))
     model.actions =
       settings.actions.map { .init(isOn: true, action: $0) }

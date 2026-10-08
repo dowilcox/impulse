@@ -17,6 +17,8 @@ struct Toast: Identifiable {
   var secondaryAction: (() -> Void)? = nil
   /// Seconds before it dismisses itself (nil: stays until dismissed).
   var lifetime: TimeInterval? = 6
+  /// Names a toast so it can be taken back when it no longer applies.
+  var tag: String? = nil
 }
 
 /// Per-window toast queue, shown bottom-center in a child panel so toasts
@@ -44,6 +46,11 @@ final class ToastCenter {
 
   func dismiss(_ id: UUID) {
     toasts.removeAll { $0.id == id }
+    presenter?.update()
+  }
+
+  func dismiss(tag: String) {
+    toasts.removeAll { $0.tag == tag }
     presenter?.update()
   }
 }

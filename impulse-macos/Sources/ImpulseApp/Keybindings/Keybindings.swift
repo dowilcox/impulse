@@ -464,6 +464,10 @@ enum Keybindings {
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
+            id: "finish_task", description: "Finish Task…", category: "Navigation",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
+        ),
+        BuiltinKeybinding(
             id: "project_setup", description: "Project Setup…", category: "Navigation",
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),

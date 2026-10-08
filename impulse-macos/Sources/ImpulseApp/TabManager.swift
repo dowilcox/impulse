@@ -376,9 +376,12 @@ final class TabManager: NSObject {
 
   /// Creates a new terminal tab and makes it active. Without a directory it
   /// starts in the active workspace's folder.
-  func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) {
+  @discardableResult
+  func addTerminalTab(directory: String? = nil, initialCommand: String? = nil) -> TerminalContainer {
     let directory = directory ?? activeWorkspace.defaultDirectory
-    insertTab(.terminal(makeTerminalContainer(directory: directory, initialCommand: initialCommand)))
+    let container = makeTerminalContainer(directory: directory, initialCommand: initialCommand)
+    insertTab(.terminal(container))
+    return container
   }
 
   /// A new terminal surface (shell spawns once it's laid out).

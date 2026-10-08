@@ -281,6 +281,26 @@ extension MainWindowController {
         debugCreateTask(title: String(action.dropFirst(5)), command: "echo task ready")
       } else if action == "archive-merged" {
         presentArchiveMergedTasks(from: tabManager.activeWorkspaceID)
+      } else if action == "trust-project-settings" {
+        // Trust the active workspace's project settings without asking.
+        let root = tabManager.activeWorkspace.root
+        if let loaded = Self.loadProjectConfig(root: root) {
+          var trust = ProjectTrustStore.current
+          for source in loaded.sources {
+            trust.trust(root: Self.trustKey(for: source, in: loaded, root: root), digest: source.digest)
+          }
+          ProjectTrustStore.current = trust
+        }
+      } else if action == "finish-task" {
+        openFinishTask()
+      } else if action.hasPrefix("finish-run") {
+        // Press Finish (or Continue); `finish-run=review` answers the
+        // landing question first.
+        for case .tool(let view) in tabManager.allSurfaces {
+          guard let model = (view as? TaskFinishSurface)?.model else { continue }
+          if let landing = ProjectConfig.Landing(rawValue: String(action.dropFirst(11))) { model.chosenLanding = landing }
+          model.onFinish?()
+        }
       } else if action == "project-setup" {
         openProjectSetup()
       } else if action == "project-setup-save" {

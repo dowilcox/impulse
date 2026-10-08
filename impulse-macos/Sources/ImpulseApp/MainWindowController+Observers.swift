@@ -330,6 +330,24 @@ extension MainWindowController {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .reviewedTasksMerged, object: nil, queue: .main) { [weak self] notification in
+        // A task Finish pushed for review was merged on the server: the
+        // window that has it open offers to finish the job.
+        guard let self, let paths = notification.userInfo?["paths"] as? [String] else { return }
+        for path in paths {
+          guard let workspace = self.tabManager.workspaces.first(where: { TaskRegistry.canonical($0.root) == path }),
+            OverlapMonitor.shared.claimCleanUpOffer(path)
+          else { continue }
+          self.toasts.show(
+            Toast(
+              kind: .success, message: "\(workspace.name) was merged.",
+              detail: "Finish can update the main checkout and archive the task.", actionTitle: "Clean Up…",
+              action: { [weak self] in self?.openFinishTask(from: workspace.id) }, lifetime: 30,
+              tag: "clean-up:\(path)"))
+        }
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .gitHeadMoved, object: nil, queue: .main) { [weak self] notification in
         guard let info = notification.userInfo, let root = info["root"] as? String, let from = info["from"] as? String,
           let to = info["to"] as? String

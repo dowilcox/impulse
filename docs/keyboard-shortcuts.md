@@ -45,6 +45,7 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 | ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                      |
 | ⌥⌘N      | New Task…                                                            | File        | `new_task`             |
 | Unbound  | New Task from Branch… (the palette in `task:` mode)                  | File        | `new_task_from_branch` |
+| Unbound  | Finish Task…                                                         | File        | `finish_task`          |
 | Unbound  | Project Setup…                                                       | File        | `project_setup`        |
 | ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`      |
 

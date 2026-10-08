@@ -21,10 +21,13 @@ public struct TaskRecord: Codable, Equatable, Sendable {
   /// The commit the task started at: a branch still there has no work of
   /// its own yet (so it isn't "merged"). Nil for adopted tasks.
   public var start: String?
+  /// When Finish Task pushed the branch for review: once it's merged, Impulse
+  /// offers to clean up.
+  public var pushedForReview: Date?
 
   public init(
     path: String, branch: String, base: String? = nil, remote: String? = nil, slot: Int? = nil,
-    created: Date = Date(), start: String? = nil
+    created: Date = Date(), start: String? = nil, pushedForReview: Date? = nil
   ) {
     self.path = path
     self.branch = branch
@@ -33,6 +36,7 @@ public struct TaskRecord: Codable, Equatable, Sendable {
     self.slot = slot
     self.created = created
     self.start = start
+    self.pushedForReview = pushedForReview
   }
 
   /// `origin/main`, or `main` for a local base; nil when unknown.

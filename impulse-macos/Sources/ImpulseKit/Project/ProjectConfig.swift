@@ -29,6 +29,14 @@ public struct ProjectConfig: Equatable, Sendable {
     }
   }
 
+  /// How Finish Task lands a task's work (`[finish] land`).
+  public enum Landing: String, Equatable, Sendable, CaseIterable {
+    /// Merge the branch into its base and push the base.
+    case merge
+    /// Push the branch for review on the git host.
+    case review
+  }
+
   public var actions: [Action] = []
   /// Run in a new task worktree after it's created.
   public var setupScript: String?
@@ -65,6 +73,8 @@ public struct ProjectConfig: Equatable, Sendable {
   /// Files that don't count when workspaces change the same files
   /// (`[worktrees] overlap_ignore`): names, paths or patterns.
   public var overlapIgnore: [String] = []
+  /// How Finish Task lands work; nil until chosen (the first Finish asks).
+  public var landing: Landing?
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -129,13 +139,17 @@ public struct ProjectConfig: Equatable, Sendable {
         case overlapIgnore = "overlap_ignore"
       }
     }
+    struct Finish: Decodable {
+      var land: String?
+    }
     var actions: [Action]?
     var scripts: Scripts?
     var worktrees: Worktrees?
     var onChange: [String: String]?
+    var finish: Finish?
 
     enum CodingKeys: String, CodingKey {
-      case actions, scripts, worktrees
+      case actions, scripts, worktrees, finish
       case onChange = "on_change"
     }
   }
@@ -186,6 +200,7 @@ public struct ProjectConfig: Equatable, Sendable {
       if let service = layer.worktrees?.database?.service { config.databaseService = service.isEmpty ? nil : service }
       if let override = layer.worktrees?.composeOverride { config.composeOverride = override }
       if let ignore = layer.worktrees?.overlapIgnore { config.overlapIgnore = ignore }
+      if let land = layer.finish?.land { config.landing = ProjectConfig.Landing(rawValue: land) }
     }
     config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
     config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }

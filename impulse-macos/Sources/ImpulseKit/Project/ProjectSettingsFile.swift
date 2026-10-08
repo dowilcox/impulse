@@ -10,7 +10,7 @@ public enum ProjectSettingsFile {
   /// The section headers the screen manages.
   public static let managedHeaders: Set<String> = [
     "[scripts]", "[worktrees]", "[worktrees.ports]", "[worktrees.env]", "[worktrees.database]", "[on_change]",
-    "[[actions]]",
+    "[finish]", "[[actions]]",
   ]
 
   /// `config` as TOML, its sections in a fixed order; settings left at
@@ -68,6 +68,11 @@ public enum ProjectSettingsFile {
         (["[on_change]"] + config.onChange.keys.sorted().map { "\(key($0)) = \(string(config.onChange[$0]!))" })
           .joined(separator: "\n"))
     }
+    if let landing = config.landing {
+      sections.append("[finish]\nland = \(string(landing.rawValue))")
+    } else if committed?.landing != nil {
+      sections.append("[finish]\nland = \"\"")
+    }
     for action in config.actions {
       var lines = ["[[actions]]", "name = \(string(action.name))", "command = \(string(action.command))"]
       if let cwd = action.cwd { lines.append("cwd = \(string(cwd))") }
@@ -99,6 +104,31 @@ public enum ProjectSettingsFile {
     return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n"
   }
 
+  /// `existing` with `[finish] land` set to `landing`, for Finish Task
+  /// remembering its answer. A file the screen wrote is written again the
+  /// same way; in any other, only the `[finish]` section changes.
+  public static func setting(_ landing: ProjectConfig.Landing, in existing: String) -> String {
+    if case .success(var config) = ProjectConfig.parse(existing), text(config) == existing {
+      config.landing = landing
+      return text(config)
+    }
+    let section = ["[finish]", "land = \(string(landing.rawValue))"]
+    var lines = existing.components(separatedBy: "\n")
+    if let start = lines.firstIndex(where: { header(of: $0) == "[finish]" }) {
+      var end = start + 1
+      while end < lines.count, header(of: lines[end]) == nil { end += 1 }
+      while end > start + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
+      lines.replaceSubrange(start..<end, with: section)
+    } else if let actions = lines.firstIndex(where: { header(of: $0) == "[[actions]]" }) {
+      lines.insert(contentsOf: section + [""], at: actions)
+    } else {
+      while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+      if !lines.isEmpty { lines.append("") }
+      lines += section + [""]
+    }
+    return lines.joined(separator: "\n")
+  }
+
   /// Whether the sections a rewrite replaces hold comments it would drop.
   public static func managedSectionsHaveComments(_ text: String) -> Bool {
     split(text).contains { block in
@@ -114,15 +144,20 @@ public enum ProjectSettingsFile {
   private static func split(_ text: String) -> [(header: String?, text: String)] {
     var blocks: [(header: String?, text: String)] = [(nil, "")]
     for line in text.components(separatedBy: "\n") {
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if trimmed.hasPrefix("["), let close = trimmed.range(of: "]]") ?? trimmed.range(of: "]") {
-        let header = String(trimmed[..<close.upperBound]).replacingOccurrences(of: " ", with: "")
+      if let header = header(of: line) {
         blocks.append((header, line))
       } else {
         blocks[blocks.count - 1].text += (blocks[blocks.count - 1].text.isEmpty ? "" : "\n") + line
       }
     }
     return blocks
+  }
+
+  /// The table header a line starts (`[scripts]`, `[[actions]]`), if any.
+  private static func header(of line: String) -> String? {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("["), let close = trimmed.range(of: "]]") ?? trimmed.range(of: "]") else { return nil }
+    return String(trimmed[..<close.upperBound]).replacingOccurrences(of: " ", with: "")
   }
 
   /// A TOML basic string.

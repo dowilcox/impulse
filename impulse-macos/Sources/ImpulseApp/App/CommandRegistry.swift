@@ -145,6 +145,11 @@ enum CommandRegistry {
         keybindingId: "new_task_from_branch"
       ) { [weak controller] in controller?.showPalette(prefix: "task:") },
       AppCommand(
+        id: "finish_task", title: "Finish Task…", category: "Workspaces",
+        keywords: ["worktree", "merge", "land", "push", "review", "done", "check"], icon: .gitMerge,
+        keybindingId: "finish_task"
+      ) { [weak controller] in controller?.openFinishTask() },
+      AppCommand(
         id: "archive_task", title: "Archive Task…", category: "Workspaces",
         keywords: ["worktree", "remove", "done"], icon: .archive
       ) { [weak controller] in

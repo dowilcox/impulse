@@ -25,6 +25,7 @@ It shows the settings already saved, and fills what's missing from what it finds
 | Values for each task | A database name, when tasks share one database server, and an app URL on a task's port.                                                                                                                                                                                                                            |
 | Scripts              | **Setup** from the lock files (`npm ci`, `composer install`, …) and `docker compose up -d`; **Check** from type-check, lint and test scripts; **Archive** `docker compose down -v`.                                                                                                                                |
 | Actions              | The repository's `package.json` and `composer.json` scripts and Makefile targets, unticked until you tick them.                                                                                                                                                                                                    |
+| Finishing tasks      | How **Finish Task…** lands a task: ask the first time (the default), **Merge and push**, or **Push for review**. See [Finish a task](tasks.md#finish-a-task).                                                                                                                                                      |
 | When files change    | A rule for each lock file it finds (`composer.lock` → `composer install`), and for a `Dockerfile` beside a Compose file. See [When files change](#when-files-change).                                                                                                                                              |
 
 Everything is editable. **Save to** chooses where the settings go: **This Mac** (`.git/impulse/project.toml`, never committed; see [Settings for this Mac only](#settings-for-this-mac-only)) or **The project** (`.impulse/project.toml`, to commit for everyone). In a committed file, Saving rewrites only the sections the tab manages and keeps the rest of the file as written; it says so first if comments in those sections would be dropped. Saving trusts exactly what it wrote, so the settings work in the next task without a prompt. **Open File** opens the file in the editor.
@@ -85,11 +86,11 @@ Actions with an empty `name` or `command` are left out.
 
 ### `[scripts]`
 
-| Key       | Type   | Meaning                                                                                                                                                                                                              |
-| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script).                                                                                                                  |
-| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script).                                                                                                                  |
-| `check`   | string | Checks that a task's work is ready (type checks, tests), for example `npm run typecheck && npm test`. Impulse offers to run it after a pull or merge brings in changes; see [When files change](#when-files-change). |
+| Key       | Type   | Meaning                                                                                                                                                                                                                                                                                                                 |
+| --------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script).                                                                                                                                                                                                                     |
+| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script).                                                                                                                                                                                                                     |
+| `check`   | string | Checks that a task's work is ready (type checks, tests), for example `npm run typecheck && npm test`. **Finish Task…** runs it before landing a task (see [Finish a task](tasks.md#finish-a-task)), and Impulse offers to run it after a pull or merge brings in changes (see [When files change](#when-files-change)). |
 
 An empty string means no script.
 
@@ -122,6 +123,12 @@ What to run when a file changes in a pull, merge or checkout, one rule per line:
 | --------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `clone`   | string | A database's data folder, cloned into each new task so it starts with the main checkout's data. See [A database for each task](#a-database-for-each-task). |
 | `service` | string | The Compose service that writes that folder. It's stopped in the main checkout while the folder is cloned, then started again.                             |
+
+### `[finish]`
+
+| Key    | Type   | Meaning                                                                                                                                                                                                                                             |
+| ------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `land` | string | How **Finish Task…** lands a task: `"merge"` (merge into the base with a merge commit and push it) or `"review"` (push the branch for review). Unset, the first Finish asks and saves the answer here. See [Finish a task](tasks.md#finish-a-task). |
 
 ### When the file has a mistake
 

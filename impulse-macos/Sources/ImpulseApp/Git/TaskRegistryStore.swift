@@ -77,6 +77,16 @@ enum TaskRegistryStore {
     return environment
   }
 
+  /// Note that Finish Task pushed the task at `path` for review.
+  static func markPushedForReview(path: String, root: String) {
+    guard let common = GitClient.commonGitDirectory(forPath: root) else { return }
+    _ = try? TaskRegistry.update(commonGitDirectory: common) { registry in
+      let canonical = TaskRegistry.canonical(path)
+      guard let index = registry.tasks.firstIndex(where: { TaskRegistry.canonical($0.path) == canonical }) else { return }
+      registry.tasks[index].pushedForReview = Date()
+    }
+  }
+
   /// Forget the task at `path` (archived); the record, for Undo.
   @discardableResult
   static func remove(path: String, root: String) -> TaskRecord? {

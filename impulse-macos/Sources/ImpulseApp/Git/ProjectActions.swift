@@ -51,7 +51,7 @@ extension MainWindowController {
 
   /// What a settings file is trusted under: the committed file per main
   /// repository (`trustKey`), the local file by its own path.
-  private static func trustKey(for source: ProjectConfig.Source, in loaded: ProjectConfig.Loaded, root: String)
+  static func trustKey(for source: ProjectConfig.Source, in loaded: ProjectConfig.Loaded, root: String)
     -> String
   {
     source == loaded.local ? source.path : trustKey(for: root)

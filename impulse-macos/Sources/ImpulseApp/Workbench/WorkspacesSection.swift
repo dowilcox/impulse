@@ -333,6 +333,18 @@ private struct WorkspaceRow: View {
         .foregroundStyle(chrome.attention)
         .help("\(workspace.agentsWaiting) agent(s) waiting for you")
       }
+      if let snapshot, snapshot.behind > 0, let upstream = snapshot.upstream {
+        Button {
+          model.onPullWorkspace?(workspace.id)
+        } label: {
+          Text(verbatim: "↓\(snapshot.behind)")
+            .font(ChromeFont.mono(10))
+            .foregroundStyle(chrome.textTertiary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ChromePressStyle())
+        .help("\(snapshot.behind) commit\(snapshot.behind == 1 ? "" : "s") behind \(upstream): click to pull")
+      }
       if let snapshot, snapshot.changedFileCount > 0 {
         DiffStat(added: snapshot.totalAdded, removed: snapshot.totalRemoved)
       }
@@ -369,6 +381,9 @@ private struct WorkspaceRow: View {
   private var contextMenu: some View {
     if workspace.isMerged {
       Button("Archive Task…") { model.onArchiveTask?(workspace.id) }
+      Divider()
+    } else if workspace.isTask {
+      Button("Finish Task…") { model.onFinishTask?(workspace.id) }
       Divider()
     }
     if workspace.repository != nil {

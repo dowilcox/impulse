@@ -441,13 +441,14 @@ public enum GitOperations {
 
   // MARK: - Remote
 
-  /// Fetch the default remote, or every remote. Deleted remote branches are
-  /// pruned. `timeout` is shorter for quiet background fetches.
+  /// Fetch the default remote, `remote`, or every remote. Deleted remote
+  /// branches are pruned. `timeout` is shorter for quiet background fetches.
   public static func fetch(
-    allRemotes: Bool = false, root: String, timeout: TimeInterval = 600, onProgress: ((String) -> Void)? = nil
+    allRemotes: Bool = false, remote: String? = nil, root: String, timeout: TimeInterval = 600,
+    onProgress: ((String) -> Void)? = nil
   ) -> GitResult {
     var args = ["fetch", "--prune", "--progress"]
-    if allRemotes { args.append("--all") }
+    if allRemotes { args.append("--all") } else if let remote { args += ["--end-of-options", remote] }
     return void(git(args, in: root, timeout: timeout, onOutputLine: onProgress))
   }
 
@@ -845,6 +846,12 @@ public enum GitOperations {
     var args = ["merge", "--no-edit"]
     if noFastForward { args.append("--no-ff") }
     return void(git(args + ["--end-of-options", revision], in: root, timeout: 600))
+  }
+
+  /// Move the current branch up to `revision` when it only adds commits;
+  /// fails when the branch has commits of its own.
+  public static func fastForward(to revision: String, root: String) -> GitResult {
+    void(git(["merge", "--ff-only", "--end-of-options", revision], in: root, timeout: 600))
   }
 
   /// Replay the current branch's own commits on top of `revision`.

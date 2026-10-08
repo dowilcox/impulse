@@ -299,6 +299,13 @@ extension MainWindowController {
     windowModel.onArchiveMergedTasks = { [weak self] id in
       self?.presentArchiveMergedTasks(from: id)
     }
+    windowModel.onFinishTask = { [weak self] id in
+      self?.openFinishTask(from: id)
+    }
+    windowModel.onPullWorkspace = { [weak self] id in
+      guard let self, let repository = self.tabManager.workspace(id)?.repository else { return }
+      GitActions(repository: repository, host: self).pull()
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.
