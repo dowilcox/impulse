@@ -60,7 +60,7 @@ A short description of the work, for example "Fix elevation". Impulse turns it i
 
 #### From
 
-The base the new branch starts from. It's filled in with the branch checked out in the repository's main checkout, even when you start from a task (or `HEAD` if the main checkout is on a detached HEAD). You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`.
+The base the new branch starts from. It's filled in with the branch checked out in the repository's main checkout, even when you start from a task (or `HEAD` if the main checkout is on a detached HEAD). You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`. The new branch doesn't track its base, even a remote one, so the first **Git ▸ Push** publishes it under its own name rather than pushing to `main`.
 
 #### Start
 

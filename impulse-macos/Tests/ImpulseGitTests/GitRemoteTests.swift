@@ -28,6 +28,20 @@
       return (repo, origin, seed)
     }
 
+    @Test func newWorktreeBranchDoesNotTrackARemoteBase() throws {
+      let (repo, origin, seed) = try cloneWithOrigin()
+      let path = repo.root + "-wt-task"
+      defer {
+        [repo, origin, seed].forEach { $0.destroy() }
+        try? FileManager.default.removeItem(atPath: path)
+      }
+      _ = try GitOperations.addWorktree(
+        path: path, branch: "task", newBranch: true, base: "origin/main", root: repo.root
+      ).get()
+      #expect(try repo.git("rev-parse", "task") == repo.git("rev-parse", "origin/main"))
+      #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
+    }
+
     @Test func lightweightAndAnnotatedTags() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

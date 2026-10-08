@@ -821,13 +821,15 @@ public enum GitOperations {
   }
 
   /// Add a worktree at `path`. With `newBranch`, create it from `base`
-  /// (default HEAD); otherwise check out the existing `branch`.
+  /// (default HEAD); otherwise check out the existing `branch`. A new branch
+  /// never tracks its base: from `origin/main` it would take that as its
+  /// upstream, and its first push would go to (or be refused for) main.
   public static func addWorktree(
     path: String, branch: String, newBranch: Bool, base: String? = nil, root: String
   ) -> GitResult {
     var args = ["worktree", "add"]
     if newBranch {
-      args += ["-b", branch, "--end-of-options", path]
+      args += ["--no-track", "-b", branch, "--end-of-options", path]
       if let base { args.append(base) }
     } else {
       args += ["--end-of-options", path, branch]
