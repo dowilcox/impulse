@@ -32,19 +32,20 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 
 ## Workspaces, tabs and tasks
 
-| Shortcut | Command                                                              | Menu        | ID                 |
-| -------- | -------------------------------------------------------------------- | ----------- | ------------------ |
-| ⌘T       | New Tab (a terminal)                                                 | File        | `new_tab`          |
-| ⌘W       | Close Tab: closes the focused pane, or the tab if it has only one    | File        | `close_tab`        |
-| ⇧⌘T      | Reopen Closed Tab                                                    | File        | `reopen_tab`       |
-| ⌘Z       | Right after closing a tab or pane (within 10 seconds): bring it back | Edit › Undo | —                  |
-| ⌃⇥       | Show Next Tab (in the current workspace)                             | Window      | `next_tab`         |
-| ⌃⇧⇥      | Show Previous Tab (in the current workspace)                         | Window      | `prev_tab`         |
-| ⌘1 … ⌘9  | Tab 1 … Tab 9: the first to ninth tab of the current workspace       | Window      | —                  |
-| ⌃⌘O      | Switch Workspace… (the palette in `w:` mode)                         | File        | `switch_workspace` |
-| ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                  |
-| ⌥⌘N      | New Task…                                                            | File        | `new_task`         |
-| ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`  |
+| Shortcut | Command                                                              | Menu        | ID                     |
+| -------- | -------------------------------------------------------------------- | ----------- | ---------------------- |
+| ⌘T       | New Tab (a terminal)                                                 | File        | `new_tab`              |
+| ⌘W       | Close Tab: closes the focused pane, or the tab if it has only one    | File        | `close_tab`            |
+| ⇧⌘T      | Reopen Closed Tab                                                    | File        | `reopen_tab`           |
+| ⌘Z       | Right after closing a tab or pane (within 10 seconds): bring it back | Edit › Undo | —                      |
+| ⌃⇥       | Show Next Tab (in the current workspace)                             | Window      | `next_tab`             |
+| ⌃⇧⇥      | Show Previous Tab (in the current workspace)                         | Window      | `prev_tab`             |
+| ⌘1 … ⌘9  | Tab 1 … Tab 9: the first to ninth tab of the current workspace       | Window      | —                      |
+| ⌃⌘O      | Switch Workspace… (the palette in `w:` mode)                         | File        | `switch_workspace`     |
+| ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                      |
+| ⌥⌘N      | New Task…                                                            | File        | `new_task`             |
+| Unbound  | New Task from Branch… (the palette in `task:` mode)                  | File        | `new_task_from_branch` |
+| ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`      |
 
 The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace** and **Archive Task…** have no shortcut. To reorder workspaces, use **Move Up** and **Move Down** in a workspace row's context menu. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).
 
@@ -210,31 +211,28 @@ The editor is Monaco, and Monaco's own keybindings work in it too, except where 
 
 ### Commands
 
-| Shortcut | Command                         | Menu | ID                       |
-| -------- | ------------------------------- | ---- | ------------------------ |
-| ⌃⇧G      | Show Changes                    | Git  | `show_changes`           |
-| ⇧⌘G      | Review Changes                  | Git  | `review_changes`         |
-| ⇧⌘H      | Show Git History                | Git  | `git_history`            |
-| ⌃⇧⌘H     | Show History of This File       | Git  | `file_history`           |
-| ⌥⌘G      | Toggle Diff View                | Git  | `diff_view`              |
-| ⌃⌘B      | Switch Branch…                  | Git  | `switch_branch`          |
-| Unbound  | Manage Branches…                | Git  | `manage_branches`        |
-| Unbound  | Fetch                           | Git  | `git_fetch`              |
-| Unbound  | Pull                            | Git  | `git_pull`               |
-| Unbound  | Push                            | Git  | `git_push`               |
-| Unbound  | Create Tag…                     | Git  | `git_create_tag`         |
-| Unbound  | Fetch All Remotes               | Git  | `git_fetch_all`          |
-| Unbound  | Pull (Rebase)                   | Git  | `git_pull_rebase`        |
-| Unbound  | Force Push (With Lease)…        | Git  | `git_force_push`         |
-| Unbound  | Push All Tags                   | Git  | `git_push_tags`          |
-| Unbound  | Stash All Changes               | Git  | `git_stash`              |
-| Unbound  | Pop Latest Stash                | Git  | `git_pop_stash`          |
-| Unbound  | Undo Last Commit                | Git  | `git_undo_commit`        |
-| Unbound  | Open or Create Pull Request     | Git  | `pull_request`           |
-| Unbound  | Create Draft Pull Request       | Git  | `create_draft_pr`        |
-| Unbound  | Check Out Pull Request as Task… | Git  | `checkout_pr`            |
-| Unbound  | Open Repository in Browser      | Git  | `git_open_remote`        |
-| Unbound  | Open Branch in Browser          | Git  | `git_open_branch_remote` |
+| Shortcut | Command                    | Menu | ID                    |
+| -------- | -------------------------- | ---- | --------------------- |
+| ⌃⇧G      | Show Changes               | Git  | `show_changes`        |
+| ⇧⌘G      | Review Changes             | Git  | `review_changes`      |
+| ⇧⌘H      | Show Git History           | Git  | `git_history`         |
+| ⌃⇧⌘H     | Show History of This File  | Git  | `file_history`        |
+| ⌥⌘G      | Toggle Diff View           | Git  | `diff_view`           |
+| ⌃⌘B      | Switch Branch…             | Git  | `switch_branch`       |
+| Unbound  | Manage Branches…           | Git  | `manage_branches`     |
+| Unbound  | Fetch                      | Git  | `git_fetch`           |
+| Unbound  | Pull                       | Git  | `git_pull`            |
+| Unbound  | Push                       | Git  | `git_push`            |
+| Unbound  | Create Tag…                | Git  | `git_create_tag`      |
+| Unbound  | Fetch All Remotes          | Git  | `git_fetch_all`       |
+| Unbound  | Pull (Rebase)              | Git  | `git_pull_rebase`     |
+| Unbound  | Force Push (With Lease)…   | Git  | `git_force_push`      |
+| Unbound  | Push All Tags              | Git  | `git_push_tags`       |
+| Unbound  | Stash All Changes          | Git  | `git_stash`           |
+| Unbound  | Pop Latest Stash           | Git  | `git_pop_stash`       |
+| Unbound  | Undo Last Commit           | Git  | `git_undo_commit`     |
+| Unbound  | Open Repository in Browser | Git  | `git_open_remote`     |
+| Unbound  | Copy Remote URL            | Git  | `git_copy_remote_url` |
 
 Every Git menu command can be given a shortcut in the Keyboard Shortcuts tab. See [Git](git.md).
 

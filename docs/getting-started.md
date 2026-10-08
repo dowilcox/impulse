@@ -36,10 +36,10 @@ There is nothing to configure before you start typing:
 
 A few things are off until you turn them on:
 
-| Setting                                                    | Where                                | What it does                                                                                                                |
-| ---------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| **Quick terminal** (`quick_terminal_enabled`)              | Settings ▸ General ▸ Quick terminal  | A terminal that drops down over any app on a global shortcut. See [Quick terminal](workspaces-and-tabs.md#quick-terminal).  |
-| **Use Impulse as $EDITOR** (`terminal_editor_integration`) | Settings ▸ Terminal ▸ Blocks & input | `git commit` and other tools open files in an Impulse tab. See [Command-line tool](cli.md).                                            |
+| Setting                                                    | Where                                | What it does                                                                                                               |
+| ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **Quick terminal** (`quick_terminal_enabled`)              | Settings ▸ General ▸ Quick terminal  | A terminal that drops down over any app on a global shortcut. See [Quick terminal](workspaces-and-tabs.md#quick-terminal). |
+| **Use Impulse as $EDITOR** (`terminal_editor_integration`) | Settings ▸ Terminal ▸ Blocks & input | `git commit` and other tools open files in an Impulse tab. See [Command-line tool](cli.md).                                |
 
 Settings open as a tab with ⌘, (**Impulse ▸ Settings…**). Every setting is described in [Settings and themes](settings-and-themes.md).
 
@@ -52,7 +52,7 @@ From top to bottom, left to right:
 ### Titlebar
 
 - **Sidebar button** shows and hides the sidebar (⌘B).
-- **Workspace name and branch.** The name of the active workspace (`trailhead`) is followed by its git branch (`feature/forecast-cache`) and, when your branch is ahead of or behind its upstream, counts such as `↑2 ↓1`. Click the name to switch workspaces (⌃⌘O) and the branch to switch branches (⌃⌘B); both open the [command palette](command-palette.md). When the branch has a GitHub pull request (found with the GitHub CLI, `gh`), a chip with its number and check status follows; click it to open the pull request in your browser.
+- **Workspace name and branch.** The name of the active workspace (`trailhead`) is followed by its git branch (`feature/forecast-cache`) and, when your branch is ahead of or behind its upstream, counts such as `↑2 ↓1`. Click the name to switch workspaces (⌃⌘O) and the branch to switch branches (⌃⌘B); both open the [command palette](command-palette.md).
 - **Tabs.** The active workspace's tabs, with a **+** button for a new terminal tab (⌘T). To list them in the sidebar instead, turn on **List tabs in the sidebar** (`sidebar_tabs`) in Settings ▸ General ▸ Sidebar. See [Tabs](workspaces-and-tabs.md#tabs).
 - **Agents button.** Appears while a coding agent runs in one of the window's terminals. It shows how many agents are working and how many are waiting for you; click it for the list. See [Agents](agents.md).
 - **Search or run a command.** Opens the [command palette](command-palette.md) (⇧⌘P).
@@ -177,14 +177,14 @@ Project actions and task setup scripts from `.impulse/project.toml` have a separ
 
 Impulse keeps its data in `~/Library/Application Support/impulse/`:
 
-| File or folder         | What it holds                                                                                                                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File or folder         | What it holds                                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `settings.json`        | Your settings. Edit it with **Open settings.json** in the palette; changes made outside Impulse are picked up automatically. See [Settings and themes](settings-and-themes.md). |
-| `session-state.json`   | Windows, workspaces, tabs and splits from the last session.                                                                                                                        |
-| `scrollback/`          | Each restored terminal's saved output.                                                                                                                                             |
-| `trusted-folders.json` | The folders you trust.                                                                                                                                                             |
-| `history.sqlite3`      | Command history from the input bar.                                                                                                                                                |
-| `themes/`              | Your own themes.                                                                                                                                                                   |
+| `session-state.json`   | Windows, workspaces, tabs and splits from the last session.                                                                                                                     |
+| `scrollback/`          | Each restored terminal's saved output.                                                                                                                                          |
+| `trusted-folders.json` | The folders you trust.                                                                                                                                                          |
+| `history.sqlite3`      | Command history from the input bar.                                                                                                                                             |
+| `themes/`              | Your own themes.                                                                                                                                                                |
 
 ## Next steps
 

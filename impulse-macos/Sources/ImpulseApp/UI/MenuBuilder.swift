@@ -139,6 +139,7 @@ enum MenuBuilder {
         openWorkspaceItem.target = MenuActions.shared
         menu.addItem(openWorkspaceItem)
         menu.addItem(commandItem("New Task…", id: "new_task", overrides: overrides))
+        menu.addItem(commandItem("New Task from Branch…", id: "new_task_from_branch", overrides: overrides))
 
         let composerItem = NSMenuItem(title: "Compose Message to Agent",
                                       action: #selector(MenuActions.menuAgentComposer(_:)),
@@ -481,11 +482,8 @@ enum MenuBuilder {
         menu.addItem(commandItem("Undo Last Commit", id: "git_undo_commit", overrides: overrides))
 
         menu.addItem(.separator())
-        menu.addItem(commandItem("Open or Create Pull Request", id: "pull_request", overrides: overrides))
-        menu.addItem(commandItem("Create Draft Pull Request", id: "create_draft_pr", overrides: overrides))
-        menu.addItem(commandItem("Check Out Pull Request as Task…", id: "checkout_pr", overrides: overrides))
         menu.addItem(commandItem("Open Repository in Browser", id: "git_open_remote", overrides: overrides))
-        menu.addItem(commandItem("Open Branch in Browser", id: "git_open_branch_remote", overrides: overrides))
+        menu.addItem(commandItem("Copy Remote URL", id: "git_copy_remote_url", overrides: overrides))
 
         let item = NSMenuItem(title: "Git", action: nil, keyEquivalent: "")
         item.submenu = menu

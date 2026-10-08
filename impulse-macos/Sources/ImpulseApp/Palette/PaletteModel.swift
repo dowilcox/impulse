@@ -25,10 +25,8 @@ protocol PaletteHost: AnyObject {
   var paletteHistoryContext: (cwd: String?, repo: String?) { get }
   /// Put a command from history at the prompt (not run).
   func paletteInsertCommand(_ command: String)
-  /// Open pull requests in the repository (nil: gh missing or failed).
-  func palettePullRequests(_ completion: @escaping ([PullRequestSummary]?) -> Void)
-  /// Check a pull request out into a new task worktree.
-  func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary)
+  /// Open an existing branch (`origin/x` for a remote one) as a new task.
+  func paletteOpenBranchAsTask(_ branch: String, isRemote: Bool)
   /// Open the Settings tab at one setting.
   func paletteOpenSetting(_ key: String)
   /// The focused editor's symbols (nil: no editor or no language server).
@@ -68,7 +66,7 @@ struct PaletteRow: Identifiable {
 @Observable
 final class PaletteModel {
   enum Mode: Equatable {
-    case files, commands, goToLine, text, branches, tabs, workspaces, history, pullRequests, settings, symbols
+    case files, commands, goToLine, text, branches, tabs, workspaces, history, taskBranches, settings, symbols
     case workspaceSymbols, actions, help
 
     var placeholder: String {
@@ -81,7 +79,7 @@ final class PaletteModel {
       case .tabs: return "Switch to tab…"
       case .workspaces: return "Switch to workspace or open a folder…"
       case .history: return "Search history…  @here @repo @failed @today"
-      case .pullRequests: return "Check out a pull request into a new task…"
+      case .taskBranches: return "Open a branch as a new task…"
       case .settings: return "Find a setting…"
       case .symbols: return "Go to symbol in this file…"
       case .workspaceSymbols: return "Go to symbol in the project…"
@@ -100,7 +98,7 @@ final class PaletteModel {
       case .tabs: return .layers
       case .workspaces: return .folderGit2
       case .history: return .history
-      case .pullRequests: return .gitPullRequest
+      case .taskBranches: return .gitBranchPlus
       case .settings: return .settings
       case .symbols: return .code
       case .workspaceSymbols: return .code
@@ -133,7 +131,7 @@ final class PaletteModel {
   @ObservationIgnored private var fileIndexRoot: String = ""
   @ObservationIgnored private var fileIndexDate: Date = .distantPast
   @ObservationIgnored private var branches: [String]?
-  @ObservationIgnored private var pullRequests: [PullRequestSummary]?
+  @ObservationIgnored private var taskBranches: [(name: String, isRemote: Bool)]?
   @ObservationIgnored private var symbols: [OutlineSymbol]?
   @ObservationIgnored private var generation = 0
   @ObservationIgnored private var textSearchWork: DispatchWorkItem?
@@ -145,7 +143,7 @@ final class PaletteModel {
   /// stale, forget cached branches, and set the initial query.
   func prepare(prefix: String) {
     branches = nil
-    pullRequests = nil
+    taskBranches = nil
     symbols = nil
     let root = host?.paletteRoot ?? ""
     if root != fileIndexRoot || Date().timeIntervalSince(fileIndexDate) > 20 {
@@ -191,7 +189,7 @@ final class PaletteModel {
     if query.hasPrefix("t:") { return (.tabs, String(query.dropFirst(2))) }
     if query.hasPrefix("w:") { return (.workspaces, String(query.dropFirst(2))) }
     if query.hasPrefix("h:") { return (.history, String(query.dropFirst(2))) }
-    if query.hasPrefix("pr:") { return (.pullRequests, String(query.dropFirst(3))) }
+    if query.hasPrefix("task:") { return (.taskBranches, String(query.dropFirst(5))) }
     if query.hasPrefix("set:") { return (.settings, String(query.dropFirst(4))) }
     if query.hasPrefix("@") { return (.symbols, String(query.dropFirst())) }
     if query.hasPrefix("#") { return (.workspaceSymbols, String(query.dropFirst())) }
@@ -216,7 +214,7 @@ final class PaletteModel {
     case .tabs: refreshTabs(trimmed)
     case .workspaces: refreshWorkspaces(trimmed)
     case .history: refreshHistory(trimmed)
-    case .pullRequests: refreshPullRequests(trimmed)
+    case .taskBranches: refreshTaskBranches(trimmed)
     case .settings: refreshSettings(trimmed)
     case .symbols: refreshSymbols(trimmed)
     case .workspaceSymbols: refreshWorkspaceSymbols(trimmed)
@@ -716,41 +714,48 @@ final class PaletteModel {
     emptyMessage = "No matching settings"
   }
 
-  // MARK: Pull requests
+  // MARK: Branches as tasks
 
-  private func refreshPullRequests(_ term: String) {
-    func build(_ list: [PullRequestSummary]) {
-      let ranked = FuzzyMatcher.rank(list, query: term) { "#\($0.number) \($0.title) \($0.headBranch)" }
+  /// Branches that no worktree has checked out (a branch can only be in
+  /// one), local ones first, then remote ones without a local branch.
+  private func refreshTaskBranches(_ term: String) {
+    func build(_ list: [(name: String, isRemote: Bool)]) {
+      let ranked = FuzzyMatcher.rank(list, query: term) { $0.name }
       rows = ranked.map { entry in
-        let pr = entry.item
+        let branch = entry.item
         return PaletteRow(
-          id: "pr:\(pr.number)", glyph: .lucide(.gitPullRequest), title: "#\(pr.number) \(pr.title)",
-          subtitle: [pr.headBranch, pr.author].filter { !$0.isEmpty }.joined(separator: " · "),
-          trailing: pr.isDraft ? "draft" : nil
+          id: "task-branch:" + branch.name, glyph: .lucide(branch.isRemote ? .globe : .gitBranch),
+          title: branch.name, highlights: entry.match.positions, trailing: branch.isRemote ? "remote" : nil
         ) { [weak self] in
-          self?.host?.paletteCheckOutPullRequest(pr)
+          self?.host?.paletteOpenBranchAsTask(branch.name, isRemote: branch.isRemote)
         }
       }
-      emptyMessage = list.isEmpty ? "No open pull requests" : "No matching pull requests"
+      emptyMessage = list.isEmpty ? "No branches to open: each one is checked out already" : "No matching branches"
     }
-    if let pullRequests {
-      build(pullRequests)
+    if let taskBranches {
+      build(taskBranches)
       return
     }
+    let root = fileIndexRoot
     isBusy = true
     rows = []
-    emptyMessage = "Asking GitHub…"
     let generation = self.generation
-    host?.palettePullRequests { [weak self] list in
-      guard let self else { return }
-      self.isBusy = false
-      guard let list else {
-        self.emptyMessage = "Couldn't list pull requests (is gh installed and signed in?)"
-        return
-      }
-      self.pullRequests = list
-      if self.mode == .pullRequests, self.generation == generation { build(list) } else if self.mode == .pullRequests {
-        self.refresh()
+    Self.worker.async { [weak self] in
+      let lists = GitOperations.branches(root: root)
+      let checkedOut = Set(GitOperations.worktrees(root: root).compactMap(\.branch))
+      let local = lists.local.filter { !checkedOut.contains($0) }.map { (name: $0, isRemote: false) }
+      let remote = lists.remote
+        .filter { !$0.hasSuffix("/HEAD") && !lists.local.contains(Self.localName(forRemote: $0)) }
+        .map { (name: $0, isRemote: true) }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.isBusy = false
+        self.taskBranches = local + remote
+        if self.mode == .taskBranches, self.generation == generation {
+          build(local + remote)
+        } else if self.mode == .taskBranches {
+          self.refresh()
+        }
       }
     }
   }
@@ -816,7 +821,7 @@ final class PaletteModel {
       ("t:", "Switch tab", .layers),
       ("w:", "Switch workspace", .folderGit2),
       ("h:", "Search command history", .history),
-      ("pr:", "Check out a pull request", .gitPullRequest),
+      ("task:", "Open a branch as a new task", .gitBranchPlus),
       ("set:", "Find a setting", .settings),
       ("@", "Go to a symbol in this file", .code),
       ("#", "Go to a symbol in the project", .code),

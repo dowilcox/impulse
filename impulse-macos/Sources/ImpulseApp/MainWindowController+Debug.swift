@@ -265,12 +265,6 @@ extension MainWindowController {
       } else if action.hasPrefix("select-blocks="), let terminal = tabManager.selectedTerminal?.activeTerminal {
         terminal.beginBlockSelection()
         for _ in 1..<max(1, Int(action.dropFirst(14)) ?? 1) { terminal.handleBlockSelectionKey(.up(extend: true)) }
-      } else if action.hasPrefix("pr-threads=") {
-        // A saved `gh api graphql` reviewThreads answer, applied to the open review.
-        let data = FileManager.default.contents(atPath: String(action.dropFirst(11))) ?? Data()
-        for case .diffReview(_, let review) in tabManager.allSurfaces {
-          review.applyImportedThreads(PullRequestThreads.parse(data), number: 7)
-        }
       } else if action.hasPrefix("composer=") {
         windowModel.composerDraft = String(action.dropFirst(9))
         toggleAgentComposer()

@@ -185,8 +185,6 @@ extension Notification.Name {
     static let impulseRunInTerminal = Notification.Name("impulseRunInTerminal")
     /// A Command Blocks menu item (userInfo["command"]) for the focused terminal.
     static let impulseBlockCommand = Notification.Name("impulseBlockCommand")
-    /// A pull request's checks finished (object: GitRepositoryState).
-    static let pullRequestChecksFinished = Notification.Name("impulsePullRequestChecksFinished")
     /// Requests project-wide find.
     static let impulseFindInProject = Notification.Name("impulseFindInProject")
     /// Requests toggling markdown preview in the active editor tab.

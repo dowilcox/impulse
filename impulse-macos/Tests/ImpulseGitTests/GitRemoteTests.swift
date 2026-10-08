@@ -28,6 +28,31 @@
       return (repo, origin, seed)
     }
 
+    @Test func aPushCarriesTheServersMessage() throws {
+      let (repo, origin, seed) = try cloneWithOrigin()
+      defer { [repo, origin, seed].forEach { $0.destroy() } }
+      // A server hook prints what hosts print: git relays it as "remote:" lines.
+      let hook = origin.root + "/.git/hooks/post-receive"
+      try FileManager.default.createDirectory(
+        atPath: (hook as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+      try """
+        #!/bin/sh
+        echo "To create a merge request for topic, visit:"
+        echo "  https://git.example.edu/web/repo/-/merge_requests/new?merge_request%5Bsource_branch%5D=topic"
+        """.write(toFile: hook, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+      try repo.git("switch", "-q", "-c", "topic")
+      try repo.commit(["b.txt": "2\n"], message: "topic")
+
+      var lines: [String] = []
+      _ = try GitOperations.push(setUpstream: true, remote: "origin", branch: "topic", root: repo.root) {
+        lines.append($0)
+      }.get()
+      let message = try #require(GitServerMessage.parse(lines))
+      #expect(message.linkCaption == "To create a merge request for topic, visit:")
+      #expect(message.link?.host == "git.example.edu")
+    }
+
     @Test func newWorktreeBranchDoesNotTrackARemoteBase() throws {
       let (repo, origin, seed) = try cloneWithOrigin()
       let path = repo.root + "-wt-task"
@@ -40,6 +65,23 @@
       ).get()
       #expect(try repo.git("rev-parse", "task") == repo.git("rev-parse", "origin/main"))
       #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
+    }
+
+    @Test func aRemoteBranchOpenedAsATaskTracksIt() throws {
+      let (repo, origin, seed) = try cloneWithOrigin()
+      let path = repo.root + "-wt-shared"
+      defer {
+        [repo, origin, seed].forEach { $0.destroy() }
+        try? FileManager.default.removeItem(atPath: path)
+      }
+      try seed.git("switch", "-q", "-c", "shared")
+      try seed.commit(["s.txt": "1\n"], message: "shared")
+      try seed.git("push", "-q", "origin", "shared")
+      try repo.git("fetch", "-q", "origin")
+      _ = try GitOperations.addWorktree(
+        path: path, branch: "shared", newBranch: true, base: "origin/shared", track: true, root: repo.root
+      ).get()
+      #expect(try repo.git("rev-parse", "--abbrev-ref", "shared@{upstream}") == "origin/shared")
     }
 
     @Test func lightweightAndAnnotatedTags() throws {

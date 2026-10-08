@@ -77,13 +77,12 @@ final class HistoryModel {
   @ObservationIgnored var loader: ((Request, Int, Int) -> Result<[LogEntry], GitOperationError>)?
 
   /// What the menus need: the checked-out branch, the remotes (to tell
-  /// `origin/x` from a local `feature/x`) and the web host's name.
+  /// `origin/x` from a local `feature/x`) and where tags go.
   struct Context: Equatable {
     var branch: String?
     var remotes: [String] = []
     /// Where tags are pushed to and deleted from (`GitOperations.defaultRemote`).
     var tagRemote: String?
-    var webHost: String?
   }
   private(set) var context = Context()
   @ObservationIgnored var contextLoader: (() -> Context)?
@@ -268,10 +267,10 @@ enum HistoryAction: Equatable {
   case mergeIntoCurrent
   /// Rebase the current branch onto this commit (or the branch on it).
   case rebaseCurrentOnto
-  case compareWithWorkingTree, selectForCompare, compareWithSelected, copySha, copySubject, openOnRemote
+  case compareWithWorkingTree, selectForCompare, compareWithSelected, copySha, copySubject
   // A branch or tag shown on the commit.
   case switchToBranch(String), mergeRef(String), rebaseOntoRef(String), deleteBranch(String)
-  case pushTag(String), deleteTag(String), deleteRemoteTag(String), openTagOnRemote(String), copyName(String)
+  case pushTag(String), deleteTag(String), deleteRemoteTag(String), copyName(String)
 }
 
 final class HistorySurface: NSView {
@@ -302,13 +301,9 @@ final class HistorySurface: NSView {
         root: root, scope: request.scope, path: request.path, query: request.query, skip: skip, limit: limit)
     }
     model.contextLoader = {
-      let remote = GitOperations.defaultRemote(root: root)
-      let web = remote
-        .flatMap { GitOperations.remoteURL($0, root: root) }
-        .flatMap { RemoteWebURL(remote: $0) }
-      return HistoryModel.Context(
+      HistoryModel.Context(
         branch: GitOperations.currentBranch(root: root), remotes: GitOperations.remotes(root: root),
-        tagRemote: remote, webHost: web?.displayName)
+        tagRemote: GitOperations.defaultRemote(root: root))
     }
     model.onSelect = { [weak self] entry in
       self?.review.show(scope: .commit(sha: entry.sha), focusPath: path)
@@ -495,8 +490,6 @@ final class HistorySurface: NSView {
     case .rebaseCurrentOnto:
       let (revision, label) = mergeTarget(entry)
       actions.rebase(onto: revision, label: label)
-    case .openOnRemote:
-      actions.openOnRemote(.commit(entry.sha))
     case .switchToBranch(let name):
       actions.switchBranch(name)
     case .mergeRef(let name):
@@ -511,8 +504,6 @@ final class HistorySurface: NSView {
       actions.deleteTag(name)
     case .deleteRemoteTag(let name):
       actions.deleteRemoteTag(name)
-    case .openTagOnRemote(let name):
-      actions.openOnRemote(.tag(name))
     case .copyName(let name):
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(name, forType: .string)
@@ -847,9 +838,6 @@ private struct HistoryRowView: View {
     Divider()
     Button("Copy SHA") { model.onAction?(.copySha, entry) }
     Button("Copy Subject") { model.onAction?(.copySubject, entry) }
-    if let host = model.context.webHost {
-      Button("Open Commit on \(host)") { model.onAction?(.openOnRemote, entry) }
-    }
   }
 
   static func menuTitle(_ ref: RefDecoration) -> String {
@@ -874,9 +862,6 @@ private struct RefMenuItems: View {
     case .tag(let name):
       if let remote = model.context.tagRemote {
         Button("Push to \(remote)") { model.onAction?(.pushTag(name), entry) }
-      }
-      if let host = model.context.webHost {
-        Button("Open on \(host)") { model.onAction?(.openTagOnRemote(name), entry) }
       }
       Button("Merge into \(current)") { model.onAction?(.mergeRef(name), entry) }
       Button("Copy Name") { model.onAction?(.copyName(name), entry) }

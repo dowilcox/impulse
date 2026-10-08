@@ -364,34 +364,38 @@ extension MainWindowController {
     }
   }
 
-  /// A pull request as a task: a worktree beside the repository with the
-  /// PR checked out by gh (which also sets up fork remotes), set up and
-  /// opened like New Task… (copies, then the setup script if the user says
-  /// so for this pull request).
-  func checkOutPullRequestAsTask(_ pullRequest: PullRequestSummary) {
+  /// "New Task from Branch…": an existing branch opened as a task, in a
+  /// folder beside the repository like New Task… (copies, the task list,
+  /// setup). A remote branch gets a local branch of the same name that
+  /// tracks it, so pushing goes back to it.
+  func openBranchAsTask(_ name: String, isRemote: Bool) {
     guard let repository = taskRepository(from: nil) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository first."))
       return
     }
     let root = Self.mainCheckoutRoot(of: repository.root)
-    toasts.show(Toast(kind: .info, message: "Checking out #\(pullRequest.number)…"))
+    let branch = isRemote ? PaletteModel.localName(forRemote: name) : name
+    let path = WorktreeTasks.worktreePath(repoRoot: root, branch: branch)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let taken = Set(GitOperations.branches(root: root).local)
       let copies = Self.taskCopies(root: root)
-      let branch = pullRequest.localBranch(taken: taken)
-      let path = WorktreeTasks.worktreePath(repoRoot: root, branch: branch)
       var failure: String?
       if FileManager.default.fileExists(atPath: path) {
         failure = "\(TabManager.abbreviateHomePath(path)) already exists."
       } else {
         try? FileManager.default.createDirectory(
           atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        // Start detached at HEAD; gh then makes the PR's branch.
-        if case .failure(let error) = GitOperations.addWorktree(
-          path: path, branch: "HEAD", newBranch: false, root: root)
-        {
-          failure = error.message
-        }
+        let result =
+          isRemote
+          ? GitOperations.addWorktree(path: path, branch: branch, newBranch: true, base: name, track: true, root: root)
+          : GitOperations.addWorktree(path: path, branch: name, newBranch: false, root: root)
+        if case .failure(let error) = result { failure = error.message }
+      }
+      if failure == nil {
+        Self.copyFiles(copies, from: root, to: path)
+        // The base it will be merged into: what New Task would start from.
+        let main = GitClient.snapshot(forPath: root)
+        let base = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead).base }
+        TaskRegistryStore.recordCreated(path: path, branch: branch, base: base ?? "", root: root)
       }
       DispatchQueue.main.async {
         guard let self else { return }
@@ -399,49 +403,40 @@ extension MainWindowController {
           self.toasts.show(Toast(kind: .warning, message: failure))
           return
         }
-        PullRequestMonitor.shared.checkout(number: pullRequest.number, branch: branch, in: path) {
-          [weak self] result in
-          guard let self else { return }
-          if case .failure(let message) = result {
-            // Leave nothing half-made behind.
-            _ = GitOperations.removeWorktree(path: path, force: true, root: root)
-            self.toasts.show(Toast(kind: .warning, message: "gh: \(message)", lifetime: 12))
-            return
-          }
-          Self.copyFiles(copies, from: root, to: path)
-          // The setup script comes from the pull request's own checkout.
-          self.confirmPullRequestSetup(pullRequest, root: path) { [weak self] setup in
-            self?.tabManager.openWorkspace(folder: path, initialCommand: setup)
-            self?.toasts.show(Toast(kind: .success, message: "Checked out #\(pullRequest.number) as \(branch)."))
-          }
+        let open: (String?) -> Void = { [weak self] setup in
+          self?.tabManager.openWorkspace(folder: path, initialCommand: setup)
+          self?.toasts.show(Toast(kind: .success, message: "Opened \(branch) as a task."))
+        }
+        if isRemote {
+          // Someone else's branch: its folder isn't trusted like yours, and
+          // its setup script is asked about every time.
+          self.confirmBranchSetup(name, root: path, completion: open)
+        } else {
+          if Trust.shared.isTrusted(root) { Trust.shared.trust(path) }
+          self.trustProjectConfig(root: path) { open($0?.setupScript) }
         }
       }
     }
   }
 
-  /// A pull request's setup script, once the user says to run it. Always
-  /// asked, whatever the repository's trusted project.toml: the pull
-  /// request can change what the script runs (package.json scripts, say)
-  /// without touching that file. The answer isn't remembered. Nil when
-  /// there's no script or the user declines.
-  private func confirmPullRequestSetup(
-    _ pullRequest: PullRequestSummary, root: String, completion: @escaping (String?) -> Void
-  ) {
+  /// A remote branch's setup script, once the user says to run it. Always
+  /// asked, whatever project settings were trusted: the branch can change
+  /// what the script runs (package.json scripts, say) without touching
+  /// them. The answer isn't remembered. Nil when there's no script or the
+  /// user declines.
+  private func confirmBranchSetup(_ branch: String, root: String, completion: @escaping (String?) -> Void) {
     guard let setup = projectConfig(root: root)?.setupScript else { return completion(nil) }
-    let author = pullRequest.author.isEmpty ? "" : " by \(pullRequest.author)"
-    let title = pullRequest.title.isEmpty ? "" : " (“\(pullRequest.title)”)"
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "Run the setup script of #\(pullRequest.number)?"
+    alert.messageText = "Run the setup script for \(branch)?"
     alert.informativeText = """
-      Pull request #\(pullRequest.number)\(author)\(title) sets up its task with this script \
-      from \(ProjectConfig.relativePath):
+      The task for \(branch) is set up with this script:
 
         \(setup)
 
-      It runs in the pull request's checkout, where the pull request decides what these commands \
-      do (a changed package.json script, for example). Run it only if you trust the pull \
-      request's changes. The task opens either way.
+      It runs in the branch's checkout, where the branch decides what these commands do (a \
+      changed package.json script, for example). Run it only if you trust the branch's changes. \
+      The task opens either way.
       """
     alert.addButton(withTitle: "Run Setup Script")
     alert.addButton(withTitle: "Don't Run")

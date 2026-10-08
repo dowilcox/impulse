@@ -54,17 +54,6 @@ final class ReviewCommentStore {
     save()
   }
 
-  /// Swap the comments imported from a pull request for a fresh import.
-  /// Returns the paths whose comments changed.
-  @discardableResult
-  func replaceImported(with imported: [ReviewComment]) -> Set<String> {
-    let previous = comments.filter { $0.remote != nil }
-    comments.removeAll { $0.remote != nil }
-    comments.append(contentsOf: imported)
-    save()
-    return Set(previous.map(\.path) + imported.map(\.path))
-  }
-
   private func load() {
     guard let data = try? Data(contentsOf: fileURL) else { return }
     let decoder = JSONDecoder()

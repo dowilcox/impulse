@@ -221,7 +221,6 @@ The comments menu in the header (the speech-bubble icon) has:
 | Item                                     | What it does                                                                                                 |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Send Comments to Claude Code · trailhead | One item per running agent. Types the comments on this view's files into that agent's prompt as one message. |
-| Import Review Threads from #12           | When the branch has a GitHub pull request. See below.                                                        |
 | Copy Comments as Prompt                  | Copies the same message to the clipboard, for an agent running somewhere else.                               |
 | Delete All Comments in Repository…       | Deletes every comment in the repository, including ones on files this view doesn't show, after asking.       |
 
@@ -250,20 +249,6 @@ Ten minutes is a big jump from one. Was that on purpose?
 Comments stay after you send them, so you can check each one against what the agent did. Delete them (one by one, or with **Delete All Comments in Repository…**) once they're addressed.
 
 Impulse never calls an AI model itself: sending comments only types text into an agent CLI you're already running. See [Agents](agents.md).
-
-## Pull request review threads
-
-If the current branch has a GitHub pull request (see [Pull requests](git.md#pull-requests-github-cli)), you can bring its open review threads into Review, to work through them yourself or send them to an agent along with your own comments.
-
-1. Open the comments menu in the header and choose **Import Review Threads from #12**.
-2. Impulse loads the pull request's unresolved threads through `gh` and adds each as a comment, with every reply folded into its text. Resolved threads are skipped.
-3. If any threads came in, Review switches to the branch scope ("vs origin/main"), where the threads' lines are.
-
-![Imported review threads in src/forecast.ts: a thread by @samortiz with View on GitHub and Dismiss buttons](images/review-pr-threads.png)
-
-An imported thread shows its author ("@samortiz") and has **View on GitHub** (opens the thread) and **Dismiss** (removes it from Impulse) instead of Edit and Delete. Threads GitHub marks as outdated, and threads on lines that aren't in the current diff, go to the top of their file with the outdated comments.
-
-Importing again replaces the earlier import, so threads resolved on GitHub since then disappear. Nothing is posted back to GitHub. If `gh` can't load the threads (signed out, offline), a toast says so.
 
 ## Opening files
 

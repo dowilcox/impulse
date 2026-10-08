@@ -383,20 +383,30 @@ struct GitActions {
     let branch = snapshot?.branch
     let followTags = SettingsStore.shared.settings.gitPushFollowTags
     var remote = "origin"
+    let output = OutputLines()
     repository.run(needsUpstream ? "Publishing…" : forceWithLease ? "Force pushing…" : "Pushing…") { root in
       remote = GitOperations.defaultRemote(root: root, branch: branch) ?? "origin"
       return GitOperations.push(
         setUpstream: needsUpstream, remote: remote, branch: branch,
         forceWithLease: forceWithLease, followTags: followTags, root: root
-      ) { repository.reportProgress($0) }
+      ) { line in
+        output.append(line)
+        repository.reportProgress(line)
+      }
     } completion: { result, _ in
       switch result {
       case .success:
+        let message =
+          needsUpstream ? "Published \(branch ?? "branch") to \(remote)" : forceWithLease ? "Force pushed" : "Pushed"
+        // What the server said back, such as a link for a merge request.
+        let reply = GitServerMessage.parse(output.lines)
         host?.toasts.show(
           Toast(
-            kind: .success,
-            message: needsUpstream
-              ? "Published \(branch ?? "branch") to \(remote)" : forceWithLease ? "Force pushed" : "Pushed"))
+            kind: .success, message: message,
+            detail: reply.map { "\(remote): \($0.linkCaption ?? $0.lines.joined(separator: " "))" },
+            actionTitle: reply?.link == nil ? nil : "Open Link",
+            action: reply?.link.map { url in { NSWorkspace.shared.open(url) } },
+            lifetime: reply == nil ? 6 : 20))
         then?()
       case .failure(let error):
         host?.gitPresentError(error, title: needsUpstream ? "Couldn't publish" : "Couldn't push")
@@ -567,34 +577,42 @@ struct GitActions {
     }
   }
 
-  // MARK: On the web
+  // MARK: Remote address
 
-  enum RemotePage {
-    case repository, commit(String), tag(String), branch(String)
-  }
-
-  /// Open a page of the remote's web host (GitHub, GitLab, …).
-  func openOnRemote(_ page: RemotePage) {
+  /// The default remote's URL, as configured (off the main thread); a
+  /// toast and nil when there's no remote.
+  private func withRemoteURL(_ body: @escaping (String) -> Void) {
     let root = repository.root
     DispatchQueue.global(qos: .userInitiated).async {
-      let web = GitOperations.defaultRemote(root: root)
-        .flatMap { GitOperations.remoteURL($0, root: root) }
-        .flatMap { RemoteWebURL(remote: $0) }
-      let url: URL? = web.flatMap { web in
-        switch page {
-        case .repository: return web.repository
-        case .commit(let sha): return web.commit(sha)
-        case .tag(let name): return web.tag(name)
-        case .branch(let name): return web.branch(name)
-        }
-      }
+      let url = GitOperations.defaultRemote(root: root).flatMap { GitOperations.remoteURL($0, root: root) }
       DispatchQueue.main.async {
         guard let url else {
-          host?.toasts.show(Toast(kind: .info, message: "This repository's remote isn't on a web host Impulse recognizes."))
+          host?.toasts.show(Toast(kind: .info, message: "This repository has no remote."))
           return
         }
-        NSWorkspace.shared.open(url)
+        body(url)
       }
+    }
+  }
+
+  /// Open the default remote's address as a web page (`git@host:o/r.git` →
+  /// `https://host/o/r`). Impulse knows nothing about the host itself.
+  func openRepositoryInBrowser() {
+    withRemoteURL { [host] remote in
+      guard let url = RemoteWebURL(remote: remote)?.repository else {
+        host?.toasts.show(Toast(kind: .info, message: "\(remote) isn't a web address."))
+        return
+      }
+      NSWorkspace.shared.open(url)
+    }
+  }
+
+  /// Copy the default remote's URL, as git has it.
+  func copyRemoteURL() {
+    withRemoteURL { [host] remote in
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(remote, forType: .string)
+      host?.toasts.show(Toast(kind: .success, message: "Copied \(remote)"))
     }
   }
 
@@ -967,5 +985,23 @@ enum CommitMessageHistory {
     var list = messages(root: root).filter { $0 != trimmed }
     list.insert(trimmed, at: 0)
     UserDefaults.standard.set(Array(list.prefix(25)), forKey: key(root))
+  }
+}
+
+/// Lines a git command printed, collected from its progress callback.
+private final class OutputLines: @unchecked Sendable {
+  private let lock = NSLock()
+  private var collected: [String] = []
+
+  func append(_ line: String) {
+    lock.lock()
+    collected.append(line)
+    lock.unlock()
+  }
+
+  var lines: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return collected
   }
 }

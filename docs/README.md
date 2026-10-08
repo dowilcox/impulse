@@ -22,7 +22,7 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 
 ## Git
 
-- [Git](git.md): the Changes panel, committing, branches, stashes, fetch, pull and push, merge conflicts, tags and pull requests.
+- [Git](git.md): the Changes panel, committing, branches, stashes, fetch, pull and push, merge conflicts and tags.
 - [Review](review.md): read and stage changes, comment on them, and send the comments to an agent.
 - [History](history.md): the commit graph, filters, comparing, and actions on commits, branches and tags.
 
@@ -39,9 +39,9 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 | To…                                                            | See                                                                                    |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Work on a second thing without stashing or switching branches  | [Tasks](tasks.md)                                                                      |
-| Run two agents side by side and see which one needs you        | [Tasks](tasks.md#example-two-agents-in-parallel), [Agents](agents.md)                          |
+| Run two agents side by side and see which one needs you        | [Tasks](tasks.md#example-two-agents-in-parallel), [Agents](agents.md)                  |
 | See exactly what an agent changed in its last turn, or undo it | [Agents › Checkpoints and turns](agents.md#checkpoints-and-turns), [Review](review.md) |
-| Commit part of a file                                          | [Review › Staging, unstaging and reverting](review.md#staging-unstaging-and-reverting)                      |
+| Commit part of a file                                          | [Review › Staging, unstaging and reverting](review.md#staging-unstaging-and-reverting) |
 | Send review comments back to an agent                          | [Review › Comments](review.md#comments)                                                |
 | Find when a line changed, and who changed it                   | [History](history.md), [Editor › Inline blame](editor.md#inline-blame)                 |
 | Run your project's dev server or tests from the palette        | [Project configuration › Project actions](project-config.md#project-actions)           |

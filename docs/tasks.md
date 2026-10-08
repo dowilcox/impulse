@@ -168,7 +168,7 @@ A task workspace behaves like any folder workspace. Everything you do in it appl
 - **Review the task's changes.** **Git ▸ Review Changes** (⇧⌘G) opens Review on the task's uncommitted changes. To see everything the task changed since it branched (commits and uncommitted work together), open the scope menu at the top left of Review and choose **Compare with origin/main** (Impulse offers the remote's default branch, or a local `main`/`master` when there's no remote default). After an agent's turn, ⇧⌘I reviews just that turn. See [Review](review.md).
 - **Commit.** **Git ▸ Show Changes** (⌃⇧G) opens the Changes panel for the task's repository, where you stage and commit. See [Git](git.md).
 - **Push.** **Git ▸ Push** publishes the task's branch the first time (it sets the upstream on your default remote) and pushes after that.
-- **Open a pull request.** **Git ▸ Open or Create Pull Request** opens the branch's pull request, or starts one in your browser through the GitHub CLI (`gh`). **Git ▸ Create Draft Pull Request** creates a draft titled and described from the branch's commits; if the branch isn't published yet, it offers to publish it first.
+- **Open a merge request.** Impulse uses git only, so pull requests and merge requests are opened on your host's website. Many hosts send a link for that back when you push, and the push's toast shows it with **Open Link** (see [Git](git.md#push-and-publish)).
 
 Because all tasks share one repository, a commit in a task is immediately visible from your main checkout and from other tasks: in History, in the branch switcher and to `git log`.
 
@@ -187,7 +187,7 @@ Because all tasks share one repository, a commit in a task is immediately visibl
 
 Two common ways:
 
-- **Through a pull request.** Push the task's branch and open a pull request (see [Work in a task](#work-in-a-task)). Merge it on your git host as usual, then archive the task.
+- **Through a merge request.** Push the task's branch and open a merge request (pull request) on your git host (see [Work in a task](#work-in-a-task)). Merge it there as usual, then archive the task.
 - **Locally.** Switch to the `trailhead` workspace (the main checkout, on `main`), choose **Git ▸ Manage Branches…**, open the **…** menu on the `fix-elevation` row and choose **Merge into main**. You can also merge from History (⇧⌘H): right-click the `fix-elevation` branch label (or its latest commit) and choose **Merge into main**. See [Git](git.md) and [History](history.md).
 
 You can't check out the task's branch in your main checkout while the task exists: git only lets a branch be checked out in one worktree at a time. Merge it instead, or archive the task first.
@@ -224,11 +224,17 @@ Archiving never deletes the branch. Once the work is merged, delete it from **Gi
 
 **Close Workspace** closes the task's workspace and leaves its folder and branch on disk. Reopen it later from **Switch Workspace…** (⌃⌘O), where it's listed as a recent folder, or with **File ▸ Open Folder as Workspace…**.
 
-## Check out a pull request as a task
+## Open a branch as a task
 
-**Git ▸ Check Out Pull Request as Task…** opens the command palette in pull request mode (`pr:`), listing the repository's open pull requests through the GitHub CLI (`gh`). Choose one, and Impulse creates a worktree beside the repository's main checkout, has `gh` check out the pull request into it (setting up a fork's remote if needed), copies the same untracked files as **New Task…** (see [Which files are copied](#which-files-are-copied)), and opens it as a workspace. If the pull request's own `.impulse/project.toml` has a setup script, Impulse shows it, with the pull request's number, author and title, and asks whether to run it in the first terminal. It asks every time, even when you've trusted the repository's project file, because a pull request can change what the script does (a `package.json` script that `npm ci` runs, for example) without touching that file, and your answer isn't remembered. Choose **Don't Run** to open the task without it. The local branch is the pull request's branch name, or `pr-<number>-<branch>` when that name is taken locally or is a default branch name such as `main`. See [Git](git.md).
+To work on, review or test a branch that already exists (a colleague's branch, say) without disturbing your own checkout, open it as a task:
 
-Unlike **New Task…**, checking out a pull request doesn't start an agent, and the folder doesn't inherit the repository's workspace trust: a pull request can come from someone else's fork, so you're asked about the folder like any other you open (unless a parent folder you trusted already covers it).
+1. Choose **File ▸ New Task from Branch…**, or type `task:` in the command palette.
+2. Pick a branch. The list has the local branches that no checkout has open (git lets a branch be checked out in only one place), then the remote branches with no local branch, marked "remote". Type to filter.
+3. Impulse creates the task's folder beside the repository's main checkout, as **New Task…** does (for `trail-search`, `~/Code/trailhead.worktrees/trail-search`), copies the same untracked files (see [Which files are copied](#which-files-are-copied)), and opens it as a workspace. A remote branch such as `origin/trail-search` gets a local branch `trail-search` that tracks it, so **Push** sends your commits back to it.
+
+For one of your own local branches, the task is set up like **New Task…**: it's trusted when the repository is, and the setup script runs once you've trusted the project's settings. A remote branch can come from someone else, so its folder isn't trusted on its own (you're asked about it like any other folder you open), and if there's a setup script Impulse shows it and asks whether to run it in the first terminal. It asks every time, even when you've trusted the project's settings, because the branch can change what the script does (a `package.json` script that `npm ci` runs, for example) without touching them. Choose **Don't Run** to open the task without it.
+
+Unlike **New Task…**, opening a branch as a task doesn't start an agent. If the branch is on someone's fork, add their remote first (`git remote add sam https://…`) and fetch, so its branches appear in the list.
 
 ## Gotchas
 
@@ -248,6 +254,6 @@ Unlike **New Task…**, checking out a pull request doesn't start an agent, and 
 - [Agents](agents.md): agent status, review last turn, the composer and hooks
 - [Project configuration](project-config.md): `.impulse/project.toml`, setup and archive scripts, `.worktreeinclude`
 - [Workspaces and tabs](workspaces-and-tabs.md): the sidebar, switching and closing workspaces
-- [Git](git.md): the Changes panel, pushing, Manage Branches and pull requests
+- [Git](git.md): the Changes panel, pushing, Manage Branches, and merge requests on your host
 - [Review](review.md): reviewing a task's changes against its base
 - [Getting started](getting-started.md): workspace trust

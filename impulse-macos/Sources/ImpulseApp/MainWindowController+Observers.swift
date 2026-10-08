@@ -317,22 +317,6 @@ extension MainWindowController {
       }
     )
     notificationObservers.append(
-      nc.addObserver(forName: .pullRequestChecksFinished, object: nil, queue: .main) {
-        [weak self] notification in
-        guard let self, let repository = notification.object as? GitRepositoryState,
-          self.windowModel.repository === repository, self.window?.isKeyWindow == true,
-          let info = notification.userInfo
-        else { return }
-        let url = (info["url"] as? String).flatMap(URL.init(string:))
-        self.toasts.show(
-          Toast(
-            kind: info["passed"] as? Bool == true ? .success : .warning,
-            message: "\(info["title"] as? String ?? "Checks finished") · \(info["body"] as? String ?? "")",
-            actionTitle: url == nil ? nil : "Open",
-            action: url.map { url in { NSWorkspace.shared.open(url) } }, lifetime: 12))
-      }
-    )
-    notificationObservers.append(
       nc.addObserver(forName: .impulseManageBranches, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.presentBranchManager()

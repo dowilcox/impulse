@@ -18,10 +18,6 @@ final class GitRepositoryState {
   private(set) var activityDetail: String?
   /// Incremented on every snapshot change (cheap change token for observers).
   private(set) var revision = 0
-  /// The current branch's pull request, when the GitHub CLI knows one (see
-  /// PullRequestMonitor).
-  var pullRequest: PullRequestInfo?
-
   /// When this repository last fetched (any fetch or pull from Impulse).
   @ObservationIgnored var lastFetch: Date?
   @ObservationIgnored private var refreshCallbacks: [(RepoSnapshot?) -> Void] = []

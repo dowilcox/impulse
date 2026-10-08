@@ -35,11 +35,11 @@ Shell integration is available for **bash**, **zsh** and **fish**, recognized by
 
 Impulse loads your usual startup files first and the integration last, so your configuration runs as usual:
 
-| Shell | How it starts                                                                                                                                                                                                                                                                                                               |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| zsh   | A login shell with `ZDOTDIR` pointing at a temporary folder. Its startup files source your `.zshenv`, `.zprofile` and `.zshrc` from your own `ZDOTDIR` (your home folder unless you set one), load the integration after your `.zshrc` and give `ZDOTDIR` back to you, so your `.zlogin` runs as usual. If your `.zshenv` sets `ZDOTDIR`, the rest of your files are read from there.                                                                                    |
-| bash  | `bash --rcfile` with a temporary file that sources `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` (or `~/.bashrc` when none of those exists), then the integration. This is what a login shell reads, so if your `~/.bash_profile` doesn't source `~/.bashrc`, `.bashrc` isn't read. |
-| fish  | `fish --login --init-command <integration>`.                                                                                                                                                                                                                                                                                |
+| Shell | How it starts                                                                                                                                                                                                                                                                                                                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| zsh   | A login shell with `ZDOTDIR` pointing at a temporary folder. Its startup files source your `.zshenv`, `.zprofile` and `.zshrc` from your own `ZDOTDIR` (your home folder unless you set one), load the integration after your `.zshrc` and give `ZDOTDIR` back to you, so your `.zlogin` runs as usual. If your `.zshenv` sets `ZDOTDIR`, the rest of your files are read from there. |
+| bash  | `bash --rcfile` with a temporary file that sources `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` (or `~/.bashrc` when none of those exists), then the integration. This is what a login shell reads, so if your `~/.bash_profile` doesn't source `~/.bashrc`, `.bashrc` isn't read.                                                           |
+| fish  | `fish --login --init-command <integration>`.                                                                                                                                                                                                                                                                                                                                          |
 
 The temporary files are removed when the terminal closes. zsh still keeps its history in your own `.zsh_history` (in your `ZDOTDIR`, or your home folder), not in the temporary folder.
 
@@ -75,7 +75,7 @@ Impulse terminals inherit Impulse's environment, with these changes:
 
 Impulse leaves out the dynamic-loader variables (`DYLD_*`, `LD_PRELOAD` and similar) and its own `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `FORCE_COLOR`. Your shell's startup files can still set any of these.
 
-At launch, Impulse also runs your shell once in the background (`-i -l -c`) to learn your `PATH`, so it can find `git`, `gh` and language servers even when started from the Dock. During that run `IMPULSE_RESOLVING_ENVIRONMENT=1` is set; check for it in your startup files to skip slow or interactive setup.
+At launch, Impulse also runs your shell once in the background (`-i -l -c`) to learn your `PATH`, so it can find `git` and language servers even when started from the Dock. During that run `IMPULSE_RESOLVING_ENVIRONMENT=1` is set; check for it in your startup files to skip slow or interactive setup.
 
 ### Checking that integration works
 
@@ -123,7 +123,6 @@ With the input bar on, the shell's prompt for the next command isn't drawn in th
 
 Hover over a block to show its toolbar at the top-right corner:
 
-
 | Button        | What it does                                                                                                                        |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Copy output   | Copies the block's output (without the command).                                                                                    |
@@ -133,22 +132,22 @@ Hover over a block to show its toolbar at the top-right corner:
 
 Right-click a block for the same actions and more. The menu's first group acts on the block you clicked:
 
-| Menu item                                                                   | What it does                                                                                                                   |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Copy Command**                                                            | Copies the command.                                                                                                            |
-| **Copy Output**                                                             | Copies the output.                                                                                                             |
-| **Copy Command & Output**                                                   | Copies both, separated by a blank line.                                                                                        |
-| **Rerun Command**                                                           | Runs the command again in the terminal's current folder (which may not be where it first ran). Unavailable while it's running. |
-| **Send to Agent**                                                           | Sends the block to an agent. Unavailable while it's running.                                                                   |
-| **Bookmark Block** / **Remove Bookmark**                                    | Toggles a [bookmark](#bookmarks).                                                                                              |
-| **Copy**, **Paste**                                                         | Copies the selected text; pastes the clipboard.                                                                                |
-| **Copy Last Command**                                                       | Copies the most recent command.                                                                                                |
-| **Copy Last Command Output**                                                | Copies the output of the most recent command that printed something.                                                           |
-| **Rerun Last Command**                                                      | Runs the most recent command again.                                                                                            |
-| **Command History…**                                                        | Opens [history search](#searching-history).                                                                                    |
-| **Previous Block**, **Next Block**, **Last Failed Block**                   | Jump between blocks (see below).                                                                                               |
-| **Select All**                                                              | Selects the text on screen.                                                                                                    |
-| **Clear**                                                                   | Sends ⌃L to the shell, which clears the screen.                                                                                |
+| Menu item                                                 | What it does                                                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Copy Command**                                          | Copies the command.                                                                                                            |
+| **Copy Output**                                           | Copies the output.                                                                                                             |
+| **Copy Command & Output**                                 | Copies both, separated by a blank line.                                                                                        |
+| **Rerun Command**                                         | Runs the command again in the terminal's current folder (which may not be where it first ran). Unavailable while it's running. |
+| **Send to Agent**                                         | Sends the block to an agent. Unavailable while it's running.                                                                   |
+| **Bookmark Block** / **Remove Bookmark**                  | Toggles a [bookmark](#bookmarks).                                                                                              |
+| **Copy**, **Paste**                                       | Copies the selected text; pastes the clipboard.                                                                                |
+| **Copy Last Command**                                     | Copies the most recent command.                                                                                                |
+| **Copy Last Command Output**                              | Copies the output of the most recent command that printed something.                                                           |
+| **Rerun Last Command**                                    | Runs the most recent command again.                                                                                            |
+| **Command History…**                                      | Opens [history search](#searching-history).                                                                                    |
+| **Previous Block**, **Next Block**, **Last Failed Block** | Jump between blocks (see below).                                                                                               |
+| **Select All**                                            | Selects the text on screen.                                                                                                    |
+| **Clear**                                                 | Sends ⌃L to the shell, which clears the screen.                                                                                |
 
 Right-clicking outside any block shows the same menu without the first group.
 

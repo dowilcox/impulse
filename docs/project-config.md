@@ -188,7 +188,7 @@ The last row of the list is **Add project actions…** when the file has no acti
 - If you chose an agent under **Start**, the agent runs after it, as one command joined with `&&` (for example `npm ci && claude`). If setup fails, the agent doesn't start; fix the problem in that terminal and start the agent yourself.
 - Impulse reads the script from the new task's own copy of `.impulse/project.toml`, which is whatever is committed on the base branch. Commit changes to the file before relying on them in new tasks, or put the script in [`.git/impulse/project.toml`](#settings-for-this-mac-only), which every new task sees as soon as you save it.
 - If you haven't trusted the file, Impulse asks first. If you cancel, the script doesn't run, and the task's terminal still opens (and starts the agent, if you chose one).
-- **Check Out Pull Request as Task…** reads it from the pull request's own copy of the file and always asks before running it, showing the script and the pull request's number and author, even if you trusted the file: a pull request can change what the script runs (a `package.json` script, for example) without changing the file. The answer isn't remembered, and **Don't Run** opens the task without it.
+- **New Task from Branch…** on a remote branch reads it from the branch's own copy of the file and always asks before running it, even if you trusted the file: the branch can change what the script runs (a `package.json` script, for example) without changing the file. The answer isn't remembered, and **Don't Run** opens the task without it.
 
 ## Archive script
 
@@ -245,7 +245,7 @@ The rules:
 copy = [".env", "config/*.local.json"]
 ```
 
-Use whichever file suits your project: `.worktreeinclude` keeps the list in a file of its own, `copy` keeps everything about tasks in `project.toml`. **New Task…** and **Check Out Pull Request as Task…** both use the two together.
+Use whichever file suits your project: `.worktreeinclude` keeps the list in a file of its own, `copy` keeps everything about tasks in `project.toml`. **New Task…** and **New Task from Branch…** both use the two together.
 
 ## Related
 

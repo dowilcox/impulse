@@ -38,7 +38,7 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 - Workspaces in the sidebar: one per folder, each with its own tabs, with worktrees of the same repository grouped together, plus a Scratch workspace for terminals that don't belong to a project
 - Tabs in the titlebar (or listed in the sidebar) and split panes of any surface; a file tree with git status
 - Session restore of every window's workspaces, layouts and terminal output
-- Fuzzy command palette with modes: files, `>` commands, `:` line, `%` text, `@`/`#` symbols, `t:` tabs, `w:` workspaces, `b:` branches, `h:` history, `pr:` pull requests, `a:` project actions, `set:` settings (`?` lists them all)
+- Fuzzy command palette with modes: files, `>` commands, `:` line, `%` text, `@`/`#` symbols, `t:` tabs, `w:` workspaces, `b:` branches, `h:` history, `task:` branches as tasks, `a:` project actions, `set:` settings (`?` lists them all)
 - Project actions and worktree setup from `.impulse/project.toml`; the `impulse` command-line tool, which also lets Impulse be your `$EDITOR`
 - An optional quick terminal on a global shortcut; ⇧⌘T reopens a closed tab (or ⌘Z right after closing it)
 - 19 built-in themes plus user themes; Settings and Keyboard Shortcuts as searchable tabs
@@ -61,12 +61,12 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 **Git**
 
 - Changes panel with a commit composer and keyboard control; commit and push in one step if you like
-- Review with scopes (unstaged, staged, all uncommitted, against a branch, a commit, a range, a stash, the last agent turn, or everything since your last review), hunk and line staging, comments, and GitHub pull request threads
+- Review with scopes (unstaged, staged, all uncommitted, against a branch, a commit, a range, a stash, the last agent turn, or everything since your last review), hunk and line staging, and comments you can send to the agent that wrote the code
 - Live change marks, inline blame, and an editable side-by-side diff view in the editor
 - History (⇧⌘H) with a commit graph across branches, compare, author/path/date filters and fork-point dimming
-- Branch switching and management, undoable stashes, merge-conflict resolution, and GitHub pull requests through `gh`
+- Branch switching and management, undoable stashes and merge-conflict resolution, using git alone so any host works
 - Fetch, pull (fast-forward, rebase or merge), push and force push with lease from the Git menu or palette, with optional background fetch
-- Tags from History or at HEAD (lightweight or annotated, optionally pushed right away); merge, rebase and "open on GitHub" (or GitLab, Bitbucket, Gitea, Azure DevOps) from History
+- Tags from History or at HEAD (lightweight or annotated, optionally pushed right away); merge and rebase from History
 
 <table>
   <tr>

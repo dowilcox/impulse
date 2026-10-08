@@ -83,19 +83,6 @@ PROBLEMS = [
      "message": "This may be converted to an arrow function.", "source": "ts", "code": "80002"},
 ]
 
-PR_THREADS = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [{
-    "id": "PRRT_1", "path": "src/forecast.ts", "isResolved": False, "isOutdated": False,
-    "diffSide": "RIGHT", "line": 16, "startLine": None,
-    "comments": {"nodes": [
-        {"author": {"login": "samortiz"}, "createdAt": "2026-10-06T16:20:00Z",
-         "url": "https://github.com/trailhead/trailhead/pull/12#discussion_r1",
-         "body": "Could the TTL come from config instead? Ops wants to tune it per environment."},
-        {"author": {"login": "mayachen"}, "createdAt": "2026-10-06T17:02:00Z",
-         "url": "https://github.com/trailhead/trailhead/pull/12#discussion_r2",
-         "body": "Good call, reading FORECAST_TTL_MS now (defaults to ten minutes)."},
-    ]},
-}]}}}}}
-
 SHOTS = [
     # ------------------------------------------------------------ getting started
     {"name": "getting-started-window-tour",
@@ -241,10 +228,6 @@ SHOTS = [
     {"name": "review-comment-composer", "session": ONE,
      "actions": ["no-sidebar", "review", *wait(2), "review-scope=uncommitted", *wait(2),
                  "review-reveal=src/lib/cache.ts", *wait(), "review-composer"],
-     "delay": 8, "crop": (0, TITLE_H, W, 560)},
-    {"name": "review-pr-threads", "session": ONE, "files": {"threads.json": PR_THREADS},
-     "actions": ["no-sidebar", "review", *wait(2), "review-scope=branch:origin/main", *wait(2),
-                 "pr-threads={files}/threads.json", *wait(), "review-reveal=src/forecast.ts"],
      "delay": 8, "crop": (0, TITLE_H, W, 560)},
 
     # ------------------------------------------------------------ history

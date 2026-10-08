@@ -146,7 +146,6 @@ Right-click a commit for:
 | Select for Compare / Clear Compare Selection | See [Comparing](#comparing).                                                                                                                                                                                                          |
 | Copy SHA                                     | Copy the full commit ID.                                                                                                                                                                                                              |
 | Copy Subject                                 | Copy the first line of the message.                                                                                                                                                                                                   |
-| Open Commit on GitHub                        | Open the commit on the remote's website. The item names the host: GitHub, GitLab, Bitbucket, Gitea, Codeberg, Azure DevOps, or the server's name for other hosts. Shown when the remote has a web address.                            |
 
 ### Branch and tag actions
 
@@ -157,7 +156,7 @@ Right-click a ref chip on a commit for its actions (the same ones are in the com
 | Local branch           | **Switch to units-refactor**, **Merge into main**, **Rebase main onto units-refactor**, **Copy Name**, **Delete Branch…**                     |
 | The checked-out branch | **Copy Name**                                                                                                                                 |
 | Remote branch          | **Check Out trail-search** (creates a local branch tracking it), **Merge into main**, **Rebase main onto origin/trail-search**, **Copy Name** |
-| Tag                    | **Push to origin**, **Open on GitHub**, **Merge into main**, **Copy Name**, **Delete Tag**, **Delete from origin…**                           |
+| Tag                    | **Push to origin**, **Merge into main**, **Copy Name**, **Delete Tag**, **Delete from origin…**                                               |
 
 **Push to origin** and **Delete from origin…** appear when the repository has a remote, and name the remote they use: the current branch's remote, else `origin`, else the only one. **Open on GitHub** appears when the remote has a web address. Deleting a branch or a local tag can be undone from the toast; deleting a tag from the remote asks first and can't be undone there. See [Git](git.md#pushing-and-deleting-tags).
 

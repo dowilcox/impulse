@@ -822,14 +822,16 @@ public enum GitOperations {
 
   /// Add a worktree at `path`. With `newBranch`, create it from `base`
   /// (default HEAD); otherwise check out the existing `branch`. A new branch
-  /// never tracks its base: from `origin/main` it would take that as its
-  /// upstream, and its first push would go to (or be refused for) main.
+  /// doesn't track its base unless `track` says so: from `origin/main` it
+  /// would take that as its upstream, and its first push would go to (or be
+  /// refused for) main. `track` is for a local copy of a remote branch
+  /// (`feature-x` from `origin/feature-x`), which should push back to it.
   public static func addWorktree(
-    path: String, branch: String, newBranch: Bool, base: String? = nil, root: String
+    path: String, branch: String, newBranch: Bool, base: String? = nil, track: Bool = false, root: String
   ) -> GitResult {
     var args = ["worktree", "add"]
     if newBranch {
-      args += ["--no-track", "-b", branch, "--end-of-options", path]
+      args += [track ? "--track" : "--no-track", "-b", branch, "--end-of-options", path]
       if let base { args.append(base) }
     } else {
       args += ["--end-of-options", path, branch]

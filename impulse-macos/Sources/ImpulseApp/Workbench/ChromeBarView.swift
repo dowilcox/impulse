@@ -125,9 +125,6 @@ private struct WorkspaceBreadcrumb: View {
         }
         .buttonStyle(ChromePressStyle())
         .help("Switch branch (⌃⌘B)")
-        if let pr = model.repository?.pullRequest {
-          PullRequestChip(pr: pr)
-        }
       }
     }
     .help(model.fileTreeRootPath)
@@ -146,62 +143,6 @@ private struct WorkspaceBreadcrumb: View {
     guard !root.isEmpty else { return "" }
     if root == NSHomeDirectory() { return "~" }
     return (root as NSString).lastPathComponent
-  }
-}
-
-/// The branch's pull request: number, state and checks; opens it on GitHub.
-private struct PullRequestChip: View {
-  @Environment(\.chrome) private var chrome
-  let pr: PullRequestInfo
-
-  var body: some View {
-    Button {
-      if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) }
-    } label: {
-      HStack(spacing: 4) {
-        Icon(.gitPullRequest, size: 11).foregroundStyle(stateColor)
-        Text(verbatim: "#\(pr.number)").font(ChromeFont.mono(10.5)).foregroundStyle(chrome.textSecondary)
-        switch pr.checks {
-        case .passed: Icon(.check, size: 10).foregroundStyle(chrome.success)
-        case .failed: Icon(.x, size: 10).foregroundStyle(chrome.danger)
-        case .pending: ProgressRing(progress: nil, color: chrome.warning, size: 9, lineWidth: 1.3)
-        case .none: EmptyView()
-        }
-      }
-      .padding(.horizontal, 5)
-      .frame(height: 20)
-      .background(RoundedRectangle(cornerRadius: 4).fill(stateColor.opacity(0.12)))
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(ChromePressStyle())
-    .help(help)
-    .accessibilityLabel(help)
-  }
-
-  private var stateColor: Color {
-    switch pr.state {
-    case .merged: return chrome.gitRenamed
-    case .closed: return chrome.danger
-    case .open: return pr.isDraft ? chrome.textTertiary : chrome.success
-    }
-  }
-
-  private var help: String {
-    var parts = ["#\(pr.number) \(pr.title)"]
-    parts.append(pr.isDraft ? "Draft" : pr.state.rawValue.capitalized)
-    switch pr.reviewDecision {
-    case "APPROVED": parts.append("Approved")
-    case "CHANGES_REQUESTED": parts.append("Changes requested")
-    case "REVIEW_REQUIRED": parts.append("Review required")
-    default: break
-    }
-    switch pr.checks {
-    case .passed: parts.append("Checks passed")
-    case .failed: parts.append("Checks failed")
-    case .pending: parts.append("Checks running")
-    case .none: break
-    }
-    return parts.joined(separator: " · ") + "\nClick to open on GitHub"
   }
 }
 

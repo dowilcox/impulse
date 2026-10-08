@@ -50,26 +50,12 @@ public enum RefDecoration: Equatable, Sendable {
   }
 }
 
-/// Web pages for a remote: commits, tags and branches on GitHub, GitLab,
-/// Bitbucket, Gitea/Codeberg and Azure DevOps, from the remote's URL.
+/// A remote's repository page, from its URL alone: `git@host:owner/repo.git`
+/// becomes `https://host/owner/repo`. Impulse uses only git, so it knows
+/// nothing about the host behind the address (no per-host page layouts).
 public struct RemoteWebURL: Equatable, Sendable {
-  public enum Host: Equatable, Sendable { case github, gitlab, bitbucket, gitea, azure, other }
-
   /// `https://host/owner/repo`, no trailing slash or `.git`.
   public let base: String
-  public let host: Host
-
-  /// The service's name for menus ("GitHub"), or the host name.
-  public var displayName: String {
-    switch host {
-    case .github: return "GitHub"
-    case .gitlab: return "GitLab"
-    case .bitbucket: return "Bitbucket"
-    case .gitea: return URL(string: base)?.host == "codeberg.org" ? "Codeberg" : "Gitea"
-    case .azure: return "Azure DevOps"
-    case .other: return URL(string: base)?.host ?? "Remote"
-    }
-  }
 
   /// Parse `git@host:owner/repo.git`, `ssh://git@host[:port]/owner/repo`,
   /// `https://user@host/owner/repo.git` and the like. Nil for local paths.
@@ -106,71 +92,10 @@ public struct RemoteWebURL: Equatable, Sendable {
     if path.hasSuffix(".git") { path = String(path.dropLast(4)) }
     // A Windows drive ("C:\\repo") isn't a host.
     guard !hostName.isEmpty, !path.isEmpty, !path.contains("\\"), hostName.count > 1 else { return nil }
-
-    if hostName == "ssh.dev.azure.com" || hostName.hasSuffix("vs-ssh.visualstudio.com") {
-      // v3/org/project/repo → dev.azure.com/org/project/_git/repo
-      var parts = path.split(separator: "/").map(String.init)
-      if parts.first == "v3" { parts.removeFirst() }
-      guard parts.count == 3 else { return nil }
-      self.base = "https://dev.azure.com/\(parts[0])/\(parts[1])/_git/\(parts[2])"
-      self.host = .azure
-      return
-    }
     self.base = "\(webScheme)://\(hostName)/\(path)"
-    if hostName == "github.com" || hostName.hasPrefix("github.") {
-      host = .github
-    } else if hostName == "gitlab.com" || hostName.hasPrefix("gitlab.") {
-      host = .gitlab
-    } else if hostName == "bitbucket.org" {
-      host = .bitbucket
-    } else if hostName == "codeberg.org" || hostName.hasPrefix("gitea.") {
-      host = .gitea
-    } else if hostName == "dev.azure.com" {
-      host = .azure
-    } else {
-      host = .other
-    }
   }
 
   public var repository: URL? { URL(string: base) }
-
-  public func commit(_ sha: String) -> URL? {
-    switch host {
-    case .gitlab: return URL(string: "\(base)/-/commit/\(sha)")
-    case .bitbucket: return URL(string: "\(base)/commits/\(sha)")
-    case .azure: return URL(string: "\(base)/commit/\(sha)")
-    case .github, .gitea, .other: return URL(string: "\(base)/commit/\(sha)")
-    }
-  }
-
-  public func tag(_ name: String) -> URL? {
-    let name = Self.escape(name)
-    switch host {
-    case .github: return URL(string: "\(base)/releases/tag/\(name)")
-    case .gitlab: return URL(string: "\(base)/-/tags/\(name)")
-    case .bitbucket: return URL(string: "\(base)/src/\(name)")
-    case .gitea: return URL(string: "\(base)/src/tag/\(name)")
-    case .azure: return URL(string: "\(base)?version=GT\(name)")
-    case .other: return URL(string: "\(base)/tree/\(name)")
-    }
-  }
-
-  public func branch(_ name: String) -> URL? {
-    let name = Self.escape(name)
-    switch host {
-    case .github, .other: return URL(string: "\(base)/tree/\(name)")
-    case .gitlab: return URL(string: "\(base)/-/tree/\(name)")
-    case .bitbucket: return URL(string: "\(base)/branch/\(name)")
-    case .gitea: return URL(string: "\(base)/src/branch/\(name)")
-    case .azure: return URL(string: "\(base)?version=GB\(name)")
-    }
-  }
-
-  private static func escape(_ name: String) -> String {
-    var allowed = CharacterSet.urlPathAllowed
-    allowed.remove(charactersIn: "?#")
-    return name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name
-  }
 }
 
 /// A name for the next tag: the newest version-like tag with its last

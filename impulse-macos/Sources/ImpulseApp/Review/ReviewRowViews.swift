@@ -282,21 +282,11 @@ struct ReviewCommentRow: View {
   @State private var draft = ""
   @FocusState private var focused: Bool
 
-  /// The text without the thread author's name (it's in the header).
-  static func displayText(_ comment: ReviewComment) -> String {
-    guard let author = comment.remote?.author else { return comment.text }
-    let lead = "@\(author): "
-    return comment.text.hasPrefix(lead) ? String(comment.text.dropFirst(lead.count)) : comment.text
-  }
-
   var body: some View {
     let range =
       comment.endLine > comment.line ? "lines \(comment.line)–\(comment.endLine)" : "line \(comment.line)"
     VStack(alignment: .leading, spacing: 3) {
       HStack(spacing: 8) {
-        if let author = comment.remote?.author {
-          Text("@\(author)").font(ChromeFont.ui(11, weight: .semibold)).foregroundStyle(chrome.text)
-        }
         Text((comment.side == .old ? "removed " : "") + range)
           .font(ChromeFont.ui(11))
           .foregroundStyle(chrome.textTertiary)
@@ -305,12 +295,8 @@ struct ReviewCommentRow: View {
           ReviewActionButton(title: "Cancel", help: "Cancel (Esc)") { handler?.reviewEditComment(nil, path: comment.path) }
           ReviewActionButton(title: "Save", kind: .primary, help: "Save (⌘↩)") { save() }
         } else {
-          if let url = comment.remote?.url {
-            ReviewActionButton(title: "View on GitHub", help: url) { handler?.reviewOpenURL(url) }
-          } else {
-            ReviewActionButton(title: "Edit", help: "Edit comment") { handler?.reviewEditComment(comment.id, path: comment.path) }
-          }
-          ReviewActionButton(title: comment.remote == nil ? "Delete" : "Dismiss", kind: .danger, help: "Remove this comment") {
+          ReviewActionButton(title: "Edit", help: "Edit comment") { handler?.reviewEditComment(comment.id, path: comment.path) }
+          ReviewActionButton(title: "Delete", kind: .danger, help: "Remove this comment") {
             handler?.reviewDeleteComment(id: comment.id)
           }
         }
@@ -338,7 +324,7 @@ struct ReviewCommentRow: View {
             return .ignored
           }
       } else {
-        Text(Self.displayText(comment))
+        Text(comment.text)
           .font(ChromeFont.ui(12))
           .foregroundStyle(chrome.text)
           .textSelection(.enabled)

@@ -1,6 +1,6 @@
 # Git
 
-Impulse has git built into the window: a Changes panel for staging and committing, branch switching and management, stashes, fetch/pull/push, merge-conflict resolution, tags and GitHub pull requests. This page covers all of it except reviewing diffs, which has its own page ([Review](review.md)), and browsing commits ([History](history.md)).
+Impulse has git built into the window: a Changes panel for staging and committing, branch switching and management, stashes, fetch/pull/push, merge-conflict resolution and tags. Impulse uses git alone, so all of it works the same whichever host your repository is on (GitHub, GitLab, your own server); it never talks to a host's website or tools. This page covers all of it except reviewing diffs, which has its own page ([Review](review.md)), and browsing commits ([History](history.md)).
 
 ## How Impulse works with git
 
@@ -31,7 +31,7 @@ If the active folder isn't inside a repository, the Changes panel says "Not a gi
 
 ![The titlebar with the trailhead workspace, the feature/forecast-cache branch two commits ahead, and the changed-files pill on the right](images/git-titlebar.png)
 
-- **Titlebar breadcrumb.** After the workspace name comes the branch, with `↑2` / `↓1` when the branch is ahead of or behind its upstream. Click the branch to switch branches. When the GitHub CLI knows a pull request for the branch, a chip with its number follows (see [Pull requests](#pull-requests-github-cli)).
+- **Titlebar breadcrumb.** After the workspace name comes the branch, with `↑2` / `↓1` when the branch is ahead of or behind its upstream. Click the branch to switch branches.
 - **Changed-files pill.** At the right of the titlebar, the number of changed files and the lines added and removed. Click it to open [Review](review.md).
 - **Status bar.** The branch (click to switch) and the same change count (click to review). See [Workspaces and tabs](workspaces-and-tabs.md) for the rest of the status bar.
 - **Terminal context bar.** Below a terminal, chips for the branch and the changes, with the same actions. See [Terminal](terminal.md).
@@ -280,6 +280,8 @@ If the branch has no upstream yet, Push publishes it: it pushes to the branch's 
 
 With **Push annotated tags with commits** on (`git_push_follow_tags`), Push uses `git push --follow-tags`, so annotated tags on the commits you push go along with them.
 
+When the server sends a message back during a push (git prints these as `remote:` lines), the toast shows it under "Pushed" or "Published …", with **Open Link** when it has a web address in it. Many hosts use this to offer a link for opening a merge request or pull request for the branch, for example "origin: To create a merge request for fix-elevation, visit:". Click **Open Link** to open it in your browser. Impulse shows what the server said without knowing which host it is.
+
 ### Force push with lease
 
 After rewriting commits you've already pushed (a rebase, an amend), a normal push is refused. **Force Push (With Lease)…** replaces the upstream branch with yours.
@@ -302,9 +304,11 @@ Background fetches:
 - Skip a repository while another git operation is running in it.
 - Count any fetch or pull you do yourself, so the interval starts over.
 
-### Open the repository on the web
+### The remote's address
 
-**Open Repository in Browser** and **Open Branch in Browser** open the remote's web page for the repository or the current branch. Impulse recognizes GitHub (including GitHub Enterprise hosts named `github.*`), GitLab (`gitlab.*`), Bitbucket, Gitea (`gitea.*`) and Codeberg, and Azure DevOps, and builds the right URL for each from the remote's URL. For other hosts it opens `https://<host>/<path>`. If the remote is a local path, a toast says "This repository's remote isn't on a web host Impulse recognizes."
+**Open Repository in Browser** turns the current branch's remote (or `origin`, or the only remote there is) into a web address and opens it: `git@git.example.edu:web/trailhead.git` becomes `https://git.example.edu/web/trailhead`. Impulse doesn't know which host that is, so it opens the repository's front page, not a particular branch or commit. If the remote is a local path, a toast says it isn't a web address; if there's no remote, a toast says so.
+
+**Copy Remote URL** copies the remote's address as git has it, for example to clone the repository somewhere else.
 
 ## Merging and rebasing
 
@@ -416,72 +420,41 @@ An invalid name (with spaces, `..`, `~`, `:` and so on) is refused with "“v 1�
 
 - **Git ▸ Push All Tags** pushes every local tag to the remote (`git push --tags`).
 - With **Push annotated tags with commits** on, annotated tags also go along with a normal push.
-- In [History](history.md#branch-and-tag-actions), right-click a tag's chip for **Push to origin**, **Open on GitHub** (or your host), **Merge into main**, **Copy Name**, **Delete Tag** and **Delete from origin…**.
+- In [History](history.md#branch-and-tag-actions), right-click a tag's chip for **Push to origin**, **Merge into main**, **Copy Name**, **Delete Tag** and **Delete from origin…**.
   - **Delete Tag** deletes the local tag, with **Undo** for about 15 seconds (an annotated tag comes back with its message).
   - **Delete from origin…** asks first, and removes the tag from the remote only; your local tag stays. This can't be undone on the remote.
 
-## Pull requests (GitHub CLI)
+## Pull requests and merge requests
 
-Impulse works with GitHub pull requests through the GitHub CLI. You need:
+Impulse uses git only, so pull requests (merge requests on GitLab) are opened, reviewed and merged on your host's website. Two things connect the two:
 
-- `gh` installed and on your `PATH` (`brew install gh`).
-- To be signed in (`gh auth login`).
-- A GitHub remote.
-
-Without these, the pull-request features quietly stay out of the way, and the commands say what's missing ("Install the GitHub CLI (gh) to work with pull requests.").
-
-### The pull request chip
-
-When the current branch has a pull request, a chip after the branch in the titlebar shows its number. Its color shows the state (open, draft, merged or closed), and an icon shows the checks: a check mark when they passed, a cross when they failed, a spinner while they run. Hover for the title, state, review decision ("Approved", "Changes requested", "Review required") and checks. Click to open the pull request on GitHub.
-
-Impulse asks `gh` about the branch's pull request when you switch branches and at most once a minute otherwise. While checks are running it asks again with a growing delay, from 30 seconds up to 5 minutes. When the checks finish, you get a toast ("Checks passed · #12 Cache forecast responses", with **Open**), or a desktop notification if Impulse isn't the active app.
-
-### Creating a pull request
-
-- **Git ▸ Open or Create Pull Request** opens the branch's pull request if there is one. Otherwise it runs `gh pr create --web`, which opens GitHub's new-pull-request page in your browser with the branch filled in. The branch has to be pushed first.
-- **Git ▸ Create Draft Pull Request** creates a draft without leaving Impulse (`gh pr create --draft --fill`): its title and description come from the branch's commits. If the branch isn't published yet, a toast offers **Publish**, which pushes the branch and then creates the draft. The toast that follows has **Open**. If the branch already has an open pull request, a toast says so.
-
-### Checking out a pull request as a task
-
-To review or test someone's pull request without disturbing your own work, check it out into its own worktree:
-
-1. Choose **Git ▸ Check Out Pull Request as Task…**, or type `pr:` in the command palette.
-2. Pick a pull request. The list shows the repository's open pull requests ("#14 Add trail search", with "trail-search · samortiz" underneath); type to filter.
-3. Impulse creates a worktree beside the repository's main checkout (for `trail-search`, `~/Code/trailhead.worktrees/trail-search`; slashes in branch names become dashes in the folder name), runs `gh pr checkout` in it, copies the same untracked files as **New Task…** (from `.worktreeinclude` or its defaults, plus `[worktrees] copy` in `.impulse/project.toml`; see [Tasks](tasks.md#which-files-are-copied)), and opens it as a new workspace. If the pull request's `.impulse/project.toml` has a setup script, Impulse first shows it, with the pull request's number and author, and asks whether to run it in the workspace's first terminal. It asks every time, whether or not you trusted the repository's copy of the file (see [Tasks](tasks.md#check-out-a-pull-request-as-a-task)).
-
-The local branch takes the pull request's branch name, or `pr-<number>-<name>` if that name is taken locally or is a default branch like `main` (common for pull requests from forks). If the worktree folder already exists or `gh` fails, nothing is left behind and a toast explains. See [Tasks](tasks.md) for working with task worktrees and archiving them when you're done.
-
-### Review threads
-
-To work through a pull request's open review comments in Impulse (or hand them to an agent), import them into Review with **Import Review Threads from #12**. See [Review](review.md#pull-request-review-threads).
+- After a push, the toast shows the server's link for opening a request for the branch, when the host sends one. See [Push and publish](#push-and-publish).
+- To try a colleague's branch without disturbing your own work, open it as a task with **File ▸ New Task from Branch…**. See [Tasks](tasks.md#open-a-branch-as-a-task).
 
 ## The Git menu
 
-| Item                            | Shortcut | What it does                                                                               |
-| ------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| Show Changes                    | ⌃⇧G      | Show the Changes panel and give it the keyboard.                                           |
-| Review Changes                  | ⇧⌘G      | Open [Review](review.md).                                                                  |
-| Show Git History                | ⇧⌘H      | Open [History](history.md).                                                                |
-| Show History of This File       | ⌃⇧⌘H     | History of the file in the active editor.                                                  |
-| Toggle Diff View                | ⌥⌘G      | The active editor's side-by-side diff against the staged version. See [Editor](editor.md). |
-| Switch Branch…                  | ⌃⌘B      | The branch switcher.                                                                       |
-| Manage Branches…                |          | The Branches sheet.                                                                        |
-| Fetch                           |          | Fetch the branch's remote.                                                                 |
-| Fetch All Remotes               |          | Fetch every remote.                                                                        |
-| Pull                            |          | Pull with the **When pulling** setting.                                                    |
-| Pull (Rebase)                   |          | Pull, rebasing local commits.                                                              |
-| Push                            |          | Push, or publish a new branch.                                                             |
-| Force Push (With Lease)…        |          | Overwrite the upstream branch, after asking.                                               |
-| Create Tag…                     |          | Tag the current commit.                                                                    |
-| Push All Tags                   |          | Push every local tag.                                                                      |
-| Stash All Changes               |          | Stash everything, untracked files included.                                                |
-| Pop Latest Stash                |          | Apply and remove the newest stash.                                                         |
-| Undo Last Commit                |          | Uncommit, keeping the changes staged.                                                      |
-| Open or Create Pull Request     |          | Open the branch's pull request, or start one on GitHub.                                    |
-| Create Draft Pull Request       |          | `gh pr create --draft --fill`.                                                             |
-| Check Out Pull Request as Task… |          | Pick an open pull request to check out into a worktree.                                    |
-| Open Repository in Browser      |          | The repository's web page.                                                                 |
-| Open Branch in Browser          |          | The current branch's web page.                                                             |
+| Item                       | Shortcut | What it does                                                                               |
+| -------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| Show Changes               | ⌃⇧G      | Show the Changes panel and give it the keyboard.                                           |
+| Review Changes             | ⇧⌘G      | Open [Review](review.md).                                                                  |
+| Show Git History           | ⇧⌘H      | Open [History](history.md).                                                                |
+| Show History of This File  | ⌃⇧⌘H     | History of the file in the active editor.                                                  |
+| Toggle Diff View           | ⌥⌘G      | The active editor's side-by-side diff against the staged version. See [Editor](editor.md). |
+| Switch Branch…             | ⌃⌘B      | The branch switcher.                                                                       |
+| Manage Branches…           |          | The Branches sheet.                                                                        |
+| Fetch                      |          | Fetch the branch's remote.                                                                 |
+| Fetch All Remotes          |          | Fetch every remote.                                                                        |
+| Pull                       |          | Pull with the **When pulling** setting.                                                    |
+| Pull (Rebase)              |          | Pull, rebasing local commits.                                                              |
+| Push                       |          | Push, or publish a new branch.                                                             |
+| Force Push (With Lease)…   |          | Overwrite the upstream branch, after asking.                                               |
+| Create Tag…                |          | Tag the current commit.                                                                    |
+| Push All Tags              |          | Push every local tag.                                                                      |
+| Stash All Changes          |          | Stash everything, untracked files included.                                                |
+| Pop Latest Stash           |          | Apply and remove the newest stash.                                                         |
+| Undo Last Commit           |          | Uncommit, keeping the changes staged.                                                      |
+| Open Repository in Browser |          | The remote's address as a web page.                                                        |
+| Copy Remote URL            |          | Copy the remote's address.                                                                 |
 
 Every item is also a command in the [command palette](command-palette.md) (category Git). The items with a shortcut, plus Manage Branches…, Fetch, Pull, Push and Create Tag…, can have their shortcut set or changed in Keyboard Shortcuts (see [Keyboard shortcuts](keyboard-shortcuts.md)). **Review Last Agent Turn** (⇧⌘I) is in the File menu; see [Agents](agents.md).
 

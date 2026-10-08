@@ -8,19 +8,19 @@ The command palette is one search field for most of what you do in Impulse: runn
 
 The palette opens near the top of the window, already in the mode you asked for:
 
-| How                                                                                                                     | Opens in                     |
-| ----------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| ⇧⌘P (**View ▸ Command Palette**)                                                                                        | Commands (`>`)               |
-| Click **Search or run a command** in the titlebar                                                                       | Commands (`>`)               |
-| ⌘P (**View ▸ Go to File…**)                                                                                             | Files (no prefix)            |
-| ⌘G (**Edit ▸ Go to Line…**), when the selected tab is an editor                                                         | Go to line (`:`)             |
-| ⇧⌘O (**View ▸ Go to Symbol in File…**)                                                                                  | Symbols in this file (`@`)   |
-| ⌥⌘O (**View ▸ Go to Symbol in Project…**)                                                                               | Symbols in the project (`#`) |
-| ⌃⌘O (**File ▸ Switch Workspace…**), or click the workspace name in the titlebar                                         | Workspaces (`w:`)            |
-| ⌃⌘B (**Git ▸ Switch Branch…**), or click the branch in the titlebar, the status bar, the input bar or the Changes panel | Branches (`b:`)              |
-| ⌃⌘R (**View ▸ Run Project Action…**)                                                                                    | Project actions (`a:`)       |
-| ⌃R in the input bar, the input bar's history button, or **Command History…** in a terminal's context menu               | Command history (`h:`)       |
-| **Git ▸ Check Out Pull Request as Task…**                                                                               | Pull requests (`pr:`)        |
+| How                                                                                                                     | Opens in                            |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| ⇧⌘P (**View ▸ Command Palette**)                                                                                        | Commands (`>`)                      |
+| Click **Search or run a command** in the titlebar                                                                       | Commands (`>`)                      |
+| ⌘P (**View ▸ Go to File…**)                                                                                             | Files (no prefix)                   |
+| ⌘G (**Edit ▸ Go to Line…**), when the selected tab is an editor                                                         | Go to line (`:`)                    |
+| ⇧⌘O (**View ▸ Go to Symbol in File…**)                                                                                  | Symbols in this file (`@`)          |
+| ⌥⌘O (**View ▸ Go to Symbol in Project…**)                                                                               | Symbols in the project (`#`)        |
+| ⌃⌘O (**File ▸ Switch Workspace…**), or click the workspace name in the titlebar                                         | Workspaces (`w:`)                   |
+| ⌃⌘B (**Git ▸ Switch Branch…**), or click the branch in the titlebar, the status bar, the input bar or the Changes panel | Branches (`b:`)                     |
+| ⌃⌘R (**View ▸ Run Project Action…**)                                                                                    | Project actions (`a:`)              |
+| ⌃R in the input bar, the input bar's history button, or **Command History…** in a terminal's context menu               | Command history (`h:`)              |
+| **File ▸ New Task from Branch…**                                                                                        | Branches to open as tasks (`task:`) |
 
 Some palette commands also just open the palette in another mode: **Go to File…** (files), **Switch Tab…** (`t:`), **Search Text in Project…** (`%`), **Command History…** (`h:`), **Find a Setting…** (`set:`), **Go to Symbol in File…** (`@`), **Go to Symbol in Project…** (`#`) and **Run Project Action…** (`a:`).
 
@@ -37,28 +37,28 @@ Whichever way you open it, you can change modes by editing the prefix: delete th
 
 You can also click a row to run it. The palette closes when it runs a row, when you press Esc, or when you click anywhere outside it or switch to another app. Each time it opens, it starts fresh with only the mode's prefix typed and the cursor after it.
 
-The field's icon and placeholder show the current mode. A spinner appears while results are loading (indexing files, asking a language server or GitHub). The footer reminds you of the keys and of the most-used prefixes, and its ↩ label says what Return does in this mode: **run** for commands, **insert** for history, **switch** for branches, **open** for the rest.
+The field's icon and placeholder show the current mode. A spinner appears while results are loading (indexing files, asking a language server or git). The footer reminds you of the keys and of the most-used prefixes, and its ↩ label says what Return does in this mode: **run** for commands, **insert** for history, **switch** for branches, **open** for the rest.
 
 Matched letters in result titles are highlighted in the accent color.
 
 ## Modes
 
-| Prefix | Mode                                               | Return                                   |
-| ------ | -------------------------------------------------- | ---------------------------------------- |
-| (none) | [Files](#files-no-prefix)                          | Opens the file                           |
-| `>`    | [Commands](#commands-)                             | Runs the command                         |
-| `:`    | [Go to line](#go-to-line-)                         | Moves the cursor in the current file     |
-| `%`    | [Text in files](#text-in-files-)                   | Opens the file at the match              |
-| `@`    | [Symbols in this file](#symbols-in-this-file-)     | Moves the cursor to the symbol           |
-| `#`    | [Symbols in the project](#symbols-in-the-project-) | Opens the file at the symbol             |
-| `t:`   | [Tabs](#tabs-t)                                    | Shows the tab                            |
-| `w:`   | [Workspaces](#workspaces-w)                        | Shows the workspace, or opens the folder |
-| `b:`   | [Branches](#branches-b)                            | Switches to the branch, or creates it    |
-| `h:`   | [Command history](#command-history-h)              | Puts the command in the input bar        |
-| `pr:`  | [Pull requests](#pull-requests-pr)                 | Checks the pull request out as a task    |
-| `a:`   | [Project actions](#project-actions-a)              | Runs the action                          |
-| `set:` | [Settings](#settings-set)                          | Opens Settings at that setting           |
-| `?`    | [Help](#help-)                                     | Switches to the chosen mode              |
+| Prefix  | Mode                                               | Return                                   |
+| ------- | -------------------------------------------------- | ---------------------------------------- |
+| (none)  | [Files](#files-no-prefix)                          | Opens the file                           |
+| `>`     | [Commands](#commands-)                             | Runs the command                         |
+| `:`     | [Go to line](#go-to-line-)                         | Moves the cursor in the current file     |
+| `%`     | [Text in files](#text-in-files-)                   | Opens the file at the match              |
+| `@`     | [Symbols in this file](#symbols-in-this-file-)     | Moves the cursor to the symbol           |
+| `#`     | [Symbols in the project](#symbols-in-the-project-) | Opens the file at the symbol             |
+| `t:`    | [Tabs](#tabs-t)                                    | Shows the tab                            |
+| `w:`    | [Workspaces](#workspaces-w)                        | Shows the workspace, or opens the folder |
+| `b:`    | [Branches](#branches-b)                            | Switches to the branch, or creates it    |
+| `h:`    | [Command history](#command-history-h)              | Puts the command in the input bar        |
+| `task:` | [Branches as tasks](#branches-as-tasks-task)       | Opens the branch as a new task           |
+| `a:`    | [Project actions](#project-actions-a)              | Runs the action                          |
+| `set:`  | [Settings](#settings-set)                          | Opens Settings at that setting           |
+| `?`     | [Help](#help-)                                     | Switches to the chosen mode              |
 
 ## Files (no prefix)
 
@@ -180,15 +180,14 @@ Outside a repository the palette says "Not a git repository". For managing branc
 
 To bring in your zsh, bash or fish history, run **Import Shell History**. See [Terminal](terminal.md) for history in the input bar.
 
-## Pull requests (`pr:`)
+## Branches as tasks (`task:`)
 
-`pr:` lists the repository's open GitHub pull requests, using the GitHub CLI (`gh`).
+`task:` lists the branches you can open as a new task: local branches that no checkout has open, then remote branches with no local branch, marked "remote".
 
-- Each row shows `#number` and the title, with the head branch and author beside it, and `draft` for drafts.
-- Type to match the number, title or branch.
-- ↩ checks the pull request out into a new task worktree, with its own workspace. See [Tasks](tasks.md).
+- Type to match the branch name.
+- ↩ opens the branch as a task, in its own folder and workspace. See [Open a branch as a task](tasks.md#open-a-branch-as-a-task).
 
-If `gh` isn't installed or signed in, the palette says "Couldn't list pull requests (is gh installed and signed in?)". See [Git](git.md) for pull requests.
+When every branch is already checked out somewhere, the list says "No branches to open: each one is checked out already".
 
 ## Project actions (`a:`)
 

@@ -22,9 +22,9 @@ impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
                           pane LayoutTree, agents (known agents, state
                           machine, hook installer), command history DB,
                           worktree tasks + task registry, commit graph,
-                          PR/gh parsing, terminal paths/hints/find
-                          queries, project
-                          config, workspace trust, LSP workspace edits
+                          push server messages, terminal paths/hints/find
+                          queries, project config, workspace trust, LSP
+                          workspace edits
   Sources/ImpulseGit      git layer: libgit2 for reads (status, diff, blame,
                           log) + the git CLI for writes; safety snapshots;
                           gitignore-aware search
@@ -113,6 +113,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **Editor:** Monaco in WKWebView, loaded from the app bundle (`EditorAssets.monacoDirectory`; build.sh copies vendor/ + impulse-macos/web/ into `Sources/ImpulseApp/Resources/monaco` — copy again and rebuild after editing `web/`). `EditorWebViewPool` pre-warms one WebView. Markdown preview renders with cmark-gfm in safe mode (raw HTML is elided by design — do not re-enable `CMARK_OPT_UNSAFE`).
 - **Language servers:** LSP requests go through `enqueueLspRequest` (sent after queued didOpen/didChange, answered off the queue); notifications reach every server for the language. Each editor tab is its own WebView, so Monaco can only edit its own file: workspace edits that reach further (rename, code actions, `workspace/applyEdit`) are applied in Swift by `Editor/LSPWorkspaceEdits.swift` on top of `ImpulseKit.WorkspaceEdit`.
 - **Review:** native, not web. `ReviewSurface` (header + `ReviewNavigatorView` + `ReviewDiffController`) builds flat rows with `ReviewRowBuilder` into one NSTableView: line rows are custom-drawn (`DiffLineCellView`, character-wrapped, heights from `ReviewMetrics`), headers/comments/composer are hosted SwiftUI (`ReviewRowViews.swift`), file headers float as group rows. Syntax colors come from highlight.js in JavaScriptCore (`SyntaxHighlighter`, old/new sides tokenized separately) mapped to the theme's syntax colors. History's lower half is the same surface.
+- **Git only:** Impulse talks to git (the `git` CLI and libgit2) and nothing else: no hosting platform's CLI or API (`gh`, `glab`, REST), so every feature works the same on any host. Host-facing bits stay generic: `RemoteWebURL` only rewrites a remote into `https://host/owner/repo`, and after a push the server's own `remote:` lines (`ImpulseKit.GitServerMessage`) are shown, links included. Anything new must work from git alone.
 - **Workspace trust:** `ImpulseKit.WorkspaceTrust` (app instance `Trust.shared`, extension `MainWindowController+Trust`) lists the folders whose code Impulse may run on its own. Language servers (the registry's `isAllowed`), formatters/commands on save and background fetch check it; anything new that runs project code unprompted must too. Opening a folder asks (`TabManager.onFolderOpened`); restored workspaces don't.
 - **Project config:** `ImpulseKit.ProjectConfig` reads a repository's `.impulse/project.toml` (palette actions, task setup/archive scripts, files to copy into new task worktrees; `.worktreeinclude` lists more) and the local, never-committed `.git/impulse/project.toml`, which wins key by key (actions by name). Each file's commands run only after the user trusts that exact file, and changing it asks again. Language servers are configured by `~/.config/impulse/lsp.json` plus per-project `.impulse/lsp.json`, which can only choose among servers that already exist (its `servers` are ignored).
 - **Themes:** TOML files in `Sources/ImpulseKit/Resources/Themes/` (user themes in `~/Library/Application Support/impulse/themes`). `ThemeStore` resolves them; `themeToMonaco` / `themeToMarkdownColors` derive editor/preview themes. New built-in themes: add the TOML resource and its name to `ThemeStore.builtinThemeNames()`.

@@ -66,19 +66,6 @@ enum CommandRegistry {
         keybindingId: "manage_branches"
       ) { [weak controller] in controller?.presentBranchManager() },
       AppCommand(
-        id: "pull_request", title: "Open or Create Pull Request", category: "Git",
-        keywords: ["github", "gh", "pr", "review"], icon: .gitPullRequest, keybindingId: "pull_request"
-      ) { [weak controller] in controller?.openOrCreatePullRequest() },
-      AppCommand(
-        id: "create_draft_pr", title: "Create Draft Pull Request", category: "Git",
-        keywords: ["github", "gh", "pr", "draft"], icon: .gitPullRequest, keybindingId: "create_draft_pr"
-      ) { [weak controller] in controller?.createDraftPullRequest() },
-      AppCommand(
-        id: "checkout_pr", title: "Check Out Pull Request as Task…", category: "Git",
-        keywords: ["github", "gh", "pr", "review", "worktree"], icon: .gitPullRequest,
-        keybindingId: "checkout_pr"
-      ) { [weak controller] in controller?.showPalette(prefix: "pr:") },
-      AppCommand(
         id: "git_fetch", title: "Fetch", category: "Git",
         keywords: ["git", "remote", "update", "sync"], icon: .refreshCw, keybindingId: "git_fetch"
       ) { [weak controller] in controller?.repositoryActions()?.fetch() },
@@ -126,21 +113,12 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.repositoryActions()?.undoLastCommit() },
       AppCommand(
         id: "git_open_remote", title: "Open Repository in Browser", category: "Git",
-        keywords: ["git", "github", "gitlab", "bitbucket", "web", "remote"], icon: .externalLink,
-        keybindingId: "git_open_remote"
-      ) { [weak controller] in controller?.repositoryActions()?.openOnRemote(.repository) },
+        keywords: ["git", "web", "remote", "url"], icon: .externalLink, keybindingId: "git_open_remote"
+      ) { [weak controller] in controller?.repositoryActions()?.openRepositoryInBrowser() },
       AppCommand(
-        id: "git_open_branch_remote", title: "Open Branch in Browser", category: "Git",
-        keywords: ["git", "github", "gitlab", "web", "remote", "compare"], icon: .externalLink,
-        keybindingId: "git_open_branch_remote"
-      ) { [weak controller] in
-        guard let actions = controller?.repositoryActions() else { return }
-        guard let branch = actions.repository.snapshot?.branch else {
-          controller?.toasts.show(Toast(kind: .info, message: "Check out a branch first."))
-          return
-        }
-        actions.openOnRemote(.branch(branch))
-      },
+        id: "git_copy_remote_url", title: "Copy Remote URL", category: "Git",
+        keywords: ["git", "remote", "origin", "clone", "url"], icon: .copy, keybindingId: "git_copy_remote_url"
+      ) { [weak controller] in controller?.repositoryActions()?.copyRemoteURL() },
       AppCommand(
         id: "git_history", title: "Show Git History", category: "Git",
         keywords: ["log", "commits", "graph", "blame"], icon: .history, keybindingId: "git_history"
@@ -156,6 +134,11 @@ enum CommandRegistry {
         id: "new_task", title: "New Task…", category: "Workspaces",
         keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus, keybindingId: "new_task"
       ) { [weak controller] in controller?.presentNewTaskSheet() },
+      AppCommand(
+        id: "new_task_from_branch", title: "New Task from Branch…", category: "Workspaces",
+        keywords: ["worktree", "branch", "checkout", "review", "existing", "remote"], icon: .gitBranch,
+        keybindingId: "new_task_from_branch"
+      ) { [weak controller] in controller?.showPalette(prefix: "task:") },
       AppCommand(
         id: "archive_task", title: "Archive Task…", category: "Workspaces",
         keywords: ["worktree", "remove", "done"], icon: .archive

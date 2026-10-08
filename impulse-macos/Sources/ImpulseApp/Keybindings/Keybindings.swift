@@ -396,23 +396,11 @@ enum Keybindings {
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
-            id: "pull_request", description: "Open or Create Pull Request", category: "Git",
-            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
-        ),
-        BuiltinKeybinding(
-            id: "create_draft_pr", description: "Create Draft Pull Request", category: "Git",
-            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
-        ),
-        BuiltinKeybinding(
-            id: "checkout_pr", description: "Check Out Pull Request as Task…", category: "Git",
-            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
-        ),
-        BuiltinKeybinding(
             id: "git_open_remote", description: "Open Repository in Browser", category: "Git",
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
-            id: "git_open_branch_remote", description: "Open Branch in Browser", category: "Git",
+            id: "git_copy_remote_url", description: "Copy Remote URL", category: "Git",
             defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
@@ -470,6 +458,10 @@ enum Keybindings {
             defaultShortcut: "Alt+Cmd+N",
             keyEquivalent: "n",
             modifierFlags: [.option, .command]
+        ),
+        BuiltinKeybinding(
+            id: "new_task_from_branch", description: "New Task from Branch…", category: "Navigation",
+            defaultShortcut: "", keyEquivalent: "", modifierFlags: []
         ),
         BuiltinKeybinding(
             id: "review_agent_turn",

@@ -23,15 +23,6 @@ extension MainWindowController: PaletteHost {
     return (cwd?.isEmpty == false ? cwd : nil, windowModel.repository?.root)
   }
 
-  /// Into the input bar, or typed at the shell prompt when the grid owns
-  /// input (classic mode, a TUI).
-  func palettePullRequests(_ completion: @escaping ([PullRequestSummary]?) -> Void) {
-    guard let repository = tabManager.activeWorkspace.repository ?? windowModel.repository,
-      PullRequestMonitor.shared.isAvailable
-    else { return completion(nil) }
-    PullRequestMonitor.shared.list(root: repository.root, completion: completion)
-  }
-
   func paletteDocumentSymbols(_ completion: @escaping ([OutlineSymbol]?) -> Void) {
     guard let editor = tabManager.selectedEditor else { return completion(nil) }
     documentSymbols(for: editor, completion: completion)
@@ -61,10 +52,12 @@ extension MainWindowController: PaletteHost {
     openSettings(query: key)
   }
 
-  func paletteCheckOutPullRequest(_ pullRequest: PullRequestSummary) {
-    checkOutPullRequestAsTask(pullRequest)
+  func paletteOpenBranchAsTask(_ branch: String, isRemote: Bool) {
+    openBranchAsTask(branch, isRemote: isRemote)
   }
 
+  /// Into the input bar, or typed at the shell prompt when the grid owns
+  /// input (classic mode, a TUI).
   func paletteInsertCommand(_ command: String) {
     guard let terminal = tabManager.selectedTerminal?.activeTerminal else {
       NSPasteboard.general.clearContents()
