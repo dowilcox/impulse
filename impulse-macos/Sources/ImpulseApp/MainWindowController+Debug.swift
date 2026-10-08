@@ -279,6 +279,10 @@ extension MainWindowController {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
       } else if action.hasPrefix("task=") {
         debugCreateTask(title: String(action.dropFirst(5)), command: "echo task ready")
+      } else if action.hasPrefix("move-task=") {
+        debugCreateTask(title: String(action.dropFirst(10)), command: "", moving: true)
+      } else if action == "move-sheet" {
+        presentNewTaskSheet(title: "Move my work", movingChanges: true)
       } else if action == "archive-merged" {
         presentArchiveMergedTasks(from: tabManager.activeWorkspaceID)
       } else if action == "trust-project-settings" {

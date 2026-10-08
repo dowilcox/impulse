@@ -106,6 +106,9 @@ struct WorkspaceInfo: Identifiable {
   var taskSummary: String? = nil
   /// Workspaces of the same repository that change some of the same files.
   var overlaps: [TaskOverlap.Pair] = []
+  /// The repository's main checkout, canonical (set when there are
+  /// overlaps, for the popover's Move to New Task…).
+  var mainCheckoutPath: String? = nil
   /// A task whose branch is merged into its base.
   var isMerged: Bool = false
   /// A task whose branch's upstream was deleted on the remote.
@@ -453,6 +456,9 @@ final class WindowModel {
   var onArchiveMergedTasks: ((UUID) -> Void)?
   /// Finish Task… for a task workspace.
   var onFinishTask: ((UUID) -> Void)?
+  /// Move Changes to New Task… for the main checkout of a workspace's
+  /// repository.
+  var onMoveChangesToNewTask: ((UUID) -> Void)?
   /// Pull a workspace's branch (its row's "behind" count).
   var onPullWorkspace: ((UUID) -> Void)?
 

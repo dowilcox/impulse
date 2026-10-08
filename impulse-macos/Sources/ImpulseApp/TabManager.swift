@@ -2024,6 +2024,7 @@ final class TabManager: NSObject {
     ws.ports = activeWorkspace.ports
     ws.workspaces = workspaces.map { workspace in
       let tabs = infos.filter { $0.workspaceID == workspace.id }
+      let overlaps = workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : []
       return WorkspaceInfo(
         id: workspace.id,
         name: workspace.name,
@@ -2037,7 +2038,12 @@ final class TabManager: NSObject {
         repository: workspace.repository,
         isTask: workspace.isTask,
         taskSummary: workspace.taskSummary,
-        overlaps: workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : [],
+        overlaps: overlaps,
+        mainCheckoutPath: overlaps.isEmpty ? nil : workspace.repository?.snapshot.map { snapshot in
+          TaskRegistry.canonical(
+            (snapshot.commonDir as NSString).lastPathComponent == ".git"
+              ? (snapshot.commonDir as NSString).deletingLastPathComponent : snapshot.root)
+        },
         isMerged: workspace.isTask && OverlapMonitor.shared.isMerged(workspace.root),
         isUpstreamGone: workspace.isTask && OverlapMonitor.shared.isUpstreamGone(workspace.root),
         repositoryHasMergedTasks: workspace.repository.map {

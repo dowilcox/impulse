@@ -302,6 +302,9 @@ extension MainWindowController {
     windowModel.onFinishTask = { [weak self] id in
       self?.openFinishTask(from: id)
     }
+    windowModel.onMoveChangesToNewTask = { [weak self] id in
+      self?.presentNewTaskSheet(from: id, movingChanges: true)
+    }
     windowModel.onPullWorkspace = { [weak self] id in
       guard let self, let repository = self.tabManager.workspace(id)?.repository else { return }
       GitActions(repository: repository, host: self).pull()

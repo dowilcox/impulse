@@ -74,6 +74,10 @@ You can type any other base git understands: a local branch (`main`), a remote b
 
 What runs in the task's first terminal. **Just a terminal** (the default) opens a shell and nothing else. The rest of the list is every supported agent that Impulse finds on your login shell's `PATH`, by its display name: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`), Aider (`aider`), opencode (`opencode`), Amp (`amp`), Copilot CLI (`copilot`), Cursor Agent (`cursor-agent`), Goose (`goose`), Qwen Code (`qwen`) and Crush (`crush`). Agents that aren't installed don't appear. The agent starts with no arguments; type your first prompt into it once it's running.
 
+#### Move uncommitted files
+
+When the main checkout has uncommitted files, the sheet offers to take them along: **Move trailhead's 12 uncommitted files into this task**. Tick it to start the task with that work in it; see [Move work into a new task](#move-work-into-a-new-task). It can only be ticked when **From** is the main checkout's current commit, since that's what the changes were made on; otherwise it says so, with **Start from main** to set **From**.
+
 #### The preview
 
 The box below the fields shows what will happen before you commit to it:
@@ -144,6 +148,25 @@ The list is worked out when the sheet opens, from the files in the repository at
 
 For folders, such as `vendor` or build output, list them under `[worktrees] clone` and Impulse clones them in at once; see [Cloning folders into tasks](project-config.md#cloning-folders-into-tasks). For things that should be built fresh, use a setup script (`setup = "npm ci"` in `.impulse/project.toml`); see [Setup script](project-config.md#setup-script).
 
+### Move work into a new task
+
+Feature work that started in the main checkout can move into a task of its own, so the main checkout is free to pull, merge and run the dev server again. Choose **Move Changes to New Task…**:
+
+- from the main checkout's row in the sidebar (its context menu),
+- from the Changes panel: **Move All Changes to New Task…** in its ⋯ menu, or **Move to New Task…** on one file's context menu, to move just that file,
+- from the list of files two workspaces share, when one of them is the main checkout (**Move to New Task…**; see [When workspaces change the same files](#when-workspaces-change-the-same-files)),
+- or by ticking the box in the [New Task sheet](#move-uncommitted-files).
+
+Each opens the New Task sheet with the box ticked and **From** set to the main checkout's branch. Name the task, choose what to start, and click **Create Task**:
+
+1. Impulse saves the main checkout's uncommitted work in a safety snapshot.
+2. It makes the task from the main checkout's current commit, the one the changes were made on.
+3. The files arrive in the task as they were, unstaged: edited files edited, new files new, deleted files deleted.
+4. In the main checkout, those files go back to the last commit, and the new files that moved are removed. Other untracked files, and ignored files such as `.env`, stay where they are; the task has its own copy of `.env` anyway.
+5. The toast says "Started task tidy-forecast with 12 files from trailhead." with **Undo**, which puts the files back in the main checkout and removes the task (anything new in it is kept in a snapshot).
+
+An agent that's working in the main checkout can't follow its files: the move waits until it has finished its turn ("Claude Code is working in trailhead, so its files can't move until it finishes its turn."). Afterwards, choose the agent under **Start** to begin a fresh one in the task, and close the old one.
+
 ## Tasks in the sidebar
 
 ![The Workspaces section of the sidebar: a "trailhead" group header over three rows: trailhead on feature/forecast-cache; the active fix-elevation task, whose agent has finished (a bot with 1, a +9 diff stat and an attention badge); and add-trail-photos, with an agent working (a spinner) and +7](images/tasks-sidebar-group.png)
@@ -168,11 +191,11 @@ Hover a row for its full path, branch, changed-file count and tab count, and for
 Tasks keep work apart on disk, but two of them (or a task and the main checkout) can still be changing the same files, and that only shows up as conflicts when the work is merged. Impulse keeps track of what each of a repository's workspaces changes: the main checkout's uncommitted files and unpushed commits, and each task's uncommitted files and commits since it left its base. Every task Impulse made counts, whether or not it's open in the sidebar.
 
 - **The row.** When a workspace shares files with another, its row shows a warning sign and how many files (⚠ 17). Hover it to see which workspaces it shares them with.
-- **The list.** Click the warning sign for each workspace it overlaps with and the files they share; click a file to open it. **Check for Conflicts** works out, without touching either folder, which of those files would conflict if the two were merged, uncommitted work included (it needs git 2.38 or later), and marks them.
+- **The list.** Click the warning sign for each workspace it overlaps with and the files they share; click a file to open it. **Check for Conflicts** works out, without touching either folder, which of those files would conflict if the two were merged, uncommitted work included (it needs git 2.38 or later), and marks them. When one of the two is the main checkout, **Move to New Task…** moves its uncommitted work into a task of its own (see [Move work into a new task](#move-work-into-a-new-task)).
 - **A notification, once.** When two workspaces that didn't overlap start to, Impulse says so once: "fix-elevation and trailhead now change the same 3 files" (a toast, or a desktop notification when Impulse is in the background). More files between the same two don't notify again. Turn it off with **Notify when tasks change the same files** (`task_overlap_notify`) in Settings ▸ Terminal ▸ Agents.
 - **What counts.** Every file, lock files included: a lock file changed on both sides is one of the worst conflicts to sort out. The task's own env file never counts. To leave out files that are only noise in a project, list them in **Ignore when tasks overlap** in [Project Setup](project-config.md#project-setup) (`overlap_ignore`).
 
-The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Finish Task…** (on task rows, first in the menu), **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
+The row's context menu has **New Task…**, **Move Changes to New Task…** (on the main checkout, when it has uncommitted files), **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Finish Task…** (on task rows, first in the menu), **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
 
 Impulse treats any workspace that is a linked git worktree as a task, including worktrees you created yourself with `git worktree add`. They get **Archive Task…** too.
 
@@ -203,7 +226,7 @@ Because all tasks share one repository, a commit in a task is immediately visibl
 
 Tasks keep agents' files apart, but not everything else: two agents can still change the same files, and the work only meets when you merge. A few habits keep parallel work from colliding.
 
-- **Keep the main checkout for integrating.** Do feature work in tasks, and use the main checkout to pull, merge and run your dev server. Uncommitted work piling up there blocks pulls and merges later, and no task can see it.
+- **Keep the main checkout for integrating.** Do feature work in tasks, and use the main checkout to pull, merge and run your dev server. Uncommitted work piling up there blocks pulls and merges later, and no task can see it. When it happens anyway, [Move Changes to New Task…](#move-work-into-a-new-task) moves it into a task.
 - **Split the work by area, not just by branch.** Two tasks that rewrite the same files conflict when they meet, however separate their branches are. A change that touches nearly everything (a framework upgrade, a rename across the project) should run alone, or land first so other tasks start on top of it.
 - **Commit small and often, in every workspace.** git can merge commits; it can't merge a pile of uncommitted files, and nobody can review one.
 - **Keep a long-running task current.** Merge the base into its branch every day or two (in the task: `git fetch` then `git merge origin/main`), so conflicts show up while they're small, in the task that has the context to resolve them.

@@ -383,6 +383,19 @@ struct GitActions {
     }
   }
 
+  /// The repository is a main checkout (not a task), whose changes can move
+  /// into a new task.
+  var canMoveChangesToTask: Bool {
+    MainWindowController.mainCheckoutRoot(of: repository.root) == repository.root
+  }
+
+  /// Move Changes to New Task…: the New Task sheet, set to move `changes`
+  /// (nil: every uncommitted file) into the task.
+  func moveToNewTask(_ changes: [FileChange]? = nil) {
+    let paths = changes.map { list in list.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) } }
+    (host as? MainWindowController)?.presentNewTaskSheet(movingChanges: true, movePaths: paths)
+  }
+
   /// Pull with the strategy from settings (or the one given).
   func pull(mode: GitOperations.PullMode? = nil) {
     let repository = self.repository

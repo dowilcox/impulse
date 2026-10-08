@@ -388,6 +388,9 @@ private struct WorkspaceRow: View {
     }
     if workspace.repository != nil {
       Button("New Task…") { model.onNewTask?(workspace.id) }
+      if !workspace.isTask, (workspace.repository?.snapshot?.changedFileCount ?? 0) > 0 {
+        Button("Move Changes to New Task…") { model.onMoveChangesToNewTask?(workspace.id) }
+      }
       Button("Project Setup…") { model.onProjectSetup?(workspace.id) }
     }
     Button("Open Folder as Workspace…") { model.onOpenWorkspace?() }
@@ -586,7 +589,8 @@ private struct OverlapChip: View {
       workspace.overlaps.map { "Shares \($0.files.count) file\($0.files.count == 1 ? "" : "s") with \($0.other(than: path).name)" }
         .joined(separator: "\n"))
     .popover(isPresented: $showing, arrowEdge: .trailing) {
-      OverlapPopover(model: model, path: path, pairs: workspace.overlaps)
+      OverlapPopover(
+        model: model, workspaceID: workspace.id, path: path, mainPath: workspace.mainCheckoutPath, pairs: workspace.overlaps)
         .environment(\.chrome, chrome)
     }
   }
@@ -595,7 +599,10 @@ private struct OverlapChip: View {
 private struct OverlapPopover: View {
   @Environment(\.chrome) private var chrome
   var model: WindowModel
+  let workspaceID: UUID
   let path: String
+  /// The repository's main checkout, whose changes can move into a task.
+  let mainPath: String?
   let pairs: [TaskOverlap.Pair]
   /// Conflict checks by pair: nil while running, the files once done.
   @State private var conflicts: [String: [String]?] = [:]
@@ -634,6 +641,10 @@ private struct OverlapPopover: View {
               case .some(.some(let files)):
                 Text(files.isEmpty ? "These would merge without conflicts." : "\(files.count) would conflict.")
                   .font(ChromeFont.ui(11)).foregroundStyle(files.isEmpty ? chrome.success : chrome.danger)
+              }
+              if let mainPath, pair.contains(mainPath) {
+                ChromeButton(title: "Move to New Task…", kind: .ghost) { model.onMoveChangesToNewTask?(workspaceID) }
+                  .help("Move \((mainPath as NSString).lastPathComponent)'s uncommitted changes into a new task of their own")
               }
             }
           }

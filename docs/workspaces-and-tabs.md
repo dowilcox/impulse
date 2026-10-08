@@ -81,19 +81,20 @@ The **+** on a row (shown on hover) offers:
 
 Control-click a row for its context menu:
 
-| Item                          | What it does                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------- |
-| **New Task…**                 | Start a task worktree from this workspace's repository (repositories only).                 |
-| **Open Folder as Workspace…** | Choose another folder to open.                                                              |
-| **Rename…**                   | Give the workspace a name of its own.                                                       |
-| **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                                |
-| **Copy Path**                 | Copy the folder's path (not for Scratch).                                                   |
-| **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                                            |
-| **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                                  |
-| **Finish Task…**              | For a task: land its work and archive it. See [Tasks](tasks.md#finish-a-task).              |
-| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                                          |
-| **Archive Merged Tasks…**     | Archive the repository's merged tasks together. See [Tasks](tasks.md#archive-merged-tasks). |
-| **Close Workspace**           | Close the workspace and all its tabs.                                                       |
+| Item                          | What it does                                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **New Task…**                 | Start a task worktree from this workspace's repository (repositories only).                                             |
+| **Move Changes to New Task…** | For a main checkout with uncommitted files: move them into a new task. See [Tasks](tasks.md#move-work-into-a-new-task). |
+| **Open Folder as Workspace…** | Choose another folder to open.                                                                                          |
+| **Rename…**                   | Give the workspace a name of its own.                                                                                   |
+| **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                                                            |
+| **Copy Path**                 | Copy the folder's path (not for Scratch).                                                                               |
+| **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                                                                        |
+| **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                                                              |
+| **Finish Task…**              | For a task: land its work and archive it. See [Tasks](tasks.md#finish-a-task).                                          |
+| **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                                                                      |
+| **Archive Merged Tasks…**     | Archive the repository's merged tasks together. See [Tasks](tasks.md#archive-merged-tasks).                             |
+| **Close Workspace**           | Close the workspace and all its tabs.                                                                                   |
 
 ### Renaming a workspace
 

@@ -125,6 +125,10 @@ private struct ChangesPanelContent: View {
           ChromeMenuItem("Unstage All Changes") { actions.unstageAll() },
           .separator,
           ChromeMenuItem("Stash All Changes") { actions.stashAll() },
+          ChromeMenuItem(
+            "Move All Changes to New Task…",
+            isEnabled: actions.canMoveChangesToTask && (snapshot?.changedFileCount ?? 0) > 0
+          ) { actions.moveToNewTask() },
           ChromeMenuItem("Pop Latest Stash") { (model.gitHost as? MainWindowController)?.popLatestStash() },
           ChromeMenuItem("Undo Last Commit", isEnabled: snapshot?.headOid != nil) { actions.undoLastCommit() },
           .separator,
@@ -507,6 +511,9 @@ private struct ChangeRow: View {
         if !actions.agentTargets.isEmpty { Divider() }
         Button("Copy as Prompt") { actions.askAgentToResolve([change], terminalID: nil) }
       }
+    }
+    if section != .conflicted, actions.canMoveChangesToTask {
+      Button("Move to New Task…") { actions.moveToNewTask([change]) }
     }
     Divider()
     Button("Copy Path") {

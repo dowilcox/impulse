@@ -42,6 +42,19 @@ final class TaskSheetModel {
   var fetchesOnItsOwn = false
   /// From as the sheet filled it in; once the user types, it's left alone.
   var defaultBase: String?
+  /// The main checkout's uncommitted files, which can move into the task.
+  var movableCount = 0
+  /// Move them (or just `movePaths`) into the new task.
+  var movesChanges = false
+  /// Files chosen in the Changes panel; nil: every uncommitted file.
+  var movePaths: [String]?
+  /// What From can say for the commit the changes were made on: HEAD, the
+  /// main checkout's branch, refs at the same commit.
+  var headNames: Set<String> = []
+  /// The main checkout's branch (or HEAD), for "Start from main".
+  var headName = "HEAD"
+  /// An agent working in the main checkout: its files can't move mid-turn.
+  var moveBlocker: String?
 
   init(repoRoot: String, base: String) {
     self.repoRoot = repoRoot
@@ -78,6 +91,31 @@ final class TaskSheetModel {
   /// From still holds what the sheet put there (or nothing), so a better
   /// default may replace it.
   var canReplaceBase: Bool { defaultBase.map { draft.base == $0 } ?? draft.base.isEmpty }
+
+  var mainName: String { (repoRoot as NSString).lastPathComponent }
+
+  /// The sheet offers to move files.
+  var offersMove: Bool { movableCount > 0 || movePaths != nil }
+
+  /// "Move trailhead's 12 uncommitted files into this task".
+  var moveLabel: String {
+    if let movePaths {
+      return movePaths.count == 1
+        ? "Move \((movePaths[0] as NSString).lastPathComponent) into this task"
+        : "Move the \(movePaths.count) chosen files into this task"
+    }
+    return "Move \(mainName)'s \(movableCount) uncommitted file\(movableCount == 1 ? "" : "s") into this task"
+  }
+
+  /// Why the files can't move now; nil when they can.
+  var moveUnavailable: String? {
+    if let moveBlocker { return moveBlocker }
+    let base = draft.base.trimmingCharacters(in: .whitespaces)
+    if !base.isEmpty, !headNames.contains(base) {
+      return "The changes were made on \(mainName)'s current commit, so From has to be that commit."
+    }
+    return nil
+  }
 
   var branch: String { WorktreeTasks.branchName(for: draft.title, taken: takenBranches) }
   var path: String { WorktreeTasks.worktreePath(repoRoot: repoRoot, branch: branch) }
@@ -138,6 +176,32 @@ struct TaskSheetView: View {
         }
         .labelsHidden()
         .frame(width: 220)
+      }
+      if model.offersMove {
+        VStack(alignment: .leading, spacing: 4) {
+          Toggle(isOn: $model.movesChanges) {
+            Text(model.moveLabel).font(ChromeFont.ui(12)).foregroundStyle(chrome.text)
+          }
+          .toggleStyle(.checkbox)
+          .disabled(model.moveUnavailable != nil)
+          if let reason = model.moveUnavailable {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+              Text(reason).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+              if model.moveBlocker == nil {
+                ChromeButton(title: "Start from \(model.headName)", kind: .ghost) {
+                  model.draft.base = model.headName
+                  model.movesChanges = true
+                }
+              }
+            }
+          } else if model.movesChanges {
+            Text("They arrive unstaged, and \(model.mainName) goes back to its last commit for them. Ignored files such as .env stay.")
+              .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .padding(.leading, 54)
       }
 
       VStack(alignment: .leading, spacing: 4) {
@@ -239,7 +303,8 @@ extension MainWindowController {
   /// `workspaceID`'s repository, or the active workspace's). `title`,
   /// `command` and `base` prefill the sheet.
   func presentNewTaskSheet(
-    from workspaceID: UUID? = nil, title: String = "", command: String = "", base: String? = nil
+    from workspaceID: UUID? = nil, title: String = "", command: String = "", base: String? = nil,
+    movingChanges: Bool = false, movePaths: [String]? = nil
   ) {
     guard let window, let repository = taskRepository(from: workspaceID) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository to start a task."))
@@ -259,6 +324,16 @@ extension MainWindowController {
     model.draft.title = title
     model.draft.command = command
     model.fetchesOnItsOwn = Trust.shared.isTrusted(root)
+    model.movesChanges = movingChanges
+    model.movePaths = movePaths
+    if movingChanges {
+      // The changes were made on the main checkout's commit: start there.
+      let head = known?.branch ?? "HEAD"
+      model.draft.base = head
+      model.defaultBase = head
+      model.baseNote = nil
+    }
+    model.moveBlocker = moveBlocker(root: root)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let main = known ?? GitClient.snapshot(forPath: root)
       let computed = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead) }
@@ -282,12 +357,21 @@ extension MainWindowController {
       let lockFiles = ProjectDetector.installCommands.map(\.lockFile).filter {
         FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent($0))
       }
+      let movable = main?.changedFileCount ?? 0
+      let heads = Self.headNames(root: root)
       DispatchQueue.main.async {
+        model.movableCount = movable
+        model.headNames = heads.names
+        model.headName = heads.name
+        if movingChanges, base == nil, let branch = main?.branch, model.canReplaceBase {
+          model.draft.base = branch
+          model.defaultBase = branch
+        }
         model.settings = settings
         model.slot = slot
         model.clones = clones
         model.lockFiles = lockFiles
-        if base == nil, let computed, model.canReplaceBase {
+        if base == nil, !movingChanges, let computed, model.canReplaceBase {
           model.draft.base = computed.base
           model.defaultBase = computed.base
           model.baseNote = computed.note
@@ -333,8 +417,10 @@ extension MainWindowController {
     let root = model.repoRoot
     DispatchQueue.global(qos: .userInitiated).async {
       let result = GitOperations.fetch(root: root, timeout: 60)
+      let heads = Self.headNames(root: root)
       DispatchQueue.main.async {
         model.isFetching = false
+        model.headNames = heads.names
         if case .failure(let error) = result {
           let reason = error.message.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
           model.fetchError = "Couldn't fetch \(remote)\(reason.isEmpty ? "" : ": \(reason)")"
@@ -343,8 +429,9 @@ extension MainWindowController {
     }
   }
 
-  /// Snapshot runs: create a task without the sheet.
-  func debugCreateTask(title: String, command: String) {
+  /// Snapshot runs: create a task without the sheet (`moving`: with the
+  /// main checkout's uncommitted files).
+  func debugCreateTask(title: String, command: String, moving: Bool = false) {
     guard let repository = taskRepository(from: nil) else {
       NSLog("DebugSnapshot: no repository for a task")
       return
@@ -358,6 +445,13 @@ extension MainWindowController {
     model.copies = Self.taskCopies(root: root)
     model.takenBranches = Set(GitOperations.branches(root: root).local)
     model.isLoading = false
+    if moving {
+      let heads = Self.headNames(root: root)
+      model.headNames = heads.names
+      model.draft.base = heads.name
+      model.movableCount = main?.changedFileCount ?? 0
+      model.movesChanges = true
+    }
     createTask(model) {}
   }
 
@@ -391,9 +485,21 @@ extension MainWindowController {
     let base = model.draft.base.trimmingCharacters(in: .whitespaces)
     let copies = model.copies
     let command = model.draft.command
+    let moving = model.movesChanges && model.offersMove && model.moveUnavailable == nil
+    let movePaths = model.movePaths
+    if moving, let blocker = moveBlocker(root: root) {
+      model.isCreating = false
+      model.error = blocker
+      return
+    }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       var failure: String?
-      if FileManager.default.fileExists(atPath: path) {
+      if moving,
+        GitClient.resolveCommit(repoPath: root, revision: base.isEmpty ? "HEAD" : base)
+          != GitClient.resolveCommit(repoPath: root, revision: "HEAD")
+      {
+        failure = "From isn't \((root as NSString).lastPathComponent)'s current commit anymore, so the changes can't move into it."
+      } else if FileManager.default.fileExists(atPath: path) {
         failure = "\(TabManager.abbreviateHomePath(path)) already exists."
       } else {
         try? FileManager.default.createDirectory(
@@ -414,6 +520,14 @@ extension MainWindowController {
           TaskRegistryStore.portsAreFree(settings, slot: slot)
         }
       }
+      var moved: ChangeMove.Moved?
+      var moveFailure: String?
+      if failure == nil, moving {
+        switch ChangeMove.move(paths: movePaths, from: root, to: path) {
+        case .success(let result): moved = result
+        case .failure(let error): moveFailure = error.message
+        }
+      }
       DispatchQueue.main.async {
         model.isCreating = false
         if let failure {
@@ -432,11 +546,72 @@ extension MainWindowController {
             let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
             self?.tabManager.openWorkspace(
               folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
-            self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+            if let moved {
+              let main = (root as NSString).lastPathComponent
+              self?.toasts.show(
+                Toast(
+                  kind: .success,
+                  message: "Started task \(branch) with \(moved.count) file\(moved.count == 1 ? "" : "s") from \(main).",
+                  actionTitle: "Undo", action: { [weak self] in self?.undoMove(moved, root: root, path: path, branch: branch) },
+                  lifetime: 15))
+            } else {
+              self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+            }
+            if let moveFailure {
+              self?.toasts.show(
+                Toast(kind: .warning, message: "The changes stayed in \((root as NSString).lastPathComponent).", detail: moveFailure, lifetime: 12))
+            }
           }
         }
       }
     }
+  }
+
+  /// Why the main checkout's files can't move now: an agent there is mid-turn.
+  private func moveBlocker(root: String) -> String? {
+    guard let agent = tabManager.agents(inFolder: root).first(where: { $0.state == .working }) else { return nil }
+    return "\(agent.name) is working in \((root as NSString).lastPathComponent), so its files can't move until it finishes its turn."
+  }
+
+  /// What From can say for HEAD: "HEAD", the branch, the commit id, and
+  /// remote-tracking branches at the same commit (`origin/main`). Off the
+  /// main thread.
+  static func headNames(root: String) -> (names: Set<String>, name: String) {
+    guard let head = GitClient.resolveCommit(repoPath: root, revision: "HEAD") else { return ([], "HEAD") }
+    let branch = GitOperations.currentBranch(root: root)
+    var names: Set<String> = ["HEAD", head, String(head.prefix(7))]
+    if let branch { names.insert(branch) }
+    for remote in GitOperations.branches(root: root).remote
+    where GitClient.resolveCommit(repoPath: root, revision: "refs/remotes/\(remote)") == head {
+      names.insert(remote)
+    }
+    return (names, branch ?? "HEAD")
+  }
+
+  /// Undo a move: the files go back to the main checkout, and the new task
+  /// is archived (whatever it holds by then is kept in a snapshot) and its
+  /// branch deleted when nothing was committed on it.
+  func undoMove(_ moved: ChangeMove.Moved, root: String, path: String, branch: String) {
+    let finish = { [weak self] in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let undone = ChangeMove.undo(moved, source: root)
+        let removed = Self.removeTask(root: path, branch: branch, dirty: true, archiveScript: nil).result
+        if case .success = removed { _ = GitOperations.deleteBranch(branch, root: root) }
+        DispatchQueue.main.async {
+          guard let self else { return }
+          if case .failure(let error) = undone { return self.presentGitError(error, title: "Couldn't put the changes back") }
+          if case .failure(let error) = removed { return self.presentGitError(error, title: "Couldn't remove \(branch)") }
+          self.toasts.show(
+            Toast(kind: .success, message: "The changes are back in \((root as NSString).lastPathComponent); \(branch) is gone."))
+        }
+      }
+    }
+    let canonical = TaskRegistry.canonical(path)
+    guard let workspace = tabManager.workspaces.first(where: { TaskRegistry.canonical($0.root) == canonical }) else {
+      return finish()
+    }
+    tabManager.ensureScratchWorkspace()
+    requestCloseWorkspace(workspace.id, recordForUndo: false, then: finish, cancelled: {})
   }
 
   /// "New Task from Branch…": an existing branch opened as a task, in a

@@ -53,7 +53,7 @@ From left to right:
   - **Publish** when the branch has no upstream yet. It pushes the branch and sets it to track the remote branch.
   - **↓ 3** and/or **↑ 2** when the branch is behind or ahead of its upstream. Click the down arrow to pull and the up arrow to push.
   - A refresh icon when the branch is in sync. Click it to fetch.
-- **⋯ (More git actions).** A menu with **Fetch**, **Fetch All Remotes**, **Pull**, **Pull (Rebase)**, **Push**, **Force Push (With Lease)…**, **Create Tag…**, **Push All Tags**, **Stage All Changes**, **Unstage All Changes**, **Stash All Changes**, **Pop Latest Stash**, **Undo Last Commit**, **Review Uncommitted Changes** and **Refresh**.
+- **⋯ (More git actions).** A menu with **Fetch**, **Fetch All Remotes**, **Pull**, **Pull (Rebase)**, **Push**, **Force Push (With Lease)…**, **Create Tag…**, **Push All Tags**, **Stage All Changes**, **Unstage All Changes**, **Stash All Changes**, **Move All Changes to New Task…** (in a main checkout; see [Tasks](tasks.md#move-work-into-a-new-task)), **Pop Latest Stash**, **Undo Last Commit**, **Review Uncommitted Changes** and **Refresh**.
 
 While a remote operation runs, a line under the header shows its progress, using git's own progress output ("Receiving objects: 45%…").
 
@@ -106,6 +106,7 @@ Note that `U` means untracked here, not "unmerged" as in `git status --short`.
 | Stage                                                                                    | Changes, Untracked.                                                                                                                                                                       |
 | Discard Changes…                                                                         | Changes, Untracked.                                                                                                                                                                       |
 | Open to Resolve, Keep Current (HEAD), Take Incoming, Mark Resolved, Ask Agent to Resolve | Conflicts. See [Merge conflicts](#merge-conflicts).                                                                                                                                       |
+| Move to New Task…                                                                        | Staged, Changes, Untracked, in a main checkout. Moves the file into a new task. See [Tasks](tasks.md#move-work-into-a-new-task).                                                          |
 | Copy Path                                                                                | Every row. Copies the repository-relative path.                                                                                                                                           |
 | Reveal in Finder                                                                         | Every row.                                                                                                                                                                                |
 
