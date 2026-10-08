@@ -63,8 +63,9 @@ THEMES = ROOT / "impulse-macos/Sources/ImpulseKit/Resources/Themes"
 DEFAULT_OUT = WEBSITE / "_site"
 
 REPO_URL = "https://github.com/dowilcox/impulse"
-SITE_URL = "https://impulse-terminal.app"
-DOMAIN = "impulse-terminal.app"
+# The site lives on www; Cloudflare redirects the bare impulse-terminal.app to it.
+SITE_URL = "https://www.impulse-terminal.app"
+DOMAIN = "www.impulse-terminal.app"
 # Written into every build; the output folder is only ever emptied when it
 # holds this file, so --out can't wipe an unrelated folder.
 MARKER = ".impulse-site"

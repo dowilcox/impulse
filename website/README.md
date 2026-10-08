@@ -47,12 +47,19 @@ or the build script, and deploys it to GitHub Pages. Pull requests that touch
 the docs get the same check without the deploy. It can also be run by hand
 from the Actions tab.
 
-One-time setup:
+One-time setup. The site is served from `www.impulse-terminal.app`; the bare
+domain only redirects there.
 
-1. In the repository's **Settings ▸ Pages**, set **Source** to **GitHub Actions**.
-2. In the same page, set **Custom domain** to `impulse-terminal.app` and, once the
-   certificate is issued, turn on **Enforce HTTPS**.
-3. In Cloudflare, remove the redirect to the repository and point the domain at
-   GitHub Pages: a `CNAME` record for `impulse-terminal.app` (Cloudflare flattens it
-   at the apex) and one for `www`, both with the target `dowilcox.github.io`, set to
-   **DNS only** until GitHub has issued the certificate.
+1. In the repository's **Settings ▸ Pages**, set **Source** to **GitHub Actions** and
+   **Custom domain** to `www.impulse-terminal.app`. Once the certificate is issued,
+   turn on **Enforce HTTPS**. (With Actions deployments this setting, not the
+   `CNAME` file the build writes, is what GitHub uses.)
+2. In Cloudflare DNS, `www` is a `CNAME` to `dowilcox.github.io`. Leave it
+   **DNS only** until GitHub has issued the certificate; if you proxy it later,
+   set SSL/TLS to **Full** (Flexible plus Enforce HTTPS loops).
+3. Redirect the bare domain with a Cloudflare **Redirect Rule** on
+   `impulse-terminal.app`: a 301 to the dynamic URL
+   `concat("https://www.impulse-terminal.app", http.request.uri.path)` with
+   **Preserve query string** on, so old links like `/docs/git/` land on the same
+   page. The bare domain needs a proxied (orange cloud) DNS record for the rule
+   to run, such as `A @ 192.0.2.1`.
