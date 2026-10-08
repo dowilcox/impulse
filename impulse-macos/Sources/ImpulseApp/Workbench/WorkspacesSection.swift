@@ -388,6 +388,7 @@ private struct WorkspaceRow: View {
   private func help(snapshot: RepoSnapshot?) -> String {
     var lines = [workspace.isScratch ? "Scratch — the file tree follows the active tab" : workspace.root]
     if let branch = snapshot?.branch { lines.append("Branch: \(branch)") }
+    if let summary = workspace.taskSummary { lines.append(summary) }
     if let snapshot, snapshot.changedFileCount > 0 {
       lines.append("\(snapshot.changedFileCount) changed file(s)")
     }

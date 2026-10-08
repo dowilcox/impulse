@@ -1347,12 +1347,29 @@ final class TabManager: NSObject {
       let isTask =
         GitClient.gitDirectory(forPath: root).map { $0 != GitClient.commonGitDirectory(forPath: root) }
         ?? false
+      let summary = isTask ? Self.taskSummary(root: root) : nil
       DispatchQueue.main.async {
         guard isTask, let workspace else { return }
         workspace.isTask = true
+        workspace.taskSummary = summary
         self?.syncToWindowModel()
       }
     }
+  }
+
+  /// "Task slot 1 · from origin/main · APP_PORT 8100, VITE_PORT 5273" for a
+  /// task Impulse made (off the main thread); nil for other worktrees.
+  static func taskSummary(root: String) -> String? {
+    guard let record = TaskRegistryStore.record(forPath: root) else { return nil }
+    var parts = ["Task" + (record.slot.map { " slot \($0)" } ?? "")]
+    if let base = record.baseRef { parts.append("from \(base)") }
+    if let slot = record.slot, let settings = try? MainWindowController.loadProjectConfig(root: root)?.config.get(),
+      !settings.ports.isEmpty
+    {
+      let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
+      parts.append(ports.keys.sorted().map { "\($0) \(ports[$0]!)" }.joined(separator: ", "))
+    }
+    return parts.joined(separator: " · ")
   }
 
   /// The agents in the terminals of the folder workspace at `folder`.
@@ -2016,6 +2033,7 @@ final class TabManager: NSObject {
         progress: tabs.compactMap(\.progress).first,
         repository: workspace.repository,
         isTask: workspace.isTask,
+        taskSummary: workspace.taskSummary,
         ports: workspace.ports,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count

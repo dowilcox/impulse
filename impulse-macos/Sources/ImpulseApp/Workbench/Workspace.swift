@@ -24,6 +24,8 @@ final class Workspace {
   var repository: GitRepositoryState?
   /// A linked worktree made by "New Task" (or by hand), not a main checkout.
   var isTask = false
+  /// For a task Impulse made: its slot, base and ports, for the row's hover.
+  var taskSummary: String?
   /// Ports that processes in this workspace's terminals listen on.
   var ports: [ListeningPort] = []
 

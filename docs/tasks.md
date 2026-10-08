@@ -25,6 +25,7 @@ When you create a task, Impulse:
 - Creates a new branch from the base you choose (by default, the branch you're on).
 - Checks it out in a folder beside your repository: `<repo>.worktrees/<branch>`. For `~/Code/trailhead`, a task named `fix-elevation` lives in `~/Code/trailhead.worktrees/fix-elevation`.
 - Copies over the untracked files a fresh checkout lacks, such as `.env`.
+- Gives the task ports and values of its own when the project settings name them (a dev server port, a database name), written into its `.env` so its dev stack doesn't collide with the main checkout's. See [Ports and values for each task](project-config.md#ports-and-values-for-each-task).
 - Opens the folder as a new workspace, grouped in the sidebar under its repository.
 - Notes the task in the repository's `.git/impulse/tasks.json`, with the branch it started from. That list is how Impulse knows which worktrees are its tasks; worktrees in `<repo>.worktrees/` from before Impulse kept it count too.
 - Runs the project's setup script, then starts the agent you picked, in the task's first terminal.
@@ -113,9 +114,10 @@ Only local branch names are checked. If you want a specific name, type it as the
 2. **Create the worktree.** Impulse runs the equivalent of `git worktree add --no-track -b fix-elevation ~/Code/trailhead.worktrees/fix-elevation origin/main` from the repository, creating the `trailhead.worktrees` folder if needed. Any git error (for example, a base that doesn't exist) is shown in the sheet.
 3. **Copy untracked files.** The files listed under **Copies** are copied from the repository into the same relative paths in the task. A file that already exists in the task (because it's tracked and was checked out) is left alone. See [Which files are copied](#which-files-are-copied).
 4. **Carry over trust.** If the repository is a trusted folder, the task folder is trusted too, so language servers, formatters on save and background fetch work in it straight away. If the repository isn't trusted, the task folder isn't either, and you're asked about it like any other folder you open (when **Ask before trusting folders** is on). Trusting the parent folder from the trust prompt (for example `~/Code`) covers task folders too, because they live beside the repository. See [Getting started](getting-started.md) for workspace trust.
-5. **Ask about the project file.** If the task has a `.impulse/project.toml` with commands in it and you haven't trusted that exact file yet, Impulse asks before running anything from it. See [Project configuration](project-config.md#trusting-the-project-file).
-6. **Open the workspace.** The task opens as a new workspace with one terminal in the task folder. That terminal runs the project's setup script (if there is one and you trusted the file), then the agent you chose under **Start**. When both are set, they run as one command joined with `&&`, for example `npm ci && claude`, so the agent only starts if setup succeeds.
-7. **Confirm.** A toast says "Started task fix-elevation."
+5. **Ask about the project file.** If the task has a `.impulse/project.toml` with commands or per-task values in it and you haven't trusted that exact file yet, Impulse asks before running or writing anything from it. See [Project configuration](project-config.md#trusting-the-project-file).
+6. **Write the task's own values.** If the project settings name ports or values that have to differ per task, the task gets a slot and its values are written into its copy of `.env`, before setup runs. See [Ports and values for each task](project-config.md#ports-and-values-for-each-task).
+7. **Open the workspace.** The task opens as a new workspace with one terminal in the task folder. That terminal runs the project's setup script (if there is one and you trusted the file), then the agent you chose under **Start**. When both are set, they run as one command joined with `&&`, for example `npm ci && claude`, so the agent only starts if setup succeeds.
+8. **Confirm.** A toast says "Started task fix-elevation."
 
 ### Which files are copied
 

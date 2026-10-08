@@ -27,12 +27,14 @@ enum TaskRegistryStore {
     registry(root: path)?.record(forPath: path)
   }
 
-  /// Record a new task, giving it the lowest free slot. `base` is what the
-  /// New Task sheet's From held: `origin/main` is split into the remote and
-  /// its branch, anything else is kept as typed (empty: the main checkout's
-  /// branch).
+  /// Record a new task, giving it the lowest free slot that `available`
+  /// accepts (its ports free). `base` is what the New Task sheet's From
+  /// held: `origin/main` is split into the remote and its branch, anything
+  /// else is kept as typed (empty: the main checkout's branch).
   @discardableResult
-  static func recordCreated(path: String, branch: String, base: String, root: String) -> TaskRecord? {
+  static func recordCreated(
+    path: String, branch: String, base: String, root: String, available: @escaping (Int) -> Bool = { _ in true }
+  ) -> TaskRecord? {
     guard let common = GitClient.commonGitDirectory(forPath: root) else { return nil }
     let main = MainWindowController.mainCheckoutRoot(of: root)
     var baseBranch: String? = base.isEmpty ? GitOperations.currentBranch(root: main) : base
@@ -45,10 +47,33 @@ enum TaskRegistryStore {
     }
     return try? TaskRegistry.update(commonGitDirectory: common) { registry in
       let record = TaskRecord(
-        path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot())
+        path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot(available: available))
       registry.add(record)
       return record
     }
+  }
+
+  /// Whether every port of `slot` is free on this Mac.
+  static func portsAreFree(_ config: ProjectConfig?, slot: Int) -> Bool {
+    guard let config, !config.ports.isEmpty else { return true }
+    return TaskEnvironment.ports(config.ports, slot: slot, offset: config.portOffset).values.allSatisfy(PortProbe.isFree)
+  }
+
+  /// Who a terminal in `directory` belongs to, for its environment
+  /// (`IMPULSE_TASK`, `IMPULSE_TASK_SLOT`, `IMPULSE_REPO_ROOT`): cheap
+  /// enough for each new terminal (no git processes, nothing reconciled).
+  static func identity(forDirectory directory: String) -> [String: String] {
+    guard let common = GitClient.commonGitDirectory(forPath: directory),
+      (common as NSString).lastPathComponent == ".git"
+    else { return [:] }
+    var environment = ["IMPULSE_REPO_ROOT": (common as NSString).deletingLastPathComponent]
+    if let worktree = GitClient.repoRoot(forPath: directory),
+      let record = TaskRegistry.load(commonGitDirectory: common).record(forPath: worktree)
+    {
+      environment["IMPULSE_TASK"] = (record.path as NSString).lastPathComponent
+      if let slot = record.slot { environment["IMPULSE_TASK_SLOT"] = String(slot) }
+    }
+    return environment
   }
 
   /// Forget the task at `path` (archived); the record, for Undo.

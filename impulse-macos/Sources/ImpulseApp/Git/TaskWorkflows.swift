@@ -48,6 +48,22 @@ final class TaskSheetModel {
     draft.base = base
   }
 
+  /// The project's settings and the slot the task would get, for the
+  /// preview of its own values.
+  var settings: ProjectConfig?
+  var slot: Int?
+
+  /// "APP_PORT 8100 · VITE_PORT 5273 · .env: APP_URL, DB_DATABASE".
+  var valuesPreview: String? {
+    guard let settings, settings.hasTaskValues, let slot else { return nil }
+    let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
+    var parts = ports.keys.sorted().map { "\($0) \(ports[$0]!)" }
+    if !settings.worktreeEnv.isEmpty {
+      parts.append("\(settings.envFile): " + settings.worktreeEnv.keys.sorted().joined(separator: ", "))
+    }
+    return parts.joined(separator: " · ")
+  }
+
   /// From still holds what the sheet put there (or nothing), so a better
   /// default may replace it.
   var canReplaceBase: Bool { defaultBase.map { draft.base == $0 } ?? draft.base.isEmpty }
@@ -120,6 +136,9 @@ struct TaskSheetView: View {
           model.isLoading
             ? "…"
             : model.copies.isEmpty ? "nothing (add patterns to .worktreeinclude)" : model.copies.joined(separator: ", "))
+        if let values = model.valuesPreview {
+          detail("Values", values)
+        }
       }
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -224,7 +243,14 @@ extension MainWindowController {
         guard let name = kind.names.first, LoginShell.which(name) != nil else { return nil }
         return (kind.displayName, name)
       }
+      let settings = try? Self.loadProjectConfig(root: root)?.config.get()
+      let slot =
+        settings?.hasTaskValues == true
+        ? TaskRegistryStore.registry(root: root)?.nextSlot { TaskRegistryStore.portsAreFree(settings, slot: $0) }
+        : nil
       DispatchQueue.main.async {
+        model.settings = settings
+        model.slot = slot
         if base == nil, let computed, model.canReplaceBase {
           model.draft.base = computed.base
           model.defaultBase = computed.base
@@ -338,9 +364,14 @@ extension MainWindowController {
           failure = error.message
         }
       }
+      var record: TaskRecord?
       if failure == nil {
-        Self.copyFiles(copies, from: root, to: path)
-        TaskRegistryStore.recordCreated(path: path, branch: branch, base: base, root: root)
+        // Read (not yet trusted) only to pick a slot whose ports are free.
+        let settings = try? Self.loadProjectConfig(root: path)?.config.get()
+        Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
+        record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base, root: root) { slot in
+          TaskRegistryStore.portsAreFree(settings, slot: slot)
+        }
       }
       DispatchQueue.main.async {
         model.isCreating = false
@@ -353,12 +384,15 @@ extension MainWindowController {
         guard let self else { return }
         // The same repository: a task folder is as trusted as it is.
         if Trust.shared.isTrusted(root) { Trust.shared.trust(path) }
-        // The project's setup script (once trusted) runs before the agent.
+        // Once the project's settings are trusted: the task's own values go
+        // into its env file, then the setup script runs before the agent.
         self.trustProjectConfig(root: path) { [weak self] config in
-          let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
-          self?.tabManager.openWorkspace(
-            folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
-          self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+          Self.writeTaskValues(config, path: path, slot: record?.slot) {
+            let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
+            self?.tabManager.openWorkspace(
+              folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
+            self?.toasts.show(Toast(kind: .success, message: "Started task \(branch)."))
+          }
         }
       }
     }
@@ -390,12 +424,16 @@ extension MainWindowController {
           : GitOperations.addWorktree(path: path, branch: name, newBranch: false, root: root)
         if case .failure(let error) = result { failure = error.message }
       }
+      var record: TaskRecord?
       if failure == nil {
-        Self.copyFiles(copies, from: root, to: path)
+        let settings = try? Self.loadProjectConfig(root: path)?.config.get()
+        Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
         // The base it will be merged into: what New Task would start from.
         let main = GitClient.snapshot(forPath: root)
         let base = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead).base }
-        TaskRegistryStore.recordCreated(path: path, branch: branch, base: base ?? "", root: root)
+        record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base ?? "", root: root) { slot in
+          TaskRegistryStore.portsAreFree(settings, slot: slot)
+        }
       }
       DispatchQueue.main.async {
         guard let self else { return }
@@ -408,12 +446,17 @@ extension MainWindowController {
           self?.toasts.show(Toast(kind: .success, message: "Opened \(branch) as a task."))
         }
         if isRemote {
-          // Someone else's branch: its folder isn't trusted like yours, and
-          // its setup script is asked about every time.
-          self.confirmBranchSetup(name, root: path, completion: open)
+          // Someone else's branch: its folder isn't trusted like yours, its
+          // values come only from settings you trusted already, and its
+          // setup script is asked about every time.
+          Self.writeTaskValues(self.alreadyTrustedProjectConfig(root: path), path: path, slot: record?.slot) {
+            [weak self] in self?.confirmBranchSetup(name, root: path, completion: open)
+          }
         } else {
           if Trust.shared.isTrusted(root) { Trust.shared.trust(path) }
-          self.trustProjectConfig(root: path) { open($0?.setupScript) }
+          self.trustProjectConfig(root: path) { config in
+            Self.writeTaskValues(config, path: path, slot: record?.slot) { open(config?.setupScript) }
+          }
         }
       }
     }
@@ -444,6 +487,38 @@ extension MainWindowController {
       alert.beginSheetModal(for: window) { response in
         completion(response == .alertFirstButtonReturn ? setup : nil)
       }
+    }
+  }
+
+  /// The env file, when the settings give tasks values of their own and the
+  /// main checkout has one that `copies` doesn't already include: a task's
+  /// values are written into a copy of it, secrets and all.
+  static func envFileCopy(_ settings: ProjectConfig?, root: String, copies: [String]) -> [String] {
+    guard let settings, settings.hasTaskValues, isInside(settings.envFile), !copies.contains(settings.envFile),
+      FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent(settings.envFile))
+    else { return [] }
+    return [settings.envFile]
+  }
+
+  /// A relative path that stays inside the folder it's relative to.
+  private static func isInside(_ path: String) -> Bool {
+    !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("~") && !path.split(separator: "/").contains("..")
+  }
+
+  /// Write a new task's own values (ports, `[worktrees.env]`) into its env
+  /// file, from trusted settings, then call `done` on the main thread.
+  static func writeTaskValues(_ config: ProjectConfig?, path: String, slot: Int?, done: @escaping () -> Void) {
+    guard let config, config.hasTaskValues, let slot, isInside(config.envFile) else { return done() }
+    DispatchQueue.global(qos: .userInitiated).async {
+      let task = (path as NSString).lastPathComponent
+      let file = (path as NSString).appendingPathComponent(config.envFile)
+      let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+      let values = TaskEnvironment.values(config: config, task: task, slot: slot)
+      try? FileManager.default.createDirectory(
+        atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+      try? TaskEnvironment.applying(values, to: current, comment: "Impulse task \(task)")
+        .write(toFile: file, atomically: true, encoding: .utf8)
+      DispatchQueue.main.async(execute: done)
     }
   }
 
@@ -553,7 +628,9 @@ extension MainWindowController {
 
   private func removeTaskWorktree(root: String, branch: String, dirty: Bool, archiveScript: String? = nil) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      if let archiveScript, !Self.runScript(archiveScript, in: root) {
+      if let archiveScript,
+        !Self.runScript(archiveScript, in: root, extra: TaskRegistryStore.identity(forDirectory: root))
+      {
         DispatchQueue.main.async {
           self?.toasts.show(Toast(kind: .warning, message: "The archive script failed; archiving anyway."))
         }

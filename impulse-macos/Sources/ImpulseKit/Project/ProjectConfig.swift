@@ -36,6 +36,16 @@ public struct ProjectConfig: Equatable, Sendable {
   public var archiveScript: String?
   /// Untracked files to copy into new task worktrees (globs allowed).
   public var worktreeCopy: [String] = []
+  /// The dotenv file a new task's own values are written into
+  /// (`[worktrees] env_file`): the main checkout's copy, then updated.
+  public var envFile = ".env"
+  /// What task n adds to every port: n × this (`[worktrees] port_offset`).
+  public var portOffset = 100
+  /// The main checkout's ports, by their name in the env file
+  /// (`[worktrees.ports]`).
+  public var ports: [String: Int] = [:]
+  /// Values that differ per task, with placeholders (`[worktrees.env]`).
+  public var worktreeEnv: [String: String] = [:]
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -50,6 +60,12 @@ public struct ProjectConfig: Equatable, Sendable {
   public var commands: [String] {
     actions.map(\.command) + [setupScript, archiveScript].compactMap { $0 }
   }
+
+  /// Whether new tasks get values of their own (ports, env).
+  public var hasTaskValues: Bool { !ports.isEmpty || !worktreeEnv.isEmpty }
+
+  /// The names a new task's values are written under, for the trust prompt.
+  public var taskValueNames: [String] { ports.keys.sorted() + worktreeEnv.keys.sorted() }
 
   /// The committed file, relative to the repository root.
   public static let relativePath = ".impulse/project.toml"
@@ -70,6 +86,16 @@ public struct ProjectConfig: Equatable, Sendable {
     }
     struct Worktrees: Decodable {
       var copy: [String]?
+      var envFile: String?
+      var portOffset: Int?
+      var ports: [String: Int]?
+      var env: [String: String]?
+
+      enum CodingKeys: String, CodingKey {
+        case copy, ports, env
+        case envFile = "env_file"
+        case portOffset = "port_offset"
+      }
     }
     var actions: [Action]?
     var scripts: Scripts?
@@ -110,6 +136,10 @@ public struct ProjectConfig: Equatable, Sendable {
       if let value = layer.scripts?.setup { setup = value }
       if let value = layer.scripts?.archive { archive = value }
       if let copy = layer.worktrees?.copy { config.worktreeCopy = copy }
+      if let file = layer.worktrees?.envFile, !file.isEmpty { config.envFile = file }
+      if let offset = layer.worktrees?.portOffset, offset > 0 { config.portOffset = offset }
+      config.ports.merge(layer.worktrees?.ports ?? [:]) { _, later in later }
+      config.worktreeEnv.merge(layer.worktrees?.env ?? [:]) { _, later in later }
     }
     config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
     config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }
@@ -117,11 +147,13 @@ public struct ProjectConfig: Equatable, Sendable {
   }
 
   /// One settings file as read: where it is, the SHA-256 of its bytes
-  /// (trust is for exactly this content), and the commands it can run.
+  /// (trust is for exactly this content), the commands it can run and the
+  /// per-task values it sets.
   public struct Source: Equatable, Sendable {
     public let path: String
     public let digest: String
     public let commands: [String]
+    public var values: [String] = []
   }
 
   /// The settings for a checkout, from both files.
@@ -133,8 +165,10 @@ public struct ProjectConfig: Equatable, Sendable {
     /// `.git/impulse/project.toml`.
     public let local: Source?
 
-    /// The files that can run commands, for the trust prompt.
-    public var sources: [Source] { [committed, local].compactMap { $0 }.filter { !$0.commands.isEmpty } }
+    /// The files that need trusting: they run commands or set values.
+    public var sources: [Source] {
+      [committed, local].compactMap { $0 }.filter { !$0.commands.isEmpty || !$0.values.isEmpty }
+    }
   }
 
   /// The settings for the checkout at `root`: its own `.impulse/project.toml`
@@ -151,7 +185,9 @@ public struct ProjectConfig: Equatable, Sendable {
       switch parseLayer(String(decoding: data, as: UTF8.self)) {
       case .success(let layer):
         layers.append(layer)
-        sources[index] = Source(path: path, digest: digest(data), commands: resolve([layer]).commands)
+        let alone = resolve([layer])
+        sources[index] = Source(
+          path: path, digest: digest(data), commands: alone.commands, values: alone.taskValueNames)
       case .failure(.invalid(let message)):
         let name = index == 0 ? relativePath : ".git/impulse/project.toml"
         failure = failure ?? .invalid("\(name): \(message)")

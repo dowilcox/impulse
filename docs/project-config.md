@@ -89,9 +89,19 @@ An empty string means no script.
 
 ### `[worktrees]`
 
-| Key    | Type             | Meaning                                                                                                                                               |
-| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `copy` | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude). |
+| Key           | Type             | Meaning                                                                                                                                                                              |
+| ------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `copy`        | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                |
+| `env_file`    | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task). |
+| `port_offset` | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                             |
+
+### `[worktrees.ports]`
+
+The main checkout's ports, one per line, named as they are in the env file: `APP_PORT = 8000`. Each task gets each port plus its slot × `port_offset`. See [Ports and values for each task](#ports-and-values-for-each-task).
+
+### `[worktrees.env]`
+
+Other values that have to differ in each task, one per line: `DB_DATABASE = "trailhead_{task_}"`. They can use the placeholders `{task}`, `{task_}`, `{slot}` and the port names. See [Ports and values for each task](#ports-and-values-for-each-task).
 
 ### When the file has a mistake
 
@@ -128,17 +138,18 @@ command = "docker compose exec web npm test"
 
 Impulse reads both, and `.git/impulse/project.toml` wins key by key:
 
-| In `.git/impulse/project.toml`     | Result                                                                 |
-| ---------------------------------- | ---------------------------------------------------------------------- |
-| A key the committed file also sets | The local value is used.                                               |
-| A key it doesn't set               | The committed file's value is used.                                    |
-| An empty script (`setup = ""`)     | The committed file's script is turned off.                             |
-| `[worktrees] copy`                 | Replaces the committed file's list.                                    |
-| An action with the same `name`     | Replaces the committed file's action; the others from both files stay. |
+| In `.git/impulse/project.toml`         | Result                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| A key the committed file also sets     | The local value is used.                                                        |
+| A key it doesn't set                   | The committed file's value is used.                                             |
+| An empty script (`setup = ""`)         | The committed file's script is turned off.                                      |
+| `[worktrees] copy`                     | Replaces the committed file's list.                                             |
+| `[worktrees.ports]`, `[worktrees.env]` | Merged name by name: a local value replaces the committed one of the same name. |
+| An action with the same `name`         | Replaces the committed file's action; the others from both files stay.          |
 
 ## Trusting the project file
 
-A `project.toml` is part of the repository, so anyone who can commit to it can put commands in it. Impulse never runs those commands until you've trusted that exact file. The same goes for `.git/impulse/project.toml`, which is trusted on its own: when both files have commands you haven't trusted, one prompt lists both files' commands.
+A `project.toml` is part of the repository, so anyone who can commit to it can put commands in it. Impulse never runs those commands until you've trusted that exact file. The same goes for `.git/impulse/project.toml`, which is trusted on its own: when both files have commands you haven't trusted, one prompt lists both files' commands. A file that sets [values for each task](#ports-and-values-for-each-task) asks too, naming them ("It sets API_PORT, DATABASE_NAME in each new task's env file.").
 
 The first time something would run a command from the file (an action, a task's setup script or a task's archive script), Impulse asks:
 
@@ -197,6 +208,35 @@ The last row of the list is **Add project actions…** when the file has no acti
 - It runs in the task folder with `/bin/sh -c` and your login shell's `PATH`, without a terminal. Its output isn't shown.
 - If it exits with an error, or runs for more than two minutes (it's stopped then), a toast says "The archive script failed; archiving anyway." and the task is archived regardless.
 - It needs the file to be trusted, like any command from it. If you cancel the trust prompt, the task is archived without running it.
+
+## Ports and values for each task
+
+Two checkouts of a project that each run a dev server, or a Docker stack, collide when both want the same ports or database. The project settings can name what has to differ, and each new task gets its own values, written into its copy of `.env` when it's created:
+
+```toml
+[worktrees]
+port_offset = 100          # task n adds n × 100 to every port (the default)
+
+[worktrees.ports]          # the main checkout's ports
+WEB_PORT = 5173
+API_PORT = 8080
+
+[worktrees.env]            # may use {task}, {task_}, {slot} and the port names
+DATABASE_NAME = "trailhead_{task_}"
+API_URL = "http://localhost:{API_PORT}"
+```
+
+With that, a task named `fix-elevation` in slot 1 gets `WEB_PORT=5273`, `API_PORT=8180`, `DATABASE_NAME=trailhead_fix_elevation` and `API_URL=http://localhost:8180`.
+
+- **Slots.** Each task Impulse creates gets a slot, a small number that's unique among the repository's tasks and stays with the task until it's archived; the main checkout is slot 0 and keeps its ports. A new task takes the lowest slot whose ports are all free on your Mac. The New Task sheet's **Values** line shows what the task will get.
+- **The file.** The task's `.env` starts as a copy of the main checkout's (with your secrets and other settings), even when `.worktreeinclude` doesn't list it, and only these keys are changed: in place where the file already sets them, otherwise added at the end under a `# Impulse task fix-elevation` comment. `env_file` names a different file. If the main checkout has none, the task's file holds only these values. Because the values are in the file, everything that reads it gets them: your app, `docker compose` from any terminal, Vite.
+- **Written once.** The values are written when the task is created. After that the file is yours to edit; changing the settings later doesn't change existing tasks.
+- **Placeholders.** `{task}` is the task's folder name (`fix-elevation`, fine for host names and Compose project names), `{task_}` the same with dashes as underscores (`fix_elevation`, for database names), `{slot}` the slot number, and `{API_PORT}` (any name from `[worktrees.ports]`) that port for the task.
+- **Trust.** The values are only written from settings you've trusted, like scripts (see [Trusting the project file](#trusting-the-project-file)).
+
+Every terminal in a task also gets `IMPULSE_TASK` (the task's folder name), `IMPULSE_TASK_SLOT` and `IMPULSE_REPO_ROOT` (the main checkout) in its environment, and so do setup and archive scripts and project actions. Terminals in the main checkout get `IMPULSE_REPO_ROOT` only.
+
+For a Docker project, read the ports in `docker-compose.yml` from the file (`"${API_PORT:-8080}:8080"`) and don't set `container_name`, so each task's stack is separate; Compose names a stack after its folder. Then `setup = "docker compose up -d"` starts the task's own stack and `archive = "docker compose down -v"` removes it.
 
 ## Copying files into tasks
 

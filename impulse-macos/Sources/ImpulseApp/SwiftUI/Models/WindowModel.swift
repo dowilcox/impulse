@@ -102,6 +102,8 @@ struct WorkspaceInfo: Identifiable {
   let repository: GitRepositoryState?
   /// A task worktree (can be archived).
   var isTask: Bool = false
+  /// For a task Impulse made: "Task slot 1 · from origin/main · APP_PORT 8100".
+  var taskSummary: String? = nil
   /// Listening ports of its terminals' processes.
   var ports: [ListeningPort] = []
   /// Agents waiting on the user, and agents working.

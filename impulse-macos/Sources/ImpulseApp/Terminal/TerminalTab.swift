@@ -1332,6 +1332,11 @@ class TerminalTab: NSView {
     if let cli = Self.cliPath {
       envDict[ControlProtocol.cliKey] = cli
     }
+    // In a task: which one (IMPULSE_TASK, IMPULSE_TASK_SLOT) and the main
+    // checkout (IMPULSE_REPO_ROOT), for scripts that need them.
+    if let initialDirectory {
+      envDict.merge(TaskRegistryStore.identity(forDirectory: initialDirectory)) { current, _ in current }
+    }
 
     // Dangerous linker/loader environment variables.
     let dangerousEnvKeys: Set<String> = [

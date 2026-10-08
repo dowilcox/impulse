@@ -82,6 +82,7 @@ extension MainWindowController {
     }
     if untrusted.isEmpty { return completion(config) }
     let commands = untrusted.flatMap(\.commands)
+    let values = Array(Set(untrusted.flatMap(\.values))).sorted()
     let list = commands.prefix(8).map { "  \($0)" }.joined(separator: "\n")
     let more = commands.count > 8 ? "\n  …and \(commands.count - 8) more" : ""
     let name = (root as NSString).lastPathComponent
@@ -90,10 +91,13 @@ extension MainWindowController {
       ? "Trust \(Self.displayName(of: untrusted[0], in: loaded)) in \(name)?"
       : "Trust the project settings in \(name)?"
     let what = untrusted.count == 1 ? "It" : "\(ProjectConfig.relativePath) and .git/impulse/project.toml"
+    var message = commands.isEmpty ? "" : "\(what) can run these commands on your Mac:\n\(list)\(more)\n\n"
+    if !values.isEmpty {
+      message += "\(commands.isEmpty ? what : "It also") sets \(values.joined(separator: ", ")) in each new task's env file.\n\n"
+    }
     gitConfirm(
       title: title,
-      message: "\(what) can run these commands on your Mac:\n\(list)\(more)\n\nYou'll be asked again if the "
-        + (untrusted.count == 1 ? "file changes." : "files change."),
+      message: message + "You'll be asked again if the " + (untrusted.count == 1 ? "file changes." : "files change."),
       confirmTitle: "Trust and Run", destructive: false
     ) { trusted in
       guard trusted else { return completion(nil) }
@@ -106,14 +110,29 @@ extension MainWindowController {
     }
   }
 
+  /// The project's config when every settings file that needs trusting is
+  /// trusted already; nil otherwise. Never asks.
+  func alreadyTrustedProjectConfig(root: String) -> ProjectConfig? {
+    guard let loaded = Self.loadProjectConfig(root: root), case .success(let config) = loaded.config else {
+      return nil
+    }
+    let store = ProjectTrustStore.current
+    let trusted = loaded.sources.allSatisfy {
+      store.isTrusted(root: Self.trustKey(for: $0, in: loaded, root: root), digest: $0.digest)
+    }
+    return trusted ? config : nil
+  }
+
   /// Run a project script synchronously in `directory` (off the main
-  /// thread); false when it fails or takes over two minutes.
-  static func runScript(_ script: String, in directory: String) -> Bool {
+  /// thread); false when it fails or takes over two minutes. `extra` is
+  /// added to its environment (a task's `IMPULSE_TASK`, say).
+  static func runScript(_ script: String, in directory: String, extra: [String: String] = [:]) -> Bool {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = ["-c", script]
     process.currentDirectoryURL = URL(fileURLWithPath: directory)
     var environment = ProcessInfo.processInfo.environment
+    environment.merge(extra) { _, new in new }
     environment["PATH"] = LoginShell.loginPath()
     process.environment = environment
     process.standardOutput = FileHandle.nullDevice
