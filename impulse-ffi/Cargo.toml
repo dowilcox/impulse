@@ -1,6 +1,6 @@
 [package]
 name = "impulse-ffi"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2021"
 description = "C FFI over the impulse-terminal core for the Swift app"
 license = "GPL-3.0-only"
