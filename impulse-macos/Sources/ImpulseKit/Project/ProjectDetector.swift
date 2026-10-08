@@ -36,6 +36,8 @@ public struct ProjectSuggestions: Equatable, Sendable {
   public var archive: String?
   public var check: String?
   public var actions: [ProjectConfig.Action] = []
+  /// What to run when files change in a pull, merge or checkout.
+  public var onChange: [String: String] = [:]
   /// A database whose data is a folder of the project.
   public var databaseFolder: String?
   public var databaseService: String?
@@ -170,6 +172,12 @@ public enum ProjectDetector {
     for install in installs where !setup.contains(install) { setup.append(install) }
     suggestions.setup = setup.isEmpty ? nil : setup.joined(separator: " && ")
     suggestions.archive = compose == nil ? nil : "docker compose down -v"
+    for (lockFile, command) in installCommands where exists(lockFile) { suggestions.onChange[lockFile] = command }
+    if compose != nil, exists("Dockerfile") {
+      // Anonymous volumes survive a rebuild: renew them, or the old
+      // dependencies stay.
+      suggestions.onChange["Dockerfile"] = "docker compose build && docker compose up -d --renew-anon-volumes"
+    }
 
     let npmScripts = read("package.json").flatMap(scripts) ?? []
     let composerScripts = read("composer.json").flatMap(scripts) ?? []

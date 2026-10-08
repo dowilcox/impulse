@@ -51,6 +51,8 @@ final class ProjectSetupModel {
   var check = ""
   var archive = ""
   var actions: [ActionRow] = []
+  /// `[on_change]`: file → command.
+  var rules: [Pair] = []
   /// What the Database row offers, and what's chosen.
   var databaseOptions: [Database] = []
   var database: Database = .none
@@ -121,6 +123,11 @@ final class ProjectSetupModel {
       config.databaseService = databaseService
     }
     config.composeOverride = composeOverride
+    for pair in rules {
+      let name = pair.name.trimmingCharacters(in: .whitespaces)
+      let command = pair.value.trimmingCharacters(in: .whitespaces)
+      if !name.isEmpty, !command.isEmpty { config.onChange[name] = command }
+    }
     return config
   }
 }
@@ -294,6 +301,11 @@ struct ProjectSetupView: View {
         script("Setup", "Runs in a new task's first terminal, before the agent", Binding(get: { model.setup }, set: { model.setup = $0 }))
         script("Check", "Checks a task is ready to land (types, tests)", Binding(get: { model.check }, set: { model.check = $0 }))
         script("Archive", "Runs before a task's folder is removed", Binding(get: { model.archive }, set: { model.archive = $0 }))
+      }
+
+      section("When files change", detail: "After a pull, merge or checkout brings in a change to one of these files, Impulse offers to run its command.") {
+        pairs(Binding(get: { model.rules }, set: { model.rules = $0 }), namePlaceholder: "composer.lock", valuePlaceholder: "composer install")
+        ChromeButton(title: "Add Rule", icon: .plus, kind: .ghost) { model.rules.append(.init(name: "", value: "")) }
       }
 
       section("Actions", detail: "Commands in the palette's a: list.") {

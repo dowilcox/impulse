@@ -70,6 +70,12 @@ final class GitRepositoryState {
         self.refreshInFlight = false
         self.isRefreshing = false
         if snapshot != self.snapshot {
+          // HEAD moved (a pull, merge or checkout, from Impulse or a
+          // terminal): windows offer to update dependencies that came with it.
+          if let from = self.snapshot?.headOid, let to = snapshot?.headOid, from != to, snapshot?.operation == nil {
+            NotificationCenter.default.post(
+              name: .gitHeadMoved, object: self, userInfo: ["root": root, "from": from, "to": to])
+          }
           self.snapshot = snapshot
           self.revision += 1
         }
@@ -246,4 +252,7 @@ final class GitRepositoryStore {
 extension Notification.Name {
   /// Posted after Impulse itself changed a repository (object: state).
   static let gitRepositoryDidChange = Notification.Name("impulse.gitRepositoryDidChange")
+  /// A repository's HEAD moved (object: GitRepositoryState; userInfo: root,
+  /// from, to).
+  static let gitHeadMoved = Notification.Name("impulse.gitHeadMoved")
 }

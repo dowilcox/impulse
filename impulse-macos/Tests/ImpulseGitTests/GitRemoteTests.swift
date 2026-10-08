@@ -67,6 +67,25 @@
       #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
     }
 
+    @Test func headMovesAreToldApartByTheirReflog() throws {
+      let (repo, origin, seed) = try cloneWithOrigin()
+      defer { [repo, origin, seed].forEach { $0.destroy() } }
+      try repo.commit(["b.txt": "1\n"], message: "own")
+      #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .ownCommit)
+
+      try seed.commit(["composer.lock": "{}\n"], message: "deps")
+      try seed.git("push", "-q", "origin", "main")
+      let before = try repo.git("rev-parse", "HEAD")
+      _ = try GitOperations.pull(mode: .merge, root: repo.root).get()
+      #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .merge)
+      let after = try repo.git("rev-parse", "HEAD")
+      #expect(GitOperations.changedPaths(from: before, to: after, root: repo.root) == ["composer.lock"])
+
+      try repo.git("switch", "-q", "-c", "other")
+      try repo.git("switch", "-q", "main")
+      #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .checkout)
+    }
+
     @Test func commitDateIsTheCommittersDate() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

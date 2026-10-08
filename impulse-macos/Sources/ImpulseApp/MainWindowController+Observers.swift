@@ -311,6 +311,14 @@ extension MainWindowController {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .gitHeadMoved, object: nil, queue: .main) { [weak self] notification in
+        guard let info = notification.userInfo, let root = info["root"] as? String, let from = info["from"] as? String,
+          let to = info["to"] as? String
+        else { return }
+        self?.offerDependencySteps(root: root, from: from, to: to)
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .impulseSwitchBranch, object: nil, queue: .main) { [weak self] _ in
         guard let self, self.window?.isKeyWindow == true else { return }
         self.showBranchSwitcher()

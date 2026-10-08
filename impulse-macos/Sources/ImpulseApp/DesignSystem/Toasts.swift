@@ -2,7 +2,8 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// A transient message, optionally with one action (usually "Undo").
+/// A transient message, optionally with an action (usually "Undo") and a
+/// second one.
 struct Toast: Identifiable {
   enum Kind { case info, success, warning, error }
 
@@ -12,6 +13,8 @@ struct Toast: Identifiable {
   var detail: String? = nil
   var actionTitle: String? = nil
   var action: (() -> Void)? = nil
+  var secondaryTitle: String? = nil
+  var secondaryAction: (() -> Void)? = nil
   /// Seconds before it dismisses itself (nil: stays until dismissed).
   var lifetime: TimeInterval? = 6
 }
@@ -162,6 +165,12 @@ struct ToastView: View {
       }
       .frame(minWidth: 200, maxWidth: 380, alignment: .leading)
       if let title = toast.actionTitle, let action = toast.action {
+        ChromeButton(title: title, kind: .secondary) {
+          action()
+          dismiss()
+        }
+      }
+      if let title = toast.secondaryTitle, let action = toast.secondaryAction {
         ChromeButton(title: title, kind: .secondary) {
           action()
           dismiss()

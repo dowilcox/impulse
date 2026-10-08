@@ -59,6 +59,7 @@
       #expect(found.composeWarnings == ["app: container_name pulseboard-app", "app: fixed port 8000:8000"])
       #expect(found.setup == "docker compose up -d && npm ci && composer install")
       #expect(found.archive == "docker compose down -v")
+      #expect(found.onChange == ["package-lock.json": "npm ci", "composer.lock": "composer install"])
       #expect(found.check == "npm run typecheck && npm test && composer test")
       #expect(found.actions.map(\.name) == ["build", "dev", "test", "typecheck", "composer test", "make up", "make fresh"])
       #expect(found.databaseFolder == "docker/data/mysql")

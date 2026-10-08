@@ -25,6 +25,7 @@ It shows the settings already saved, and fills what's missing from what it finds
 | Values for each task | A database name, when tasks share one database server, and an app URL on a task's port.                                                                                                                                                                                                                            |
 | Scripts              | **Setup** from the lock files (`npm ci`, `composer install`, …) and `docker compose up -d`; **Check** from type-check, lint and test scripts; **Archive** `docker compose down -v`.                                                                                                                                |
 | Actions              | The repository's `package.json` and `composer.json` scripts and Makefile targets, unticked until you tick them.                                                                                                                                                                                                    |
+| When files change    | A rule for each lock file it finds (`composer.lock` → `composer install`), and for a `Dockerfile` beside a Compose file. See [When files change](#when-files-change).                                                                                                                                              |
 
 Everything is editable. **Save to** chooses where the settings go: **This Mac** (`.git/impulse/project.toml`, never committed; see [Settings for this Mac only](#settings-for-this-mac-only)) or **The project** (`.impulse/project.toml`, to commit for everyone). In a committed file, Saving rewrites only the sections the tab manages and keeps the rest of the file as written; it says so first if comments in those sections would be dropped. Saving trusts exactly what it wrote, so the settings work in the next task without a prompt. **Open File** opens the file in the editor.
 
@@ -84,11 +85,11 @@ Actions with an empty `name` or `command` are left out.
 
 ### `[scripts]`
 
-| Key       | Type   | Meaning                                                                                                                                                                  |
-| --------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script).                                                                      |
-| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script).                                                                      |
-| `check`   | string | Checks that a task's work is ready (type checks, tests), for example `npm run typecheck && npm test`. Project Setup proposes one; Impulse doesn't run it on its own yet. |
+| Key       | Type   | Meaning                                                                                                                                                                                                              |
+| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script).                                                                                                                  |
+| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script).                                                                                                                  |
+| `check`   | string | Checks that a task's work is ready (type checks, tests), for example `npm run typecheck && npm test`. Impulse offers to run it after a pull or merge brings in changes; see [When files change](#when-files-change). |
 
 An empty string means no script.
 
@@ -109,6 +110,10 @@ The main checkout's ports, one per line, named as they are in the env file: `APP
 ### `[worktrees.env]`
 
 Other values that have to differ in each task, one per line: `DB_DATABASE = "trailhead_{task_}"`. They can use the placeholders `{task}`, `{task_}`, `{slot}` and the port names. See [Ports and values for each task](#ports-and-values-for-each-task).
+
+### `[on_change]`
+
+What to run when a file changes in a pull, merge or checkout, one rule per line: `"composer.lock" = "composer install"`. A name matches that file in any folder; a path (`"web/package-lock.json"`) or a pattern (`"*.gemspec"`) works too. Quote names with dots in them. See [When files change](#when-files-change).
 
 ### `[worktrees.database]`
 
@@ -278,6 +283,24 @@ service = "mysql"
 A running database's files can't be copied safely, so Impulse stops that Compose service in the main checkout (`docker compose stop mysql`), clones the folder, and starts it again: a second or two. If the service isn't running, nothing is stopped. Because these run `docker compose`, they need the settings to be trusted, and the trust prompt lists them. The clone is also a safety net: a task can try a change that rewrites the data, such as a database upgrade, on its own copy.
 
 When the data lives in a Docker volume instead, have the setup script load it (a dump from the main checkout's database, or migrations and seed data).
+
+## When files change
+
+When a checkout's commit changes under it and a dependency file comes along (a lock file, a `Dockerfile`), the installed dependencies are stale, and tests fail for the wrong reason. Impulse notices when a workspace moves to another commit, from Impulse or from a terminal (an agent's `git pull`, say), and offers to bring it up to date:
+
+```toml
+[on_change]
+"composer.lock" = "composer install"
+"package-lock.json" = "npm ci"
+"Dockerfile" = "docker compose build && docker compose up -d --renew-anon-volumes"
+```
+
+- **The toast.** It names the files that changed ("composer.lock and package-lock.json changed") and the commands, with **Update Dependencies**, which runs them in a new terminal tab of that workspace. When a known dependency file changed but no rule names it, the button is **Run Setup** and runs the setup script.
+- **After a pull or merge** that brought in changes, the toast also has **Run Check**, which runs the [`check` script](#scripts): a merge without conflicts can still break code that relied on something the other side changed.
+- **Not for your own commits.** Committing, amending or cherry-picking moves the commit too, but you already have what you committed, so nothing is offered. A checkout or reset gets **Update Dependencies** without **Run Check**.
+- **Trust.** The commands come from the project settings, so they run once you've trusted them, like scripts.
+
+[Project Setup](#project-setup) fills in a rule for each lock file it finds. For a `Dockerfile`, its rule also renews the containers' anonymous volumes (`--renew-anon-volumes`): Compose keeps them when it recreates a container, so the old dependencies would otherwise stay.
 
 ## Copying files into tasks
 

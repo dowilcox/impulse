@@ -497,6 +497,23 @@ public enum GitOperations {
     return void(git(args, in: root, timeout: 600, onOutputLine: onProgress))
   }
 
+  /// How HEAD last moved, from its reflog ("pull: Fast-forward",
+  /// "checkout: moving from main to topic"); nil without a reflog.
+  public static func headReflogSubject(root: String) -> String? {
+    guard case .success(let result) = git(["reflog", "-1", "--format=%gs", "HEAD"], in: root) else { return nil }
+    let subject = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return subject.isEmpty ? nil : subject
+  }
+
+  /// The paths that differ between two commits (renames as a deletion and
+  /// an addition).
+  public static func changedPaths(from: String, to: String, root: String) -> [String] {
+    guard case .success(let result) = git(["diff", "--name-only", "--no-renames", from, to, "--"], in: root) else {
+      return []
+    }
+    return result.stdout.split(separator: "\n").map(String.init)
+  }
+
   /// When `revision` was committed (committer date); nil when it doesn't
   /// resolve.
   public static func commitDate(_ revision: String, root: String) -> Date? {

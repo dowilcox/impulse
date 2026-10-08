@@ -270,7 +270,7 @@ The toast says what came in for your branch: "Fetched: 2 commits to pull" or "Fe
 
 **Pull (Rebase)** always rebases, whatever the setting.
 
-The toast says "Pulled 3 commits" or "Already up to date". A pull that rebases or merges records a [safety snapshot](#safety-snapshots-and-undo) first, and its toast offers **Undo** for about 15 seconds, which moves your branch back to where it was and restores the working tree. If a pull stops with conflicts, see [Merge conflicts](#merge-conflicts).
+The toast says "Pulled 3 commits" or "Already up to date". When the commits brought in change a dependency file (a lock file, a `Dockerfile`), another toast offers to update the checkout's dependencies and run the project's check script; see [When files change](project-config.md#when-files-change). A pull that rebases or merges records a [safety snapshot](#safety-snapshots-and-undo) first, and its toast offers **Undo** for about 15 seconds, which moves your branch back to where it was and restores the working tree. If a pull stops with conflicts, see [Merge conflicts](#merge-conflicts).
 
 ### Push and publish
 
