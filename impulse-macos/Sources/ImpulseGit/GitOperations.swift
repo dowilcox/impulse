@@ -520,6 +520,30 @@ public enum GitOperations {
     }
   }
 
+  /// Commits on `branch` that `base` lacks, and the reverse.
+  public static func aheadBehind(_ branch: String, base: String, root: String) -> (ahead: Int, behind: Int)? {
+    guard case .success(let result) = git(["rev-list", "--left-right", "--count", "\(branch)...\(base)"], in: root)
+    else { return nil }
+    let counts = result.stdout.split(whereSeparator: { $0 == "\t" || $0 == " " || $0 == "\n" }).compactMap { Int($0) }
+    return counts.count == 2 ? (counts[0], counts[1]) : nil
+  }
+
+  /// HEAD's latest move from its reflog: when it happened, how ("pull:
+  /// Fast-forward"), and the commits before and after. Nil without two
+  /// reflog entries.
+  public static func lastHeadMove(root: String) -> (time: Date, subject: String, from: String, to: String)? {
+    guard
+      case .success(let result) = git(
+        ["reflog", "-2", "--date=unix", "--format=%H%x09%gd%x09%gs", "HEAD"], in: root)
+    else { return nil }
+    let lines = result.stdout.split(separator: "\n").map { $0.split(separator: "\t", maxSplits: 2).map(String.init) }
+    guard lines.count == 2, lines[0].count == 3, let to = lines[0].first, let from = lines[1].first,
+      let open = lines[0][1].firstIndex(of: "{"), let close = lines[0][1].lastIndex(of: "}"),
+      let seconds = TimeInterval(lines[0][1][lines[0][1].index(after: open)..<close])
+    else { return nil }
+    return (Date(timeIntervalSince1970: seconds), lines[0][2], from, to)
+  }
+
   /// How HEAD last moved, from its reflog ("pull: Fast-forward",
   /// "checkout: moving from main to topic"); nil without a reflog.
   public static func headReflogSubject(root: String) -> String? {

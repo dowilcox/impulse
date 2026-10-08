@@ -137,6 +137,14 @@ struct Settings: Codable {
     /// Notify when two of a repository's workspaces start changing the same
     /// files.
     var taskOverlapNotify: Bool = true
+    /// What Impulse's agent hooks tell agents about other tasks: a summary
+    /// at session start, a note when an edited file is changed in another
+    /// workspace, a question before merging a branch a task is still working
+    /// on, and dependency files that changed under it.
+    var agentHookTaskSummary: Bool = true
+    var agentHookSharedFiles: Bool = true
+    var agentHookMergeGuard: Bool = true
+    var agentHookDependencies: Bool = true
     /// The drop-down quick terminal and its global shortcut.
     var quickTerminalEnabled: Bool = false
     var quickTerminalShortcut: String = "Ctrl+`"
@@ -265,6 +273,10 @@ struct Settings: Codable {
         case terminalEditorIntegration = "terminal_editor_integration"
         case agentComposerAutoShow = "agent_composer_auto_show"
         case taskOverlapNotify = "task_overlap_notify"
+        case agentHookTaskSummary = "agent_hook_task_summary"
+        case agentHookSharedFiles = "agent_hook_shared_files"
+        case agentHookMergeGuard = "agent_hook_merge_guard"
+        case agentHookDependencies = "agent_hook_dependencies"
         case quickTerminalEnabled = "quick_terminal_enabled"
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
@@ -424,6 +436,10 @@ struct Settings: Codable {
         agentComposerAutoShow =
             (try? c.decode(Bool.self, forKey: .agentComposerAutoShow)) ?? d.agentComposerAutoShow
         taskOverlapNotify = (try? c.decode(Bool.self, forKey: .taskOverlapNotify)) ?? d.taskOverlapNotify
+        agentHookTaskSummary = (try? c.decode(Bool.self, forKey: .agentHookTaskSummary)) ?? d.agentHookTaskSummary
+        agentHookSharedFiles = (try? c.decode(Bool.self, forKey: .agentHookSharedFiles)) ?? d.agentHookSharedFiles
+        agentHookMergeGuard = (try? c.decode(Bool.self, forKey: .agentHookMergeGuard)) ?? d.agentHookMergeGuard
+        agentHookDependencies = (try? c.decode(Bool.self, forKey: .agentHookDependencies)) ?? d.agentHookDependencies
         quickTerminalEnabled =
             (try? c.decode(Bool.self, forKey: .quickTerminalEnabled)) ?? d.quickTerminalEnabled
         quickTerminalShortcut =

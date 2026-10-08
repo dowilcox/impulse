@@ -6,8 +6,20 @@
 import Foundation
 
 public enum AgentHookInstaller {
-  /// The Claude Code events Impulse listens to.
-  public static let claudeEvents = ["SessionStart", "UserPromptSubmit", "Notification", "Stop"]
+  /// The Claude Code events Impulse listens to, each with the tools a tool
+  /// event is limited to: before shell commands (a merge of a branch still
+  /// being worked on asks first) and after edits and shell commands (notes
+  /// about files other tasks change, and dependencies that changed).
+  public static let claudeHooks: [(event: String, matcher: String?)] = [
+    ("SessionStart", nil), ("UserPromptSubmit", nil), ("Notification", nil), ("Stop", nil),
+    ("PreToolUse", "Bash"), ("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash"),
+  ]
+
+  public static var claudeEvents: [String] { claudeHooks.map(\.event) }
+
+  /// Whether Impulse's Claude Code hooks are in a settings file: all of them,
+  /// some (installed by an older Impulse), or none.
+  public enum Status: Equatable, Sendable { case notInstalled, outdated, installed }
 
   /// The shell command each Claude Code hook runs.
   public static let claudeCommand = #"[ -n "$IMPULSE_CLI" ] && "$IMPULSE_CLI" hook claude || true"#
@@ -27,12 +39,17 @@ public enum AgentHookInstaller {
   // MARK: Claude Code (settings.json)
 
   public static func claudeHooksInstalled(_ json: Data?) -> Bool {
+    claudeHookStatus(json) == .installed
+  }
+
+  public static func claudeHookStatus(_ json: Data?) -> Status {
     guard let json, let settings = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
       let hooks = settings["hooks"] as? [String: Any]
-    else { return false }
-    return claudeEvents.allSatisfy { event in
+    else { return .notInstalled }
+    let present = claudeEvents.filter { event in
       (hooks[event] as? [[String: Any]])?.contains(where: isOurClaudeEntry) == true
     }
+    return present.isEmpty ? .notInstalled : present.count == claudeEvents.count ? .installed : .outdated
   }
 
   /// settings.json with Impulse's hooks added (other settings and hooks
@@ -49,10 +66,12 @@ public enum AgentHookInstaller {
     if settings["hooks"] != nil, !(settings["hooks"] is [String: Any]) {
       return .failure(.unreadable("\"hooks\" isn't an object"))
     }
-    for event in claudeEvents {
+    for (event, matcher) in claudeHooks {
       var entries = hooks[event] as? [[String: Any]] ?? []
       if !entries.contains(where: isOurClaudeEntry) {
-        entries.append(["hooks": [["type": "command", "command": claudeCommand]]])
+        var entry: [String: Any] = ["hooks": [["type": "command", "command": claudeCommand]]]
+        if let matcher { entry["matcher"] = matcher }
+        entries.append(entry)
       }
       hooks[event] = entries
     }

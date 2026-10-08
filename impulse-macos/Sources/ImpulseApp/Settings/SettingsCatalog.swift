@@ -273,6 +273,19 @@ enum SettingsCatalog {
     toggle(
       "task_overlap_notify", "Notify when tasks change the same files", \.taskOverlapNotify, .terminal, "Agents",
       detail: "Once per pair of workspaces, when the main checkout or a task starts changing files another one changes."),
+    toggle(
+      "agent_hook_task_summary", "Tell agents about other tasks when they start", \.agentHookTaskSummary, .terminal,
+      "Agents", detail: "Claude Code (with Impulse's hooks) gets a short summary of the repository's other workspaces."),
+    toggle(
+      "agent_hook_shared_files", "Tell agents when they edit a file another task changes", \.agentHookSharedFiles,
+      .terminal, "Agents", detail: "Once per file, naming the other workspace and its agent."),
+    toggle(
+      "agent_hook_merge_guard", "Ask before an agent merges a branch still being worked on", \.agentHookMergeGuard,
+      .terminal, "Agents",
+      detail: "When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files."),
+    toggle(
+      "agent_hook_dependencies", "Tell agents when dependency files changed", \.agentHookDependencies, .terminal,
+      "Agents", detail: "After an agent's git pull, merge or checkout brings in a changed lock file or Dockerfile."),
     toggle("terminal_copy_on_select", "Copy on select", \.terminalCopyOnSelect, .terminal, "Behavior"),
     toggle("terminal_scroll_on_output", "Scroll to bottom on output", \.terminalScrollOnOutput, .terminal, "Behavior"),
     toggle("terminal_allow_hyperlink", "Clickable links", \.terminalAllowHyperlink, .terminal, "Behavior"),

@@ -154,7 +154,13 @@ extension MainWindowController {
       if let agentID, let session = args["session"], !session.isEmpty {
         terminal.agentSession = (agentID, session)
       }
-      reply(ControlResponse(ok: true))
+      // What the agent should know (other tasks, shared files, dependency
+      // changes), or a question before it merges a branch still moving.
+      guard agentID == "claude" else { return reply(ControlResponse(ok: true)) }
+      agentHookReply(request, terminal: terminal) { text in reply(ControlResponse(ok: true, message: text)) }
+
+    case "tasks":
+      handleTasksCommand(request, cwd: cwd, reply: reply)
 
     case "checkpoint":
       DispatchQueue.global(qos: .userInitiated).async {

@@ -34,6 +34,9 @@ class TerminalTab: NSView {
   /// The agent's session (from its hooks), so a restored terminal can
   /// offer to resume it.
   var agentSession: (agentID: String, id: String)?
+  /// Files an agent here was told another workspace also changes (told once
+  /// each).
+  var sharedFileNotes = Set<String>()
   /// The message from the last `impulse status` (shown with the agent's
   /// state), cleared when the agent ends.
   var agentStatusMessage: String?

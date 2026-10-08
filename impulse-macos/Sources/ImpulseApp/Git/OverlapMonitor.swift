@@ -17,6 +17,8 @@ final class OverlapMonitor {
 
   /// The pairs per repository, by its shared git folder (main thread).
   private(set) var pairs: [String: [TaskOverlap.Pair]] = [:]
+  /// What each workspace changes, per repository (main thread).
+  private(set) var changes: [String: [TaskOverlap.Changes]] = [:]
   private var pending: [String: DispatchWorkItem] = [:]
   private let queue = DispatchQueue(label: "impulse.overlap", qos: .utility)
 
@@ -43,6 +45,7 @@ final class OverlapMonitor {
     let found = changes.count < 2 ? [] : TaskOverlap.pairs(changes, ignoring: ignore)
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      self.changes[commonDir] = changes
       let known = Set((self.pairs[commonDir] ?? []).map(\.key))
       guard found != self.pairs[commonDir] ?? [] else { return }
       self.pairs[commonDir] = found

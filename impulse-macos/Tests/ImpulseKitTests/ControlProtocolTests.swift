@@ -47,6 +47,30 @@
       #expect(notification?.arguments["message"] == "Claude needs your permission to use Bash")
     }
 
+    @Test func toolHooksCarryTheToolAndWhatItActsOn() {
+      let bash = parse(
+        ["hook", "claude"],
+        stdin: #"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git merge upgrade"},"cwd":"/repo"}"#)
+      #expect(bash?.arguments["event"] == "PreToolUse")
+      #expect(bash?.arguments["tool"] == "Bash")
+      #expect(bash?.arguments["toolCommand"] == "git merge upgrade")
+      #expect(bash?.arguments["hookCwd"] == "/repo")
+      let edit = parse(
+        ["hook", "claude"],
+        stdin: #"{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/repo/src/a.ts"}}"#)
+      #expect(edit?.arguments["toolFile"] == "/repo/src/a.ts")
+    }
+
+    @Test func tasksListsAndWaits() {
+      #expect(parse(["tasks"])?.arguments == [:])
+      #expect(parse(["tasks", "--json"])?.arguments == ["json": "1"])
+      let wait = parse(["tasks", "wait", "interia-upgrade"])
+      #expect(wait?.arguments == ["wait": "interia-upgrade"])
+      #expect(wait?.wait == true)
+      #expect(parse(["tasks", "wait"]) == nil)
+      #expect(parse(["tasks", "everything"]) == nil)
+    }
+
     @Test func codexNotifyPassesJSONAsAnArgument() {
       let turn = parse(["hook", "codex", #"{"type":"agent-turn-complete","last-assistant-message":"All done"}"#])
       #expect(turn?.arguments == ["agent": "codex", "event": "agent-turn-complete", "message": "All done"])

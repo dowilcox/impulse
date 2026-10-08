@@ -26,18 +26,19 @@ If your shell startup files replace `PATH` outright (rather than adding to it), 
 
 ## Commands
 
-| Command                                                     | What it does                                                                     |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `impulse open <file>[:line[:column]]`                       | Open a file in the editor (a folder opens as a workspace).                       |
-| `impulse edit <file>`                                       | Open a file and wait until its tab closes. For `$EDITOR`.                        |
-| `impulse review [last-turn\|uncommitted\|staged\|unstaged]` | Open Review on the current repository.                                           |
-| `impulse split [right\|down] [command…]`                    | Split this pane, optionally running a command in the new pane.                   |
-| `impulse tab [command…]`                                    | Open a new terminal tab, optionally running a command.                           |
-| `impulse notify <title> [message…]`                         | Flag this pane and send a desktop notification.                                  |
-| `impulse status <working\|waiting\|done\|idle> [message…]`  | Report an agent state from a program running in this pane.                       |
-| `impulse checkpoint [message…]`                             | Snapshot the repository's files.                                                 |
-| `impulse hook <claude\|codex> [event]`                      | Used by agent hooks.                                                             |
-| `impulse help`                                              | Print the usage summary. `-h` and `--help` do the same, as does `impulse` alone. |
+| Command                                                     | What it does                                                                                    |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `impulse open <file>[:line[:column]]`                       | Open a file in the editor (a folder opens as a workspace).                                      |
+| `impulse edit <file>`                                       | Open a file and wait until its tab closes. For `$EDITOR`.                                       |
+| `impulse review [last-turn\|uncommitted\|staged\|unstaged]` | Open Review on the current repository.                                                          |
+| `impulse split [right\|down] [command…]`                    | Split this pane, optionally running a command in the new pane.                                  |
+| `impulse tab [command…]`                                    | Open a new terminal tab, optionally running a command.                                          |
+| `impulse notify <title> [message…]`                         | Flag this pane and send a desktop notification.                                                 |
+| `impulse status <working\|waiting\|done\|idle> [message…]`  | Report an agent state from a program running in this pane.                                      |
+| `impulse checkpoint [message…]`                             | Snapshot the repository's files.                                                                |
+| `impulse tasks [--json]`                                    | List the repository's workspaces: branches, agents, uncommitted files, files shared with yours. |
+| `impulse hook <claude\|codex> [event]`                      | Used by agent hooks.                                                                            |
+| `impulse help`                                              | Print the usage summary. `-h` and `--help` do the same, as does `impulse` alone.                |
 
 Relative paths are resolved against your current directory, and `~` is expanded.
 
@@ -182,6 +183,34 @@ git restore --source=refs/impulse/checkpoints/manual/1791382210345-before-units-
 
 Manual checkpoints don't appear in an agent's **Turns** menu. Like agent checkpoints, they're not sent by a normal `git push`, and they're pruned along with them: each time `impulse checkpoint` records one, and the first time in each session that Impulse records an agent turn in the repository, checkpoints older than 14 days, and any beyond the newest 200, are deleted. Outside a git repository, the command prints `Not in a git repository.` and exits with status 1.
 
+### `impulse tasks`
+
+```
+impulse tasks [--json]
+impulse tasks wait <task>
+```
+
+Lists the workspaces of the repository the terminal is in: its main checkout and every [task](tasks.md) Impulse made, open or not. For each: its branch, the base it was made from and how far ahead of and behind it the branch is, its commit, its folder, the agent working there and its state, its uncommitted files, and the files it changes that your workspace changes too. Your own workspace is marked `← you`.
+
+```
+trailhead: 2 workspaces
+
+trailhead (main checkout) ← you
+  branch main at 3f2a9c1
+  /Users/sam/Code/trailhead
+  2 uncommitted files
+
+fix-elevation (task)
+  branch fix-elevation from origin/main, 3 ahead, 0 behind at 9b1d4e0
+  /Users/sam/Code/trailhead.worktrees/fix-elevation
+  Claude Code: working
+  also changes files you change: src/lib/units.ts
+```
+
+It's meant for agents as much as for you: an agent only knows its own folder, and this shows it what the others are doing before it merges a branch or makes sweeping edits. `--json` prints the same as JSON, for scripts.
+
+`impulse tasks wait <task>` waits until no agent is working (or waiting for input) in that task, named by its folder or branch, then exits: a way to let a branch stop moving before merging it.
+
 ### `impulse hook`
 
 ```
@@ -197,6 +226,8 @@ What the hooks installed by **Install Agent Hooks…** run; you don't normally c
 | `Notification`                      | **Needs your input** if the message asks for permission or input, else **Finished** |
 | `Stop`, `agent-turn-complete`       | **Finished**                                                                        |
 | Anything else (tool use, subagents) | No change                                                                           |
+
+For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
 
 Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does nothing and exits with status 0, so the hooks never get in the agent's way. See [Agents](agents.md#agent-hooks).
 

@@ -102,6 +102,13 @@
       let after = try repo.git("rev-parse", "HEAD")
       #expect(GitOperations.changedPaths(from: before, to: after, root: repo.root) == ["composer.lock"])
 
+      let move = try #require(GitOperations.lastHeadMove(root: repo.root))
+      #expect(move.from == before && move.to == after)
+      #expect(DependencyChanges.move(reflog: move.subject) == .merge)
+      // The reflog is stamped with the committer date, which the tests pin.
+      #expect(move.time == ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z"))
+      #expect(GitOperations.aheadBehind("main", base: "origin/main", root: repo.root).map { [$0.ahead, $0.behind] } == [2, 0])
+
       try repo.git("switch", "-q", "-c", "other")
       try repo.git("switch", "-q", "main")
       #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .checkout)

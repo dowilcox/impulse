@@ -225,10 +225,14 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 
 #### Agents
 
-| Setting                                     | Key                        | Values   | Default | What it does                                                                                                                                                          |
-| ------------------------------------------- | -------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open the composer when an agent needs input | `agent_composer_auto_show` | on / off | off     | In the focused terminal, so you can answer without clicking into the agent. See [Agents](agents.md).                                                                  |
-| Notify when tasks change the same files     | `task_overlap_notify`      | on / off | on      | Once per pair of workspaces, when the main checkout or a task starts changing files another one changes. See [Tasks](tasks.md#when-workspaces-change-the-same-files). |
+| Setting                                                   | Key                        | Values   | Default | What it does                                                                                                                                                          |
+| --------------------------------------------------------- | -------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open the composer when an agent needs input               | `agent_composer_auto_show` | on / off | off     | In the focused terminal, so you can answer without clicking into the agent. See [Agents](agents.md).                                                                  |
+| Notify when tasks change the same files                   | `task_overlap_notify`      | on / off | on      | Once per pair of workspaces, when the main checkout or a task starts changing files another one changes. See [Tasks](tasks.md#when-workspaces-change-the-same-files). |
+| Tell agents about other tasks when they start             | `agent_hook_task_summary`  | on / off | on      | A short summary of the repository's other workspaces for Claude Code. See [Agents](agents.md#what-the-hooks-tell-agents).                                             |
+| Tell agents when they edit a file another task changes    | `agent_hook_shared_files`  | on / off | on      | Once per file.                                                                                                                                                        |
+| Ask before an agent merges a branch still being worked on | `agent_hook_merge_guard`   | on / off | on      | Claude Code asks you first.                                                                                                                                           |
+| Tell agents when dependency files changed                 | `agent_hook_dependencies`  | on / off | on      | After an agent's pull, merge or checkout.                                                                                                                             |
 
 #### Behavior
 

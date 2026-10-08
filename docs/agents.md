@@ -236,7 +236,7 @@ Before writing, Impulse saves the previous version of the file beside it as `<fi
 - **Claude Code, All projects:** `~/.claude/settings.json`.
 - **Claude Code, This project only:** `.claude/settings.local.json` in the window's repository. In a [task](tasks.md) workspace that's the task's folder, which is removed when you archive the task; the sheet says so and names the main checkout. Install project hooks in the main checkout instead: new tasks copy `.claude/settings.local.json` from it (unless the repository's `.worktreeinclude` leaves it out; see [Which files are copied](tasks.md#which-files-are-copied)).
 
-Impulse adds a hook for each of the `SessionStart`, `UserPromptSubmit`, `Notification` and `Stop` events, keeping your other settings and hooks. Each one looks like this:
+Impulse adds a hook for each of the `SessionStart`, `UserPromptSubmit`, `Notification` and `Stop` events, and for `PreToolUse` (shell commands, `"matcher": "Bash"`) and `PostToolUse` (edits and shell commands, `"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash"`), keeping your other settings and hooks. Each one looks like this:
 
 ```json
 {
@@ -255,7 +255,20 @@ Impulse adds a hook for each of the `SessionStart`, `UserPromptSubmit`, `Notific
 }
 ```
 
-Impulse rewrites the file pretty-printed with its keys sorted. Hooks that are already there aren't added twice.
+Impulse rewrites the file pretty-printed with its keys sorted. Hooks that are already there aren't added twice. Hooks installed by an older version of Impulse show as "Out of date: install again to add the newer hooks"; **Install Hooks** then adds only the missing ones.
+
+### What the hooks tell agents
+
+In a repository with [tasks](tasks.md), Impulse's Claude Code hooks also tell the agent about the other workspaces, which it otherwise can't see. Each can be turned off in Settings ▸ Terminal ▸ Agents.
+
+| When                                                                                                                                                                       | The agent is told                                                                                                                                                                                        | Setting                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| A session starts                                                                                                                                                           | A short summary: which workspace it's in, the others with their agents, uncommitted files and the files they share with it, and to run `impulse tasks` before merging a branch or making sweeping edits. | `agent_hook_task_summary` |
+| It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                      | `agent_hook_shared_files` |
+| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code stops and asks you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-the-work-back).                                                                  | `agent_hook_merge_guard`  |
+| Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing.                                                               | `agent_hook_dependencies` |
+
+Nothing is written into your repository or its instruction files (`CLAUDE.md`, `AGENTS.md`): it all goes through the hooks. Codex only tells Impulse when a turn ends, so it gets none of this; it can still run `impulse tasks`.
 
 **Codex:** `~/.codex/config.toml`. Impulse adds Codex's `notify` program at the top of the file:
 
@@ -288,13 +301,14 @@ Press Return to resume, or clear it to start fresh. This only applies to Claude 
 
 The `impulse` command-line tool, available in every Impulse terminal, has commands for agents and for scripts that wrap them. See [Command-line tool](cli.md) for the full reference.
 
-| Command                                                    | Use                                                                                                                                                         |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `impulse hook <claude\|codex> [event]`                     | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code) or its last argument (Codex).                                         |
-| `impulse status <working\|waiting\|done\|idle> [message…]` | Report a state (and a message shown with it) from a program running in this pane: a wrapper around an agent without hooks, or your own long-running script. |
-| `impulse notify <title> [message…]`                        | Flag this pane and send a desktop notification.                                                                                                             |
-| `impulse checkpoint [message…]`                            | Snapshot the repository under `refs/impulse/checkpoints/manual/`.                                                                                           |
-| `impulse review last-turn`                                 | Open Review on the last agent turn.                                                                                                                         |
+| Command                                                    | Use                                                                                                                                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `impulse hook <claude\|codex> [event]`                     | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code) or its last argument (Codex).                                                                                    |
+| `impulse status <working\|waiting\|done\|idle> [message…]` | Report a state (and a message shown with it) from a program running in this pane: a wrapper around an agent without hooks, or your own long-running script.                                            |
+| `impulse notify <title> [message…]`                        | Flag this pane and send a desktop notification.                                                                                                                                                        |
+| `impulse checkpoint [message…]`                            | Snapshot the repository under `refs/impulse/checkpoints/manual/`.                                                                                                                                      |
+| `impulse tasks [--json]`                                   | List the repository's workspaces: what each task's agent is doing, uncommitted files, and the files they share with this one. `impulse tasks wait <task>` waits until that task's agent stops working. |
+| `impulse review last-turn`                                 | Open Review on the last agent turn.                                                                                                                                                                    |
 
 ## Run agents in parallel
 

@@ -541,32 +541,36 @@ VoiceOver reads the terminal's visible screen as a text area labeled "Terminal" 
 
 All of these are in Settings ▸ Terminal, and in `settings.json` under the keys shown. See [Settings and themes](settings-and-themes.md) for how to change them.
 
-| Setting                                     | Key                                  | Default        |
-| ------------------------------------------- | ------------------------------------ | -------------- |
-| Font family                                 | `terminal_font_family`               | JetBrains Mono |
-| Font size                                   | `terminal_font_size`                 | 14             |
-| Bold text uses bright colors                | `terminal_bold_is_bright`            | On             |
-| Minimum contrast                            | `terminal_minimum_contrast`          | 3              |
-| Cursor shape                                | `terminal_cursor_shape`              | Block          |
-| Blinking cursor                             | `terminal_cursor_blink`              | On             |
-| Command blocks                              | `terminal_blocks`                    | On             |
-| Input bar                                   | `terminal_context_bar`               | On             |
-| Keep command history                        | `terminal_persistent_history`        | On             |
-| Ask the shell for completions               | `terminal_shell_completions`         | Off            |
-| Use Impulse as $EDITOR                      | `terminal_editor_integration`        | Off            |
-| Open the composer when an agent needs input | `agent_composer_auto_show`           | Off            |
-| Notify when tasks change the same files     | `task_overlap_notify`                | On             |
-| Copy on select                              | `terminal_copy_on_select`            | On             |
-| Scroll to bottom on output                  | `terminal_scroll_on_output`          | On             |
-| Clickable links                             | `terminal_allow_hyperlink`           | On             |
-| Programs may set the clipboard              | `terminal_allow_osc52_write`         | On             |
-| Programs may read the clipboard             | `terminal_allow_osc52_read`          | Off            |
-| Audible bell                                | `terminal_bell`                      | On             |
-| Request attention on bell                   | `terminal_attention_on_bell`         | On             |
-| Allow terminal notifications                | `terminal_allow_notifications`       | On             |
-| Notify when long commands finish            | `terminal_attention_on_long_command` | On             |
-| Long command threshold (seconds)            | `terminal_long_command_seconds`      | 30             |
-| Scrollback lines                            | `terminal_scrollback`                | 10000          |
+| Setting                                                   | Key                                  | Default        |
+| --------------------------------------------------------- | ------------------------------------ | -------------- |
+| Font family                                               | `terminal_font_family`               | JetBrains Mono |
+| Font size                                                 | `terminal_font_size`                 | 14             |
+| Bold text uses bright colors                              | `terminal_bold_is_bright`            | On             |
+| Minimum contrast                                          | `terminal_minimum_contrast`          | 3              |
+| Cursor shape                                              | `terminal_cursor_shape`              | Block          |
+| Blinking cursor                                           | `terminal_cursor_blink`              | On             |
+| Command blocks                                            | `terminal_blocks`                    | On             |
+| Input bar                                                 | `terminal_context_bar`               | On             |
+| Keep command history                                      | `terminal_persistent_history`        | On             |
+| Ask the shell for completions                             | `terminal_shell_completions`         | Off            |
+| Use Impulse as $EDITOR                                    | `terminal_editor_integration`        | Off            |
+| Open the composer when an agent needs input               | `agent_composer_auto_show`           | Off            |
+| Notify when tasks change the same files                   | `task_overlap_notify`                | On             |
+| Tell agents about other tasks when they start             | `agent_hook_task_summary`            | On             |
+| Tell agents when they edit a file another task changes    | `agent_hook_shared_files`            | On             |
+| Ask before an agent merges a branch still being worked on | `agent_hook_merge_guard`             | On             |
+| Tell agents when dependency files changed                 | `agent_hook_dependencies`            | On             |
+| Copy on select                                            | `terminal_copy_on_select`            | On             |
+| Scroll to bottom on output                                | `terminal_scroll_on_output`          | On             |
+| Clickable links                                           | `terminal_allow_hyperlink`           | On             |
+| Programs may set the clipboard                            | `terminal_allow_osc52_write`         | On             |
+| Programs may read the clipboard                           | `terminal_allow_osc52_read`          | Off            |
+| Audible bell                                              | `terminal_bell`                      | On             |
+| Request attention on bell                                 | `terminal_attention_on_bell`         | On             |
+| Allow terminal notifications                              | `terminal_allow_notifications`       | On             |
+| Notify when long commands finish                          | `terminal_attention_on_long_command` | On             |
+| Long command threshold (seconds)                          | `terminal_long_command_seconds`      | 30             |
+| Scrollback lines                                          | `terminal_scrollback`                | 10000          |
 
 Restore terminal scrollback (`restore_scrollback`) is in Settings ▸ General.
 

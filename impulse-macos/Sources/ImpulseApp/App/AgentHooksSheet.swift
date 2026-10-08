@@ -30,6 +30,8 @@ final class AgentHooksModel {
   private(set) var before = ""
   private(set) var after: String?
   private(set) var installed = false
+  /// Some of Impulse's hooks, from an older Impulse: Install adds the rest.
+  private(set) var outdated = false
   private(set) var error: String?
 
   init(projectRoot: String?, mainCheckout: String? = nil) {
@@ -59,7 +61,9 @@ final class AgentHooksModel {
     error = nil
     switch agent {
     case .claude:
-      installed = AgentHookInstaller.claudeHooksInstalled(data)
+      let status = AgentHookInstaller.claudeHookStatus(data)
+      installed = status == .installed
+      outdated = status == .outdated
       switch installed
         ? (data.map { AgentHookInstaller.removingClaudeHooks(from: $0) } ?? .success(Data()))
         : AgentHookInstaller.installingClaudeHooks(into: data)
@@ -69,6 +73,7 @@ final class AgentHooksModel {
       }
     case .codex:
       installed = AgentHookInstaller.codexNotifyInstalled(before)
+      outdated = false
       if installed {
         let removed = AgentHookInstaller.removingCodexNotify(from: before)
         after = removed == before ? nil : removed
@@ -147,8 +152,8 @@ struct AgentHooksSheetView: View {
       }
 
       HStack(spacing: 6) {
-        StatusDot(color: model.installed ? chrome.success : chrome.textTertiary, size: 7)
-        Text(model.installed ? "Installed" : "Not installed")
+        StatusDot(color: model.installed ? chrome.success : model.outdated ? chrome.warning : chrome.textTertiary, size: 7)
+        Text(model.installed ? "Installed" : model.outdated ? "Out of date: install again to add the newer hooks" : "Not installed")
           .font(ChromeFont.ui(11.5, weight: .medium))
           .foregroundStyle(chrome.textSecondary)
         Text(TabManager.abbreviateHomePath(model.path))

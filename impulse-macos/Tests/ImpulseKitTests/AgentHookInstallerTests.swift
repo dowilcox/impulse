@@ -30,7 +30,25 @@
       #expect(settings["model"] as? String == "opus")
       let hooks = settings["hooks"] as? [String: Any]
       #expect((hooks?["Stop"] as? [[String: Any]])?.count == 2)
-      #expect((hooks?["PreToolUse"] as? [[String: Any]])?.count == 1)
+      // Impulse's own PreToolUse hook (for shell commands) goes beside the user's.
+      let preToolUse = hooks?["PreToolUse"] as? [[String: Any]]
+      #expect(preToolUse?.count == 2)
+      #expect((preToolUse?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String == "audit")
+      #expect(preToolUse?.last?["matcher"] as? String == "Bash")
+      #expect((hooks?["PostToolUse"] as? [[String: Any]])?.first?["matcher"] as? String == "Edit|Write|MultiEdit|NotebookEdit|Bash")
+    }
+
+    @Test func hooksFromAnOlderImpulseAreOutOfDate() throws {
+      let command = AgentHookInstaller.claudeCommand.replacingOccurrences(of: "\"", with: "\\\"")
+      let older = Data(
+        """
+        {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "\(command)"}]}],
+         "Stop": [{"hooks": [{"type": "command", "command": "\(command)"}]}]}}
+        """.utf8)
+      #expect(AgentHookInstaller.claudeHookStatus(older) == .outdated)
+      #expect(AgentHookInstaller.claudeHookStatus(nil) == .notInstalled)
+      let updated = try AgentHookInstaller.installingClaudeHooks(into: older).get()
+      #expect(AgentHookInstaller.claudeHookStatus(updated) == .installed)
     }
 
     @Test func uninstallRestoresTheRest() throws {

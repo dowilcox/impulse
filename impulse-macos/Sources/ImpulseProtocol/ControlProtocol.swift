@@ -70,6 +70,9 @@ public enum ControlProtocol {
                                             report an agent state from a program running
                                             in this pane (it lasts while that program runs)
       impulse checkpoint [message…]         snapshot the repository
+      impulse tasks [--json]                this repository's workspaces: branches, agents,
+                                            uncommitted files, files shared with yours
+      impulse tasks wait <task>             wait until that task's agent stops working
       impulse hook <claude|codex> [event]   for agent hooks (reads hook input on stdin)
 
     Outside an Impulse terminal, `impulse hook` does nothing and exits 0.
@@ -190,6 +193,20 @@ public enum ControlProtocol {
     case "checkpoint":
       request.arguments["message"] = rest.joined(separator: " ")
 
+    case "tasks":
+      var words = rest
+      if words.first == "--json" {
+        request.arguments["json"] = "1"
+        words.removeFirst()
+      }
+      if words.first == "wait" {
+        guard words.count == 2 else { return .failure(UsageError("usage: impulse tasks wait <task>")) }
+        request.arguments["wait"] = words[1]
+        request.wait = true
+      } else if let word = words.first {
+        return .failure(UsageError("impulse tasks: unknown argument '\(word)'\n\n" + usage))
+      }
+
     case "hook":
       guard let agent = rest.first else { return .failure(UsageError("usage: impulse hook <claude|codex> [event]")) }
       request.arguments["agent"] = agent
@@ -211,6 +228,15 @@ public enum ControlProtocol {
         if let session = object["session_id"] as? String ?? object["thread-id"] as? String {
           request.arguments["session"] = session
         }
+        // Tool events: which tool, on what (a shell command, a file).
+        if let tool = object["tool_name"] as? String { request.arguments["tool"] = tool }
+        if let input = object["tool_input"] as? [String: Any] {
+          if let command = input["command"] as? String { request.arguments["toolCommand"] = command }
+          if let file = input["file_path"] as? String ?? input["notebook_path"] as? String {
+            request.arguments["toolFile"] = file
+          }
+        }
+        if let hookCwd = object["cwd"] as? String { request.arguments["hookCwd"] = hookCwd }
       }
       guard let event, !event.isEmpty else {
         return .failure(UsageError("usage: impulse hook <claude|codex> <event>"))
