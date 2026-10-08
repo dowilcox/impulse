@@ -609,7 +609,6 @@ extension MainWindowController {
     guard let workspace = tabManager.workspaces.first(where: { TaskRegistry.canonical($0.root) == canonical }) else {
       return finish()
     }
-    tabManager.ensureScratchWorkspace()
     requestCloseWorkspace(workspace.id, recordForUndo: false, then: finish, cancelled: {})
   }
 
@@ -904,7 +903,6 @@ extension MainWindowController {
           self.archivingTasks.remove(id)
           return
         }
-        self.tabManager.ensureScratchWorkspace()
         // Close the workspace first (it confirms unsaved files and running
         // processes), then remove the folder once it's gone.
         self.requestCloseWorkspace(

@@ -728,7 +728,6 @@ extension MainWindowController {
     let landed = model.landedCommit.map { " as \($0.prefix(7))" } ?? ""
     let script = alreadyTrustedProjectConfig(root: root)?.archiveScript
     model.statuses[.cleanUp] = .running("Closing the task's workspace…")
-    tabManager.ensureScratchWorkspace()
     // Closing asks about unsaved files and running processes; the Finish
     // tab goes with the workspace, so the outcome is a toast.
     requestCloseWorkspace(

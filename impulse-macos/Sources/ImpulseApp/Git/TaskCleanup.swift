@@ -212,7 +212,6 @@ extension MainWindowController {
         ready.append(row)
         return next()
       }
-      tabManager.ensureScratchWorkspace()
       requestCloseWorkspace(
         workspace.id, recordForUndo: false, then: { ready.append(row); next() }, cancelled: { next() })
     }
