@@ -1,6 +1,6 @@
 # Command palette
 
-The command palette is one search field for most of what you do in Impulse: running commands, opening files, jumping to a line or symbol, switching tabs, workspaces and branches, finding a past command, checking out a pull request, running a project action and finding a setting. What you type first picks the mode: `>` for commands, `:` for a line, `b:` for branches, and so on.
+The command palette is one search field for most of what you do in Impulse: running commands, opening files, jumping to a line or symbol, switching tabs, workspaces and branches, finding a past command, opening a branch as a task, running a project action and finding a setting. What you type first picks the mode: `>` for commands, `:` for a line, `b:` for branches, and so on.
 
 ![The command palette in command mode with the query "split", listing Split Right and Split Down with their shortcuts and matched letters highlighted](images/command-palette-commands.png)
 

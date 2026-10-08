@@ -488,5 +488,5 @@ Background fetch also depends on **Ask before trusting folders** (`workspace_tru
 - [Editor](editor.md): change marks, inline blame and the diff view
 - [Tasks](tasks.md): parallel work in worktrees
 - [Agents](agents.md): checkpoints, "review last turn" and sending text to agents
-- [Command palette](command-palette.md): the `b:` and `pr:` modes
+- [Command palette](command-palette.md): the `b:` and `task:` modes
 - [Settings and themes](settings-and-themes.md)

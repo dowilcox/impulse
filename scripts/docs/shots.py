@@ -197,7 +197,7 @@ SHOTS = [
     {"name": "cli-editor-setting", "session": ONE, "actions": ["no-sidebar", "settings=$EDITOR"],
      "crop": (0, TITLE_H, W, 300)},
     {"name": "cli-help", "session": ONE, "actions": ["run=impulse help"],
-     "crop": (SIDEBAR_W, GRID_BOTTOM - 320, W - SIDEBAR_W, 320)},
+     "crop": (SIDEBAR_W, GRID_BOTTOM - 412, W - SIDEBAR_W, 412)},
 
     # ------------------------------------------------------------ git
     {"name": "git-titlebar", "session": ONE, "actions": ["no-sidebar"], "crop": TITLEBAR},

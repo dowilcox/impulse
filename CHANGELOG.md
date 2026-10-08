@@ -2,6 +2,53 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.32.0
+
+**Running tasks and agents in parallel.** Tasks now get an environment of
+their own, see each other, and finish in one step. Two agents can work on
+one repository without sharing ports, databases or containers; Impulse
+says when their work starts to overlap, tells the agents too, and lands
+each task with a merge commit (or pushes it for review) without touching
+the main checkout. [Tasks](https://www.impulse-terminal.app/docs/tasks/)
+covers all of it, including a section on running agents in parallel.
+
+**Git only.** Impulse no longer talks to GitHub. The titlebar's pull
+request chip, the pull request commands, the `pr:` palette mode and
+importing review threads from a pull request are gone; everything works
+the same on any git host. After a push, the server's own message is
+shown, with its link (GitLab's "create a merge request", say) as **Open
+Link**. **New Task from Branch…** (the palette's `task:` mode) opens any
+branch, local or remote, as a task, and **Open Repository in Browser** and
+**Copy Remote URL** replace the per-host links.
+
+**Documentation** is online at
+[impulse-terminal.app](https://www.impulse-terminal.app/docs/), with a new
+homepage.
+
+### Tasks
+
+- New Task starts from the remote branch (`origin/main`): fetched in the background in trusted folders, with a **Fetch** button otherwise, and a note when your local branch has commits that aren't pushed. A new task's branch no longer tracks its base, so its first push publishes it under its own name.
+- Impulse keeps a list of the tasks it made in `.git/impulse/tasks.json`, with each one's base and slot. Worktrees you made yourself are left alone.
+- **Project Setup** (File ▸ Project Setup…, or from the New Task sheet) looks through a repository and proposes what its tasks need: files to copy, folders to clone, ports and values, a database, Compose changes, setup, check and archive scripts, and rules for when files change. Save it for this Mac only (`.git/impulse/project.toml`, the default) or for everyone (`.impulse/project.toml`); the local file wins.
+- Each task can get ports and values of its own: `[worktrees.ports]`, moved by 100 × the task's slot, and `[worktrees.env]`, with placeholders such as `{task}` and `{slot}`, written into its copy of `.env`. Task terminals and scripts get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT` and `IMPULSE_REPO_ROOT`.
+- Dependency folders (`vendor`, `node_modules`) and a database's data folder can be cloned into new tasks, instantly on APFS, with the database's Compose service stopped for a moment. A Compose project can give each task an override that renames its containers and moves its fixed ports.
+- When a pull, merge or checkout changes a lock file, or another file named in `[on_change]`, Impulse offers to run its command (`composer install`), and after a merge, the `check` script.
+- Workspaces of one repository that change the same files show a warning with the count. Its list names the files, opens them, and checks which would conflict, without touching either folder. A notification says so when two workspaces start to overlap (`task_overlap_notify`).
+- **Finish Task…** takes a task from done to landed, in a tab that shows each step: committed, synced with its base (a merge, never a rebase), checked with the `check` script in a terminal, then merged with a merge commit and pushed, or pushed for review. The merge is made in a throwaway folder, so the main checkout isn't touched; it's fast-forwarded afterwards when it's clean, and the task is archived with its branch. The first Finish asks how work lands in the repository and remembers it (`[finish] land`).
+- Tasks whose work has landed, squash merges included, are marked "merged". **Archive Merged Tasks…** archives them together, optionally deleting their branches here and on the remote, with one Undo. A task pushed for review gets a **Clean Up…** offer once it's merged.
+- **Move Changes to New Task…** moves the main checkout's uncommitted files, or one file from the Changes panel, into a new task, and the main checkout goes back to its last commit for them. Undo puts them back.
+- Merging a branch that a task is still working on asks first, naming the agent and the branch's last commit, and merges that commit.
+- A workspace row shows ↓ and a count when its branch is behind its upstream; click it to pull.
+
+### Agents
+
+- `impulse tasks` lists the repository's workspaces from the caller's point of view: branches, bases with ahead/behind counts, agents and their state, uncommitted files, and the files each shares with the caller (`--json` for scripts). `impulse tasks wait <task>` waits until that task's agent stops working.
+- Claude Code hooks now carry what Impulse knows: a summary of the other workspaces when a session starts, a note when an edited file is also changed in another workspace, a note when a pull or merge brought in changed dependency files, and a question before merging a branch a task is still working on. Each has a setting (`agent_hook_task_summary`, `agent_hook_shared_files`, `agent_hook_dependencies`, `agent_hook_merge_guard`). The Agent Hooks sheet says when installed hooks are out of date: install them again to get these.
+
+### Git
+
+- Abort works after you've edited files during a merge, cherry-pick or revert: when git's own abort refuses, Impulse puts the branch back and restores the work you had before, with Undo.
+
 ## 0.31.0
 
 **Documentation.** `docs/` now explains every part of Impulse, with

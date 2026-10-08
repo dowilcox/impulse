@@ -191,7 +191,7 @@ The first time something would run a command from the file (an action, a task's 
 - **Trust and Run** remembers your answer and runs the command.
 - **Cancel** runs nothing from the file. Impulse asks again next time.
 
-What you trust is the file's exact content (a SHA-256 hash of it) in that repository. Any change to the file, even a comment, makes Impulse ask again, so you see new commands before they run. Task worktrees share their repository's trust: a task whose copy of the file is identical to the one you trusted doesn't ask again. The exception is the setup script of a pull request checked out as a task, which asks every time (see [Setup script](#setup-script)).
+What you trust is the file's exact content (a SHA-256 hash of it) in that repository. Any change to the file, even a comment, makes Impulse ask again, so you see new commands before they run. Task worktrees share their repository's trust: a task whose copy of the file is identical to the one you trusted doesn't ask again. The exception is the setup script of a remote branch opened as a task (**New Task from Branch…**), which asks every time, since the branch decides what it runs (see [Setup script](#setup-script)).
 
 Some things don't need trust: listing the actions in the palette, and copying the files named in `[worktrees] copy`. A file with no actions and no scripts never asks.
 
