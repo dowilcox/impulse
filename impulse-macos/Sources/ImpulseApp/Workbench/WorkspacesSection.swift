@@ -263,7 +263,10 @@ private struct WorkspaceRow: View {
           .layoutPriority(-1)
       }
       Spacer(minLength: 4)
+      // The badges keep their size; the name and branch truncate instead.
       trailing(snapshot: snapshot)
+        .fixedSize()
+        .layoutPriority(1)
       ChromeMenuButton(help: "New workspace") { newWorkspaceItems } label: {
         Icon(.plus, size: 12).foregroundStyle(chrome.textSecondary)
       }

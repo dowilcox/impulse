@@ -185,15 +185,14 @@ struct TaskSheetView: View {
           .toggleStyle(.checkbox)
           .disabled(model.moveUnavailable != nil)
           if let reason = model.moveUnavailable {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-              Text(reason).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-              if model.moveBlocker == nil {
-                ChromeButton(title: "Start from \(model.headName)", kind: .ghost) {
-                  model.draft.base = model.headName
-                  model.movesChanges = true
-                }
+            Text(reason).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+              .fixedSize(horizontal: false, vertical: true)
+            if model.moveBlocker == nil {
+              ChromeButton(title: "Start from \(model.headName)", kind: .ghost) {
+                model.draft.base = model.headName
+                model.movesChanges = true
               }
+              .padding(.leading, -9)
             }
           } else if model.movesChanges {
             Text("They arrive unstaged, and \(model.mainName) goes back to its last commit for them. Ignored files such as .env stay.")

@@ -124,7 +124,10 @@ final class OverlapMonitor {
       mainFiles.formUnion(GitOperations.changedPaths(from: base, to: "HEAD", root: main))
     }
     list.append(.init(path: TaskRegistry.canonical(main), name: (main as NSString).lastPathComponent, files: mainFiles))
-    let fallbackBase = mainSnapshot?.upstream ?? mainSnapshot?.branch
+    // Tasks from before Impulse kept its list don't know their base: the
+    // repository's default branch (not the main checkout's branch, which
+    // may be a feature branch the task never came from).
+    let fallbackBase = GitClient.defaultBaseBranch(repoPath: main)
     for task in registry.tasks {
       var files = uncommitted(GitClient.snapshot(forPath: task.path))
       let branch = "refs/heads/\(task.branch)"
