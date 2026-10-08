@@ -16,6 +16,18 @@
       #expect(WorktreeTasks.branchName(for: long, taken: []).count <= 48)
     }
 
+    @Test func tasksStartFromTheRemoteBranch() {
+      #expect(WorktreeTasks.defaultBase(branch: "main", upstream: "origin/main", ahead: 0) == ("origin/main", nil))
+      #expect(WorktreeTasks.defaultBase(branch: "main", upstream: nil, ahead: 0) == ("main", nil))
+      #expect(WorktreeTasks.defaultBase(branch: nil, upstream: nil, ahead: 0) == ("HEAD", nil))
+      let one = WorktreeTasks.defaultBase(branch: "main", upstream: "origin/main", ahead: 1)
+      #expect(one.base == "origin/main")
+      #expect(one.note == "main has 1 unpushed commit that isn't included; type main to include it.")
+      #expect(
+        WorktreeTasks.defaultBase(branch: "main", upstream: "upstream/main", ahead: 2).note
+          == "main has 2 unpushed commits that aren't included; type main to include them.")
+    }
+
     @Test func worktreesLiveBesideTheRepository() {
       #expect(
         WorktreeTasks.worktreePath(repoRoot: "/Users/me/Code/app", branch: "feat/search")

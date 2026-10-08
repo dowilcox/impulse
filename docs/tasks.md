@@ -45,7 +45,7 @@ When you're done, **Archive Task…** removes the folder and keeps the branch, w
 
 The menu, shortcut and palette start a task from the repository of the active workspace (in the Scratch workspace, the repository of the active tab's directory). The **+** button and the context menu start it from that row's repository, so you can start a task for `trailhead` while you're looking at another workspace. The **+** and context-menu items only appear on rows that are in a git repository.
 
-Tasks always come from the repository's main checkout. Started from a task's row, or with a task workspace active, the new task's folder still goes beside the repository (`~/Code/trailhead.worktrees/…`), and **From** defaults to the main checkout's branch, not the task's.
+Tasks always come from the repository's main checkout. Started from a task's row, or with a task workspace active, the new task's folder still goes beside the repository (`~/Code/trailhead.worktrees/…`), and **From** defaults to what the main checkout's branch tracks, not the task's branch.
 
 If there's no repository to start from, Impulse shows "Open a folder in a git repository to start a task." Open the repository as a workspace first (see [Workspaces and tabs](workspaces-and-tabs.md)).
 
@@ -61,7 +61,13 @@ A short description of the work, for example "Fix elevation". Impulse turns it i
 
 #### From
 
-The base the new branch starts from. It's filled in with the branch checked out in the repository's main checkout, even when you start from a task (or `HEAD` if the main checkout is on a detached HEAD). You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`. The new branch doesn't track its base, even a remote one, so the first **Git ▸ Push** publishes it under its own name rather than pushing to `main`.
+The base the new branch starts from. It's filled in with the remote branch that the main checkout's branch tracks, for example `origin/main`, so a task starts from what's on the remote rather than from a local `main` that may be behind. It's the main checkout's branch even when you start from a task. When that branch tracks nothing, its local name is used (`main`), and `HEAD` when the main checkout is on a detached HEAD.
+
+If the local branch has commits you haven't pushed, a note under **From** says so, for example "main has 2 unpushed commits that aren't included; type main to include them."
+
+In a trusted repository (see [Getting started](getting-started.md)), Impulse fetches the remote when the sheet opens, showing "Fetching origin…" beside **From**. You don't have to wait: a task created before the fetch finishes starts from what was fetched last. In a folder you haven't trusted, Impulse doesn't fetch on its own; click **Fetch** beside **From** to fetch. If fetching fails, the reason shows under **From**, and you can still create the task.
+
+You can type any other base git understands: a local branch (`main`), a remote branch (`origin/main`), a tag (`v0.2.0`) or a commit. If you clear the field, the branch starts from the repository's current `HEAD`. The new branch doesn't track its base, even a remote one, so the first **Git ▸ Push** publishes it under its own name rather than pushing to `main`.
 
 #### Start
 
@@ -104,7 +110,7 @@ Only local branch names are checked. If you want a specific name, type it as the
 ### What happens when you click Create Task
 
 1. **Check the folder.** If the task's folder already exists, Impulse stops and shows "`~/Code/trailhead.worktrees/fix-elevation` already exists." in the sheet.
-2. **Create the worktree.** Impulse runs the equivalent of `git worktree add -b fix-elevation ~/Code/trailhead.worktrees/fix-elevation main` from the repository, creating the `trailhead.worktrees` folder if needed. Any git error (for example, a base that doesn't exist) is shown in the sheet.
+2. **Create the worktree.** Impulse runs the equivalent of `git worktree add --no-track -b fix-elevation ~/Code/trailhead.worktrees/fix-elevation origin/main` from the repository, creating the `trailhead.worktrees` folder if needed. Any git error (for example, a base that doesn't exist) is shown in the sheet.
 3. **Copy untracked files.** The files listed under **Copies** are copied from the repository into the same relative paths in the task. A file that already exists in the task (because it's tracked and was checked out) is left alone. See [Which files are copied](#which-files-are-copied).
 4. **Carry over trust.** If the repository is a trusted folder, the task folder is trusted too, so language servers, formatters on save and background fetch work in it straight away. If the repository isn't trusted, the task folder isn't either, and you're asked about it like any other folder you open (when **Ask before trusting folders** is on). Trusting the parent folder from the trust prompt (for example `~/Code`) covers task folders too, because they live beside the repository. See [Getting started](getting-started.md) for workspace trust.
 5. **Ask about the project file.** If the task has a `.impulse/project.toml` with commands in it and you haven't trusted that exact file yet, Impulse asks before running anything from it. See [Project configuration](project-config.md#trusting-the-project-file).
@@ -168,7 +174,7 @@ Because all tasks share one repository, a commit in a task is immediately visibl
 
 ### Example: two agents in parallel
 
-1. With the `trailhead` workspace active, press ⌥⌘N. Type "Fix elevation", leave **From** as `main`, choose **Claude Code** under **Start**, and click **Create Task**.
+1. With the `trailhead` workspace active, press ⌥⌘N. Type "Fix elevation", set **From** to `origin/main`, choose **Claude Code** under **Start**, and click **Create Task**.
 2. In the new `fix-elevation` workspace, type the prompt for Claude Code in its terminal.
 3. Click the `trailhead` row in the sidebar and press ⌥⌘N again. Type "Add trail difficulty filter", choose **Codex**, and click **Create Task**.
 4. Give Codex its prompt. Both agents now work in separate folders on separate branches.

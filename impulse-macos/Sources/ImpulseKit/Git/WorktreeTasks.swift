@@ -41,6 +41,19 @@ public enum WorktreeTasks {
       .appendingPathComponent(folder)
   }
 
+  /// What a new task starts from, given the main checkout's branch: the
+  /// remote branch it tracks (`origin/main`), so a task starts from what's
+  /// on the remote and not from a local branch that may be behind; the
+  /// local branch when it tracks nothing; `HEAD` when detached. The note
+  /// says when the local branch has commits the remote one lacks.
+  public static func defaultBase(branch: String?, upstream: String?, ahead: Int) -> (base: String, note: String?) {
+    guard let branch else { return ("HEAD", nil) }
+    guard let upstream else { return (branch, nil) }
+    guard ahead > 0 else { return (upstream, nil) }
+    let commits = ahead == 1 ? "1 unpushed commit" : "\(ahead) unpushed commits"
+    return (upstream, "\(branch) has \(commits) that \(ahead == 1 ? "isn't" : "aren't") included; type \(branch) to include \(ahead == 1 ? "it" : "them").")
+  }
+
   /// What's copied when a repository has no `.worktreeinclude`: local
   /// secrets, and project-only agent hooks (so a task keeps the project's
   /// hooks, and archiving it doesn't take the only copy with it).

@@ -30,11 +30,27 @@ final class TaskSheetModel {
   var isLoading = true
   var isCreating = false
   var error: String?
+  /// Under From: unpushed commits the default base leaves out.
+  var baseNote: String?
+  /// The remote From's default comes from (`origin`), when there is one.
+  var remote: String?
+  /// Fetching `remote`, or what went wrong.
+  var isFetching = false
+  var fetchError: String?
+  /// The repository is trusted, so the sheet fetches on its own; otherwise
+  /// From has a Fetch button.
+  var fetchesOnItsOwn = false
+  /// From as the sheet filled it in; once the user types, it's left alone.
+  var defaultBase: String?
 
   init(repoRoot: String, base: String) {
     self.repoRoot = repoRoot
     draft.base = base
   }
+
+  /// From still holds what the sheet put there (or nothing), so a better
+  /// default may replace it.
+  var canReplaceBase: Bool { defaultBase.map { draft.base == $0 } ?? draft.base.isEmpty }
 
   var branch: String { WorktreeTasks.branchName(for: draft.title, taken: takenBranches) }
   var path: String { WorktreeTasks.worktreePath(repoRoot: repoRoot, branch: branch) }
@@ -45,6 +61,7 @@ struct TaskSheetView: View {
   @Bindable var model: TaskSheetModel
   let onCancel: () -> Void
   let onCreate: () -> Void
+  let onFetch: () -> Void
   @FocusState private var titleFocused: Bool
 
   var body: some View {
@@ -67,6 +84,22 @@ struct TaskSheetView: View {
         TextField("base branch", text: $model.draft.base)
           .textFieldStyle(.roundedBorder)
           .frame(width: 220)
+        if model.isFetching {
+          ProgressView().controlSize(.small)
+          Text("Fetching \(model.remote ?? "")…")
+            .font(ChromeFont.ui(11))
+            .foregroundStyle(chrome.textTertiary)
+        } else if !model.fetchesOnItsOwn, model.remote != nil {
+          ChromeButton(title: "Fetch", kind: .secondary) { onFetch() }
+            .help("Fetch \(model.remote ?? "the remote") so From starts from its latest commits")
+        }
+      }
+      if let note = model.fetchError ?? model.baseNote {
+        Text(note)
+          .font(ChromeFont.ui(11))
+          .foregroundStyle(chrome.textTertiary)
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.leading, 54)
       }
       field("Start") {
         Picker("", selection: $model.draft.command) {
@@ -166,15 +199,25 @@ extension MainWindowController {
       return
     }
     // Tasks branch from the main checkout, even when started from a task:
-    // their folders go beside it, and its branch is the default base.
+    // their folders go beside it, and what its branch tracks is the
+    // default base.
     let root = Self.mainCheckoutRoot(of: repository.root)
-    let fromTask = root != repository.root
-    let model = TaskSheetModel(
-      repoRoot: root, base: base ?? (fromTask ? "" : repository.snapshot?.branch ?? "HEAD"))
+    let known = root == repository.root ? repository.snapshot : nil
+    let initial = known.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead) }
+    let model = TaskSheetModel(repoRoot: root, base: base ?? initial?.base ?? "")
+    if base == nil {
+      model.defaultBase = initial?.base
+      model.baseNote = initial?.note
+    }
     model.draft.title = title
     model.draft.command = command
-    DispatchQueue.global(qos: .userInitiated).async {
-      let mainBranch = fromTask && base == nil ? GitOperations.currentBranch(root: root) ?? "HEAD" : nil
+    model.fetchesOnItsOwn = Trust.shared.isTrusted(root)
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let main = known ?? GitClient.snapshot(forPath: root)
+      let computed = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead) }
+      let remote = main?.upstream.flatMap { upstream in
+        GitOperations.remotes(root: root).first { upstream.hasPrefix("\($0)/") }
+      }
       let taken = Set(GitOperations.branches(root: root).local)
       let copies = Self.taskCopies(root: root)
       let agents = KnownAgents.builtIn.compactMap { kind -> (name: String, command: String)? in
@@ -182,11 +225,18 @@ extension MainWindowController {
         return (kind.displayName, name)
       }
       DispatchQueue.main.async {
-        if let mainBranch, model.draft.base.isEmpty { model.draft.base = mainBranch }
+        if base == nil, let computed, model.canReplaceBase {
+          model.draft.base = computed.base
+          model.defaultBase = computed.base
+          model.baseNote = computed.note
+        }
+        model.remote = remote
         model.takenBranches = taken
         model.copies = copies
         model.agents = agents
         model.isLoading = false
+        // Start from what's on the remote now; creating doesn't wait.
+        if model.fetchesOnItsOwn { self?.fetchForTaskSheet(model) }
       }
     }
 
@@ -203,8 +253,28 @@ extension MainWindowController {
           self?.createTask(model) {
             if let sheet { window?.endSheet(sheet) }
           }
-        }
+        },
+        onFetch: { [weak self] in self?.fetchForTaskSheet(model) }
       ))
+  }
+
+  /// Fetch the remote From's default comes from, quietly (no credential
+  /// prompts). A failure shows under From; the task can be created anyway.
+  private func fetchForTaskSheet(_ model: TaskSheetModel) {
+    guard !model.isFetching, let remote = model.remote else { return }
+    model.isFetching = true
+    model.fetchError = nil
+    let root = model.repoRoot
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = GitOperations.fetch(root: root, timeout: 60)
+      DispatchQueue.main.async {
+        model.isFetching = false
+        if case .failure(let error) = result {
+          let reason = error.message.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+          model.fetchError = "Couldn't fetch \(remote)\(reason.isEmpty ? "" : ": \(reason)")"
+        }
+      }
+    }
   }
 
   /// Snapshot runs: create a task without the sheet.
@@ -214,8 +284,8 @@ extension MainWindowController {
       return
     }
     let root = Self.mainCheckoutRoot(of: repository.root)
-    let base =
-      root == repository.root ? repository.snapshot?.branch : GitOperations.currentBranch(root: root)
+    let main = root == repository.root ? repository.snapshot : GitClient.snapshot(forPath: root)
+    let base = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead).base }
     let model = TaskSheetModel(repoRoot: root, base: base ?? "HEAD")
     model.draft.title = title
     model.draft.command = command
