@@ -2036,6 +2036,7 @@ final class TabManager: NSObject {
         taskSummary: workspace.taskSummary,
         overlaps: workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : [],
         isMerged: workspace.isTask && OverlapMonitor.shared.isMerged(workspace.root),
+        isUpstreamGone: workspace.isTask && OverlapMonitor.shared.isUpstreamGone(workspace.root),
         repositoryHasMergedTasks: workspace.repository.map {
           !(OverlapMonitor.shared.merged[$0.snapshot?.commonDir ?? ""] ?? []).isEmpty
         } ?? false,

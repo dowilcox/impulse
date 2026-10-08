@@ -22,6 +22,9 @@ final class OverlapMonitor {
   /// Tasks whose branch is merged into their base, per repository (main
   /// thread).
   private(set) var merged: [String: Set<String>] = [:]
+  /// Tasks whose branch's upstream was deleted on the remote (a hint that
+  /// it was merged there), per repository (main thread).
+  private(set) var upstreamGone: [String: Set<String>] = [:]
   private var pending: [String: DispatchWorkItem] = [:]
   private let queue = DispatchQueue(label: "impulse.overlap", qos: .utility)
 
@@ -40,6 +43,12 @@ final class OverlapMonitor {
     return merged.values.contains { $0.contains(path) }
   }
 
+  /// Whether the task at `path` has a branch whose upstream is gone.
+  func isUpstreamGone(_ path: String) -> Bool {
+    let path = TaskRegistry.canonical(path)
+    return upstreamGone.values.contains { $0.contains(path) }
+  }
+
   /// The pairs a workspace at `path` is part of.
   func pairs(involving path: String) -> [TaskOverlap.Pair] {
     let path = TaskRegistry.canonical(path)
@@ -53,11 +62,13 @@ final class OverlapMonitor {
     let ignore = settings.overlapIgnore + [settings.envFile]
     let found = changes.count < 2 ? [] : TaskOverlap.pairs(changes, ignoring: ignore)
     let mergedNow = Self.mergedTasks(root: root)
+    let goneNow = Self.upstreamGoneTasks(root: root)
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
-      let mergedChanged = self.merged[commonDir] ?? [] != mergedNow
+      let finishedChanged = self.merged[commonDir] ?? [] != mergedNow || self.upstreamGone[commonDir] ?? [] != goneNow
       self.merged[commonDir] = mergedNow
-      if mergedChanged, found == self.pairs[commonDir] ?? [] {
+      self.upstreamGone[commonDir] = goneNow
+      if finishedChanged, found == self.pairs[commonDir] ?? [] {
         NotificationCenter.default.post(name: .taskOverlapsChanged, object: nil, userInfo: ["newPairs": [TaskOverlap.Pair]()])
       }
       self.changes[commonDir] = changes
@@ -123,6 +134,15 @@ final class OverlapMonitor {
       merged.insert(TaskRegistry.canonical(task.path))
     }
     return merged
+  }
+
+  /// Tasks whose branch tracked a remote branch that's gone (deleted on
+  /// the remote and pruned by a fetch).
+  static func upstreamGoneTasks(root: String) -> Set<String> {
+    let main = MainWindowController.mainCheckoutRoot(of: root)
+    guard let registry = TaskRegistryStore.registry(root: main), !registry.tasks.isEmpty else { return [] }
+    let gone = Set(GitOperations.branchDetails(root: main, base: nil).filter(\.upstreamGone).map(\.name))
+    return Set(registry.tasks.filter { gone.contains($0.branch) }.map { TaskRegistry.canonical($0.path) })
   }
 
   private static func uncommitted(_ snapshot: RepoSnapshot?) -> Set<String> {

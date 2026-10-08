@@ -256,6 +256,8 @@ Once a task's work has landed, its folder is only in the way. Impulse marks a ta
 
 For a remote base (`origin/main`), Impulse compares with what it last fetched, so after a merge request is merged on your host, **Git ▸ Fetch** (or the background fetch) brings the label. A task with no commits of its own isn't marked, even though its branch is part of the base: there's nothing of it to have landed. Tasks made before Impulse kept its list of tasks (and worktrees you made yourself) aren't marked either.
 
+Hosts often delete a branch when its merge request is merged. Once a fetch notices (git calls the upstream "gone"), the task's row says so when you hover it: "Its branch was deleted on the remote; it may have been merged there." That alone doesn't mark the task merged, since a branch can be deleted without being merged.
+
 To clean up, choose **Archive Merged Tasks…** from a task row's or the repository header's context menu. The sheet lists every merged task of the repository, open in the sidebar or not, each with a checkbox and a warning when it has uncommitted files ("2 uncommitted").
 
 - **Delete their branches too** deletes each archived task's local branch.

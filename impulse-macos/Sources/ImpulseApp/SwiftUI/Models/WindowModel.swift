@@ -108,6 +108,8 @@ struct WorkspaceInfo: Identifiable {
   var overlaps: [TaskOverlap.Pair] = []
   /// A task whose branch is merged into its base.
   var isMerged: Bool = false
+  /// A task whose branch's upstream was deleted on the remote.
+  var isUpstreamGone: Bool = false
   /// Its repository has tasks whose branches are merged.
   var repositoryHasMergedTasks: Bool = false
   /// Listening ports of its terminals' processes.

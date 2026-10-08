@@ -411,6 +411,11 @@ private struct WorkspaceRow: View {
     var lines = [workspace.isScratch ? "Scratch — the file tree follows the active tab" : workspace.root]
     if let branch = snapshot?.branch { lines.append("Branch: \(branch)") }
     if let summary = workspace.taskSummary { lines.append(summary) }
+    if workspace.isMerged {
+      lines.append("Merged into its base")
+    } else if workspace.isUpstreamGone {
+      lines.append("Its branch was deleted on the remote; it may have been merged there")
+    }
     if let snapshot, snapshot.changedFileCount > 0 {
       lines.append("\(snapshot.changedFileCount) changed file(s)")
     }
