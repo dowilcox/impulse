@@ -181,6 +181,18 @@ Because all tasks share one repository, a commit in a task is immediately visibl
 5. Go back to `trailhead` and keep working on your own branch. When an agent finishes or needs input, its row and tab show it; press ⇧⌘U to jump to it.
 6. When an agent finishes a turn, press ⇧⌘I in its terminal to review exactly what it changed.
 
+## Running agents in parallel
+
+Tasks keep agents' files apart, but not everything else: two agents can still change the same files, and the work only meets when you merge. A few habits keep parallel work from colliding.
+
+- **Keep the main checkout for integrating.** Do feature work in tasks, and use the main checkout to pull, merge and run your dev server. Uncommitted work piling up there blocks pulls and merges later, and no task can see it.
+- **Split the work by area, not just by branch.** Two tasks that rewrite the same files conflict when they meet, however separate their branches are. A change that touches nearly everything (a framework upgrade, a rename across the project) should run alone, or land first so other tasks start on top of it.
+- **Commit small and often, in every workspace.** git can merge commits; it can't merge a pile of uncommitted files, and nobody can review one.
+- **Keep a long-running task current.** Merge the base into its branch every day or two (in the task: `git fetch` then `git merge origin/main`), so conflicts show up while they're small, in the task that has the context to resolve them.
+- **Give each agent its own browser.** Browser tools for agents often share one browser profile, so a second agent finds it already in use. The Chrome DevTools MCP server, for example, takes `--isolated` to give each agent a temporary profile of its own.
+- **Check after a big merge.** A merge without conflicts can still break code that relied on something the other side changed. After merging a large change, reinstall dependencies and run the type checker or tests before anything else (in trailhead, `npm ci && npm test`).
+- **Clean up worktrees you made yourself.** Impulse archives its own tasks. For worktrees made with `git worktree add`, `git worktree list` shows them all, `git worktree remove <path>` removes one, and `git worktree prune` forgets folders you deleted by hand.
+
 ## Finish a task
 
 ### Merge the work back
