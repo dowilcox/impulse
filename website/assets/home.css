@@ -64,7 +64,6 @@ html:has(body.home), .home { overflow-x: clip; }
   --wfs: 12.5px;
 
   position: relative; text-align: left;
-  font-feature-settings: "calt" 0, "liga" 0;
   display: grid; grid-template-rows: 40px minmax(0, 1fr) 24px;
   height: 620px; border-radius: 14px; overflow: hidden;
   background: var(--w-bg); color: var(--w-fg); font: 400 var(--wfs)/1.45 var(--sans);
@@ -74,6 +73,8 @@ html:has(body.home), .home { overflow-x: clip; }
   transition: background .35s ease, color .35s ease, box-shadow .35s ease;
   outline: none;
 }
+/* The `font` shorthand resets font features, so ligatures are switched off on every element. */
+.win, .win * { font-feature-settings: "calt" 0, "liga" 0; }
 .win * { transition-property: background-color, border-color, color; transition-duration: .3s; }
 .win button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .win kbd { font: 500 10px var(--mono); color: var(--w-comment); background: none; border: 1px solid color-mix(in srgb, var(--w-fg) 18%, transparent); border-bottom-width: 1px; padding: 0 4px; border-radius: 4px; }
@@ -86,6 +87,7 @@ html:has(body.home), .home { overflow-x: clip; }
 .lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
 .lights i:nth-child(2) { background: #febc2e; }
 .lights i:nth-child(3) { background: #28c840; }
+.tb-btn, .tb-changes, .tb-palette, .tb-agents, .lights { flex: none; }
 .tb-btn { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: var(--w-muted); }
 .tb-btn:hover { background: var(--w-hl); color: var(--w-fg); }
 .tb-ws { display: flex; align-items: baseline; gap: 6px; padding: 0 6px; white-space: nowrap; }
@@ -100,7 +102,7 @@ html:has(body.home), .home { overflow-x: clip; }
 .tab[aria-selected="true"] { background: var(--w-hl); color: var(--w-fg); }
 .tab[aria-selected="true"]::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -6px; height: 2px; border-radius: 2px; background: var(--w-accent); }
 .tab .tab-title { overflow: hidden; text-overflow: ellipsis; }
-.tab .tab-x { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; opacity: 0; color: var(--w-comment); }
+.tab .tab-x { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; opacity: 0; color: var(--w-comment); }
 .tab:hover .tab-x, .tab[aria-selected="true"] .tab-x { opacity: 1; }
 .tab .tab-x:hover { background: color-mix(in srgb, var(--w-fg) 12%, transparent); color: var(--w-fg); }
 .tab-ico { color: var(--w-comment); }
@@ -399,6 +401,73 @@ html:has(body.home), .home { overflow-x: clip; }
   .site-footer nav { margin-left: 0; }
   .feature, .grid-section, .native { padding-left: 16px; padding-right: 16px; }
   .theme-strip { justify-content: flex-start; }
+}
+@media (max-width: 760px) {
+  .win { height: 520px; height: clamp(440px, 74svh, 580px); }
+  .tab { max-width: 150px; }
+  .tb-palette { width: 30px; justify-content: center; padding: 0; }
+  .tb-palette svg { margin: 0; }
+  .win-titlebar { padding-left: 6px; gap: 4px; }
+  .tb-tabs { margin-left: 0; }
+  .blk { padding-left: 12px; padding-right: 12px; }
+  .blk-tools { right: 8px; top: 26px; }
+  .rv-head { gap: 8px; padding: 0 10px; }
+  .rv-head > span:nth-of-type(2) ~ span:not(.rv-spacer) { display: none; }
+  .ed-num { width: 34px; padding-right: 10px; }
+  .ed-mark { margin-right: 8px; }
+  .win-toasts { left: 10px; right: 10px; align-items: stretch; }
+  .toast { max-width: none; }
+  .win-status { gap: 12px; }
+  .hero-title { font-size: clamp(38px, 11.5vw, 56px); }
+  .hero-sub { font-size: 17px; }
+  .hero-cta .btn-lg { flex: 1 1 220px; }
+  .feature h2, .grid-section h2, .final h2 { font-size: clamp(28px, 8vw, 36px); }
+  .feature p { font-size: 16px; }
+  .feature { gap: 28px; padding-top: 80px; }
+  .grid-section { padding-top: 100px; }
+  .native { margin-top: 100px; }
+  .demo-hints > span { flex-basis: 100%; }
+  .agent-chips span { height: 30px; }
+}
+@media (max-width: 380px) {
+  .win { --wfs: 11px; }
+  .tab { max-width: 112px; padding: 0 6px; }
+  .tb-changes { padding: 0 6px; }
+  .win-status span:nth-child(2) { display: none; }
+}
+/* Landscape phones: keep the whole window on screen. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .win { height: calc(100svh - 70px); min-height: 300px; }
+  .hero { padding-top: 40px; }
+}
+/* Touch: no hover, so the controls hover reveals are shown or bigger. */
+@media (pointer: coarse) {
+  /* iOS zooms into any field under 16px, so on touch screens they're 16px. */
+  .ib-editor { font-size: 16px; height: 42px; }
+  .ib-mirror, .ib-field input { line-height: 40px; }
+  .dpal-input input, .rv-composer textarea { font-size: 16px; }
+  .dpal-input input { height: 46px; }
+  .more { display: inline-block; padding: 10px 0; }
+  .site-footer nav a { display: inline-block; padding: 10px 0; }
+  .tb-btn { width: 30px; height: 30px; }
+  .tab .tab-x { width: 26px; height: 26px; min-width: 26px; }
+  .tb-changes { min-width: 30px; }
+  .hint { height: 38px; padding: 0 14px; }
+  .theme-chip { height: 38px; }
+  .blk.selected .blk-tools { display: flex; }
+  .blk:hover .blk-tools { display: none; }
+  .blk.selected:hover .blk-tools { display: flex; }
+  .blk-tools button { width: 32px; height: 28px; }
+  .tab { height: 30px; }
+  .tb-btn, .tb-changes, .tb-palette, .tb-agents { min-height: 30px; }
+  .fi { height: 30px; }
+  .rv-line .n { width: 40px; }
+  .dpal-item { height: 40px; }
+  .dpal-foot { display: none; }
+  .win kbd { display: none; }
+  .hint kbd { display: none; }
+  .tb-palette span { display: none; }
+  .tb-palette { width: 30px; justify-content: center; padding: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .js .reveal { opacity: 1; transform: none; }

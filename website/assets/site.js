@@ -148,14 +148,32 @@
 
   // ── Docs ──────────────────────────────────────────────────────────────
 
-  // Small screens: the sidebar slides over the page.
+  // Small screens: the menu button slides the docs sidebar over the page, or
+  // drops the site links down from the top bar on pages without a sidebar.
   const navToggle = $("[data-nav-toggle]");
-  if (navToggle && $(".docs-sidebar")) {
-    navToggle.addEventListener("click", () => document.body.toggleAttribute("data-nav-open"));
-    $(".docs-sidebar").addEventListener("click", (e) => { if (e.target.closest("a")) document.body.removeAttribute("data-nav-open"); });
-    $("[aria-current]", $(".docs-sidebar"))?.scrollIntoView({ block: "center" });
-  } else if (navToggle) {
-    navToggle.remove();
+  const sidebar = $(".docs-sidebar");
+  if (navToggle) {
+    const attr = sidebar ? "data-nav-open" : "data-menu-open";
+    const scrim = document.createElement("div");
+    scrim.className = "nav-scrim";
+    document.body.appendChild(scrim);
+    const setOpen = (open) => {
+      document.body.toggleAttribute(attr, open);
+      navToggle.setAttribute("aria-expanded", String(open));
+    };
+    navToggle.setAttribute("aria-controls", sidebar ? "docs-nav" : "site-nav");
+    navToggle.addEventListener("click", () => setOpen(!document.body.hasAttribute(attr)));
+    scrim.addEventListener("click", () => setOpen(false));
+    (sidebar || $(".topnav")).addEventListener("click", (e) => { if (e.target.closest("a")) setOpen(false); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.hasAttribute(attr)) { setOpen(false); navToggle.focus(); } });
+    matchMedia("(min-width: 861px)").addEventListener("change", (e) => { if (e.matches) setOpen(false); });
+    // Desktop: bring the current page into view in a long sidebar. (The drawer
+    // on small screens opens at its top, where the site links are.)
+    const currentItem = sidebar && $("[aria-current]", sidebar);
+    if (currentItem && matchMedia("(min-width: 861px)").matches) {
+      const r = currentItem.getBoundingClientRect();
+      if (r.bottom > innerHeight) sidebar.scrollTop += r.top - innerHeight / 2;
+    }
   }
   const main = $("[data-docs-main]");
   if (main && !$(".toc", main)) main.classList.add("no-toc");

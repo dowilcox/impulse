@@ -1,13 +1,14 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar">
-  <button class="icon-btn menu-btn" type="button" aria-label="Show navigation" data-nav-toggle>
+  <button class="icon-btn menu-btn" type="button" aria-label="Menu" aria-expanded="false" data-nav-toggle>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
   <a class="brand" href="{{home}}"><img src="{{root}}assets/impulse-logo.svg" alt="" width="26" height="26">Impulse<span class="brand-tag">v{{version}}</span></a>
-  <nav class="topnav" aria-label="Site">
+  <nav class="topnav" id="site-nav" aria-label="Site">
     <a href="{{root}}docs/" data-section="docs">Docs</a>
     <a href="{{root}}changelog/" data-section="changelog">Changelog</a>
     <a href="{{repo}}">GitHub</a>
+    <a class="topnav-download" href="{{repo}}/releases/latest">Download Impulse {{version}}</a>
   </nav>
   <div class="topbar-spacer"></div>
   <button class="search-field" type="button" data-search-open aria-label="Search the docs">
