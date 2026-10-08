@@ -6,6 +6,20 @@ Two Claude Code sessions worked on PulseBoard at once: one did a framework upgra
 
 The short version: **a task isolates files, but not the environment, and not what the agents intend to do.** The two sessions collided only at merge time, because each one could only see its own folder. Impulse is the one program that sees every workspace, every branch and every agent's state at once, and it doesn't use that view yet.
 
+## Status
+
+Implemented 8 Oct 2026, every proposal, in the order below (commits `1fd53ac` to `3ffc43c`; user docs in `docs/tasks.md`, `docs/project-config.md`, `docs/agents.md`, `docs/cli.md` and `docs/git.md`). Where the build differs from the decisions:
+
+- **Finish is a tab, not a sheet** (4). A sheet blocks the window, and the check's terminal output and conflict resolution both need it. The tab lists the steps; one that stops says why and offers what helps (Show Changes, Skip Check, Push for Review Instead), and Continue picks up from there.
+- **"Main checkout is behind" lives on its row** (4): ↓3 on the main checkout's row, click to pull, rather than in the group header, which disappears once the task is archived and the main checkout is the only workspace left.
+- **The throwaway merge folder skips post-checkout hooks** (4); merge and push hooks run as usual. A server refusal (a protected branch) is told apart from a moved base and offers Push for Review instead.
+- **Finish's toast says Restore Task, not Undo** (4): it brings back the folder and the local branch; the pushed merge stays.
+- **The overlap chip is on the workspace rows** (2), not the group header: one chip per workspace, with its own list.
+- **Archive Merged Tasks… is also on the row menu** (12), and a task whose upstream is gone gets a hover hint, not a mark.
+- **Moving changes picks one file or all** (11): the Changes panel has single selection, so its context menu moves one file and its ⋯ menu moves everything.
+
+Still open: an agent starting Finish (`impulse tasks finish`, with Impulse asking you to approve the land step), which was decided to come after the tab.
+
 ## What went wrong, and what Impulse does today
 
 | What went wrong                                                                                               | Impulse today                                                                | Proposal                                                                                                     |
