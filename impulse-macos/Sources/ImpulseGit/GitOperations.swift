@@ -497,6 +497,29 @@ public enum GitOperations {
     return void(git(args, in: root, timeout: 600, onOutputLine: onProgress))
   }
 
+  /// The best common ancestor of two commits; nil when they share none.
+  public static func mergeBase(_ a: String, _ b: String, root: String) -> String? {
+    guard case .success(let result) = git(["merge-base", a, b], in: root) else { return nil }
+    let base = result.stdout.split(separator: "\n").first.map(String.init) ?? ""
+    return base.isEmpty ? nil : base
+  }
+
+  /// The files that would conflict if `a` and `b` were merged, worked out
+  /// in memory (`git merge-tree`, git 2.38+) without touching any folder.
+  /// Empty when they merge cleanly; nil when git can't tell.
+  public static func predictConflicts(_ a: String, _ b: String, root: String) -> [String]? {
+    let result = git(["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b], in: root)
+    switch result {
+    case .success:
+      return []
+    case .failure(.cli(let failure)) where failure.status == 1:
+      // Exit 1: conflicts. The first line is the tree, then the files.
+      return Array(failure.output.split(separator: "\n").dropFirst().map(String.init))
+    case .failure:
+      return nil
+    }
+  }
+
   /// How HEAD last moved, from its reflog ("pull: Fast-forward",
   /// "checkout: moving from main to topic"); nil without a reflog.
   public static func headReflogSubject(root: String) -> String? {

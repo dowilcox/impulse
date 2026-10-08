@@ -95,13 +95,14 @@ An empty string means no script.
 
 ### `[worktrees]`
 
-| Key                | Type             | Meaning                                                                                                                                                                              |
-| ------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `copy`             | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                |
-| `env_file`         | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task). |
-| `port_offset`      | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                             |
-| `clone`            | array of strings | Folders cloned into new tasks from the main checkout, such as `vendor` or `public/build`. See [Cloning folders into tasks](#cloning-folders-into-tasks).                             |
-| `compose_override` | boolean          | Give each new task a Compose override that renames its containers and moves its fixed ports. Default `false`. See [Docker Compose in tasks](#docker-compose-in-tasks).               |
+| Key                | Type             | Meaning                                                                                                                                                                                  |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `copy`             | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                    |
+| `env_file`         | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task).     |
+| `port_offset`      | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                                 |
+| `clone`            | array of strings | Folders cloned into new tasks from the main checkout, such as `vendor` or `public/build`. See [Cloning folders into tasks](#cloning-folders-into-tasks).                                 |
+| `compose_override` | boolean          | Give each new task a Compose override that renames its containers and moves its fixed ports. Default `false`. See [Docker Compose in tasks](#docker-compose-in-tasks).                   |
+| `overlap_ignore`   | array of strings | Files that don't count when two workspaces change the same files: names, paths or patterns. See [When workspaces change the same files](tasks.md#when-workspaces-change-the-same-files). |
 
 ### `[worktrees.ports]`
 

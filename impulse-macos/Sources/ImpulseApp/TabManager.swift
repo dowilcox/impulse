@@ -2034,6 +2034,7 @@ final class TabManager: NSObject {
         repository: workspace.repository,
         isTask: workspace.isTask,
         taskSummary: workspace.taskSummary,
+        overlaps: workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : [],
         ports: workspace.ports,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count

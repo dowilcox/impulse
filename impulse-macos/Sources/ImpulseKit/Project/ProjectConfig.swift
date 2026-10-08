@@ -62,6 +62,9 @@ public struct ProjectConfig: Equatable, Sendable {
   /// Give each new task a Compose override that renames its containers and
   /// moves its fixed ports (`[worktrees] compose_override`).
   public var composeOverride = false
+  /// Files that don't count when workspaces change the same files
+  /// (`[worktrees] overlap_ignore`): names, paths or patterns.
+  public var overlapIgnore: [String] = []
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -116,12 +119,14 @@ public struct ProjectConfig: Equatable, Sendable {
       var clone: [String]?
       var database: Database?
       var composeOverride: Bool?
+      var overlapIgnore: [String]?
 
       enum CodingKeys: String, CodingKey {
         case copy, ports, env, clone, database
         case envFile = "env_file"
         case portOffset = "port_offset"
         case composeOverride = "compose_override"
+        case overlapIgnore = "overlap_ignore"
       }
     }
     var actions: [Action]?
@@ -180,6 +185,7 @@ public struct ProjectConfig: Equatable, Sendable {
       if let folder = layer.worktrees?.database?.clone { config.databaseFolder = folder.isEmpty ? nil : folder }
       if let service = layer.worktrees?.database?.service { config.databaseService = service.isEmpty ? nil : service }
       if let override = layer.worktrees?.composeOverride { config.composeOverride = override }
+      if let ignore = layer.worktrees?.overlapIgnore { config.overlapIgnore = ignore }
     }
     config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
     config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }

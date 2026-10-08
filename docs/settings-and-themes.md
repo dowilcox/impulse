@@ -225,9 +225,10 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 
 #### Agents
 
-| Setting                                     | Key                        | Values   | Default | What it does                                                                                         |
-| ------------------------------------------- | -------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------- |
-| Open the composer when an agent needs input | `agent_composer_auto_show` | on / off | off     | In the focused terminal, so you can answer without clicking into the agent. See [Agents](agents.md). |
+| Setting                                     | Key                        | Values   | Default | What it does                                                                                                                                                          |
+| ------------------------------------------- | -------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open the composer when an agent needs input | `agent_composer_auto_show` | on / off | off     | In the focused terminal, so you can answer without clicking into the agent. See [Agents](agents.md).                                                                  |
+| Notify when tasks change the same files     | `task_overlap_notify`      | on / off | on      | Once per pair of workspaces, when the main checkout or a task starts changing files another one changes. See [Tasks](tasks.md#when-workspaces-change-the-same-files). |
 
 #### Behavior
 

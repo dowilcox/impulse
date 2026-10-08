@@ -104,6 +104,8 @@ struct WorkspaceInfo: Identifiable {
   var isTask: Bool = false
   /// For a task Impulse made: "Task slot 1 · from origin/main · APP_PORT 8100".
   var taskSummary: String? = nil
+  /// Workspaces of the same repository that change some of the same files.
+  var overlaps: [TaskOverlap.Pair] = []
   /// Listening ports of its terminals' processes.
   var ports: [ListeningPort] = []
   /// Agents waiting on the user, and agents working.
@@ -439,6 +441,8 @@ final class WindowModel {
   var onArchiveTask: ((UUID) -> Void)?
   /// Project Setup for a workspace's repository.
   var onProjectSetup: ((UUID) -> Void)?
+  /// Open a file another workspace also changes (the overlap popover).
+  var onOpenOverlapFile: ((String) -> Void)?
 
   // MARK: Methods
 

@@ -67,6 +67,27 @@
       #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
     }
 
+    @Test func conflictsArePredictedWithoutTouchingAFolder() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["page.tsx": "a\n", "link.tsx": "Link\n"], message: "base")
+      let base = try repo.git("rev-parse", "HEAD")
+      try repo.git("switch", "-q", "-c", "upgrade")
+      try repo.commit(["page.tsx": "upgrade\n"], message: "upgrade")
+      try repo.git("switch", "-q", "main")
+      #expect(GitOperations.mergeBase("main", "upgrade", root: repo.root) == base)
+      #expect(GitOperations.predictConflicts("main", "upgrade", root: repo.root) == [], "nothing on main yet")
+
+      // Uncommitted work on main that touches the same lines.
+      try repo.write("page.tsx", "overhaul\n")
+      let working = try #require(SafetySnapshots.workingTreeCommit(root: repo.root))
+      #expect(working != base)
+      #expect(try repo.git("status", "--porcelain") == "M page.tsx", "the index and files are untouched")
+      #expect(GitOperations.predictConflicts(working, "upgrade", root: repo.root) == ["page.tsx"])
+      try repo.git("checkout", "--", "page.tsx")
+      #expect(SafetySnapshots.workingTreeCommit(root: repo.root) == base, "clean: HEAD itself")
+    }
+
     @Test func headMovesAreToldApartByTheirReflog() throws {
       let (repo, origin, seed) = try cloneWithOrigin()
       defer { [repo, origin, seed].forEach { $0.destroy() } }

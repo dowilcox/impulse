@@ -115,6 +115,43 @@ public enum SafetySnapshots {
       SafetySnapshot(ref: ref, commit: commit, indexTree: indexTree, date: now, reason: reason))
   }
 
+  /// A commit of the working tree as it is (uncommitted and untracked,
+  /// non-ignored files included) on top of HEAD, with no ref pointing at it,
+  /// for comparing work that isn't committed (git's gc removes it in time).
+  /// HEAD itself when nothing is uncommitted; nil when it can't be made.
+  public static func workingTreeCommit(root: String) -> String? {
+    guard case .success(let dirResult) = GitOperations.git(["rev-parse", "--absolute-git-dir"], in: root),
+      case .success(let headResult) = GitOperations.git(["rev-parse", "--verify", "-q", "HEAD"], in: root)
+    else { return nil }
+    let head = headResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let gitDir = dirResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let tempIndex = (gitDir as NSString).appendingPathComponent("impulse-compare-\(UUID().uuidString).index")
+    defer { try? FileManager.default.removeItem(atPath: tempIndex) }
+    try? FileManager.default.copyItem(atPath: (gitDir as NSString).appendingPathComponent("index"), toPath: tempIndex)
+    var env = GitOperations.environment
+    env["GIT_INDEX_FILE"] = tempIndex
+    guard case .success = GitCLI.run(["add", "--all", "--", "."], in: root, environment: env, timeout: 120),
+      case .success(let tree) = GitCLI.run(["write-tree"], in: root, environment: env, timeout: 60)
+    else { return nil }
+    let treeID = tree.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    if case .success(let headTree) = GitOperations.git(["rev-parse", "HEAD^{tree}"], in: root),
+      headTree.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == treeID
+    {
+      return head
+    }
+    var commitEnv = GitOperations.environment
+    commitEnv["GIT_AUTHOR_NAME"] = "Impulse"
+    commitEnv["GIT_AUTHOR_EMAIL"] = "snapshots@impulse.invalid"
+    commitEnv["GIT_COMMITTER_NAME"] = "Impulse"
+    commitEnv["GIT_COMMITTER_EMAIL"] = "snapshots@impulse.invalid"
+    guard
+      case .success(let commit) = GitCLI.run(
+        ["commit-tree", treeID, "--no-gpg-sign", "-p", head, "-m", "impulse: working tree"], in: root,
+        environment: commitEnv, timeout: 60)
+    else { return nil }
+    return commit.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// Snapshots under `prefix` (including nested folders, e.g. one per
   /// terminal under the checkpoint prefix), newest first.
   public static func list(root: String, prefix: String = oplogPrefix) -> [SafetySnapshot] {

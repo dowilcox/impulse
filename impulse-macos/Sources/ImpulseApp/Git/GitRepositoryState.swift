@@ -78,6 +78,7 @@ final class GitRepositoryState {
           }
           self.snapshot = snapshot
           self.revision += 1
+          if let snapshot { OverlapMonitor.shared.schedule(root: root, commonDir: snapshot.commonDir) }
         }
         self.startWatchingIfNeeded()
         if self.refreshQueued {

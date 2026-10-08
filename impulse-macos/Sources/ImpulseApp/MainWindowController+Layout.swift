@@ -293,6 +293,9 @@ extension MainWindowController {
     windowModel.onProjectSetup = { [weak self] id in
       self?.openProjectSetup(from: id)
     }
+    windowModel.onOpenOverlapFile = { [weak self] path in
+      self?.openFile(path: path)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.

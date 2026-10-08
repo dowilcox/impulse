@@ -311,6 +311,25 @@ extension MainWindowController {
       }
     )
     notificationObservers.append(
+      nc.addObserver(forName: .taskOverlapsChanged, object: nil, queue: .main) { [weak self] notification in
+        guard let self else { return }
+        self.tabManager.syncToWindowModel()
+        // A new pair of workspaces changing the same files: say so once,
+        // in the key window, when it's one of this window's.
+        guard SettingsStore.shared.settings.taskOverlapNotify, self.window?.isKeyWindow == true,
+          let started = notification.userInfo?["newPairs"] as? [TaskOverlap.Pair]
+        else { return }
+        let roots = Set(self.tabManager.workspaces.map { TaskRegistry.canonical($0.root) })
+        for pair in started where roots.contains(pair.a.path) || roots.contains(pair.b.path) {
+          self.toasts.show(
+            Toast(
+              kind: .warning, message: OverlapMonitor.sentence(pair),
+              detail: pair.files.prefix(3).joined(separator: ", ") + (pair.files.count > 3 ? ", …" : ""),
+              lifetime: 12))
+        }
+      }
+    )
+    notificationObservers.append(
       nc.addObserver(forName: .gitHeadMoved, object: nil, queue: .main) { [weak self] notification in
         guard let info = notification.userInfo, let root = info["root"] as? String, let from = info["from"] as? String,
           let to = info["to"] as? String

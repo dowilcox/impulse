@@ -41,6 +41,9 @@ public enum ProjectSettingsFile {
     if config.composeOverride || committed?.composeOverride == true {
       worktrees.append("compose_override = \(config.composeOverride)")
     }
+    if !config.overlapIgnore.isEmpty || committed?.overlapIgnore.isEmpty == false {
+      worktrees.append("overlap_ignore = \(array(config.overlapIgnore))")
+    }
     if !worktrees.isEmpty { sections.append((["[worktrees]"] + worktrees).joined(separator: "\n")) }
 
     if !config.ports.isEmpty {

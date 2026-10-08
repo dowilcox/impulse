@@ -270,6 +270,9 @@ enum SettingsCatalog {
     toggle(
       "agent_composer_auto_show", "Open the composer when an agent needs input", \.agentComposerAutoShow,
       .terminal, "Agents", detail: "In the focused terminal, so you can answer without clicking into the agent."),
+    toggle(
+      "task_overlap_notify", "Notify when tasks change the same files", \.taskOverlapNotify, .terminal, "Agents",
+      detail: "Once per pair of workspaces, when the main checkout or a task starts changing files another one changes."),
     toggle("terminal_copy_on_select", "Copy on select", \.terminalCopyOnSelect, .terminal, "Behavior"),
     toggle("terminal_scroll_on_output", "Scroll to bottom on output", \.terminalScrollOnOutput, .terminal, "Behavior"),
     toggle("terminal_allow_hyperlink", "Clickable links", \.terminalAllowHyperlink, .terminal, "Behavior"),

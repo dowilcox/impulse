@@ -153,12 +153,22 @@ A task appears in the Workspaces section at the top of the sidebar like any othe
 Each row shows, from left to right:
 
 - The workspace name, and the branch when it differs from the name. A task named after its branch (`fix-elevation` on branch `fix-elevation`) shows the name once.
+- A warning sign with a count when the workspace changes files that another workspace of the repository also changes (see [When workspaces change the same files](#when-workspaces-change-the-same-files)).
 - Listening ports from the task's terminals (`:3000`), for example its dev server.
 - A spinner while an agent in the workspace is working, and a bot icon with a count when agents are waiting for you.
 - The workspace's uncommitted changes as added and removed lines.
 - A badge with the number of tabs that need attention, or the tab count.
 
-Hover a row for its full path, branch, changed-file count and tab count. Click the chevron (or choose **Show Tabs** from the context menu) to list the workspace's tabs under it.
+Hover a row for its full path, branch, changed-file count and tab count, and for a task Impulse made, its slot, base and ports ("Task slot 1 · from origin/main · APP_PORT 8100"). Click the chevron (or choose **Show Tabs** from the context menu) to list the workspace's tabs under it.
+
+### When workspaces change the same files
+
+Tasks keep work apart on disk, but two of them (or a task and the main checkout) can still be changing the same files, and that only shows up as conflicts when the work is merged. Impulse keeps track of what each of a repository's workspaces changes: the main checkout's uncommitted files and unpushed commits, and each task's uncommitted files and commits since it left its base. Every task Impulse made counts, whether or not it's open in the sidebar.
+
+- **The row.** When a workspace shares files with another, its row shows a warning sign and how many files (⚠ 17). Hover it to see which workspaces it shares them with.
+- **The list.** Click the warning sign for each workspace it overlaps with and the files they share; click a file to open it. **Check for Conflicts** works out, without touching either folder, which of those files would conflict if the two were merged, uncommitted work included (it needs git 2.38 or later), and marks them.
+- **A notification, once.** When two workspaces that didn't overlap start to, Impulse says so once: "fix-elevation and trailhead now change the same 3 files" (a toast, or a desktop notification when Impulse is in the background). More files between the same two don't notify again. Turn it off with **Notify when tasks change the same files** (`task_overlap_notify`) in Settings ▸ Terminal ▸ Agents.
+- **What counts.** Every file, lock files included: a lock file changed on both sides is one of the worst conflicts to sort out. The task's own env file never counts. To leave out files that are only noise in a project, list them in **Ignore when tasks overlap** in [Project Setup](project-config.md#project-setup) (`overlap_ignore`).
 
 The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Archive Task…** (on task rows only) and **Close Workspace**.
 

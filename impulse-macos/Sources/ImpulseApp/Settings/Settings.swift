@@ -134,6 +134,9 @@ struct Settings: Codable {
     var terminalEditorIntegration: Bool = false
     /// Open the composer when the focused terminal's agent asks for input.
     var agentComposerAutoShow: Bool = false
+    /// Notify when two of a repository's workspaces start changing the same
+    /// files.
+    var taskOverlapNotify: Bool = true
     /// The drop-down quick terminal and its global shortcut.
     var quickTerminalEnabled: Bool = false
     var quickTerminalShortcut: String = "Ctrl+`"
@@ -261,6 +264,7 @@ struct Settings: Codable {
         case terminalPersistentHistory = "terminal_persistent_history"
         case terminalEditorIntegration = "terminal_editor_integration"
         case agentComposerAutoShow = "agent_composer_auto_show"
+        case taskOverlapNotify = "task_overlap_notify"
         case quickTerminalEnabled = "quick_terminal_enabled"
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
@@ -419,6 +423,7 @@ struct Settings: Codable {
             (try? c.decode(Bool.self, forKey: .terminalEditorIntegration)) ?? d.terminalEditorIntegration
         agentComposerAutoShow =
             (try? c.decode(Bool.self, forKey: .agentComposerAutoShow)) ?? d.agentComposerAutoShow
+        taskOverlapNotify = (try? c.decode(Bool.self, forKey: .taskOverlapNotify)) ?? d.taskOverlapNotify
         quickTerminalEnabled =
             (try? c.decode(Bool.self, forKey: .quickTerminalEnabled)) ?? d.quickTerminalEnabled
         quickTerminalShortcut =

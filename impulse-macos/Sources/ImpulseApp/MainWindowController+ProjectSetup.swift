@@ -110,6 +110,7 @@ extension MainWindowController {
       + found.actions.filter { !names.contains($0.name) }.map { .init(isOn: false, action: $0) }
     let rules = settings.onChange.isEmpty ? found.onChange : settings.onChange
     model.rules = rules.keys.sorted().map { .init(name: $0, value: rules[$0]!) }
+    model.overlapIgnore = settings.overlapIgnore.joined(separator: ", ")
     model.composeFileName = found.composeFileName
     model.composeWarnings = found.composeWarnings
     model.composeOverride = settings.composeOverride

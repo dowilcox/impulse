@@ -301,6 +301,9 @@ private struct WorkspaceRow: View {
   @ViewBuilder
   private func trailing(snapshot: RepoSnapshot?) -> some View {
     HStack(spacing: 6) {
+      if !workspace.overlaps.isEmpty {
+        OverlapChip(model: model, workspace: workspace)
+      }
       if let port = workspace.ports.first {
         Text(verbatim: workspace.ports.count > 1 ? ":\(port.port)+" : ":\(port.port)")
           .font(ChromeFont.mono(10))
@@ -514,5 +517,101 @@ private struct NewTabRow: View {
     .buttonStyle(ChromePressStyle())
     .onHover { hovering = $0 }
     .help("New Tab (⌘T)")
+  }
+}
+
+// MARK: - Overlaps
+
+/// "⚠ 17": this workspace changes files another workspace of the repository
+/// changes too. Opens the pairs, their files, and a conflict check.
+private struct OverlapChip: View {
+  @Environment(\.chrome) private var chrome
+  var model: WindowModel
+  let workspace: WorkspaceInfo
+  @State private var showing = false
+
+  var body: some View {
+    let path = TaskRegistry.canonical(workspace.root)
+    let shared = Set(workspace.overlaps.flatMap(\.files)).count
+    Button {
+      showing.toggle()
+    } label: {
+      HStack(spacing: 2) {
+        Icon(.triangleAlert, size: 10)
+        Text("\(shared)").font(ChromeFont.mono(10))
+      }
+      .foregroundStyle(chrome.warning)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(ChromePressStyle())
+    .help(
+      workspace.overlaps.map { "Shares \($0.files.count) file\($0.files.count == 1 ? "" : "s") with \($0.other(than: path).name)" }
+        .joined(separator: "\n"))
+    .popover(isPresented: $showing, arrowEdge: .trailing) {
+      OverlapPopover(model: model, path: path, pairs: workspace.overlaps)
+        .environment(\.chrome, chrome)
+    }
+  }
+}
+
+private struct OverlapPopover: View {
+  @Environment(\.chrome) private var chrome
+  var model: WindowModel
+  let path: String
+  let pairs: [TaskOverlap.Pair]
+  /// Conflict checks by pair: nil while running, the files once done.
+  @State private var conflicts: [String: [String]?] = [:]
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        ForEach(pairs, id: \.key) { pair in
+          let other = pair.other(than: path)
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Also changed in \(other.name)").font(ChromeFont.ui(12, weight: .semibold)).foregroundStyle(chrome.text)
+            ForEach(pair.files.prefix(20), id: \.self) { file in
+              let conflicting = (conflicts[pair.key] ?? nil)?.contains(file) == true
+              Button {
+                model.onOpenOverlapFile?((path as NSString).appendingPathComponent(file))
+              } label: {
+                HStack(spacing: 4) {
+                  if conflicting { Icon(.triangleAlert, size: 10).foregroundStyle(chrome.danger) }
+                  Text(file).font(ChromeFont.mono(11)).foregroundStyle(conflicting ? chrome.danger : chrome.textSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+                }
+              }
+              .buttonStyle(.plain)
+              .help("Open \(file) in this workspace")
+            }
+            if pair.files.count > 20 {
+              Text("…and \(pair.files.count - 20) more").font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+            }
+            HStack(spacing: 8) {
+              switch conflicts[pair.key] {
+              case .none:
+                ChromeButton(title: "Check for Conflicts", kind: .secondary) { check(pair) }
+              case .some(.none):
+                ProgressView().controlSize(.small)
+                Text("Checking…").font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+              case .some(.some(let files)):
+                Text(files.isEmpty ? "These would merge without conflicts." : "\(files.count) would conflict.")
+                  .font(ChromeFont.ui(11)).foregroundStyle(files.isEmpty ? chrome.success : chrome.danger)
+              }
+            }
+          }
+        }
+      }
+      .padding(14)
+    }
+    .frame(width: 360)
+    .frame(maxHeight: 420)
+  }
+
+  private func check(_ pair: TaskOverlap.Pair) {
+    conflicts[pair.key] = .some(nil)
+    DispatchQueue.global(qos: .userInitiated).async {
+      let found = OverlapMonitor.conflicts(pair) ?? []
+      DispatchQueue.main.async { conflicts[pair.key] = .some(found) }
+    }
   }
 }

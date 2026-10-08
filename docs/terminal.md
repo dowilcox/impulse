@@ -555,6 +555,7 @@ All of these are in Settings ▸ Terminal, and in `settings.json` under the keys
 | Ask the shell for completions               | `terminal_shell_completions`         | Off            |
 | Use Impulse as $EDITOR                      | `terminal_editor_integration`        | Off            |
 | Open the composer when an agent needs input | `agent_composer_auto_show`           | Off            |
+| Notify when tasks change the same files     | `task_overlap_notify`                | On             |
 | Copy on select                              | `terminal_copy_on_select`            | On             |
 | Scroll to bottom on output                  | `terminal_scroll_on_output`          | On             |
 | Clickable links                             | `terminal_allow_hyperlink`           | On             |

@@ -42,6 +42,11 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
       userInfo: ["terminal": terminalID.uuidString], thread: thread)
   }
 
+  /// A notification that brings Impulse forward when clicked.
+  func post(title: String, subtitle: String?, body: String, thread: String) {
+    post(id: UUID().uuidString, title: title, subtitle: subtitle, body: body, userInfo: [:], thread: thread)
+  }
+
   /// A notification that opens `url` when clicked (e.g. a pull request).
   func post(title: String, subtitle: String?, body: String, url: String, thread: String) {
     post(id: UUID().uuidString, title: title, subtitle: subtitle, body: body, userInfo: ["url": url], thread: thread)

@@ -53,6 +53,8 @@ final class ProjectSetupModel {
   var actions: [ActionRow] = []
   /// `[on_change]`: file → command.
   var rules: [Pair] = []
+  /// `overlap_ignore`, comma-separated.
+  var overlapIgnore = ""
   /// What the Database row offers, and what's chosen.
   var databaseOptions: [Database] = []
   var database: Database = .none
@@ -123,6 +125,8 @@ final class ProjectSetupModel {
       config.databaseService = databaseService
     }
     config.composeOverride = composeOverride
+    config.overlapIgnore = overlapIgnore.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
     for pair in rules {
       let name = pair.name.trimmingCharacters(in: .whitespaces)
       let command = pair.value.trimmingCharacters(in: .whitespaces)
@@ -306,6 +310,11 @@ struct ProjectSetupView: View {
       section("When files change", detail: "After a pull, merge or checkout brings in a change to one of these files, Impulse offers to run its command.") {
         pairs(Binding(get: { model.rules }, set: { model.rules = $0 }), namePlaceholder: "composer.lock", valuePlaceholder: "composer install")
         ChromeButton(title: "Add Rule", icon: .plus, kind: .ghost) { model.rules.append(.init(name: "", value: "")) }
+      }
+
+      section("Ignore when tasks overlap", detail: "Files that don't count when two workspaces change the same files: names, paths or patterns, separated by commas.") {
+        TextField("CHANGELOG.md, *.snap", text: Binding(get: { model.overlapIgnore }, set: { model.overlapIgnore = $0 }))
+          .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
       }
 
       section("Actions", detail: "Commands in the palette's a: list.") {
