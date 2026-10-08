@@ -67,6 +67,24 @@
       #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
     }
 
+    @Test func mergedBranchesIncludingSquashMerges() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"], message: "base")
+      for name in ["merged", "squashed", "open"] {
+        try repo.git("switch", "-q", "-c", name, "main")
+        try repo.commit(["\(name).txt": "work\n"], message: name)
+        try repo.commit(["\(name).txt": "more work\n"], message: "\(name) 2")
+      }
+      try repo.git("switch", "-q", "main")
+      try repo.git("merge", "-q", "--no-ff", "-m", "Merge merged", "merged")
+      try repo.git("merge", "-q", "--squash", "squashed")
+      try repo.git("commit", "-q", "-m", "Squash squashed")
+      #expect(GitOperations.isMerged("merged", into: "main", root: repo.root))
+      #expect(GitOperations.isMerged("squashed", into: "main", root: repo.root), "absorbed: merging it changes nothing")
+      #expect(!GitOperations.isMerged("open", into: "main", root: repo.root))
+    }
+
     @Test func conflictsArePredictedWithoutTouchingAFolder() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

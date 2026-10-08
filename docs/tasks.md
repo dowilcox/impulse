@@ -30,7 +30,7 @@ When you create a task, Impulse:
 - Notes the task in the repository's `.git/impulse/tasks.json`, with the branch it started from. That list is how Impulse knows which worktrees are its tasks; worktrees in `<repo>.worktrees/` from before Impulse kept it count too.
 - Runs the project's setup script, then starts the agent you picked, in the task's first terminal.
 
-When you're done, **Archive Task…** removes the folder and keeps the branch, with Undo.
+When you're done, **Archive Task…** removes the folder and keeps the branch, with Undo. Impulse marks tasks whose work has landed "merged", and **Archive Merged Tasks…** clears them all out at once.
 
 ## Start a task
 
@@ -153,6 +153,7 @@ A task appears in the Workspaces section at the top of the sidebar like any othe
 Each row shows, from left to right:
 
 - The workspace name, and the branch when it differs from the name. A task named after its branch (`fix-elevation` on branch `fix-elevation`) shows the name once.
+- "merged" when the task's branch is merged into its base, so the task can go (see [Archive merged tasks](#archive-merged-tasks)).
 - A warning sign with a count when the workspace changes files that another workspace of the repository also changes (see [When workspaces change the same files](#when-workspaces-change-the-same-files)).
 - Listening ports from the task's terminals (`:3000`), for example its dev server.
 - A spinner while an agent in the workspace is working, and a bot icon with a count when agents are waiting for you.
@@ -170,7 +171,7 @@ Tasks keep work apart on disk, but two of them (or a task and the main checkout)
 - **A notification, once.** When two workspaces that didn't overlap start to, Impulse says so once: "fix-elevation and trailhead now change the same 3 files" (a toast, or a desktop notification when Impulse is in the background). More files between the same two don't notify again. Turn it off with **Notify when tasks change the same files** (`task_overlap_notify`) in Settings ▸ Terminal ▸ Agents.
 - **What counts.** Every file, lock files included: a lock file changed on both sides is one of the worst conflicts to sort out. The task's own env file never counts. To leave out files that are only noise in a project, list them in **Ignore when tasks overlap** in [Project Setup](project-config.md#project-setup) (`overlap_ignore`).
 
-The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Archive Task…** (on task rows only) and **Close Workspace**.
+The row's context menu has **New Task…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
 
 Impulse treats any workspace that is a linked git worktree as a task, including worktrees you created yourself with `git worktree add`. They get **Archive Task…** too.
 
@@ -246,9 +247,25 @@ Archiving removes the task's folder and closes its workspace, and keeps its bran
 | Uncommitted changes (tracked and untracked)                        |         | ✓ (in a snapshot, for Undo) |
 | Ignored files in the folder (`.env`, `node_modules`, build output) |    ✓    |                             |
 
+### Archive merged tasks
+
+Once a task's work has landed, its folder is only in the way. Impulse marks a task "merged" in the sidebar when its branch has commits of its own and they're all in its base (the branch in the New Task sheet's **From**), however they got there:
+
+- **Merged** (a merge commit or a fast-forward): the branch's last commit is part of the base.
+- **Squash-merged or rebased**, as many git hosts do when a merge request is accepted: the base has different commits with the same changes. Impulse checks whether merging the branch into the base would change anything, without touching any folder (this needs git 2.38 or later).
+
+For a remote base (`origin/main`), Impulse compares with what it last fetched, so after a merge request is merged on your host, **Git ▸ Fetch** (or the background fetch) brings the label. A task with no commits of its own isn't marked, even though its branch is part of the base: there's nothing of it to have landed. Tasks made before Impulse kept its list of tasks (and worktrees you made yourself) aren't marked either.
+
+To clean up, choose **Archive Merged Tasks…** from a task row's or the repository header's context menu. The sheet lists every merged task of the repository, open in the sidebar or not, each with a checkbox and a warning when it has uncommitted files ("2 uncommitted").
+
+- **Delete their branches too** deletes each archived task's local branch.
+- **…and on origin** (shown when the branches were pushed) deletes them on the remote as well.
+
+Click **Archive N Tasks**. Each task's workspace closes first; as with Archive Task…, Impulse asks about unsaved files and running processes, and a task whose closing you cancel is left alone. Then each task's archive script runs (when the project file is already trusted; the batch doesn't ask) and its folder is removed, its uncommitted files saved in a snapshot first. One toast covers them all, with **Undo** for 15 seconds: it brings back every folder, its uncommitted files and, when they were deleted, the local branches. Branches deleted on the remote stay deleted; push them again to bring them back.
+
 ### Delete the branch
 
-Archiving never deletes the branch. Once the work is merged, delete it from **Git ▸ Manage Branches…**: open the **…** menu on its row and choose **Delete…**. Merged branches are marked "merged" there. A branch can't be deleted while a task still has it checked out, so archive the task first.
+**Archive Task…** never deletes the branch (**Archive Merged Tasks…** can). Once the work is merged, delete it from **Git ▸ Manage Branches…**: open the **…** menu on its row and choose **Delete…**. Merged branches are marked "merged" there. A branch can't be deleted while a task still has it checked out, so archive the task first.
 
 ### Close instead of archive
 
@@ -275,6 +292,7 @@ Unlike **New Task…**, opening a branch as a task doesn't start an agent. If th
 - **The setup script comes from the task's own checkout.** Impulse reads `.impulse/project.toml` from the new task folder, which contains what's committed on the base branch. An uncommitted or untracked project file in your main checkout doesn't reach the task (unless you copy it with `.worktreeinclude`). Settings in `.git/impulse/project.toml` do reach every task straight away (see [Settings for this Mac only](project-config.md#settings-for-this-mac-only)).
 - **A failing setup script stops the agent from starting**, because the two are joined with `&&`. The error is right there in the task's first terminal; fix it and start the agent yourself.
 - **Archiving deletes ignored files.** `.env`, `node_modules` and other ignored files in the task folder are removed with it, and Undo doesn't bring them back (the snapshot only holds files git would track). The confirmation names some of them when there are any. Copy anything you edited by hand before archiving.
+- **Deleting a branch on the remote can't be undone by Impulse.** **Archive Merged Tasks…** with **…and on origin** checked removes the branches there for everyone. Undo restores only the local branch; `git push -u origin <branch>` from the restored task publishes it again.
 - **Undo is short-lived.** If you miss the **Undo** button, the branch still exists and you can make a new worktree for it with `git worktree add ~/Code/trailhead.worktrees/fix-elevation fix-elevation`. The uncommitted files are in a commit under `refs/impulse/oplog/` in the repository (list them with `git for-each-ref refs/impulse/oplog`); the newest one ending in `archive-fix-elevation` holds them, and `git restore --overlay --source=<that ref> --worktree -- .` in the recreated folder puts them back. Don't wait too long: Impulse keeps these snapshots for two weeks at most, and only the newest 200 in the repository, deleting older ones whenever it takes a new snapshot there (see [Safety snapshots and Undo](git.md#safety-snapshots-and-undo)).
 - **Branches checked out in a task can't be used elsewhere.** git refuses to switch your main checkout (or another task) to a branch that a task has checked out, and refuses to delete it. Archive the task first.
 - **Tasks need a git repository.** In a folder that isn't in a repository, New Task… only shows "Open a folder in a git repository to start a task."

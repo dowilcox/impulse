@@ -47,7 +47,8 @@ enum TaskRegistryStore {
     }
     return try? TaskRegistry.update(commonGitDirectory: common) { registry in
       let record = TaskRecord(
-        path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot(available: available))
+        path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot(available: available),
+        start: GitClient.resolveCommit(repoPath: path, revision: "HEAD"))
       registry.add(record)
       return record
     }

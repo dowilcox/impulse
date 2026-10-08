@@ -279,6 +279,8 @@ extension MainWindowController {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
       } else if action.hasPrefix("task=") {
         debugCreateTask(title: String(action.dropFirst(5)), command: "echo task ready")
+      } else if action == "archive-merged" {
+        presentArchiveMergedTasks(from: tabManager.activeWorkspaceID)
       } else if action == "project-setup" {
         openProjectSetup()
       } else if action == "project-setup-save" {

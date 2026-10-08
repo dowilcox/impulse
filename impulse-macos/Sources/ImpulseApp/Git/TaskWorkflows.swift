@@ -756,78 +756,39 @@ extension MainWindowController {
 
   private func removeTaskWorktree(root: String, branch: String, dirty: Bool, archiveScript: String? = nil) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      if let archiveScript,
-        !Self.runScript(archiveScript, in: root, extra: TaskRegistryStore.identity(forDirectory: root))
-      {
-        DispatchQueue.main.async {
-          self?.toasts.show(Toast(kind: .warning, message: "The archive script failed; archiving anyway."))
-        }
-      }
-      // Run git from the main checkout: the worktree is about to vanish.
-      let mainRoot =
-        GitClient.commonGitDirectory(forPath: root).map { ($0 as NSString).deletingLastPathComponent }
-        ?? root
-      // Look again: closing the workspace may have just saved files
-      // ("Save & Close"), which then belong in the snapshot too.
-      let dirty = dirty || (GitClient.snapshot(forPath: root)?.changedFileCount ?? 0) > 0
-      var saved: SafetySnapshot?
-      if dirty {
-        switch SafetySnapshots.create(reason: "archive \(branch)", root: root) {
-        case .success(let snapshot):
-          saved = snapshot
-        case .failure(let error):
-          // The dialog promised the uncommitted files would be saved.
-          DispatchQueue.main.async {
-            self?.presentGitError(
-              .invalid("The task wasn't archived: its uncommitted files couldn't be saved first. \(error.message)"),
-              title: "Couldn't archive the task")
-          }
-          return
-        }
-      }
-      let result = GitOperations.removeWorktree(path: root, force: dirty, root: mainRoot)
-      let record: TaskRecord? =
-        if case .success = result { TaskRegistryStore.remove(path: root, root: mainRoot) } else { nil }
-      // Impulse's own files for it (a Compose override) go with the folder.
-      if case .success = result, let common = GitClient.commonGitDirectory(forPath: mainRoot) {
-        try? FileManager.default.removeItem(atPath: Self.taskFolder((root as NSString).lastPathComponent, common: common))
-      }
+      let removed = Self.removeTask(root: root, branch: branch, dirty: dirty, archiveScript: archiveScript)
       DispatchQueue.main.async {
         guard let self else { return }
-        if case .failure(let error) = result {
-          self.presentGitError(error, title: "Couldn't archive the task")
-          return
+        if removed.scriptFailed {
+          self.toasts.show(Toast(kind: .warning, message: "The archive script failed; archiving anyway."))
         }
-        self.toasts.show(
-          Toast(
-            kind: .success, message: "Archived \(branch). The branch is kept.", actionTitle: "Undo",
-            action: { [weak self] in
-              self?.restoreTask(root: root, branch: branch, snapshot: saved, record: record, mainRoot: mainRoot)
-            },
-            lifetime: 15))
+        switch removed.result {
+        case .failure(let error):
+          self.presentGitError(error, title: "Couldn't archive the task")
+        case .success(let archived):
+          self.toasts.show(
+            Toast(
+              kind: .success, message: "Archived \(branch). The branch is kept.", actionTitle: "Undo",
+              action: { [weak self] in self?.restoreTasks([archived]) }, lifetime: 15))
+        }
       }
     }
   }
 
-  private func restoreTask(
-    root: String, branch: String, snapshot: SafetySnapshot?, record: TaskRecord?, mainRoot: String
-  ) {
+  /// Bring archived tasks back and reopen their workspaces.
+  func restoreTasks(_ tasks: [ArchivedTask]) {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let added = GitOperations.addWorktree(path: root, branch: branch, newBranch: false, root: mainRoot)
-      if case .success = added, let snapshot {
-        _ = SafetySnapshots.restore(snapshot, root: root)
-      }
-      if case .success = added, let record {
-        TaskRegistryStore.restore(record, root: mainRoot)
-      }
+      let results = tasks.map { ($0, Self.restoreArchived($0)) }
       DispatchQueue.main.async {
         guard let self else { return }
-        if case .failure(let error) = added {
-          self.presentGitError(error, title: "Couldn't restore the task")
-          return
+        for (task, result) in results {
+          if case .failure(let error) = result {
+            self.presentGitError(error, title: "Couldn't restore \(task.branch)")
+            continue
+          }
+          if Trust.shared.isTrusted(task.mainRoot) { Trust.shared.trust(task.root) }
+          self.tabManager.openWorkspace(folder: task.root)
         }
-        if Trust.shared.isTrusted(mainRoot) { Trust.shared.trust(root) }
-        self.tabManager.openWorkspace(folder: root)
       }
     }
   }

@@ -2035,6 +2035,10 @@ final class TabManager: NSObject {
         isTask: workspace.isTask,
         taskSummary: workspace.taskSummary,
         overlaps: workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : [],
+        isMerged: workspace.isTask && OverlapMonitor.shared.isMerged(workspace.root),
+        repositoryHasMergedTasks: workspace.repository.map {
+          !(OverlapMonitor.shared.merged[$0.snapshot?.commonDir ?? ""] ?? []).isEmpty
+        } ?? false,
         ports: workspace.ports,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count

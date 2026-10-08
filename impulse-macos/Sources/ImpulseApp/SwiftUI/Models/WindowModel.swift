@@ -106,6 +106,10 @@ struct WorkspaceInfo: Identifiable {
   var taskSummary: String? = nil
   /// Workspaces of the same repository that change some of the same files.
   var overlaps: [TaskOverlap.Pair] = []
+  /// A task whose branch is merged into its base.
+  var isMerged: Bool = false
+  /// Its repository has tasks whose branches are merged.
+  var repositoryHasMergedTasks: Bool = false
   /// Listening ports of its terminals' processes.
   var ports: [ListeningPort] = []
   /// Agents waiting on the user, and agents working.
@@ -443,6 +447,8 @@ final class WindowModel {
   var onProjectSetup: ((UUID) -> Void)?
   /// Open a file another workspace also changes (the overlap popover).
   var onOpenOverlapFile: ((String) -> Void)?
+  /// Archive Merged Tasks… for a workspace's repository.
+  var onArchiveMergedTasks: ((UUID) -> Void)?
 
   // MARK: Methods
 

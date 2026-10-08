@@ -18,10 +18,13 @@ public struct TaskRecord: Codable, Equatable, Sendable {
   /// checkout is 0. Nil for tasks adopted from before the registry.
   public var slot: Int?
   public var created: Date
+  /// The commit the task started at: a branch still there has no work of
+  /// its own yet (so it isn't "merged"). Nil for adopted tasks.
+  public var start: String?
 
   public init(
     path: String, branch: String, base: String? = nil, remote: String? = nil, slot: Int? = nil,
-    created: Date = Date()
+    created: Date = Date(), start: String? = nil
   ) {
     self.path = path
     self.branch = branch
@@ -29,6 +32,7 @@ public struct TaskRecord: Codable, Equatable, Sendable {
     self.remote = remote
     self.slot = slot
     self.created = created
+    self.start = start
   }
 
   /// `origin/main`, or `main` for a local base; nil when unknown.

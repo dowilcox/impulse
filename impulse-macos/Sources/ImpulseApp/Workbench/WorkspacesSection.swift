@@ -34,6 +34,11 @@ struct WorkspacesSection: View {
             ForEach(groups, id: \.id) { group in
               if let name = group.name {
                 RepoGroupHeader(name: name)
+                  .contextMenu {
+                    if let first = group.workspaces.first, first.repositoryHasMergedTasks {
+                      Button("Archive Merged Tasks…") { model.onArchiveMergedTasks?(first.id) }
+                    }
+                  }
               }
               ForEach(group.workspaces) { workspace in
                 WorkspaceRow(
@@ -301,6 +306,12 @@ private struct WorkspaceRow: View {
   @ViewBuilder
   private func trailing(snapshot: RepoSnapshot?) -> some View {
     HStack(spacing: 6) {
+      if workspace.isMerged {
+        Text("merged")
+          .font(ChromeFont.mono(10))
+          .foregroundStyle(chrome.success)
+          .help("Its branch is merged into its base: archive it when you're done")
+      }
       if !workspace.overlaps.isEmpty {
         OverlapChip(model: model, workspace: workspace)
       }
@@ -356,6 +367,10 @@ private struct WorkspaceRow: View {
 
   @ViewBuilder
   private var contextMenu: some View {
+    if workspace.isMerged {
+      Button("Archive Task…") { model.onArchiveTask?(workspace.id) }
+      Divider()
+    }
     if workspace.repository != nil {
       Button("New Task…") { model.onNewTask?(workspace.id) }
       Button("Project Setup…") { model.onProjectSetup?(workspace.id) }
@@ -383,8 +398,11 @@ private struct WorkspaceRow: View {
     Button("Move Down") { model.onMoveWorkspace?(workspace.id, 1) }
       .disabled(!canMoveDown)
     Divider()
-    if workspace.isTask {
+    if workspace.isTask, !workspace.isMerged {
       Button("Archive Task…") { model.onArchiveTask?(workspace.id) }
+    }
+    if workspace.repositoryHasMergedTasks {
+      Button("Archive Merged Tasks…") { model.onArchiveMergedTasks?(workspace.id) }
     }
     Button("Close Workspace") { model.onCloseWorkspace?(workspace.id) }
   }

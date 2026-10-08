@@ -520,6 +520,19 @@ public enum GitOperations {
     }
   }
 
+  /// Whether `branch`'s work is in `base`: its commits are (a merge or a
+  /// fast-forward), or merging it would change nothing (a squash merge,
+  /// whose commits never look merged). Can miss a branch whose lines `base`
+  /// has since changed again.
+  public static func isMerged(_ branch: String, into base: String, root: String) -> Bool {
+    if case .success = git(["merge-base", "--is-ancestor", branch, base], in: root) { return true }
+    guard case .success(let merged) = git(["merge-tree", "--write-tree", "--no-messages", base, branch], in: root),
+      case .success(let baseTree) = git(["rev-parse", "\(base)^{tree}"], in: root)
+    else { return false }
+    let tree = merged.stdout.split(separator: "\n").first.map(String.init) ?? ""
+    return tree == baseTree.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// Commits on `branch` that `base` lacks, and the reverse.
   public static func aheadBehind(_ branch: String, base: String, root: String) -> (ahead: Int, behind: Int)? {
     guard case .success(let result) = git(["rev-list", "--left-right", "--count", "\(branch)...\(base)"], in: root)
@@ -720,6 +733,11 @@ public enum GitOperations {
     remote: String, root: String, onProgress: ((String) -> Void)? = nil
   ) -> GitResult {
     void(git(["push", "--progress", "--tags", remote], in: root, timeout: 600, onOutputLine: onProgress))
+  }
+
+  /// Delete a branch on `remote` (the local branch is left alone).
+  public static func deleteRemoteBranch(_ name: String, remote: String, root: String) -> GitResult {
+    void(git(["push", remote, "--delete", "refs/heads/\(name)"], in: root, timeout: 600))
   }
 
   /// Delete a tag on `remote` (the local tag is left alone).

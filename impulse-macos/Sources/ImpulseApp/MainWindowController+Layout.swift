@@ -296,6 +296,9 @@ extension MainWindowController {
     windowModel.onOpenOverlapFile = { [weak self] path in
       self?.openFile(path: path)
     }
+    windowModel.onArchiveMergedTasks = { [weak self] id in
+      self?.presentArchiveMergedTasks(from: id)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.

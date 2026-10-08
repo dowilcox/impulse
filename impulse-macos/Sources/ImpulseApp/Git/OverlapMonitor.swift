@@ -19,6 +19,9 @@ final class OverlapMonitor {
   private(set) var pairs: [String: [TaskOverlap.Pair]] = [:]
   /// What each workspace changes, per repository (main thread).
   private(set) var changes: [String: [TaskOverlap.Changes]] = [:]
+  /// Tasks whose branch is merged into their base, per repository (main
+  /// thread).
+  private(set) var merged: [String: Set<String>] = [:]
   private var pending: [String: DispatchWorkItem] = [:]
   private let queue = DispatchQueue(label: "impulse.overlap", qos: .utility)
 
@@ -29,6 +32,12 @@ final class OverlapMonitor {
     let work = DispatchWorkItem { [weak self] in self?.compute(root: root, commonDir: commonDir) }
     pending[commonDir] = work
     queue.asyncAfter(deadline: .now() + 3, execute: work)
+  }
+
+  /// Whether the task at `path` has its branch merged into its base.
+  func isMerged(_ path: String) -> Bool {
+    let path = TaskRegistry.canonical(path)
+    return merged.values.contains { $0.contains(path) }
   }
 
   /// The pairs a workspace at `path` is part of.
@@ -43,8 +52,14 @@ final class OverlapMonitor {
     let settings = (try? MainWindowController.loadProjectConfig(root: root)?.config.get()) ?? ProjectConfig()
     let ignore = settings.overlapIgnore + [settings.envFile]
     let found = changes.count < 2 ? [] : TaskOverlap.pairs(changes, ignoring: ignore)
+    let mergedNow = Self.mergedTasks(root: root)
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      let mergedChanged = self.merged[commonDir] ?? [] != mergedNow
+      self.merged[commonDir] = mergedNow
+      if mergedChanged, found == self.pairs[commonDir] ?? [] {
+        NotificationCenter.default.post(name: .taskOverlapsChanged, object: nil, userInfo: ["newPairs": [TaskOverlap.Pair]()])
+      }
       self.changes[commonDir] = changes
       let known = Set((self.pairs[commonDir] ?? []).map(\.key))
       guard found != self.pairs[commonDir] ?? [] else { return }
@@ -91,6 +106,23 @@ final class OverlapMonitor {
       list.append(.init(path: TaskRegistry.canonical(task.path), name: (task.path as NSString).lastPathComponent, files: files))
     }
     return list
+  }
+
+  /// Tasks whose branch has work of its own (it moved past where it
+  /// started) and is merged into its base, squash merges included.
+  static func mergedTasks(root: String) -> Set<String> {
+    let main = MainWindowController.mainCheckoutRoot(of: root)
+    guard let registry = TaskRegistryStore.registry(root: main) else { return [] }
+    var merged = Set<String>()
+    for task in registry.tasks {
+      let branch = "refs/heads/\(task.branch)"
+      guard let start = task.start, let base = task.baseRef,
+        let tip = GitClient.resolveCommit(repoPath: main, revision: branch), tip != start,
+        GitOperations.isMerged(branch, into: base, root: main)
+      else { continue }
+      merged.insert(TaskRegistry.canonical(task.path))
+    }
+    return merged
   }
 
   private static func uncommitted(_ snapshot: RepoSnapshot?) -> Set<String> {
