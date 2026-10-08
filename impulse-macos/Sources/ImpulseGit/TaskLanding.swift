@@ -18,8 +18,12 @@ public enum TaskLanding {
     case refused(String)
     /// The main checkout isn't on the base branch (no remote).
     case notOnBase(current: String?)
-    /// The main checkout has uncommitted files (no remote).
+    /// The main checkout has uncommitted changes to tracked files (no
+    /// remote).
     case uncommitted(Int)
+    /// Untracked files in the main checkout that the merge would overwrite
+    /// (no remote); nothing was changed.
+    case untracked([String])
     case git(GitOperationError)
 
     public var message: String {
@@ -33,6 +37,8 @@ public enum TaskLanding {
         return "The main checkout is on \(current ?? "a detached commit"), not the base branch."
       case .uncommitted(let count):
         return "The main checkout has \(count) uncommitted file\(count == 1 ? "" : "s")."
+      case .untracked(let files):
+        return "The main checkout has untracked \(TaskLanding.naming(files)), which the merge would overwrite. Nothing was changed."
       case .git(let error): return error.message
       }
     }
@@ -106,13 +112,14 @@ public enum TaskLanding {
   }
 
   /// Without a remote: merge `branch` into the main checkout at `root`
-  /// with a merge commit, when it's on `base` with nothing uncommitted.
-  /// Moving the base under uncommitted files would make them look like
-  /// they undo the merge.
+  /// with a merge commit, when it's on `base` with no changes to tracked
+  /// files. Moving the base under changed files would make them look like
+  /// they undo the merge. Untracked files don't count: git refuses to
+  /// overwrite one, and nothing changes.
   public static func mergeLocally(branch: String, base: String, root: String) -> Result<Landed, Failure> {
     let current = GitOperations.currentBranch(root: root)
     guard current == base else { return .failure(.notOnBase(current: current)) }
-    if case .success(let status) = GitOperations.git(["status", "--porcelain", "--untracked-files=normal"], in: root) {
+    if case .success(let status) = GitOperations.git(["status", "--porcelain", "--untracked-files=no"], in: root) {
       let count = status.stdout.split(separator: "\n").count
       if count > 0 { return .failure(.uncommitted(count)) }
     }
@@ -134,7 +141,26 @@ public enum TaskLanding {
     let conflicted = (try? GitOperations.git(["diff", "--name-only", "--diff-filter=U"], in: folder).get())
       .map { $0.stdout.split(separator: "\n").map(String.init) } ?? []
     _ = GitOperations.git(["merge", "--abort"], in: folder)
+    let untracked = untrackedInTheWay(error.output ?? "")
+    if !untracked.isEmpty { return .failure(.untracked(untracked)) }
     return .failure(conflicted.isEmpty ? .git(error) : .conflicts(conflicted))
+  }
+
+  /// The untracked files git refused to overwrite, from a merge's or a
+  /// fast-forward's output; empty when that isn't why it failed.
+  public static func untrackedInTheWay(_ output: String) -> [String] {
+    var lines = output.components(separatedBy: "\n")
+    guard let start = lines.firstIndex(where: { $0.contains("untracked working tree files would be overwritten") }) else {
+      return []
+    }
+    lines = Array(lines[(start + 1)...])
+    return lines.prefix { $0.hasPrefix("\t") }.map { $0.trimmingCharacters(in: .whitespaces) }
+  }
+
+  /// "notes.txt", or "notes.txt and 2 more files".
+  public static func naming(_ files: [String]) -> String {
+    guard let first = files.first else { return "files" }
+    return files.count == 1 ? first : "\(first) and \(files.count - 1) more file\(files.count == 2 ? "" : "s")"
   }
 
   /// Whether `commit` is already part of `other`.

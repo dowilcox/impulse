@@ -676,6 +676,10 @@ extension MainWindowController {
           stop(
             "The server turned the push to \(base) down (a protected branch, perhaps). Nothing was pushed.", .land,
             .pushForReview)
+        case .failure(.untracked(let files)):
+          stop(
+            "\(model.mainName) has untracked \(TaskLanding.naming(files)), which \(branch) adds. Without a remote, Finish merges in \(model.mainName): move \(files.count == 1 ? "it" : "them") aside there, then Continue.",
+            .land, nil)
         case .failure(let failure):
           let hint =
             remote == nil
@@ -693,15 +697,20 @@ extension MainWindowController {
     model.statuses[.update] = .running("Updating \(name)…")
     DispatchQueue.global(qos: .userInitiated).async {
       let current = GitOperations.currentBranch(root: main)
-      let dirty = GitClient.snapshot(forPath: main)?.changedFileCount ?? 0
+      // Untracked files don't hold it back: git refuses to overwrite one.
+      let dirty = GitClient.snapshot(forPath: main)?.trackedChangeCount ?? 0
       var status: TaskFinishModel.Status
       if current != base {
         status = .skipped("\(name) is on \(current ?? "a detached commit"), so it was left alone.")
       } else if dirty > 0 {
         status = .skipped(
           "\(name) has \(dirty) uncommitted file\(dirty == 1 ? "" : "s"), so it wasn't updated. Its row shows how far behind it is; click that to pull when you're ready.")
-      } else if case .failure = GitOperations.fastForward(to: target, root: main) {
-        status = .skipped("\(name) has commits of its own on \(base), so it wasn't updated. Pull when you're ready.")
+      } else if case .failure(let error) = GitOperations.fastForward(to: target, root: main) {
+        let untracked = TaskLanding.untrackedInTheWay(error.output ?? "")
+        status = .skipped(
+          untracked.isEmpty
+            ? "\(name) has commits of its own on \(base), so it wasn't updated. Pull when you're ready."
+            : "\(name) has untracked \(TaskLanding.naming(untracked)), which \(target) now tracks, so it wasn't updated. Move \(untracked.count == 1 ? "it" : "them") aside, then pull.")
       } else {
         status = .done("Fast-forwarded \(name) to \(target).")
       }

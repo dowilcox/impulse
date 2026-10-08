@@ -117,15 +117,49 @@
       try repo.git("switch", "-q", "-c", "other")
       #expect(TaskLanding.mergeLocally(branch: "fix", base: "main", root: repo.root) == .failure(.notOnBase(current: "other")))
       try repo.git("switch", "-q", "main")
-      try repo.write("notes.txt", "draft\n")
+      try repo.write("a.txt", "draft\n")
       #expect(TaskLanding.mergeLocally(branch: "fix", base: "main", root: repo.root) == .failure(.uncommitted(1)))
-      try FileManager.default.removeItem(atPath: repo.root + "/notes.txt")
+      try repo.git("checkout", "--", "a.txt")
 
+      // An untracked file the merge would overwrite stops it, changing nothing.
+      let before = try repo.git("rev-parse", "HEAD")
+      try repo.write("b.txt", "mine\n")
+      #expect(TaskLanding.mergeLocally(branch: "fix", base: "main", root: repo.root) == .failure(.untracked(["b.txt"])))
+      #expect(try repo.git("rev-parse", "HEAD") == before)
+      #expect(try String(contentsOfFile: repo.root + "/b.txt", encoding: .utf8) == "mine\n")
+      try FileManager.default.removeItem(atPath: repo.root + "/b.txt")
+
+      // Any other untracked file doesn't count.
+      try repo.write("notes.txt", "draft\n")
       let landed = try TaskLanding.mergeLocally(branch: "fix", base: "main", root: repo.root).get()
       #expect(try repo.git("rev-parse", "HEAD") == landed.commit)
       #expect(try repo.git("log", "-1", "--format=%s") == "Merge branch 'fix'")
       #expect(repo.exists("b.txt"))
+      #expect(repo.exists("notes.txt"))
       #expect(TaskLanding.mergeLocally(branch: "fix", base: "main", root: repo.root) == .failure(.nothingToLand))
+    }
+
+    @Test func aFastForwardNamesTheUntrackedFilesInItsWay() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"], message: "first")
+      try repo.git("switch", "-q", "-c", "ahead")
+      try repo.commit(["b.txt": "b\n", "c.txt": "c\n"], message: "ahead")
+      try repo.git("switch", "-q", "main")
+      try repo.write("b.txt", "mine\n")
+      try repo.write("c.txt", "mine\n")
+      guard case .failure(let error) = GitOperations.fastForward(to: "ahead", root: repo.root) else {
+        Issue.record("expected the fast-forward to refuse")
+        return
+      }
+      #expect(TaskLanding.untrackedInTheWay(error.output ?? "") == ["b.txt", "c.txt"])
+      #expect(TaskLanding.naming(["b.txt", "c.txt"]) == "b.txt and 1 more file")
+      #expect(TaskLanding.untrackedInTheWay("fatal: Not possible to fast-forward, aborting.").isEmpty)
+
+      try FileManager.default.removeItem(atPath: repo.root + "/b.txt")
+      try FileManager.default.removeItem(atPath: repo.root + "/c.txt")
+      try repo.write("notes.txt", "draft\n")
+      #expect(throws: Never.self) { try GitOperations.fastForward(to: "ahead", root: repo.root).get() }
     }
   }
 #endif

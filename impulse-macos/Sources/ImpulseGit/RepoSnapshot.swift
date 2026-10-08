@@ -43,6 +43,12 @@ public struct RepoSnapshot: Equatable, Sendable {
     Set((staged + unstaged + untracked + conflicted).map(\.path)).count
   }
 
+  /// Distinct changed paths git tracks: staged, unstaged and conflicted,
+  /// not untracked. Git refuses on its own to overwrite an untracked file.
+  public var trackedChangeCount: Int {
+    Set((staged + unstaged + conflicted).map(\.path)).count
+  }
+
   /// Sum of known line counts across staged + unstaged + untracked.
   public var totalAdded: Int { (staged + unstaged + untracked).compactMap(\.added).reduce(0, +) }
   public var totalRemoved: Int { (staged + unstaged).compactMap(\.removed).reduce(0, +) }
