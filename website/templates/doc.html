@@ -18,7 +18,13 @@
 <body data-section="{{section}}">
 {{topbar}}
 <div class="docs-shell">
-  <aside class="docs-sidebar" aria-label="Documentation">
+  <aside class="docs-sidebar" id="docs-nav" aria-label="Documentation">
+    <div class="nav-group drawer-links">
+      <a class="nav-item" href="{{home}}">Home</a>
+      <a class="nav-item" href="{{root}}changelog/">Changelog</a>
+      <a class="nav-item" href="{{repo}}">GitHub</a>
+      <a class="nav-item" href="{{repo}}/releases/latest">Download Impulse {{version}}</a>
+    </div>
     <nav>{{nav}}</nav>
   </aside>
   <div>

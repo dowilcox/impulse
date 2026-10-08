@@ -247,7 +247,12 @@
 
   function activeTab() { return S.tabs.find((t) => t.id === S.active); }
 
+  // The last pointer was a finger: keep focus (and the on-screen keyboard) where it is.
+  let touch = false;
+  addEventListener("pointerdown", (e) => (touch = e.pointerType === "touch"), true);
+
   function activateTab(id, focus = true) {
+    focus = focus && !touch;
     S.active = id;
     for (const tab of S.tabs) tab.el.classList.toggle("active", tab.id === id);
     renderTabs();
@@ -293,7 +298,7 @@
         <div class="ib">
           <div class="ib-chips"></div>
           <div class="ib-editor"><span class="ib-chev">›</span><div class="ib-field"><div class="ib-mirror" aria-hidden="true"></div>
-            <input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Command input" placeholder="Run a command…"></div></div>
+            <input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="go" aria-label="Command input" placeholder="Run a command…"></div></div>
         </div></div>`);
       this.grid = $(".term-grid", this.pane);
       this.input = $("input", this.pane);
@@ -302,8 +307,9 @@
       this.input.addEventListener("input", () => { this.histIndex = null; this.paint(); });
       this.input.addEventListener("keydown", (e) => this.onKey(e));
       this.input.addEventListener("scroll", () => (this.mirror.scrollLeft = this.input.scrollLeft));
-      this.pane.addEventListener("mouseup", (e) => {
+      this.pane.addEventListener("pointerup", (e) => {
         if (e.target.closest("button, .t-link, .blk-tools") || getSelection().toString()) return;
+        if (e.pointerType === "touch" && !e.target.closest(".ib")) return;
         this.focus();
       });
       this.renderChips();
@@ -340,7 +346,7 @@
     updatePlaceholder() {
       if (this.agentMode) this.input.placeholder = S.agent?.state === "working" ? `${S.agent.name} is working… (⌃C to stop)` : `Reply to ${S.agent?.name ?? "the agent"}… (/exit to quit)`;
       else if (this.busy) this.input.placeholder = "Running… ⌃C stops it";
-      else this.input.placeholder = this.coach ? "Your turn: try claude, git log or help" : "Run a command…";
+      else this.input.placeholder = this.coach ? "Your turn: try claude" : "Run a command…";
     }
 
     onKey(e) {
@@ -1292,7 +1298,7 @@
     const tab = terminalTab();
     if (tab.term.busy || tab.term.agentMode) { const t = newTerminal(); t.term.run(cmd); return; }
     tab.term.run(cmd);
-    tab.term.focus();
+    if (!touch) tab.term.focus();
   }
 
   // ── Themes ────────────────────────────────────────────────────────────
