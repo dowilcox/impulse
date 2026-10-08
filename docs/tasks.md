@@ -78,11 +78,15 @@ What runs in the task's first terminal. **Just a terminal** (the default) opens 
 
 The box below the fields shows what will happen before you commit to it:
 
-| Line       | Shows                                                                                                                                                                                    |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Branch** | The branch name made from the title, already made unique. Shows `—` until you type a title.                                                                                              |
-| **Folder** | Where the task's folder will be, for example `~/Code/trailhead.worktrees/fix-elevation`. Shows `—` until you type a title.                                                               |
-| **Copies** | The untracked files that will be copied into the task, for example `.env`. Shows `…` while Impulse looks them up, and "nothing (add patterns to .worktreeinclude)" when nothing matches. |
+| Line       | Shows                                                                                                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Branch** | The branch name made from the title, already made unique. Shows `—` until you type a title.                                                                                                                           |
+| **Folder** | Where the task's folder will be, for example `~/Code/trailhead.worktrees/fix-elevation`. Shows `—` until you type a title.                                                                                            |
+| **Copies** | The untracked files that will be copied into the task, for example `.env`. Shows `…` while Impulse looks them up, and "nothing (add patterns to .worktreeinclude)" when nothing matches.                              |
+| **Clones** | Folders cloned in from the main checkout, such as `vendor/`. Shown only when the project settings list some. See [Cloning folders into tasks](project-config.md#cloning-folders-into-tasks).                          |
+| **Values** | The task's own ports and values, such as `APP_PORT 8100 · .env: DB_DATABASE`. Shown only when the project settings name some. See [Ports and values for each task](project-config.md#ports-and-values-for-each-task). |
+
+When the project has nothing set up for tasks yet (no setup script, clones or values), the sheet says so, naming the lock files it found ("No setup script. This repository has composer.lock and package-lock.json."), with **Set Up This Project for Tasks…**, which closes the sheet and opens [Project Setup](project-config.md#project-setup).
 
 Click **Create Task** (it reads **Creating…** while it works) or press Return. **Cancel** or Esc closes the sheet without creating anything. If creation fails, the sheet stays open and shows the reason in red, so you can fix the title or base and try again.
 

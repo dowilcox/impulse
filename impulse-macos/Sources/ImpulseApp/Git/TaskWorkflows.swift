@@ -54,6 +54,15 @@ final class TaskSheetModel {
   var slot: Int?
   /// Folders that will be cloned in (the ones the main checkout has).
   var clones: [String] = []
+  /// Lock files in the repository, when it has no task settings yet.
+  var lockFiles: [String] = []
+
+  /// The project has nothing set up for tasks yet.
+  var needsSetup: Bool {
+    guard let settings else { return true }
+    return settings.setupScript == nil && settings.worktreeClone.isEmpty && !settings.hasTaskValues
+      && settings.databaseFolder == nil && !settings.composeOverride
+  }
 
   /// "APP_PORT 8100 · VITE_PORT 5273 · .env: APP_URL, DB_DATABASE".
   var valuesPreview: String? {
@@ -80,6 +89,7 @@ struct TaskSheetView: View {
   let onCancel: () -> Void
   let onCreate: () -> Void
   let onFetch: () -> Void
+  let onSetUp: () -> Void
   @FocusState private var titleFocused: Bool
 
   var body: some View {
@@ -148,6 +158,19 @@ struct TaskSheetView: View {
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(RoundedRectangle(cornerRadius: Metrics.radius).fill(chrome.raised))
+
+      if !model.isLoading, model.needsSetup {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Text(
+            model.lockFiles.isEmpty
+              ? "No setup for tasks yet."
+              : "No setup script. This repository has \(model.lockFiles.joined(separator: " and "))."
+          )
+          .font(ChromeFont.ui(11))
+          .foregroundStyle(chrome.textTertiary)
+          ChromeButton(title: "Set Up This Project for Tasks…", kind: .ghost) { onSetUp() }
+        }
+      }
 
       if let error = model.error {
         Text(error)
@@ -256,10 +279,14 @@ extension MainWindowController {
       let clones = ((settings?.worktreeClone ?? []) + [settings?.databaseFolder].compactMap { $0 }).filter {
         FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent($0))
       }
+      let lockFiles = ProjectDetector.installCommands.map(\.lockFile).filter {
+        FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent($0))
+      }
       DispatchQueue.main.async {
         model.settings = settings
         model.slot = slot
         model.clones = clones
+        model.lockFiles = lockFiles
         if base == nil, let computed, model.canReplaceBase {
           model.draft.base = computed.base
           model.defaultBase = computed.base
@@ -289,7 +316,11 @@ extension MainWindowController {
             if let sheet { window?.endSheet(sheet) }
           }
         },
-        onFetch: { [weak self] in self?.fetchForTaskSheet(model) }
+        onFetch: { [weak self] in self?.fetchForTaskSheet(model) },
+        onSetUp: { [weak self, weak window, weak sheet] in
+          if let sheet { window?.endSheet(sheet) }
+          self?.openProjectSetup(from: workspaceID)
+        }
       ))
   }
 
@@ -523,23 +554,61 @@ extension MainWindowController {
   static func prepareTask(
     _ config: ProjectConfig?, root: String, path: String, slot: Int?, done: @escaping () -> Void
   ) {
-    guard let config, config.databaseFolder != nil || config.hasTaskValues else { return done() }
+    guard let config, config.databaseFolder != nil || config.hasTaskValues || config.composeOverride else {
+      return done()
+    }
     DispatchQueue.global(qos: .userInitiated).async {
       if let folder = config.databaseFolder {
         cloneDatabase(folder, service: config.databaseService, from: root, to: path)
       }
-      if config.hasTaskValues, let slot, isInside(config.envFile) {
-        let task = (path as NSString).lastPathComponent
-        let file = (path as NSString).appendingPathComponent(config.envFile)
-        let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
-        let values = TaskEnvironment.values(config: config, task: task, slot: slot)
-        try? FileManager.default.createDirectory(
-          atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        try? TaskEnvironment.applying(values, to: current, comment: "Impulse task \(task)")
-          .write(toFile: file, atomically: true, encoding: .utf8)
-      }
+      if let slot { writeTaskValues(config, path: path, slot: slot) }
       DispatchQueue.main.async(execute: done)
     }
+  }
+
+  /// Write a task's own values into its env file: its ports and
+  /// `[worktrees.env]`, and with `compose_override`, `COMPOSE_FILE` naming
+  /// the override written for it. False when there was nothing to write.
+  @discardableResult
+  static func writeTaskValues(_ config: ProjectConfig, path: String, slot: Int) -> Bool {
+    guard isInside(config.envFile) else { return false }
+    let task = (path as NSString).lastPathComponent
+    var values = config.hasTaskValues ? TaskEnvironment.values(config: config, task: task, slot: slot) : []
+    if config.composeOverride, let files = writeComposeOverride(config, path: path, task: task, slot: slot) {
+      values.append(.init("COMPOSE_FILE", files))
+    }
+    guard !values.isEmpty else { return false }
+    let file = (path as NSString).appendingPathComponent(config.envFile)
+    let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+    try? FileManager.default.createDirectory(
+      atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try? TaskEnvironment.applying(values, to: current, comment: "Impulse task \(task)")
+      .write(toFile: file, atomically: true, encoding: .utf8)
+    return true
+  }
+
+  /// The task's Compose override (containers renamed, fixed ports moved),
+  /// in `.git/impulse/tasks/<task>/compose.override.yml` so the project's
+  /// own files don't change. Returns `COMPOSE_FILE` for it: the project's
+  /// file, its override file if it has one, then this one.
+  private static func writeComposeOverride(_ config: ProjectConfig, path: String, task: String, slot: Int) -> String? {
+    guard let found = ComposeFile.find(in: path), let common = GitClient.commonGitDirectory(forPath: path),
+      let override = ComposeFile.parse(found.text).override(task: task, slot: slot, offset: config.portOffset)
+    else { return nil }
+    let folder = taskFolder(task, common: common)
+    let file = (folder as NSString).appendingPathComponent("compose.override.yml")
+    try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    guard (try? override.write(toFile: file, atomically: true, encoding: .utf8)) != nil else { return nil }
+    let own = ["compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml"]
+      .first { FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent($0)) }
+    return ([found.name] + [own].compactMap { $0 } + [file]).joined(separator: ":")
+  }
+
+  /// Impulse's own files for a task, outside its folder:
+  /// `.git/impulse/tasks/<task>`.
+  static func taskFolder(_ task: String, common: String) -> String {
+    ((TaskRegistry.directory(commonGitDirectory: common) as NSString).appendingPathComponent("tasks") as NSString)
+      .appendingPathComponent(task)
   }
 
   /// Clone a database's data folder into a task. A running database's
@@ -719,6 +788,10 @@ extension MainWindowController {
       let result = GitOperations.removeWorktree(path: root, force: dirty, root: mainRoot)
       let record: TaskRecord? =
         if case .success = result { TaskRegistryStore.remove(path: root, root: mainRoot) } else { nil }
+      // Impulse's own files for it (a Compose override) go with the folder.
+      if case .success = result, let common = GitClient.commonGitDirectory(forPath: mainRoot) {
+        try? FileManager.default.removeItem(atPath: Self.taskFolder((root as NSString).lastPathComponent, common: common))
+      }
       DispatchQueue.main.async {
         guard let self else { return }
         if case .failure(let error) = result {

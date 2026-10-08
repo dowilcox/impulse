@@ -4,35 +4,39 @@ A repository can tell Impulse about itself in `.impulse/project.toml`: commands 
 
 Both files live at the root of a git repository and are meant to be committed, so everyone who works on the project (and every task worktree) gets them. To keep the settings to yourself instead, put them in `.git/impulse/project.toml`, which is never committed; see [Settings for this Mac only](#settings-for-this-mac-only).
 
-## Create the file
+## Project Setup
 
-Run **Edit Project Actions** from the command palette (⇧⌘P), or open the project actions list (⌃⌘R) and choose **Add project actions…** at the bottom. If the repository has no `.impulse/project.toml`, Impulse creates one with this example and opens it in the editor:
+The easiest way to write these settings is **Project Setup**, a tab that looks through the repository, proposes what its tasks need, and saves your choices. Open it with:
 
-```toml
-# Impulse project settings. Commands here only run after you trust
-# this file, and you're asked again whenever it changes.
+- **File ▸ Project Setup…**, or **Project Setup…** in the command palette (⇧⌘P),
+- **Project Setup…** in a workspace row's context menu in the sidebar,
+- **Set Up This Project for Tasks…** in the New Task sheet, shown when the project has no task settings yet (with the lock files it found, such as "This repository has composer.lock and package-lock.json"),
+- **Edit Project Actions**, which opens it at its Actions.
 
-# Palette actions (a: in the palette). open = "tab" | "right" | "down".
-[[actions]]
-name = "Dev server"
-command = "npm run dev"
-open = "right"
+It shows the settings already saved, and fills what's missing from what it finds:
 
-[[actions]]
-name = "Tests"
-command = "npm test"
+| Section              | What it proposes                                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Docker Compose       | Warnings about what keeps two checkouts' stacks from running at once: `container_name`, and host ports written as plain numbers (`"8000:8000"`). Tick **Handle in tasks** to deal with them per task (below), or **Show** to open the Compose file.                                                                |
+| Copy into tasks      | Ignored files in the main checkout; `.env` files come ticked. See [Copying files into tasks](#copying-files-into-tasks).                                                                                                                                                                                           |
+| Clone into tasks     | Ignored dependency and build folders (`vendor`, `node_modules`, `public/build`, …), with their sizes. A folder Compose hides from the containers with an anonymous volume, and `node_modules` when setup runs `npm ci`, start unticked, saying why. See [Cloning folders into tasks](#cloning-folders-into-tasks). |
+| Database             | When the Compose file runs a database: clone its data folder, dump and load it, or start empty with migrations and seed data. See [A database for each task](#a-database-for-each-task).                                                                                                                           |
+| Ports                | Ports read from variables in the Compose file (`${APP_PORT:-8000}`) and `_PORT` values in `.env`. See [Ports and values for each task](#ports-and-values-for-each-task).                                                                                                                                           |
+| Values for each task | A database name, when tasks share one database server, and an app URL on a task's port.                                                                                                                                                                                                                            |
+| Scripts              | **Setup** from the lock files (`npm ci`, `composer install`, …) and `docker compose up -d`; **Check** from type-check, lint and test scripts; **Archive** `docker compose down -v`.                                                                                                                                |
+| Actions              | The repository's `package.json` and `composer.json` scripts and Makefile targets, unticked until you tick them.                                                                                                                                                                                                    |
 
-# Task worktrees (New Task…).
-[scripts]
-# setup = "npm ci"      # runs in a new task's first terminal
-# archive = ""          # runs before a task's folder is removed
+Everything is editable. **Save to** chooses where the settings go: **This Mac** (`.git/impulse/project.toml`, never committed; see [Settings for this Mac only](#settings-for-this-mac-only)) or **The project** (`.impulse/project.toml`, to commit for everyone). In a committed file, Saving rewrites only the sections the tab manages and keeps the rest of the file as written; it says so first if comments in those sections would be dropped. Saving trusts exactly what it wrote, so the settings work in the next task without a prompt. **Open File** opens the file in the editor.
 
-[worktrees]
-# Untracked files to copy into new tasks, in addition to .worktreeinclude.
-copy = []
-```
+**Try in a New Task** saves, then opens New Task, so you can see the settings work in a throwaway task (archive it afterwards). **Re-apply Values to N Tasks** saves, then writes the current ports and values into the env files of tasks that already exist, since a task's values are otherwise only written when it's created.
 
-If the file already exists, the same command opens it. The repository is the active workspace's; if the active workspace isn't in a git repository, Impulse says "Open a folder in a git repository first."
+### Docker Compose in tasks
+
+A Compose file with `container_name` or fixed host ports can only run one copy of its stack. Fixing the file means a change to commit; **Handle in tasks** (`compose_override = true` under `[worktrees]`) avoids that. Each new task gets an override file in `.git/impulse/tasks/<task>/compose.override.yml` that renames its containers (`pulseboard-app` becomes `pulseboard-app-fix-elevation`) and moves its fixed host ports by its slot (`"8000:8000"` becomes `"8100:8000"` in slot 1). The task's `.env` gets `COMPOSE_FILE` naming the project's Compose file, its own override file if it has one, and the task's override, so `docker compose` in the task folder uses them from any terminal. Archiving the task deletes the override. It needs Docker Compose 2.24 or later.
+
+### Writing the file by hand
+
+The settings are plain TOML, and you can write them yourself: create `.impulse/project.toml` (or `.git/impulse/project.toml`) and open it in the editor, or use **Open File** in Project Setup. The [Reference](#reference) lists every key.
 
 ## An example
 
@@ -80,21 +84,23 @@ Actions with an empty `name` or `command` are left out.
 
 ### `[scripts]`
 
-| Key       | Type   | Meaning                                                                                             |
-| --------- | ------ | --------------------------------------------------------------------------------------------------- |
-| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script). |
-| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script). |
+| Key       | Type   | Meaning                                                                                                                                                                  |
+| --------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `setup`   | string | Runs in a new task's first terminal, before the agent you chose. See [Setup script](#setup-script).                                                                      |
+| `archive` | string | Runs in a task's folder before **Archive Task…** removes it. See [Archive script](#archive-script).                                                                      |
+| `check`   | string | Checks that a task's work is ready (type checks, tests), for example `npm run typecheck && npm test`. Project Setup proposes one; Impulse doesn't run it on its own yet. |
 
 An empty string means no script.
 
 ### `[worktrees]`
 
-| Key           | Type             | Meaning                                                                                                                                                                              |
-| ------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `copy`        | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                |
-| `env_file`    | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task). |
-| `port_offset` | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                             |
-| `clone`       | array of strings | Folders cloned into new tasks from the main checkout, such as `vendor` or `public/build`. See [Cloning folders into tasks](#cloning-folders-into-tasks).                             |
+| Key                | Type             | Meaning                                                                                                                                                                              |
+| ------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `copy`             | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                |
+| `env_file`         | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task). |
+| `port_offset`      | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                             |
+| `clone`            | array of strings | Folders cloned into new tasks from the main checkout, such as `vendor` or `public/build`. See [Cloning folders into tasks](#cloning-folders-into-tasks).                             |
+| `compose_override` | boolean          | Give each new task a Compose override that renames its containers and moves its fixed ports. Default `false`. See [Docker Compose in tasks](#docker-compose-in-tasks).               |
 
 ### `[worktrees.ports]`
 
@@ -197,7 +203,7 @@ The action runs in a new terminal: a new tab, or a split to the right of or belo
 
 Actions come from the active workspace's repository. In a [task](tasks.md) workspace, they come from the task's own copy of the file and run in the task's folder, so `npm run dev` in a task serves the task's code.
 
-The last row of the list is **Add project actions…** when the file has no actions, or **Edit project actions…** when it does. Both open (or create) `.impulse/project.toml`.
+The last row of the list is **Add project actions…** when there are no actions, or **Edit project actions…** when there are. Both open [Project Setup](#project-setup) at its Actions.
 
 ## Setup script
 

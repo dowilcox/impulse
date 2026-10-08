@@ -355,6 +355,7 @@ private struct WorkspaceRow: View {
   private var contextMenu: some View {
     if workspace.repository != nil {
       Button("New Task…") { model.onNewTask?(workspace.id) }
+      Button("Project Setup…") { model.onProjectSetup?(workspace.id) }
     }
     Button("Open Folder as Workspace…") { model.onOpenWorkspace?() }
     Divider()

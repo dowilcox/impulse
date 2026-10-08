@@ -45,6 +45,7 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 | ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                      |
 | ⌥⌘N      | New Task…                                                            | File        | `new_task`             |
 | Unbound  | New Task from Branch… (the palette in `task:` mode)                  | File        | `new_task_from_branch` |
+| Unbound  | Project Setup…                                                       | File        | `project_setup`        |
 | ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`      |
 
 The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace** and **Archive Task…** have no shortcut. To reorder workspaces, use **Move Up** and **Move Down** in a workspace row's context menu. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).

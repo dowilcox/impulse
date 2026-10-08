@@ -34,6 +34,11 @@ public struct ProjectConfig: Equatable, Sendable {
   public var setupScript: String?
   /// Run in a task worktree before it's archived.
   public var archiveScript: String?
+  /// Checks that a task is ready to land: types, tests (`[scripts] check`).
+  public var checkScript: String?
+  /// Commands for when files change in a pull, merge or checkout, by file
+  /// name (`[on_change]`: `"composer.lock" = "composer install"`).
+  public var onChange: [String: String] = [:]
   /// Untracked files to copy into new task worktrees (globs allowed).
   public var worktreeCopy: [String] = []
   /// The dotenv file a new task's own values are written into
@@ -54,6 +59,9 @@ public struct ProjectConfig: Equatable, Sendable {
   /// it stopped in the main checkout meanwhile (`service`).
   public var databaseFolder: String?
   public var databaseService: String?
+  /// Give each new task a Compose override that renames its containers and
+  /// moves its fixed ports (`[worktrees] compose_override`).
+  public var composeOverride = false
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -66,7 +74,8 @@ public struct ProjectConfig: Equatable, Sendable {
 
   /// Every command the file can run, for the trust prompt.
   public var commands: [String] {
-    actions.map(\.command) + [setupScript, archiveScript].compactMap { $0 }
+    actions.map(\.command) + [setupScript, archiveScript, checkScript].compactMap { $0 }
+      + onChange.keys.sorted().map { onChange[$0]! }
       + (databaseFolder == nil ? [] : databaseService.map { ["docker compose stop \($0)", "docker compose start \($0)"] } ?? [])
   }
 
@@ -92,6 +101,7 @@ public struct ProjectConfig: Equatable, Sendable {
     struct Scripts: Decodable {
       var setup: String?
       var archive: String?
+      var check: String?
     }
     struct Worktrees: Decodable {
       struct Database: Decodable {
@@ -105,16 +115,24 @@ public struct ProjectConfig: Equatable, Sendable {
       var env: [String: String]?
       var clone: [String]?
       var database: Database?
+      var composeOverride: Bool?
 
       enum CodingKeys: String, CodingKey {
         case copy, ports, env, clone, database
         case envFile = "env_file"
         case portOffset = "port_offset"
+        case composeOverride = "compose_override"
       }
     }
     var actions: [Action]?
     var scripts: Scripts?
     var worktrees: Worktrees?
+    var onChange: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+      case actions, scripts, worktrees
+      case onChange = "on_change"
+    }
   }
 
   public enum LoadError: Error, Equatable {
@@ -140,6 +158,7 @@ public struct ProjectConfig: Equatable, Sendable {
     var config = ProjectConfig()
     var setup: String?
     var archive: String?
+    var check: String?
     for layer in layers {
       for action in layer.actions ?? [] where !action.name.isEmpty && !action.command.isEmpty {
         if let index = config.actions.firstIndex(where: { $0.name == action.name }) {
@@ -150,6 +169,8 @@ public struct ProjectConfig: Equatable, Sendable {
       }
       if let value = layer.scripts?.setup { setup = value }
       if let value = layer.scripts?.archive { archive = value }
+      if let value = layer.scripts?.check { check = value }
+      config.onChange.merge(layer.onChange ?? [:]) { _, later in later }
       if let copy = layer.worktrees?.copy { config.worktreeCopy = copy }
       if let file = layer.worktrees?.envFile, !file.isEmpty { config.envFile = file }
       if let offset = layer.worktrees?.portOffset, offset > 0 { config.portOffset = offset }
@@ -158,9 +179,12 @@ public struct ProjectConfig: Equatable, Sendable {
       if let clone = layer.worktrees?.clone { config.worktreeClone = clone }
       if let folder = layer.worktrees?.database?.clone { config.databaseFolder = folder.isEmpty ? nil : folder }
       if let service = layer.worktrees?.database?.service { config.databaseService = service.isEmpty ? nil : service }
+      if let override = layer.worktrees?.composeOverride { config.composeOverride = override }
     }
     config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
     config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }
+    config.checkScript = check.flatMap { $0.isEmpty ? nil : $0 }
+    config.onChange = config.onChange.filter { !$0.value.isEmpty }
     return config
   }
 

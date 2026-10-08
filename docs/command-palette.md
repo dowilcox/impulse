@@ -195,7 +195,7 @@ When every branch is already checked out somewhere, the list says "No branches t
 
 - Each row shows the action's name and its command, with `split` when it opens beside the current pane rather than in a new tab.
 - ↩ runs it in a new terminal (the first time, and whenever the file changes, Impulse asks you to trust the file's commands).
-- The last row, **Edit project actions…** (or **Add project actions…** when there are none), opens `.impulse/project.toml`, creating it with an example if needed.
+- The last row, **Edit project actions…** (or **Add project actions…** when there are none), opens [Project Setup](project-config.md#project-setup) at its Actions.
 
 See [Project configuration](project-config.md) for the file format.
 

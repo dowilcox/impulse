@@ -290,6 +290,9 @@ extension MainWindowController {
     windowModel.onArchiveTask = { [weak self] id in
       self?.archiveTask(id)
     }
+    windowModel.onProjectSetup = { [weak self] id in
+      self?.openProjectSetup(from: id)
+    }
 
     // AppKit owns the layout (docks, dividers, focus); SwiftUI draws the
     // chrome inside hosting views. See WorkbenchView.

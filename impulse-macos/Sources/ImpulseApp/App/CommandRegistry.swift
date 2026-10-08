@@ -135,6 +135,11 @@ enum CommandRegistry {
         keywords: ["worktree", "branch", "agent", "parallel"], icon: .gitBranchPlus, keybindingId: "new_task"
       ) { [weak controller] in controller?.presentNewTaskSheet() },
       AppCommand(
+        id: "project_setup", title: "Project Setup…", category: "Workspaces",
+        keywords: ["task", "worktree", "ports", "env", "clone", "setup script", "docker", "project.toml"],
+        icon: .settings, keybindingId: "project_setup"
+      ) { [weak controller] in controller?.openProjectSetup() },
+      AppCommand(
         id: "new_task_from_branch", title: "New Task from Branch…", category: "Workspaces",
         keywords: ["worktree", "branch", "checkout", "review", "existing", "remote"], icon: .gitBranch,
         keybindingId: "new_task_from_branch"

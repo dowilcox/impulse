@@ -279,6 +279,13 @@ extension MainWindowController {
         tabManager.selectedTerminal?.activeTerminal?.runCommand(String(action.dropFirst(4)))
       } else if action.hasPrefix("task=") {
         debugCreateTask(title: String(action.dropFirst(5)), command: "echo task ready")
+      } else if action == "project-setup" {
+        openProjectSetup()
+      } else if action == "project-setup-save" {
+        // Save what Project Setup proposed (this Mac), which trusts it.
+        for case .tool(let view) in tabManager.allSurfaces {
+          (view as? ProjectSetupSurface)?.model.onSave?()
+        }
       } else if action == "agent-submit" {
         tabManager.selectedTerminal?.activeTerminal?.agentEvent(.submit)
       } else if action == "review-agent" {

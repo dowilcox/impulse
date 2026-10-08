@@ -437,6 +437,8 @@ final class WindowModel {
   var onNewTask: ((UUID?) -> Void)?
   var onShowAgentHooks: (() -> Void)?
   var onArchiveTask: ((UUID) -> Void)?
+  /// Project Setup for a workspace's repository.
+  var onProjectSetup: ((UUID) -> Void)?
 
   // MARK: Methods
 

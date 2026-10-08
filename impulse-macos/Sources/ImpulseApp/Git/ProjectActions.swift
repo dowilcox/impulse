@@ -163,42 +163,9 @@ extension MainWindowController {
     }
   }
 
-  /// Create or open `.impulse/project.toml` with an example.
+  /// "Edit Project Actions": Project Setup at its Actions, where they're
+  /// saved on this Mac or in the project.
   func editProjectConfig() {
-    guard let root = projectRoot else {
-      toasts.show(Toast(kind: .info, message: "Open a folder in a git repository first."))
-      return
-    }
-    let path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
-    if !FileManager.default.fileExists(atPath: path) {
-      try? FileManager.default.createDirectory(
-        atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-      let example = """
-        # Impulse project settings. Commands here only run after you trust
-        # this file, and you're asked again whenever it changes.
-
-        # Palette actions (a: in the palette). open = "tab" | "right" | "down".
-        [[actions]]
-        name = "Dev server"
-        command = "npm run dev"
-        open = "right"
-
-        [[actions]]
-        name = "Tests"
-        command = "npm test"
-
-        # Task worktrees (New Task…).
-        [scripts]
-        # setup = "npm ci"      # runs in a new task's first terminal
-        # archive = ""          # runs before a task's folder is removed
-
-        [worktrees]
-        # Untracked files to copy into new tasks, in addition to .worktreeinclude.
-        copy = []
-
-        """
-      try? example.write(toFile: path, atomically: true, encoding: .utf8)
-    }
-    openFile(path: path)
+    openProjectSetup(section: "actions")
   }
 }

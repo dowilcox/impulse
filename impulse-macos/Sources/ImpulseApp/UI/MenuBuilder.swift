@@ -140,6 +140,7 @@ enum MenuBuilder {
         menu.addItem(openWorkspaceItem)
         menu.addItem(commandItem("New Task…", id: "new_task", overrides: overrides))
         menu.addItem(commandItem("New Task from Branch…", id: "new_task_from_branch", overrides: overrides))
+        menu.addItem(commandItem("Project Setup…", id: "project_setup", overrides: overrides))
 
         let composerItem = NSMenuItem(title: "Compose Message to Agent",
                                       action: #selector(MenuActions.menuAgentComposer(_:)),
