@@ -2,6 +2,26 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.33.0
+
+**Project settings live in the project.** Project Setup saves into
+`.impulse/project.toml`, and every task reads it from the main checkout,
+committed or not, so a change reaches the next task as soon as it's
+saved. The "Save to: This Mac / The project" choice is gone. Settings an
+earlier version saved on this Mac only (`.git/impulse/project.toml`) are
+shown on the screen and move into the project on the next save; a file
+there that you edited by hand is left alone, with a note naming what it
+overrides. See
+[Project configuration](https://www.impulse-terminal.app/docs/project-config/).
+
+### Tasks
+
+- Project Setup has one **Ports** section: the Compose file's fixed ports and container names, which **Move them in each task** moves and renames per task without changing the file, beside the ports in `.env`, each showing what task 1 gets.
+- Project Setup no longer proposes moving a `.env` port that belongs to a Compose service or another machine (`DB_PORT` beside `DB_HOST=mysql`). Moving it broke the task's connection to its database.
+- **Copy into tasks** and **Clone into tasks** take paths of your own, typed or picked. The database's data folder and its Compose service are fields to edit, offered whether or not a database was found.
+- Finish Task updates the main checkout even when it has untracked files (an uncommitted `.impulse/project.toml`, say); only changes to tracked files hold it back. If the update would overwrite an untracked file, Finish names it.
+- Finishing or archiving a task no longer adds a Scratch workspace beside the workspaces still open.
+
 ## 0.32.0
 
 **Running tasks and agents in parallel.** Tasks now get an environment of
