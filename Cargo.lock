@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-ffi"
-version = "0.32.0"
+version = "0.33.0"
 dependencies = [
  "impulse-terminal",
  "log",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-terminal"
-version = "0.32.0"
+version = "0.33.0"
 dependencies = [
  "alacritty_terminal",
  "bitflags",
