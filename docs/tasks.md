@@ -192,6 +192,8 @@ Two common ways:
 
 You can't check out the task's branch in your main checkout while the task exists: git only lets a branch be checked out in one worktree at a time. Merge it instead, or archive the task first.
 
+If the task is still being worked on when you merge its branch (an agent there is working or waiting for input, or the task has uncommitted files), Impulse asks first, for example "fix-elevation is still being worked on: Claude Code is working in the fix-elevation task, and its last commit was 2 minutes ago. Merge 4c1e9a2 anyway?" **Merge 4c1e9a2** merges the branch as it is at that commit, so what you merge is what the question named; anything committed after it isn't included. Wait for the agent to finish instead, and merge then.
+
 ### Archive the task
 
 Archiving removes the task's folder and closes its workspace, and keeps its branch and commits. Use it when the work is merged, or when you want to put it aside.

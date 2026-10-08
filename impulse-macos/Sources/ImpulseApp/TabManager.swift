@@ -1355,6 +1355,21 @@ final class TabManager: NSObject {
     }
   }
 
+  /// The agents in the terminals of the folder workspace at `folder`.
+  func agents(inFolder folder: String) -> [(name: String, state: AgentState)] {
+    let folder = TaskRegistry.canonical(folder)
+    return workspaces.filter { $0.kind == .folder && TaskRegistry.canonical($0.root) == folder }.flatMap { workspace in
+      tabIndices(inWorkspace: workspace.id).flatMap { index in
+        records[index].entry.surfaces.compactMap { surface -> (name: String, state: AgentState)? in
+          guard case .terminal(let container) = surface, let terminal = container.activeTerminal,
+            let agent = terminal.agent, let state = terminal.agentState
+          else { return nil }
+          return (agent.displayName, state)
+        }
+      }
+    }
+  }
+
   /// Each workspace's terminals' process trees (for port scanning).
   func processTrees() -> [(workspace: UUID, pids: [pid_t])] {
     workspaces.map { workspace in

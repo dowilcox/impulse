@@ -497,6 +497,15 @@ public enum GitOperations {
     return void(git(args, in: root, timeout: 600, onOutputLine: onProgress))
   }
 
+  /// When `revision` was committed (committer date); nil when it doesn't
+  /// resolve.
+  public static func commitDate(_ revision: String, root: String) -> Date? {
+    guard case .success(let result) = git(["log", "-1", "--format=%ct", revision, "--"], in: root),
+      let seconds = TimeInterval(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+    else { return nil }
+    return Date(timeIntervalSince1970: seconds)
+  }
+
   public static func remotes(root: String) -> [String] {
     guard case .success(let result) = git(["remote"], in: root) else { return [] }
     return result.stdout.split(separator: "\n").map(String.init)

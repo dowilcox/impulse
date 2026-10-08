@@ -67,6 +67,15 @@
       #expect(throws: (any Error).self) { try repo.git("rev-parse", "--abbrev-ref", "task@{upstream}") }
     }
 
+    @Test func commitDateIsTheCommittersDate() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"], message: "first")
+      let expected = try #require(TimeInterval(try repo.git("log", "-1", "--format=%ct", "HEAD")))
+      #expect(GitOperations.commitDate("HEAD", root: repo.root) == Date(timeIntervalSince1970: expected))
+      #expect(GitOperations.commitDate("no-such-branch", root: repo.root) == nil)
+    }
+
     @Test func aRemoteBranchOpenedAsATaskTracksIt() throws {
       let (repo, origin, seed) = try cloneWithOrigin()
       let path = repo.root + "-wt-shared"

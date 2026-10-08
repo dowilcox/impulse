@@ -1,6 +1,7 @@
 import AppKit
 import ImpulseProtocol
 import ImpulseGit
+import ImpulseKit
 
 // MARK: - AppDelegate
 
@@ -748,6 +749,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// The app delegate, for app-wide state.
   static var shared: AppDelegate? { NSApp.delegate as? AppDelegate }
+
+  /// The agents in the folder workspace at `folder`, in every window.
+  func agents(inFolder folder: String) -> [(name: String, state: AgentState)] {
+    windowControllers.flatMap { $0.tabManager.agents(inFolder: folder) }
+  }
 
   var allWindowControllers: [MainWindowController] { windowControllers }
 

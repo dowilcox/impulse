@@ -588,8 +588,27 @@ struct GitActions {
   // MARK: Merge & rebase
 
   /// Merge a branch or commit into the current branch. Undo resets to
-  /// where it was; conflicts leave the merge open in the Changes panel.
+  /// where it was; conflicts leave the merge open in the Changes panel. A
+  /// branch that a task is still working on asks first, and is merged at
+  /// the commit the question named.
   func merge(_ revision: String, label: String? = nil) {
+    let root = repository.root
+    DispatchQueue.global(qos: .userInitiated).async {
+      let task = TaskActivity.find(branch: revision, root: root)
+      DispatchQueue.main.async {
+        guard var task else { return mergeNow(revision, label: label) }
+        guard let question = task.question() else { return mergeNow(revision, label: label) }
+        host?.gitConfirm(
+          title: question.title, message: question.message, confirmTitle: "Merge \(task.shortCommit)",
+          destructive: false
+        ) { confirmed in
+          if confirmed { mergeNow(task.commit, label: "\(revision) at \(task.shortCommit)") }
+        }
+      }
+    }
+  }
+
+  private func mergeNow(_ revision: String, label: String? = nil) {
     let label = label ?? String(revision.prefix(7))
     let into = repository.snapshot?.branch ?? "HEAD"
     var before: String?

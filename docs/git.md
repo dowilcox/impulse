@@ -312,7 +312,7 @@ Background fetches:
 
 ## Merging and rebasing
 
-You can merge or rebase from the Branch Manager (**Merge into main**, **Rebase main onto This**) and from [History](history.md#commit-actions) (on any commit, branch or tag).
+You can merge or rebase from the Branch Manager (**Merge into main**, **Rebase main onto This**) and from [History](history.md#commit-actions) (on any commit, branch or tag). Merging the branch of a [task](tasks.md) that's still being worked on (an agent working or waiting there, or uncommitted files) asks first, and merges the commit the question names; see [Merge the work back](tasks.md#merge-the-work-back).
 
 - **Merge** runs `git merge --no-edit`: a fast-forward when possible, otherwise a merge commit with git's default message.
 - **Rebase** runs `git rebase`, replaying the current branch's own commits on top of the other branch or commit.
