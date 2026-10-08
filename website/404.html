@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found · Impulse</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0c0c13">
+<link rel="icon" href="{{root}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+<style>
+  .nf { max-width: 720px; margin: 12vh auto 0; padding: 0 16px 80px; }
+  .nf-term { border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg); overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0,0,0,.8); }
+  .nf-bar { display: flex; gap: 8px; align-items: center; height: 36px; padding: 0 14px; background: var(--bg-surface); border-bottom: 1px solid var(--border); }
+  .nf-bar i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; } .nf-bar i:nth-child(2) { background: #febc2e; } .nf-bar i:nth-child(3) { background: #28c840; }
+  .nf-blk { position: relative; padding: 12px 18px 14px; font: 400 14px/1.6 var(--mono); background: rgba(247,118,142,.06); }
+  .nf-blk::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--red); }
+  .nf-head { display: flex; color: var(--blue); } .nf-head span:last-child { margin-left: auto; color: var(--fg-comment); font-size: 12.5px; }
+  .nf-head .bad { color: var(--red); }
+  .nf-cmd .chev { color: var(--magenta); }
+  .nf-out { color: var(--fg); word-break: break-all; }
+  .nf h1 { font-size: 34px; letter-spacing: -0.02em; margin: 36px 0 8px; }
+  .nf p { color: var(--fg-muted); margin: 0 0 24px; }
+  .nf .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+{{topbar}}
+<main class="nf" id="main">
+  <div class="nf-term" aria-hidden="true">
+    <div class="nf-bar"><i></i><i></i><i></i></div>
+    <div class="nf-blk">
+      <div class="nf-head"><span>~/impulse-terminal.app</span><span><span class="bad">✗ 404</span> · 3ms</span></div>
+      <div class="nf-cmd"><span class="chev">❯</span> open <span data-path>/this-page</span></div>
+      <div class="nf-out">open: <span data-path>/this-page</span>: No such file or directory</div>
+    </div>
+  </div>
+  <h1>That page isn’t here.</h1>
+  <p>It may have moved when the docs were reorganized. Search the docs, or start from the top.</p>
+  <div class="hero-cta">
+    <a class="btn btn-primary" href="{{root}}docs/">Documentation</a>
+    <a class="btn" href="{{home}}">Homepage</a>
+    <button class="btn" type="button" data-search-open>Search <kbd>⌘K</kbd></button>
+  </div>
+</main>
+<script>document.querySelectorAll("[data-path]").forEach((el) => (el.textContent = decodeURIComponent(location.pathname)));</script>
+{{search}}
+</body>
+</html>

@@ -1,0 +1,13 @@
+<div class="palette-backdrop" data-search-backdrop>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Search the docs">
+    <div class="palette-input">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-label="Search the docs" aria-controls="search-results" data-search-input>
+      <kbd>esc</kbd>
+    </div>
+    <div class="palette-results" id="search-results" role="listbox" data-search-results data-empty="Type to search every page of the docs."></div>
+    <div class="palette-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> to move</span><span><kbd>↩</kbd> to open</span></div>
+  </div>
+</div>
+<script>window.IMPULSE_ROOT = "{{root}}";</script>
+<script src="{{root}}assets/site.js" defer></script>
