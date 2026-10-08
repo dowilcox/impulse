@@ -138,7 +138,7 @@ Patterns name files relative to the repository root and can use shell wildcards 
 
 The list is worked out when the sheet opens, from the files in the repository at that moment; the **Copies** line shows the result.
 
-For things that are too big to copy or should be built fresh, such as `node_modules`, use a setup script instead (`setup = "npm ci"` in `.impulse/project.toml`). See [Setup script](project-config.md#setup-script).
+For folders, such as `vendor` or build output, list them under `[worktrees] clone` and Impulse clones them in at once; see [Cloning folders into tasks](project-config.md#cloning-folders-into-tasks). For things that should be built fresh, use a setup script (`setup = "npm ci"` in `.impulse/project.toml`); see [Setup script](project-config.md#setup-script).
 
 ## Tasks in the sidebar
 
@@ -256,7 +256,7 @@ Unlike **New Task…**, opening a branch as a task doesn't start an agent. If th
 
 - **"… already exists."** A folder with the task's name is already in `trailhead.worktrees`. Pick a different title, or move the folder away.
 - **Deleting a task folder by hand.** If you remove a task's folder in Finder or with `rm` instead of archiving it, git still considers its branch checked out there, so you can't switch to or delete that branch. Run `git worktree prune` in the repository to clear it.
-- **`node_modules` and build output aren't copied.** Only files matching `.worktreeinclude` (or the defaults) are copied, and folders never are. Add a setup script such as `npm ci` to `.impulse/project.toml`.
+- **`node_modules` and build output aren't copied.** Only files matching `.worktreeinclude` (or the defaults) are copied, and folders never are. List folders under `[worktrees] clone` to have them cloned in (see [Cloning folders into tasks](project-config.md#cloning-folders-into-tasks)), or add a setup script such as `npm ci`.
 - **A `.worktreeinclude` replaces the defaults.** Once the file exists, `.env`, `.env.local` and `.claude/settings.local.json` are only copied if a pattern in it matches them. An empty `.worktreeinclude` copies nothing (except `[worktrees] copy` patterns).
 - **The setup script comes from the task's own checkout.** Impulse reads `.impulse/project.toml` from the new task folder, which contains what's committed on the base branch. An uncommitted or untracked project file in your main checkout doesn't reach the task (unless you copy it with `.worktreeinclude`). Settings in `.git/impulse/project.toml` do reach every task straight away (see [Settings for this Mac only](project-config.md#settings-for-this-mac-only)).
 - **A failing setup script stops the agent from starting**, because the two are joined with `&&`. The error is right there in the task's first terminal; fix it and start the agent yourself.

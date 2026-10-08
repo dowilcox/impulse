@@ -104,6 +104,47 @@
       #expect(TaskEnvironment.underscored("feat-search.ui") == "feat_search_ui")
     }
 
+    @Test func clonesAndTheDatabaseFolderAreRead() throws {
+      let config = try ProjectConfig.parse(
+        """
+        [worktrees]
+        clone = ["vendor", "public/build"]
+
+        [worktrees.database]
+        clone = "docker/data/mysql"
+        service = "mysql"
+        """
+      ).get()
+      #expect(config.worktreeClone == ["vendor", "public/build"])
+      #expect(config.databaseFolder == "docker/data/mysql")
+      #expect(config.databaseService == "mysql")
+      #expect(config.commands == ["docker compose stop mysql", "docker compose start mysql"], "trusting covers them")
+    }
+
+    @Test func foldersAreClonedWithTheirContents() throws {
+      let base = FileManager.default.temporaryDirectory.appendingPathComponent("clone-\(UUID().uuidString)").path
+      defer { try? FileManager.default.removeItem(atPath: base) }
+      let main = base + "/repo"
+      let task = base + "/repo.worktrees/fix"
+      try FileManager.default.createDirectory(atPath: main + "/vendor/pkg", withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(atPath: main + "/public/build", withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(atPath: task + "/public/build", withIntermediateDirectories: true)
+      try "lib".write(toFile: main + "/vendor/pkg/a.php", atomically: true, encoding: .utf8)
+      try "{}".write(toFile: main + "/public/build/manifest.json", atomically: true, encoding: .utf8)
+      try "tracked".write(toFile: task + "/public/build/.gitkeep", atomically: true, encoding: .utf8)
+
+      #expect(FolderClone.clone("vendor", from: main, to: task))
+      #expect(try String(contentsOfFile: task + "/vendor/pkg/a.php", encoding: .utf8) == "lib")
+      #expect(FolderClone.clone("public/build", from: main, to: task), "an existing folder gets what it lacks")
+      #expect(try String(contentsOfFile: task + "/public/build/manifest.json", encoding: .utf8) == "{}")
+      #expect(try String(contentsOfFile: task + "/public/build/.gitkeep", encoding: .utf8) == "tracked")
+      #expect(!FolderClone.clone("node_modules", from: main, to: task), "missing in the main checkout")
+      #expect(!FolderClone.clone("../outside", from: main, to: task))
+      // A change in the clone doesn't reach the original.
+      try "changed".write(toFile: task + "/vendor/pkg/a.php", atomically: true, encoding: .utf8)
+      #expect(try String(contentsOfFile: main + "/vendor/pkg/a.php", encoding: .utf8) == "lib")
+    }
+
     @Test func aBoundPortIsNotFree() throws {
       let fd = socket(AF_INET, SOCK_STREAM, 0)
       defer { close(fd) }

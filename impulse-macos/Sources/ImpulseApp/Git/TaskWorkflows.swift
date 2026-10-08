@@ -52,6 +52,8 @@ final class TaskSheetModel {
   /// preview of its own values.
   var settings: ProjectConfig?
   var slot: Int?
+  /// Folders that will be cloned in (the ones the main checkout has).
+  var clones: [String] = []
 
   /// "APP_PORT 8100 · VITE_PORT 5273 · .env: APP_URL, DB_DATABASE".
   var valuesPreview: String? {
@@ -136,6 +138,9 @@ struct TaskSheetView: View {
           model.isLoading
             ? "…"
             : model.copies.isEmpty ? "nothing (add patterns to .worktreeinclude)" : model.copies.joined(separator: ", "))
+        if !model.clones.isEmpty {
+          detail("Clones", model.clones.map { $0 + "/" }.joined(separator: ", "))
+        }
         if let values = model.valuesPreview {
           detail("Values", values)
         }
@@ -248,9 +253,13 @@ extension MainWindowController {
         settings?.hasTaskValues == true
         ? TaskRegistryStore.registry(root: root)?.nextSlot { TaskRegistryStore.portsAreFree(settings, slot: $0) }
         : nil
+      let clones = ((settings?.worktreeClone ?? []) + [settings?.databaseFolder].compactMap { $0 }).filter {
+        FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent($0))
+      }
       DispatchQueue.main.async {
         model.settings = settings
         model.slot = slot
+        model.clones = clones
         if base == nil, let computed, model.canReplaceBase {
           model.draft.base = computed.base
           model.defaultBase = computed.base
@@ -369,6 +378,7 @@ extension MainWindowController {
         // Read (not yet trusted) only to pick a slot whose ports are free.
         let settings = try? Self.loadProjectConfig(root: path)?.config.get()
         Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
+        for folder in settings?.worktreeClone ?? [] { FolderClone.clone(folder, from: root, to: path) }
         record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base, root: root) { slot in
           TaskRegistryStore.portsAreFree(settings, slot: slot)
         }
@@ -387,7 +397,7 @@ extension MainWindowController {
         // Once the project's settings are trusted: the task's own values go
         // into its env file, then the setup script runs before the agent.
         self.trustProjectConfig(root: path) { [weak self] config in
-          Self.writeTaskValues(config, path: path, slot: record?.slot) {
+          Self.prepareTask(config, root: root, path: path, slot: record?.slot) {
             let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
             self?.tabManager.openWorkspace(
               folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
@@ -428,6 +438,7 @@ extension MainWindowController {
       if failure == nil {
         let settings = try? Self.loadProjectConfig(root: path)?.config.get()
         Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
+        for folder in settings?.worktreeClone ?? [] { FolderClone.clone(folder, from: root, to: path) }
         // The base it will be merged into: what New Task would start from.
         let main = GitClient.snapshot(forPath: root)
         let base = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead).base }
@@ -449,13 +460,13 @@ extension MainWindowController {
           // Someone else's branch: its folder isn't trusted like yours, its
           // values come only from settings you trusted already, and its
           // setup script is asked about every time.
-          Self.writeTaskValues(self.alreadyTrustedProjectConfig(root: path), path: path, slot: record?.slot) {
+          Self.prepareTask(self.alreadyTrustedProjectConfig(root: path), root: root, path: path, slot: record?.slot) {
             [weak self] in self?.confirmBranchSetup(name, root: path, completion: open)
           }
         } else {
           if Trust.shared.isTrusted(root) { Trust.shared.trust(path) }
           self.trustProjectConfig(root: path) { config in
-            Self.writeTaskValues(config, path: path, slot: record?.slot) { open(config?.setupScript) }
+            Self.prepareTask(config, root: root, path: path, slot: record?.slot) { open(config?.setupScript) }
           }
         }
       }
@@ -505,21 +516,69 @@ extension MainWindowController {
     !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("~") && !path.split(separator: "/").contains("..")
   }
 
-  /// Write a new task's own values (ports, `[worktrees.env]`) into its env
-  /// file, from trusted settings, then call `done` on the main thread.
-  static func writeTaskValues(_ config: ProjectConfig?, path: String, slot: Int?, done: @escaping () -> Void) {
-    guard let config, config.hasTaskValues, let slot, isInside(config.envFile) else { return done() }
+  /// What a new task needs from trusted settings before its first terminal
+  /// opens: the database's data folder cloned (its service stopped in the
+  /// main checkout meanwhile), then its own values written into its env
+  /// file. Off the main thread; `done` runs on the main thread.
+  static func prepareTask(
+    _ config: ProjectConfig?, root: String, path: String, slot: Int?, done: @escaping () -> Void
+  ) {
+    guard let config, config.databaseFolder != nil || config.hasTaskValues else { return done() }
     DispatchQueue.global(qos: .userInitiated).async {
-      let task = (path as NSString).lastPathComponent
-      let file = (path as NSString).appendingPathComponent(config.envFile)
-      let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
-      let values = TaskEnvironment.values(config: config, task: task, slot: slot)
-      try? FileManager.default.createDirectory(
-        atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-      try? TaskEnvironment.applying(values, to: current, comment: "Impulse task \(task)")
-        .write(toFile: file, atomically: true, encoding: .utf8)
+      if let folder = config.databaseFolder {
+        cloneDatabase(folder, service: config.databaseService, from: root, to: path)
+      }
+      if config.hasTaskValues, let slot, isInside(config.envFile) {
+        let task = (path as NSString).lastPathComponent
+        let file = (path as NSString).appendingPathComponent(config.envFile)
+        let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+        let values = TaskEnvironment.values(config: config, task: task, slot: slot)
+        try? FileManager.default.createDirectory(
+          atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try? TaskEnvironment.applying(values, to: current, comment: "Impulse task \(task)")
+          .write(toFile: file, atomically: true, encoding: .utf8)
+      }
       DispatchQueue.main.async(execute: done)
     }
+  }
+
+  /// Clone a database's data folder into a task. A running database's
+  /// files can't be copied safely, so its Compose service in the main
+  /// checkout is stopped for the copy (a second or two) and started again.
+  private static func cloneDatabase(_ folder: String, service: String?, from root: String, to path: String) {
+    var restart = false
+    if let service {
+      let running = compose(["ps", "--status", "running", "--services"], in: root) ?? ""
+      if running.split(separator: "\n").contains(where: { $0 == service }) {
+        restart = compose(["stop", service], in: root) != nil
+      }
+    }
+    FolderClone.clone(folder, from: root, to: path)
+    if restart, let service { _ = compose(["start", service], in: root) }
+  }
+
+  /// `docker compose <arguments>` in `directory`, with the login shell's
+  /// PATH; its output, or nil when it fails or takes over a minute.
+  private static func compose(_ arguments: [String], in directory: String) -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["docker", "compose"] + arguments
+    process.currentDirectoryURL = URL(fileURLWithPath: directory)
+    var environment = ProcessInfo.processInfo.environment
+    environment["PATH"] = LoginShell.loginPath()
+    process.environment = environment
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in finished.signal() }
+    guard (try? process.run()) != nil else { return nil }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    if finished.wait(timeout: .now() + 60) == .timedOut {
+      process.terminate()
+      return nil
+    }
+    return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
   }
 
   private static func copyFiles(_ files: [String], from root: String, to destination: String) {

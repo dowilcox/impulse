@@ -46,6 +46,14 @@ public struct ProjectConfig: Equatable, Sendable {
   public var ports: [String: Int] = [:]
   /// Values that differ per task, with placeholders (`[worktrees.env]`).
   public var worktreeEnv: [String: String] = [:]
+  /// Folders cloned into new tasks from the main checkout
+  /// (`[worktrees] clone`).
+  public var worktreeClone: [String] = []
+  /// A database's data folder cloned into new tasks
+  /// (`[worktrees.database] clone`), with the Compose service that writes
+  /// it stopped in the main checkout meanwhile (`service`).
+  public var databaseFolder: String?
+  public var databaseService: String?
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -59,6 +67,7 @@ public struct ProjectConfig: Equatable, Sendable {
   /// Every command the file can run, for the trust prompt.
   public var commands: [String] {
     actions.map(\.command) + [setupScript, archiveScript].compactMap { $0 }
+      + (databaseFolder == nil ? [] : databaseService.map { ["docker compose stop \($0)", "docker compose start \($0)"] } ?? [])
   }
 
   /// Whether new tasks get values of their own (ports, env).
@@ -85,14 +94,20 @@ public struct ProjectConfig: Equatable, Sendable {
       var archive: String?
     }
     struct Worktrees: Decodable {
+      struct Database: Decodable {
+        var clone: String?
+        var service: String?
+      }
       var copy: [String]?
       var envFile: String?
       var portOffset: Int?
       var ports: [String: Int]?
       var env: [String: String]?
+      var clone: [String]?
+      var database: Database?
 
       enum CodingKeys: String, CodingKey {
-        case copy, ports, env
+        case copy, ports, env, clone, database
         case envFile = "env_file"
         case portOffset = "port_offset"
       }
@@ -140,6 +155,9 @@ public struct ProjectConfig: Equatable, Sendable {
       if let offset = layer.worktrees?.portOffset, offset > 0 { config.portOffset = offset }
       config.ports.merge(layer.worktrees?.ports ?? [:]) { _, later in later }
       config.worktreeEnv.merge(layer.worktrees?.env ?? [:]) { _, later in later }
+      if let clone = layer.worktrees?.clone { config.worktreeClone = clone }
+      if let folder = layer.worktrees?.database?.clone { config.databaseFolder = folder.isEmpty ? nil : folder }
+      if let service = layer.worktrees?.database?.service { config.databaseService = service.isEmpty ? nil : service }
     }
     config.setupScript = setup.flatMap { $0.isEmpty ? nil : $0 }
     config.archiveScript = archive.flatMap { $0.isEmpty ? nil : $0 }

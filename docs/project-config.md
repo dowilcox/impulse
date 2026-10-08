@@ -94,6 +94,7 @@ An empty string means no script.
 | `copy`        | array of strings | Untracked files to copy into new tasks, in addition to `.worktreeinclude` (or its defaults). Same patterns as [`.worktreeinclude`](#worktreeinclude).                                |
 | `env_file`    | string           | The dotenv file each new task's own values are written into, relative to the repository root. Default `.env`. See [Ports and values for each task](#ports-and-values-for-each-task). |
 | `port_offset` | integer          | What each task adds to every port in `[worktrees.ports]`, times its slot. Default `100`.                                                                                             |
+| `clone`       | array of strings | Folders cloned into new tasks from the main checkout, such as `vendor` or `public/build`. See [Cloning folders into tasks](#cloning-folders-into-tasks).                             |
 
 ### `[worktrees.ports]`
 
@@ -102,6 +103,13 @@ The main checkout's ports, one per line, named as they are in the env file: `APP
 ### `[worktrees.env]`
 
 Other values that have to differ in each task, one per line: `DB_DATABASE = "trailhead_{task_}"`. They can use the placeholders `{task}`, `{task_}`, `{slot}` and the port names. See [Ports and values for each task](#ports-and-values-for-each-task).
+
+### `[worktrees.database]`
+
+| Key       | Type   | Meaning                                                                                                                                                    |
+| --------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clone`   | string | A database's data folder, cloned into each new task so it starts with the main checkout's data. See [A database for each task](#a-database-for-each-task). |
+| `service` | string | The Compose service that writes that folder. It's stopped in the main checkout while the folder is cloned, then started again.                             |
 
 ### When the file has a mistake
 
@@ -237,6 +245,33 @@ With that, a task named `fix-elevation` in slot 1 gets `WEB_PORT=5273`, `API_POR
 Every terminal in a task also gets `IMPULSE_TASK` (the task's folder name), `IMPULSE_TASK_SLOT` and `IMPULSE_REPO_ROOT` (the main checkout) in its environment, and so do setup and archive scripts and project actions. Terminals in the main checkout get `IMPULSE_REPO_ROOT` only.
 
 For a Docker project, read the ports in `docker-compose.yml` from the file (`"${API_PORT:-8080}:8080"`) and don't set `container_name`, so each task's stack is separate; Compose names a stack after its folder. Then `setup = "docker compose up -d"` starts the task's own stack and `archive = "docker compose down -v"` removes it.
+
+## Cloning folders into tasks
+
+A new task is a fresh checkout, so dependency folders and build output (`vendor`, `node_modules`, `public/build`) aren't there, and rebuilding them takes time. `[worktrees] clone` lists folders to clone from the main checkout instead:
+
+```toml
+[worktrees]
+clone = ["vendor", "public/build"]
+```
+
+Cloning uses APFS clones: a folder of any size comes over at once and takes no extra disk space until something in it changes, and changing it doesn't change the main checkout's. If the task already has the folder (it holds a tracked file, say), it gets the entries it lacks. A folder the main checkout doesn't have is skipped. The New Task sheet's **Clones** line lists them. Cloning needs no trust: it only copies your own files.
+
+A clone is the main checkout's dependencies, which can differ from what the task's base needs, so keep a setup script to bring them in line; it only has to fix the difference. `npm ci` deletes `node_modules` before installing, so with `node_modules` cloned use `npm install` instead.
+
+### A database for each task
+
+If the project's database keeps its data in a folder of the project (a Compose bind mount such as `./docker/data/mysql:/var/lib/mysql`), each task can start with a copy of the main checkout's data:
+
+```toml
+[worktrees.database]
+clone = "docker/data/mysql"
+service = "mysql"
+```
+
+A running database's files can't be copied safely, so Impulse stops that Compose service in the main checkout (`docker compose stop mysql`), clones the folder, and starts it again: a second or two. If the service isn't running, nothing is stopped. Because these run `docker compose`, they need the settings to be trusted, and the trust prompt lists them. The clone is also a safety net: a task can try a change that rewrites the data, such as a database upgrade, on its own copy.
+
+When the data lives in a Docker volume instead, have the setup script load it (a dump from the main checkout's database, or migrations and seed data).
 
 ## Copying files into tasks
 
