@@ -190,6 +190,7 @@ struct GitActions {
   }
 
   func perform(_ action: GitOperations.OperationAction, on operation: RepoOperation) {
+    if action == .abort, OperationAbort.applies(to: operation) { return abort(operation) }
     let run = {
       repository.run("\(operation.title)…") { GitOperations.perform(action, on: operation, root: $0) }
       completion: { result, _ in
@@ -204,6 +205,52 @@ struct GitActions {
       ) { if $0 { run() } }
     } else {
       run()
+    }
+  }
+
+  /// Abort a merge, cherry-pick or revert so it always works: everything
+  /// is snapshotted first, and when git refuses (files edited while
+  /// resolving), Impulse resets to HEAD and puts back the work from before
+  /// the operation. Undo reopens a merge with the files as they were.
+  private func abort(_ operation: RepoOperation) {
+    let name = operation.title.lowercased()
+    host?.gitConfirm(
+      title: "Abort \(name)?",
+      message: "Your files go back to how they were before it started. Everything as it is now is saved in a snapshot that Undo restores.",
+      confirmTitle: "Abort", destructive: true
+    ) { confirmed in
+      guard confirmed else { return }
+      var aborted: OperationAbort.Aborted?
+      repository.run("Aborting…") { root in
+        switch OperationAbort.abort(operation, root: root) {
+        case .success(let result):
+          aborted = result
+          return .success(())
+        case .failure(let error):
+          return .failure(error)
+        }
+      } completion: { result, _ in
+        guard case .success = result, let aborted else {
+          return report(result, failure: "Couldn't abort — \(name)")
+        }
+        var detail: String?
+        if case .reset(let kept, let exact) = aborted.outcome {
+          let work = kept.isEmpty ? "" : " and put back your \(kept.count == 1 ? "file" : "\(kept.count) files") from before it"
+          detail = "git couldn't abort, so Impulse reset to HEAD\(work)."
+          if !exact, !kept.isEmpty { detail! += " Edits made during it outside its files were kept too." }
+        }
+        host?.toasts.show(
+          Toast(
+            kind: .success, message: "Aborted \(name)", detail: detail, actionTitle: aborted.undo == nil ? nil : "Undo",
+            action: aborted.undo == nil
+              ? nil
+              : {
+                repository.run("Undoing…") { OperationAbort.undo(aborted, operation: operation, root: $0) } completion: {
+                  result, _ in report(result, failure: "Couldn't undo the abort")
+                }
+              },
+            lifetime: 15))
+      }
     }
   }
 

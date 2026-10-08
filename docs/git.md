@@ -339,6 +339,7 @@ Before an action that could throw work away, Impulse records your working tree (
 | Reset (History)                                           | Yes (required for a hard reset) | Undo                               |
 | Cherry-pick, Revert (History)                             | Yes                             | Undo                               |
 | Pop a stash                                               | Yes                             | Undo                               |
+| Abort a merge, cherry-pick or revert                      | Yes                             | Undo                               |
 | Drop a stash                                              | The stash commit is kept        | Undo                               |
 | Delete a branch                                           | The branch's commit is kept     | Undo                               |
 | Create, move or delete a tag                              | The tag's target is kept        | Undo (not after pushing a new tag) |
@@ -384,7 +385,13 @@ To mark a file resolved after editing it yourself, click **Mark Resolved** (or s
 
 During a rebase, "current" (HEAD) is the branch you're rebasing onto plus the commits replayed so far, and "incoming" is your commit being replayed. This is git's own meaning of the two sides, and it's the reverse of what you might expect.
 
-**Abort** asks first ("Abort merging? Changes made during the operation will be lost.") and then runs `git merge --abort` (or the equivalent). For a bisect, **Abort** runs `git bisect reset`; drive the bisect itself from the terminal.
+**Abort** asks first ("Abort merging?"), then puts your files back as they were before the operation started:
+
+1. Impulse saves everything as it is now in a [safety snapshot](#safety-snapshots-and-undo).
+2. It runs `git merge --abort` (or `git cherry-pick --abort`, `git revert --abort`).
+3. If git refuses, which it does once you've edited a file the merge had already changed ("Entry 'link.tsx' not uptodate. Cannot merge."), Impulse resets to the commit you were on and puts back the uncommitted work you had before the merge. When the merge started while Impulse was open (including one an agent started in a terminal), Impulse noted that work at that moment, so it brings back exactly that. Otherwise it keeps every changed file the merge doesn't touch, which can include edits you made while resolving; the toast says so.
+
+The toast ("Aborted merging") offers **Undo** for 15 seconds. For a merge, Undo starts the merge again, so its conflicts are back, and puts every file back as it was when you chose Abort. For a cherry-pick or revert, Undo puts the files back without restarting it. A rebase uses `git rebase --abort`, which doesn't refuse this way. For a bisect, **Abort** runs `git bisect reset`; drive the bisect itself from the terminal.
 
 ### Handing conflicts to an agent
 

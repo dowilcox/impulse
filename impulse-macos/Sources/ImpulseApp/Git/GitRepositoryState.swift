@@ -60,6 +60,11 @@ final class GitRepositoryState {
     let root = self.root
     queue.async { [weak self] in
       let snapshot = GitClient.snapshot(forPath: root)
+      // A merge, cherry-pick or revert just started (an agent's, say): note
+      // the work from before it, so Abort can put exactly that back.
+      if let operation = snapshot?.operation, OperationAbort.applies(to: operation) {
+        OperationAbort.recordStartIfNeeded(root: root)
+      }
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight = false
