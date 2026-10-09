@@ -430,7 +430,10 @@ struct ProjectSetupView: View {
             .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
           Spacer(minLength: 0)
           ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
-            model.ports.removeAll { $0.id == pair.id }
+            // Read through the binding before the list is changed: reading it
+            // during removeAll overlaps the write to `ports` (a crash).
+            let id = pair.id
+            model.ports.removeAll { $0.id == id }
           }
         }
       }
@@ -550,7 +553,8 @@ struct ProjectSetupView: View {
             model.onChoosePath?(folders) { $row.path.wrappedValue = $0 }
           }
           ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
-            rows.wrappedValue.removeAll { $0.id == row.id }
+            let id = row.id
+            rows.wrappedValue.removeAll { $0.id == id }
           }
         } else {
           Toggle(isOn: $row.isOn) {
@@ -574,7 +578,8 @@ struct ProjectSetupView: View {
         TextField(namePlaceholder, text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
         TextField(valuePlaceholder, text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
         ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
-          list.wrappedValue.removeAll { $0.id == pair.id }
+          let id = pair.id
+          list.wrappedValue.removeAll { $0.id == id }
         }
       }
     }
