@@ -94,6 +94,36 @@ struct SessionState: Codable {
              url.path, error.localizedDescription)
     }
   }
+
+  /// What the autosave compares to tell whether the session changed: its
+  /// workspaces, tabs, folders and files, leaving out what changes all the
+  /// time (terminal titles, cursors, the selected tab, window frames).
+  static func autosaveKey(_ windows: [SessionWindowState]) -> Data? {
+    let structure = windows.map { window in
+      var window = window
+      (window.activeWorkspaceIndex, window.frame) = (nil, nil)
+      (window.sidebarVisible, window.sidebarWidth, window.workspacesHeight) = (nil, nil, nil)
+      window.workspaces = window.workspaces?.map { workspace in
+        var workspace = workspace
+        workspace.activeTabIndex = nil
+        workspace.tabs = workspace.tabs.map { tab in
+          var tab = tab
+          tab.focusedPane = nil
+          tab.panes = tab.panes.map { pane in
+            var pane = pane
+            (pane.title, pane.line, pane.column) = (nil, nil, nil)
+            return pane
+          }
+          return tab
+        }
+        return workspace
+      }
+      return window
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return try? encoder.encode(structure)
+  }
 }
 
 struct SessionWindowState: Codable {

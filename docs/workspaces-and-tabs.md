@@ -411,7 +411,7 @@ What comes back:
 
 What doesn't come back: untitled files, unsaved edits, the Settings, Keyboard Shortcuts and Problems tabs, and workspaces whose folders no longer exist. Restored folders don't ask about [workspace trust](getting-started.md#workspace-trust); untrusted ones show **Restricted** in the status bar.
 
-The session is saved when you quit and whenever a window closes, in `~/Library/Application Support/impulse/session-state.json`, with terminal output in the `scrollback` folder beside it. Files you open from Finder while Impulse is starting open on top of the restored session.
+The session is saved when you quit, whenever a window closes, and within 15 seconds of a workspace, tab, split or file opening or closing (so a crash doesn't lose them), in `~/Library/Application Support/impulse/session-state.json`, with terminal output in the `scrollback` folder beside it. Files you open from Finder while Impulse is starting open on top of the restored session.
 
 ## Multiple windows
 
