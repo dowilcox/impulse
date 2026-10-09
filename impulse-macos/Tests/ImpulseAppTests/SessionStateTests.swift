@@ -86,5 +86,27 @@
       #expect(decoded.windows.first?.frame == "{{10, 20}, {1200, 800}}")
       #expect(decoded.windows.first?.tabs == nil)
     }
+
+    @Test func autosaveKeyChangesWithWorkspacesNotTitlesOrCursors() throws {
+      func window(title: String, line: Int, activeTab: Int, tasks: [String]) -> SessionWindowState {
+        let tabs = [
+          SessionTab(pinned: false, panes: [.terminal(cwd: "/tmp/repo", title: title, shell: "zsh")]),
+          SessionTab(pinned: false, panes: [.file(path: "/tmp/repo/README.md", line: line, column: 1)]),
+        ]
+        let main = SessionWorkspaceState(
+          kind: "folder", root: "/tmp/repo", tabs: tabs, activeTabIndex: activeTab, fileTreeRoot: nil)
+        let taskWorkspaces = tasks.map {
+          SessionWorkspaceState(kind: "folder", root: $0, tabs: [], activeTabIndex: nil, fileTreeRoot: nil)
+        }
+        return SessionWindowState(
+          workspaces: [main] + taskWorkspaces, activeWorkspaceIndex: 0, frame: nil, sidebarVisible: true,
+          sidebarWidth: 260)
+      }
+      let saved = try #require(SessionState.autosaveKey([window(title: "✳ claude", line: 1, activeTab: 0, tasks: [])]))
+      // An agent's spinning title, a moved cursor or another tab selected: nothing to save.
+      #expect(SessionState.autosaveKey([window(title: "⠂ claude", line: 40, activeTab: 1, tasks: [])]) == saved)
+      // A new task workspace is.
+      #expect(SessionState.autosaveKey([window(title: "✳ claude", line: 1, activeTab: 0, tasks: ["/tmp/repo.worktrees/fix"])]) != saved)
+    }
   }
 #endif

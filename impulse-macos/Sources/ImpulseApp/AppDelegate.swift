@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var lspPollAgain = false
   private var settingsObserver: NSObjectProtocol?
   private var displayOptionsObserver: NSObjectProtocol?
+  private var sessionAutosaveTimer: Timer?
+  /// `SessionState.autosaveKey` of the last autosave.
+  private var autosavedSession: Data?
 
   /// File paths to open once the first window is ready (from Finder or CLI).
   var pendingFiles: [String] = []
@@ -209,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.filter { Trust.shared.isTrusted($0.root) }
       }
       AutoFetch.shared.start()
+      startSessionAutosave()
     }
 
     // Check for updates in background if enabled.
@@ -416,6 +420,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    sessionAutosaveTimer?.invalidate()
+    sessionAutosaveTimer = nil
     persistSessionStateFromOpenWindows()
     ControlServer.shared.stop()
 
@@ -541,11 +547,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func persistSessionStateFromOpenWindows() {
     guard AppState.persistenceEnabled, !windowControllers.isEmpty else { return }
     var seen = Set<String>()
-    settings.openFiles = windowControllers.flatMap { $0.restorableOpenFiles() }.filter { path in
+    let openFiles = windowControllers.flatMap { $0.restorableOpenFiles() }.filter { path in
       guard !seen.contains(path) else { return false }
       seen.insert(path)
       return true
     }
+    // Assigning saves settings.json: not on every autosave.
+    if settings.openFiles != openFiles { settings.openFiles = openFiles }
     let windows = windowControllers.map { $0.sessionWindowState() }
     let activeWindowIndex =
       windowControllers.firstIndex { $0.window?.isKeyWindow == true }
@@ -553,6 +561,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var state = SessionState.snapshot(windows: windows, activeWindowIndex: activeWindowIndex)
     SessionScrollback.store(&state)
     state.save()
+  }
+
+  /// The session is otherwise saved only when a window closes or the app
+  /// quits, so a crash would take it back to the last quit: workspaces and
+  /// tasks opened since then would be gone from the sidebar.
+  private func startSessionAutosave() {
+    guard sessionAutosaveTimer == nil else { return }
+    sessionAutosaveTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+      self?.autosaveSessionIfChanged()
+    }
+  }
+
+  /// Save the session if its workspaces, tabs, folders or files changed since
+  /// the last autosave (titles, cursors and the selected tab don't count).
+  private func autosaveSessionIfChanged() {
+    guard AppState.persistenceEnabled, !windowControllers.isEmpty,
+      !windowControllers.contains(where: \.isRestoringSession),
+      let key = SessionState.autosaveKey(windowControllers.map { $0.sessionWindowState(withScrollback: false) }),
+      key != autosavedSession
+    else { return }
+    autosavedSession = key
+    persistSessionStateFromOpenWindows()
   }
 
   /// Changes the active theme across all windows and persists the choice.

@@ -8,8 +8,8 @@ extension MainWindowController {
 
   // MARK: - Window State
 
-  func sessionWindowState() -> SessionWindowState {
-    var (workspaces, activeIndex) = tabManager.sessionWorkspaces()
+  func sessionWindowState(withScrollback: Bool = true) -> SessionWindowState {
+    var (workspaces, activeIndex) = tabManager.sessionWorkspaces(withScrollback: withScrollback)
     // A scratch workspace remembers where its file tree was.
     for index in workspaces.indices where workspaces[index].kind == "scratch" {
       if tabManager.activeWorkspace.kind == .scratch { workspaces[index].fileTreeRoot = fileTreeRootPath }
@@ -48,6 +48,7 @@ extension MainWindowController {
 
     let paths = savedWorkspaces.flatMap { $0.tabs.flatMap { $0.panes.compactMap(\.path) } }
     let withScrollback = settings.restoreScrollback
+    isRestoringSession = true
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let contents = TabManager.preloadFileContents(paths)
       var workspaces = savedWorkspaces
@@ -55,6 +56,7 @@ extension MainWindowController {
       DispatchQueue.main.async { [weak self] in
         self?.insertRestoredWorkspaces(
           workspaces, activeIndex: state.activeWorkspaceIndex, contents: contents)
+        self?.isRestoringSession = false
         then?()
       }
     }

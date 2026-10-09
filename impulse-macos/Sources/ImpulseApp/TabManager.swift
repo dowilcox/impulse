@@ -1624,11 +1624,12 @@ final class TabManager: NSObject {
       fileTreeRoot: nil)
   }
 
-  /// The window's workspaces and tabs for the session file.
-  func sessionWorkspaces() -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
+  /// The window's workspaces and tabs for the session file (terminal output
+  /// too, when `withScrollback` and the setting say so).
+  func sessionWorkspaces(withScrollback: Bool = true) -> (workspaces: [SessionWorkspaceState], activeIndex: Int?) {
     var result: [SessionWorkspaceState] = []
     for workspace in workspaces {
-      let state = sessionState(of: workspace, withScrollback: settings.restoreScrollback)
+      let state = sessionState(of: workspace, withScrollback: withScrollback && settings.restoreScrollback)
       if workspace.kind == .scratch, state.tabs.isEmpty, workspaces.count > 1 { continue }
       result.append(state)
     }

@@ -92,6 +92,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   var reviewingDirtyWindowClose = false
   /// Task workspaces with an Archive Task… under way (asked, closing).
   var archivingTasks: Set<UUID> = []
+  /// The saved session is still being put back: saving now would lose the
+  /// part that isn't in yet.
+  var isRestoringSession = false
 
   /// Local event monitor for custom keybinding interception.
   private var customKeybindingMonitor: Any?
