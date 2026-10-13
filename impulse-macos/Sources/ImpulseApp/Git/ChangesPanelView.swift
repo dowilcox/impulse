@@ -441,11 +441,19 @@ private struct ChangeRow: View {
     .rowBackground(selected: isSelected, hovered: hovering, focused: isFocused)
     .contentShape(Rectangle())
     .onHover { hovering = $0 }
-    .onTapGesture(count: 2) { openFile() }
-    .simultaneousGesture(TapGesture().onEnded {
-      select()
-      openDiff()
-    })
+    // One plain tap, double-click told by the click count: the hover buttons
+    // take precedence over it. A separate double-tap gesture held every
+    // button click back to rule out a double-click, a simultaneous tap also
+    // opened the diff, and a click on + soon after one on the row became a
+    // double-click on the row that never reached the button.
+    .onTapGesture {
+      if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+        openFile()
+      } else {
+        select()
+        openDiff()
+      }
+    }
     .contextMenu { contextMenu }
     .help(change.oldPath.map { "\($0) → \(change.path)" } ?? change.path)
     .accessibilityElement(children: .combine)
