@@ -184,7 +184,27 @@ extension MainWindowController {
         windowModel.isPreviewable = false
         windowModel.isPreviewing = false
       }
+    } else if let cwd = tabInfo.cwd ?? folderRoot(of: tabManager.activeWorkspace) {
+      // History, Review and tools have no shell or cursor, but the
+      // directory and repository still follow the tab: left alone, they
+      // stayed on the previous tab's, another workspace's included.
+      windowModel.shellName = ""
+      windowModel.terminalDirectInteraction = false
+      windowModel.currentCwd = cwd
+      bindRepository(forDirectory: cwd)
+      windowModel.cursorLine = nil
+      windowModel.cursorCol = nil
+      windowModel.currentLanguage = nil
+      windowModel.currentIndent = nil
+      windowModel.isPreviewable = false
+      windowModel.isPreviewing = false
     }
+  }
+
+  /// A folder workspace's folder; nil for the scratch workspace, where a
+  /// tab without a directory leaves the window's as it was.
+  private func folderRoot(of workspace: Workspace) -> String? {
+    workspace.kind == .folder ? workspace.root : nil
   }
 
   /// Re-applies theme colors to all child views.

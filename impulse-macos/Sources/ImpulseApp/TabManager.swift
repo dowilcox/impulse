@@ -40,8 +40,6 @@ struct TabInfo {
 
 // MARK: - Tab Entry
 
-/// Discriminated union representing either a terminal, editor, or image preview tab.
-/// Stores the NSView and the metadata needed for display in the tab bar.
 extension TabEntry {
   /// Whether closing the surface would lose changes: an editor's unsaved
   /// text, a tool's unsaved settings.
@@ -54,6 +52,8 @@ extension TabEntry {
   }
 }
 
+/// Discriminated union representing either a terminal, editor, or image preview tab.
+/// Stores the NSView and the metadata needed for display in the tab bar.
 enum TabEntry {
   case terminal(TerminalContainer)
   case editor(EditorTab)
