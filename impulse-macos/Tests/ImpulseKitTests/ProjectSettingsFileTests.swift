@@ -145,6 +145,45 @@
       #expect(ProjectSettingsFile.setting(.review, in: "") == "[finish]\nland = \"review\"\n")
     }
 
+    @Test func keysTheScreenDoesntKnowAreNamed() {
+      let text = """
+        top = 1
+
+        [scripts]
+        setup = "npm ci"
+        lint = "eslint ."
+        "check" = \"\"\"
+        not = a key
+        \"\"\"
+
+        [worktrees]
+        copy = [
+          ".env",
+          "a=b",
+        ]
+        ports.APP_PORT = 8000
+        shared = true
+
+        [worktrees.env]
+        ANYTHING = "x"
+
+        [[actions]]
+        name = "a"
+        command = "b"
+        icon = "x"
+
+        [[actions]]
+        name = "c"
+        command = "d"
+        icon = "y"
+
+        [lsp]
+        whatever = 1
+        """
+      #expect(ProjectSettingsFile.unknownManagedKeys(text) == ["scripts.lint", "worktrees.shared", "actions.icon"])
+      #expect(ProjectSettingsFile.unknownManagedKeys(ProjectSettingsFile.text(everything)).isEmpty)
+    }
+
     @Test func controlCharactersAreEscaped() throws {
       var config = ProjectConfig(setupScript: "npm ci\r\nnpm test")
       config.checkScript = "a\u{7}b\u{7F}"

@@ -83,8 +83,9 @@ final class ProjectSetupModel {
   var taskCount = 0
   var localFile: LocalFile?
   /// Saving drops comments in the sections of `.impulse/project.toml` the
-  /// screen manages.
+  /// screen manages, and keys there it doesn't know (`scripts.lint`).
   var dropsComments = false
+  var unknownKeys: [String] = []
   /// Bumped to scroll to a section ("actions").
   var revealSection: String?
   var revealToken = 0
@@ -104,6 +105,13 @@ final class ProjectSetupModel {
   }
 
   var name: String { (root as NSString).lastPathComponent }
+
+  /// What saving drops from `.impulse/project.toml` because the screen
+  /// doesn't show it ("comments and scripts.lint"), if anything.
+  var dropped: String? {
+    let parts = (dropsComments ? ["comments"] : []) + unknownKeys
+    return parts.isEmpty ? nil : ListFormatter.localizedString(byJoining: parts)
+  }
 
   /// What task n adds to each port, n times.
   var offset: Int { Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100 }
@@ -365,8 +373,9 @@ struct ProjectSetupView: View {
     case nil:
       EmptyView()
     }
-    if model.dropsComments {
-      note("Saving rewrites the sections this screen manages in \(ProjectConfig.relativePath); comments in them are dropped.")
+    if let dropped = model.dropped {
+      note(
+        "Saving rewrites the sections this screen manages in \(ProjectConfig.relativePath), dropping what it doesn't show there: \(dropped).")
     }
   }
 

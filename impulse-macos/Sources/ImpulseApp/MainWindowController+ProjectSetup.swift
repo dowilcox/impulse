@@ -86,6 +86,7 @@ extension MainWindowController {
         }
         model.localFile = saved.local
         model.dropsComments = committedText.map(ProjectSettingsFile.managedSectionsHaveComments) ?? false
+        model.unknownKeys = committedText.map(ProjectSettingsFile.unknownManagedKeys) ?? []
         model.taskCount = taskCount
         model.isLoading = false
         if let section {
@@ -255,10 +256,10 @@ extension MainWindowController {
         }
       }
     }
-    if model.dropsComments {
+    if let dropped = model.dropped {
       gitConfirm(
         title: "Rewrite \(ProjectConfig.relativePath)'s settings?",
-        message: "Comments inside the sections this screen manages are dropped; the rest of the file is kept.",
+        message: "What this screen doesn't show in the sections it manages is dropped: \(dropped). The rest of the file is kept.",
         confirmTitle: "Save", destructive: false
       ) { if $0 { write() } }
     } else {

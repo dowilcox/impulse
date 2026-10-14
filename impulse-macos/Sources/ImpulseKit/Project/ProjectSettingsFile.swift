@@ -149,6 +149,60 @@ public enum ProjectSettingsFile {
     }
   }
 
+  /// The keys each managed section can hold; nil for the tables of names
+  /// (`[worktrees.ports]`), which hold any. Under `[worktrees]`, `ports`,
+  /// `env` and `database` start dotted keys of its tables.
+  private static let knownKeys: [String: Set<String>?] = [
+    "[scripts]": ["setup", "archive", "check"],
+    "[worktrees]": [
+      "copy", "clone", "env_file", "port_offset", "compose_override", "overlap_ignore", "ports", "env", "database",
+    ],
+    "[worktrees.ports]": nil, "[worktrees.env]": nil, "[on_change]": nil,
+    "[worktrees.database]": ["clone", "service"],
+    "[finish]": ["land"],
+    "[[actions]]": ["name", "command", "cwd", "open"],
+  ]
+
+  /// The keys in the managed sections of `text` that Project Setup doesn't
+  /// know, which a rewrite drops (`scripts.lint`), in file order.
+  public static func unknownManagedKeys(_ text: String) -> [String] {
+    var unknown: [String] = []
+    for block in split(text) {
+      guard let header = block.header, let known = knownKeys[header], let known else { continue }
+      var inString = false
+      for line in block.text.components(separatedBy: "\n").dropFirst() {
+        let startsInString = inString
+        // A line of a multi-line string isn't a key.
+        if line.components(separatedBy: "\"\"\"").count % 2 == 0 || line.components(separatedBy: "'''").count % 2 == 0 {
+          inString.toggle()
+        }
+        guard !startsInString, let key = firstKey(of: line), !known.contains(key) else { continue }
+        let name = "\(header.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))).\(key)"
+        if !unknown.contains(name) { unknown.append(name) }
+      }
+    }
+    return unknown
+  }
+
+  /// The first part of the key a line sets (`ports` in `ports.APP = 1`),
+  /// unquoted; nil for comments, values continued from an earlier line and
+  /// anything else.
+  private static func firstKey(of line: String) -> String? {
+    var rest = Substring(line.trimmingCharacters(in: .whitespaces))
+    var key: Substring
+    if let quote = rest.first, quote == "\"" || quote == "'" {
+      guard let close = rest.dropFirst().firstIndex(of: quote) else { return nil }
+      key = rest[rest.index(after: rest.startIndex)..<close]
+      rest = rest[rest.index(after: close)...]
+    } else {
+      key = rest.prefix { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+      guard !key.isEmpty else { return nil }
+      rest = rest.dropFirst(key.count)
+    }
+    rest = rest.drop { $0 == " " || $0 == "\t" }
+    return rest.first == "=" || rest.first == "." ? String(key) : nil
+  }
+
   /// The file in blocks: what comes before the first header, then each
   /// header with the lines under it.
   private static func split(_ text: String) -> [(header: String?, text: String)] {
