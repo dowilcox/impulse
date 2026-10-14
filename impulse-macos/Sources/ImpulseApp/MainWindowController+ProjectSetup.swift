@@ -31,14 +31,17 @@ extension MainWindowController {
     }
     model.onTry = { [weak self, weak model] in
       guard let self, let model else { return }
-      self.saveProjectSetup(model) { [weak self] in
+      self.saveProjectSetup(model) { [weak self] saved in
+        guard saved else { return }
         let workspace = self?.tabManager.workspaces.first { $0.kind == .folder && $0.root == model.root }
         self?.presentNewTaskSheet(from: workspace?.id, title: "Try project setup")
       }
     }
     model.onReapply = { [weak self, weak model] in
       guard let model else { return }
-      self?.saveProjectSetup(model) { [weak self] in self?.reapplyTaskValues(root: model.root) }
+      self?.saveProjectSetup(model) { [weak self] saved in
+        if saved { self?.reapplyTaskValues(root: model.root) }
+      }
     }
     model.onShowCompose = { [weak self, weak model] in
       guard let model, let name = model.composeFileName else { return }
@@ -86,6 +89,7 @@ extension MainWindowController {
       let empty = ProjectDetector.freshDatabase(root: root)
       let taskCount = TaskRegistryStore.registry(root: root)?.tasks.filter { $0.slot != nil }.count ?? 0
       DispatchQueue.main.async { [weak self] in
+        model.loadedText = committedText
         model.loadError = unreadable
         guard unreadable == nil else {
           model.isLoading = false
@@ -243,60 +247,115 @@ extension MainWindowController {
 
   /// Save what the screen has into `.impulse/project.toml`, trust exactly
   /// what was written, and reload. Impulse's own local file, folded into
-  /// the screen, is removed: its settings are in the project's now.
-  private func saveProjectSetup(_ model: ProjectSetupModel, then: (() -> Void)? = nil) {
-    guard model.loadError == nil else { return }
+  /// the screen, is removed: its settings are in the project's now. A file
+  /// changed since the screen read it is only written over once the user
+  /// says so (`overwriting`). `then` says whether the settings were saved.
+  private func saveProjectSetup(
+    _ model: ProjectSetupModel, overwriting: Bool = false, then: ((Bool) -> Void)? = nil
+  ) {
+    guard model.loadError == nil else {
+      then?(false)
+      return
+    }
     let root = model.root
     let config = model.config()
+    let loaded = model.loadedText
     var folded: String?
     if case .impulses(let text, _)? = model.localFile { folded = text }
     let write = { [weak self] in
       model.isSaving = true
       DispatchQueue.global(qos: .userInitiated).async {
-        let result = Self.writeProjectSettings(config, root: root, removingLocal: folded)
+        let outcome = Self.writeProjectSettings(
+          config, root: root, removingLocal: folded, unlessChangedFrom: overwriting ? nil : .some(loaded))
         DispatchQueue.main.async {
           guard let self else { return }
           model.isSaving = false
-          switch result {
-          case .success(let digest):
+          switch outcome {
+          case .saved(let digest):
             var trust = ProjectTrustStore.current
             trust.trust(root: Self.trustKey(for: root), digest: digest)
             ProjectTrustStore.current = trust
             self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
             self.loadProjectSetup(model, root: root, section: nil)
-            then?()
-          case .failure(let error):
+            then?(true)
+          case .changed:
+            self.askAboutChangedSettings(model, then: then)
+          case .failed(let error):
             self.toasts.show(Toast(kind: .warning, message: "Couldn't save the project settings: \(error.localizedDescription)"))
+            then?(false)
           }
         }
       }
     }
-    if let dropped = model.dropped {
+    if let dropped = model.dropped, !overwriting {
       gitConfirm(
         title: "Rewrite \(ProjectConfig.relativePath)'s settings?",
         message: "What this screen doesn't show in the sections it manages is dropped: \(dropped). The rest of the file is kept.",
         confirmTitle: "Save", destructive: false
-      ) { if $0 { write() } }
+      ) { if $0 { write() } else { then?(false) } }
     } else {
       write()
     }
   }
 
+  /// `.impulse/project.toml` changed since the screen read it (edited in
+  /// the editor, brought in by a pull): show it as it is now, losing the
+  /// screen's changes, or write over it.
+  private func askAboutChangedSettings(_ model: ProjectSetupModel, then: ((Bool) -> Void)?) {
+    guard let window else {
+      then?(false)
+      return
+    }
+    let alert = NSAlert()
+    alert.messageText = "\(ProjectConfig.relativePath) changed since Project Setup read it"
+    alert.informativeText =
+      "Reload shows the file as it is now, discarding your changes here. Save Anyway replaces the sections this screen manages with what it shows, discarding the changes made to them in the file."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Reload")
+    alert.addButton(withTitle: "Save Anyway")
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: window) { [weak self, weak model] response in
+      guard let self, let model else {
+        then?(false)
+        return
+      }
+      switch response {
+      case .alertFirstButtonReturn:
+        self.loadProjectSetup(model, root: model.root, section: nil)
+        then?(false)
+      case .alertSecondButtonReturn:
+        self.saveProjectSetup(model, overwriting: true, then: then)
+      default:
+        then?(false)
+      }
+    }
+  }
+
+  private enum SaveOutcome {
+    /// The digest of what was written.
+    case saved(String)
+    /// The file isn't what the screen read.
+    case changed
+    case failed(Error)
+  }
+
   /// Write `config` into the main checkout's `.impulse/project.toml`, and
-  /// remove the local file when it still holds `removingLocal`; the digest
-  /// of what was written.
+  /// remove the local file when it still holds `removingLocal`. Given
+  /// `unlessChangedFrom`, only while the file still holds that text (`nil`
+  /// inside: there's still no file).
   private static func writeProjectSettings(
-    _ config: ProjectConfig, root: String, removingLocal local: String?
-  ) -> Result<String, Error> {
+    _ config: ProjectConfig, root: String, removingLocal local: String?, unlessChangedFrom loaded: String??
+  ) -> SaveOutcome {
     let path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
-    let existing = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-    let data = Data(ProjectSettingsFile.merging(config, into: existing).utf8)
+    let existing = try? String(contentsOfFile: path, encoding: .utf8)
+    if let loaded, existing != loaded { return .changed }
+    let data = Data(ProjectSettingsFile.merging(config, into: existing ?? "").utf8)
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
       try data.write(to: URL(fileURLWithPath: path), options: .atomic)
     } catch {
-      return .failure(error)
+      return .failed(error)
     }
     if let local, let common = GitClient.commonGitDirectory(forPath: root) {
       let localPath = ProjectConfig.localPath(commonGitDirectory: common)
@@ -304,7 +363,7 @@ extension MainWindowController {
         try? FileManager.default.removeItem(atPath: localPath)
       }
     }
-    return .success(ProjectConfig.digest(data))
+    return .saved(ProjectConfig.digest(data))
   }
 
   /// Write the current ports and values into the env file of every task

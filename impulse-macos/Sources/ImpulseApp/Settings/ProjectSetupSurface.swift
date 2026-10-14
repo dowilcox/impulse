@@ -48,6 +48,9 @@ final class ProjectSetupModel {
   /// The repository's main checkout.
   var root = ""
   var isLoading = true
+  /// `.impulse/project.toml` as the screen read it (nil: there was none),
+  /// so saving can tell it was changed meanwhile.
+  @ObservationIgnored var loadedText: String?
   /// Why `.impulse/project.toml` can't be read, when it can't: the screen
   /// says so instead of showing (and saving over) its settings.
   var loadError: String?
