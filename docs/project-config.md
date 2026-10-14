@@ -295,7 +295,7 @@ service = "mysql"
 
 A running database's files can't be copied safely, so Impulse stops that Compose service in the main checkout (`docker compose stop mysql`), clones the folder, and starts it again: a second or two. If the service isn't running, nothing is stopped. Because these run `docker compose`, they need the settings to be trusted, and the trust prompt lists them. The clone is also a safety net: a task can try a change that rewrites the data, such as a database upgrade, on its own copy.
 
-When the data lives in a Docker volume instead, have the setup script load it (a dump from the main checkout's database, or migrations and seed data).
+When the data lives in a Docker volume instead, have the setup script load it (a dump from the main checkout's database, or migrations and seed data). Project Setup's **Dump and load** adds a command that starts the task's database service, gives it two minutes to accept connections and loads a dump of the main checkout's database into it. It's wrapped in `sh -c '…'`, so it runs the same whatever your shell (bash, zsh, fish).
 
 ## When files change
 

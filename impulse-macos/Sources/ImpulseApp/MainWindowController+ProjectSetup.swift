@@ -72,10 +72,18 @@ extension MainWindowController {
       let services = ComposeFile.find(in: root).map { ComposeFile.parse($0.text).services } ?? []
       let database = ProjectDetector.databaseService(in: services)
       let dump = database.flatMap { service in service.image.flatMap { ProjectDetector.dumpAndLoad(service: service.name, image: $0) } }
+      let earlierDump = database.flatMap { service in
+        service.image.flatMap { ProjectDetector.earlierDumpAndLoad(service: service.name, image: $0) }
+      }
       let empty = ProjectDetector.freshDatabase(root: root)
       let taskCount = TaskRegistryStore.registry(root: root)?.tasks.filter { $0.slot != nil }.count ?? 0
       DispatchQueue.main.async { [weak self] in
         Self.fill(model, existing: saved.config, found: found, dump: dump, empty: empty)
+        // 0.33's dump and load ran only in bash and zsh and could wait forever.
+        if let earlierDump, let dump, model.setup.contains(earlierDump) {
+          model.setup = model.setup.replacingOccurrences(of: earlierDump, with: dump)
+          model.database = .dump
+        }
         model.localFile = saved.local
         model.dropsComments = committedText.map(ProjectSettingsFile.managedSectionsHaveComments) ?? false
         model.taskCount = taskCount

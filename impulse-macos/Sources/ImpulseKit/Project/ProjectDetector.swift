@@ -225,23 +225,49 @@ public enum ProjectDetector {
     return suggestions
   }
 
-  /// For a new task's setup script: wait until its own database (Compose
-  /// `service`) is up, then load a dump of the main checkout's into it.
-  /// The task's terminal has `IMPULSE_REPO_ROOT`; credentials come from the
-  /// image's own variables, inside the containers. Nil for other databases.
+  /// For a new task's setup script: start its own database (Compose
+  /// `service`), give it two minutes to accept connections, then load a
+  /// dump of the main checkout's into it. The setup script is typed into
+  /// the user's shell, so it's one `sh -c '…'`: the same from bash, zsh or
+  /// fish. The task's terminal has `IMPULSE_REPO_ROOT`; credentials come
+  /// from the image's own variables, inside the containers (`\$`, left for
+  /// the container's shell). Nil for other databases.
   public static func dumpAndLoad(service: String, image: String) -> String? {
-    let image = image.lowercased()
+    guard let commands = databaseCommands(image: image) else { return nil }
+    let exec = "docker compose exec -T \(service) sh -c"
+    return #"sh -c 'docker compose up -d \#(service) && n=0 && until \#(exec) "\#(commands.ready)"; do n=$((n+1));"#
+      + #" if [ $n -ge 120 ]; then echo "\#(service) did not start" >&2; exit 1; fi; sleep 1; done"#
+      + #" && (cd "$IMPULSE_REPO_ROOT" && \#(exec) "\#(commands.dump)") | \#(exec) "\#(commands.load)"'"#
+  }
+
+  /// `dumpAndLoad` as Impulse 0.33 wrote it (bash and zsh only, waiting
+  /// forever for a database that never starts), so Project Setup can
+  /// replace it in a saved setup script.
+  public static func earlierDumpAndLoad(service: String, image: String) -> String? {
+    guard databaseCommands(image: image) != nil else { return nil }
     let exec = "docker compose exec -T \(service)"
-    if image.hasPrefix("mysql") || image.hasPrefix("mariadb") || image.contains("/mysql") || image.contains("/mariadb") {
-      let auth = #"-uroot -p"$MYSQL_ROOT_PASSWORD""#
-      return "until \(exec) sh -c 'mysqladmin ping \(auth) --silent'; do sleep 1; done"
-        + " && (cd \"$IMPULSE_REPO_ROOT\" && \(exec) sh -c 'mysqldump \(auth) --all-databases --single-transaction')"
-        + " | \(exec) sh -c 'mysql \(auth)'"
-    }
-    if image.hasPrefix("postgres") || image.hasPrefix("postgis") || image.contains("/postgres") {
+    if image.lowercased().contains("postg") {
       return #"until \#(exec) sh -c 'pg_isready -U "$POSTGRES_USER"'; do sleep 1; done"#
         + #" && (cd "$IMPULSE_REPO_ROOT" && \#(exec) sh -c 'pg_dumpall -U "$POSTGRES_USER"')"#
         + #" | \#(exec) sh -c 'psql -U "$POSTGRES_USER"'"#
+    }
+    let auth = #"-uroot -p"$MYSQL_ROOT_PASSWORD""#
+    return "until \(exec) sh -c 'mysqladmin ping \(auth) --silent'; do sleep 1; done"
+      + " && (cd \"$IMPULSE_REPO_ROOT\" && \(exec) sh -c 'mysqldump \(auth) --all-databases --single-transaction')"
+      + " | \(exec) sh -c 'mysql \(auth)'"
+  }
+
+  /// How to tell a database image is ready, dump it and load a dump, run
+  /// by `sh -c "…"` in its container.
+  private static func databaseCommands(image: String) -> (ready: String, dump: String, load: String)? {
+    let image = image.lowercased()
+    if image.hasPrefix("mysql") || image.hasPrefix("mariadb") || image.contains("/mysql") || image.contains("/mariadb") {
+      let auth = #"-uroot -p\"\$MYSQL_ROOT_PASSWORD\""#
+      return ("mysqladmin ping \(auth) --silent", "mysqldump \(auth) --all-databases --single-transaction", "mysql \(auth)")
+    }
+    if image.hasPrefix("postgres") || image.hasPrefix("postgis") || image.contains("/postgres") {
+      let user = #"-U \"\$POSTGRES_USER\""#
+      return ("pg_isready \(user)", "pg_dumpall \(user)", "psql \(user)")
     }
     return nil
   }

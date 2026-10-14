@@ -149,11 +149,67 @@
 
     @Test func databaseCommandsForSetup() {
       let mysql = ProjectDetector.dumpAndLoad(service: "mysql", image: "mysql:8.4")
-      #expect(mysql?.hasPrefix("until docker compose exec -T mysql sh -c 'mysqladmin ping") == true)
-      #expect(mysql?.contains(#"(cd "$IMPULSE_REPO_ROOT" && docker compose exec -T mysql sh -c 'mysqldump"#) == true)
-      #expect(mysql?.hasSuffix(#"| docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'"#) == true)
-      #expect(ProjectDetector.dumpAndLoad(service: "db", image: "postgres:17")?.contains("pg_dumpall") == true)
+      #expect(
+        mysql
+          == #"sh -c 'docker compose up -d mysql && n=0 && until docker compose exec -T mysql sh -c "mysqladmin ping -uroot -p\"\$MYSQL_ROOT_PASSWORD\" --silent"; do n=$((n+1)); if [ $n -ge 120 ]; then echo "mysql did not start" >&2; exit 1; fi; sleep 1; done && (cd "$IMPULSE_REPO_ROOT" && docker compose exec -T mysql sh -c "mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" --all-databases --single-transaction") | docker compose exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\""'"#
+      )
+      #expect(ProjectDetector.dumpAndLoad(service: "db", image: "postgres:17")?.contains(#""pg_dumpall -U \"\$POSTGRES_USER\"""#) == true)
       #expect(ProjectDetector.dumpAndLoad(service: "cache", image: "redis:8") == nil)
+      #expect(
+        ProjectDetector.earlierDumpAndLoad(service: "mysql", image: "mysql:8.4")?
+          .hasPrefix("until docker compose exec -T mysql sh -c 'mysqladmin ping") == true)
+      #expect(ProjectDetector.earlierDumpAndLoad(service: "db", image: "postgres:17")?.contains("pg_dumpall") == true)
+    }
+
+    /// The command as the user's shell hands it to sh: the database's own
+    /// variables are left for the container, and the loop gives up.
+    @Test func dumpAndLoadRunsUnderSh() throws {
+      let command = try #require(ProjectDetector.dumpAndLoad(service: "mysql", image: "mysql:8.4"))
+      let folder = FileManager.default.temporaryDirectory.appendingPathComponent("dump-\(UUID().uuidString)").path
+      try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(atPath: folder) }
+      // A docker that records its arguments: up succeeds, ping fails twice.
+      let docker = """
+        #!/bin/sh
+        echo "$@" >> "\(folder)/calls"
+        case "$*" in
+          *"up -d"*) exit 0 ;;
+          *ping*) [ "$(grep -c ping "\(folder)/calls")" -ge 3 ] && exit 0 || exit 1 ;;
+          *) exit 0 ;;
+        esac
+        """
+      let dockerPath = (folder as NSString).appendingPathComponent("docker")
+      try docker.write(toFile: dockerPath, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dockerPath)
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = ["-c", command.replacingOccurrences(of: "sleep 1", with: "true")]
+      process.environment = ["PATH": "\(folder):/usr/bin:/bin", "IMPULSE_REPO_ROOT": folder]
+      try process.run()
+      process.waitUntilExit()
+      #expect(process.terminationStatus == 0)
+      let calls = try String(contentsOfFile: (folder as NSString).appendingPathComponent("calls"), encoding: .utf8)
+      #expect(calls.hasPrefix("compose up -d mysql\n"))
+      #expect(calls.contains(#"compose exec -T mysql sh -c mysqladmin ping -uroot -p"$MYSQL_ROOT_PASSWORD" --silent"#))
+      #expect(calls.contains(#"sh -c mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases"#))
+    }
+
+    @Test func dumpAndLoadGivesUpOnADatabaseThatNeverStarts() throws {
+      let command = try #require(ProjectDetector.dumpAndLoad(service: "mysql", image: "mysql:8.4"))
+      let folder = FileManager.default.temporaryDirectory.appendingPathComponent("dump-\(UUID().uuidString)").path
+      try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(atPath: folder) }
+      let dockerPath = (folder as NSString).appendingPathComponent("docker")
+      try "#!/bin/sh\ncase \"$*\" in *ping*) exit 1 ;; esac\n".write(toFile: dockerPath, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dockerPath)
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = ["-c", command.replacingOccurrences(of: "sleep 1", with: "true")]
+      process.environment = ["PATH": "\(folder):/usr/bin:/bin", "IMPULSE_REPO_ROOT": folder]
+      process.standardError = FileHandle.nullDevice
+      try process.run()
+      process.waitUntilExit()
+      #expect(process.terminationStatus == 1)
     }
 
     @Test func makeTargetsAndEnvValues() {
