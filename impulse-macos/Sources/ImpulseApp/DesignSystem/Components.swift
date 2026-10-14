@@ -64,6 +64,7 @@ struct ChromeButton: View {
   enum Kind { case primary, secondary, ghost, danger }
 
   @Environment(\.chrome) private var chrome
+  @Environment(\.isEnabled) private var isEnabled
   let title: String
   var icon: LucideIcon? = nil
   var kind: Kind = .secondary
@@ -88,10 +89,11 @@ struct ChromeButton: View {
         RoundedRectangle(cornerRadius: Metrics.radius - 1, style: .continuous)
           .strokeBorder(kind == .secondary ? chrome.hairlineStrong : .clear, lineWidth: 1)
       )
+      .opacity(isEnabled ? 1 : 0.45)
       .contentShape(Rectangle())
     }
     .buttonStyle(ChromePressStyle())
-    .onHover { hovering = $0 }
+    .onHover { hovering = $0 && isEnabled }
     .help(help ?? title)
   }
 

@@ -644,7 +644,8 @@ struct ProjectSetupView: View {
           HStack(spacing: 8) {
             TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
             TextField("8000", text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 90)
-            Text(Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
+            // Verbatim: a localized key would print 8100 as "8,100".
+            Text(verbatim: Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
               .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
             Spacer(minLength: 0)
             ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
