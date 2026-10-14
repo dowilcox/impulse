@@ -112,24 +112,28 @@ extension MainWindowController {
     _ model: ProjectSetupModel, existing: ProjectConfig?, found: ProjectSuggestions, dump: String?, empty: String?
   ) {
     let settings = existing ?? ProjectConfig()
+    // Suggestions fill in a project with no settings yet. Once it has some,
+    // the screen shows what's saved, so a field emptied and saved stays
+    // empty; the view offers the suggestion beside it instead.
     let hasSettings = existing != nil
+    model.found = found
     model.copies = rows(found.copies, chosen: settings.worktreeCopy, hasSettings: hasSettings)
     model.clones = rows(found.clones, chosen: settings.worktreeClone, hasSettings: hasSettings)
-    let ports = settings.ports.isEmpty ? found.ports : settings.ports
+    let ports = hasSettings ? settings.ports : found.ports
     model.ports = ports.keys.sorted().map { .init(name: $0, value: String(ports[$0]!)) }
-    let values = settings.worktreeEnv.isEmpty ? found.values : settings.worktreeEnv
+    let values = hasSettings ? settings.worktreeEnv : found.values
     model.values = values.keys.sorted().map { .init(name: $0, value: values[$0]!) }
     model.portOffset = String(settings.portOffset)
     model.envFile = settings.envFile
-    model.setup = settings.setupScript ?? found.setup ?? ""
-    model.check = settings.checkScript ?? found.check ?? ""
-    model.archive = settings.archiveScript ?? found.archive ?? ""
+    model.setup = (hasSettings ? settings.setupScript : found.setup) ?? ""
+    model.check = (hasSettings ? settings.checkScript : found.check) ?? ""
+    model.archive = (hasSettings ? settings.archiveScript : found.archive) ?? ""
     model.landing = settings.landing
     let names = Set(settings.actions.map(\.name))
     model.actions =
       settings.actions.map { .init(isOn: true, action: $0) }
       + found.actions.filter { !names.contains($0.name) }.map { .init(isOn: false, action: $0) }
-    let rules = settings.onChange.isEmpty ? found.onChange : settings.onChange
+    let rules = hasSettings ? settings.onChange : found.onChange
     model.rules = rules.keys.sorted().map { .init(name: $0, value: rules[$0]!) }
     model.overlapIgnore = settings.overlapIgnore.joined(separator: ", ")
     model.composeFileName = found.composeFileName

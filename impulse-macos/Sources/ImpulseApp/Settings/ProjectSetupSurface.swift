@@ -47,6 +47,9 @@ final class ProjectSetupModel {
   var root = ""
   var isLoading = true
   var isSaving = false
+  /// What the repository suggests. Fields the saved settings leave empty
+  /// offer it rather than being filled with it.
+  var found: ProjectSuggestions?
   var composeFileName: String?
   var fixedPorts: [ProjectSuggestions.FixedPort] = []
   var containerNames: [ProjectSuggestions.ContainerName] = []
@@ -272,13 +275,20 @@ struct ProjectSetupView: View {
 
       section("Values for each task", detail: "Written into each new task's \(model.envFile). Use {task}, {task_}, {slot} and port names.") {
         pairs(Binding(get: { model.values }, set: { model.values = $0 }), namePlaceholder: "DB_DATABASE", valuePlaceholder: "myapp_{task_}")
+        suggested(model.found?.values ?? [:], in: Binding(get: { model.values }, set: { model.values = $0 }))
         ChromeButton(title: "Add Value", icon: .plus, kind: .ghost) { model.values.append(.init(name: "", value: "")) }
       }
 
       section("Scripts", detail: "Commands run in tasks: once trusted, and asked again whenever they change.") {
-        script("Setup", "Runs in a new task's first terminal, before the agent", Binding(get: { model.setup }, set: { model.setup = $0 }))
-        script("Check", "Checks a task is ready to land (types, tests)", Binding(get: { model.check }, set: { model.check = $0 }))
-        script("Archive", "Runs before a task's folder is removed", Binding(get: { model.archive }, set: { model.archive = $0 }))
+        script(
+          "Setup", "Runs in a new task's first terminal, before the agent", Binding(get: { model.setup }, set: { model.setup = $0 }),
+          suggested: model.found?.setup)
+        script(
+          "Check", "Checks a task is ready to land (types, tests)", Binding(get: { model.check }, set: { model.check = $0 }),
+          suggested: model.found?.check)
+        script(
+          "Archive", "Runs before a task's folder is removed", Binding(get: { model.archive }, set: { model.archive = $0 }),
+          suggested: model.found?.archive)
       }
       .id("scripts")
 
@@ -297,6 +307,7 @@ struct ProjectSetupView: View {
 
       section("When files change", detail: "After a pull, merge or checkout brings in a change to one of these files, Impulse offers to run its command.") {
         pairs(Binding(get: { model.rules }, set: { model.rules = $0 }), namePlaceholder: "composer.lock", valuePlaceholder: "composer install")
+        suggested(model.found?.onChange ?? [:], in: Binding(get: { model.rules }, set: { model.rules = $0 }))
         ChromeButton(title: "Add Rule", icon: .plus, kind: .ghost) { model.rules.append(.init(name: "", value: "")) }
       }
 
@@ -421,7 +432,9 @@ struct ProjectSetupView: View {
       } else {
         caption("Each task gets its own value of these in its \(model.envFile).")
       }
-      if model.ports.isEmpty { caption("None found. Add the variables your app or Compose file reads its ports from.") }
+      if model.ports.isEmpty, model.found?.ports.isEmpty != false {
+        caption("None found. Add the variables your app or Compose file reads its ports from.")
+      }
       ForEach(Binding(get: { model.ports }, set: { model.ports = $0 })) { $pair in
         HStack(spacing: 8) {
           TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
@@ -437,6 +450,7 @@ struct ProjectSetupView: View {
           }
         }
       }
+      suggested((model.found?.ports ?? [:]).mapValues(String.init), in: Binding(get: { model.ports }, set: { model.ports = $0 }))
       HStack(spacing: 8) {
         ChromeButton(title: "Add Port", icon: .plus, kind: .ghost) { model.ports.append(.init(name: "", value: "")) }
         Spacer()
@@ -585,7 +599,7 @@ struct ProjectSetupView: View {
     }
   }
 
-  private func script(_ title: String, _ help: String, _ text: Binding<String>) -> some View {
+  private func script(_ title: String, _ help: String, _ text: Binding<String>, suggested: String?) -> some View {
     let chrome = model.palette
     return VStack(alignment: .leading, spacing: 3) {
       HStack(spacing: 6) {
@@ -593,6 +607,31 @@ struct ProjectSetupView: View {
         Text(help).font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
       }
       TextField("", text: text, axis: .vertical).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).lineLimit(1...4)
+      if let suggested, text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        suggestion(suggested, button: "Use") { text.wrappedValue = suggested }
+      }
+    }
+  }
+
+  /// The suggested pairs whose names `list` lacks, offered to add.
+  @ViewBuilder
+  private func suggested(_ found: [String: String], in list: Binding<[ProjectSetupModel.Pair]>) -> some View {
+    let names = Set(list.wrappedValue.map { $0.name.trimmingCharacters(in: .whitespaces) })
+    let missing = found.keys.sorted().filter { !names.contains($0) }
+    if !missing.isEmpty {
+      suggestion(missing.map { "\($0) = \(found[$0]!)" }.joined(separator: ", "), button: "Add") {
+        list.wrappedValue += missing.map { .init(name: $0, value: found[$0]!) }
+      }
+    }
+  }
+
+  /// A suggestion offered beside a field, not filled into it.
+  private func suggestion(_ text: String, button: String, apply: @escaping () -> Void) -> some View {
+    let chrome = model.palette
+    return HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text("Suggested:").font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+      Text(text).font(ChromeFont.mono(11)).foregroundStyle(chrome.textSecondary).lineLimit(1).truncationMode(.tail)
+      ChromeButton(title: button, kind: .ghost) { apply() }
     }
   }
 }
