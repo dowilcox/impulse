@@ -96,6 +96,34 @@
       #expect(found.databaseFolder == nil)
     }
 
+    @Test func serversEveryCheckoutSharesKeepTheirPorts() throws {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent("detect-\(UUID().uuidString)").path
+      try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(atPath: root) }
+      // Laravel's own: MySQL, Redis and a mail catcher on this Mac.
+      try """
+        APP_URL=http://localhost
+        DB_HOST=127.0.0.1
+        DB_PORT=3306
+        DB_DATABASE=laravel
+        REDIS_HOST=127.0.0.1
+        REDIS_PORT=6379
+        MAIL_HOST=127.0.0.1
+        MAIL_PORT=2525
+        REVERB_HOST=localhost
+        REVERB_PORT=8080
+        """.write(toFile: (root as NSString).appendingPathComponent("." + "env"), atomically: true, encoding: .utf8)
+      var found = ProjectDetector.suggest(root: root, ignored: [])
+      #expect(found.ports == ["REVERB_PORT": 8080], "the servers are shared; Reverb is the app's own")
+      #expect(found.values == ["DB_DATABASE": "laravel_{task_}"])
+
+      // Published by the Compose file, the database is the project's own.
+      try "services:\n  db:\n    image: mysql:8.4\n    ports:\n      - \"3306:3306\"\n".write(
+        toFile: (root as NSString).appendingPathComponent("compose.yaml"), atomically: true, encoding: .utf8)
+      found = ProjectDetector.suggest(root: root, ignored: [])
+      #expect(found.ports == ["DB_PORT": 3306, "REVERB_PORT": 8080])
+    }
+
     @Test func databaseCommandsForSetup() {
       let mysql = ProjectDetector.dumpAndLoad(service: "mysql", image: "mysql:8.4")
       #expect(mysql?.hasPrefix("until docker compose exec -T mysql sh -c 'mysqladmin ping") == true)

@@ -84,6 +84,10 @@ public enum ProjectDetector {
     ("postgis", "/var/lib/postgresql/data"), ("mongo", "/data/db"),
   ]
 
+  /// Ports of servers a project's checkouts usually share rather than run
+  /// one each of: databases, caches, queues, search and mail catchers.
+  static let sharedServerPorts: Set<Int> = [1025, 2525, 3306, 5432, 5672, 6379, 7700, 9200, 11211, 27017]
+
   /// Names that usually hold a database name in an env file.
   static let databaseNameKeys = ["DB_DATABASE", "DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "MYSQL_DATABASE"]
 
@@ -135,7 +139,10 @@ public enum ProjectDetector {
     // Ports: variables in the Compose file, then `_PORT` values in .env
     // that are ports on this Mac. Beside `DB_HOST=mysql`, `DB_PORT` is the
     // port inside the Compose network (or on another machine), which a
-    // task's stack keeps.
+    // task's stack keeps. A well-known server's port (`DB_PORT=3306` beside
+    // `DB_HOST=127.0.0.1`) is a server on this Mac that every checkout
+    // shares, unless the Compose file publishes it: moved, a task would
+    // connect to nothing.
     for service in services {
       for port in service.ports {
         if let variable = port.variable, let value = port.variableDefault {
@@ -148,10 +155,13 @@ public enum ProjectDetector {
         suggestions.containerNames.append(.init(service: service.name, name: name))
       }
     }
+    let published = Set(services.flatMap(\.ports).compactMap { $0.host ?? $0.variableDefault })
     let env = read(".env").map(parseEnv) ?? [:]
     for (key, value) in env where key.hasSuffix("_PORT") && suggestions.ports[key] == nil {
       let host = env[String(key.dropLast("_PORT".count)) + "_HOST"]
-      guard host.map(isThisMac) ?? true, let port = Int(value), (1...65535).contains(port) else { continue }
+      guard host.map(isThisMac) ?? true, let port = Int(value), (1...65535).contains(port),
+        !sharedServerPorts.contains(port) || published.contains(port)
+      else { continue }
       suggestions.ports[key] = port
     }
 
