@@ -120,9 +120,11 @@ final class ProjectSetupModel {
     if let added { setup = setup.isEmpty ? added : "\(setup) && \(added)" }
   }
 
+  /// `script` without `command` and the `&&` that joined it to the rest,
+  /// wherever it stands.
   private func removing(_ command: String, from script: String) -> String {
-    script.replacingOccurrences(of: " && \(command)", with: "").replacingOccurrences(of: command, with: "")
-      .trimmingCharacters(in: .whitespaces)
+    let joined = [" && \(command)", "\(command) && "].first(where: script.contains) ?? command
+    return script.replacingOccurrences(of: joined, with: "").trimmingCharacters(in: .whitespaces)
   }
 
   /// The settings as the screen has them.
