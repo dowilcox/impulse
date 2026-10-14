@@ -170,16 +170,20 @@ public enum ProjectSettingsFile {
     return String(trimmed[..<close.upperBound]).replacingOccurrences(of: " ", with: "")
   }
 
-  /// A TOML basic string.
+  /// A TOML basic string. TOML forbids raw control characters in one (a
+  /// pasted `\r\n`), so every one is escaped.
   static func string(_ value: String) -> String {
     var escaped = ""
-    for character in value {
-      switch character {
+    for scalar in value.unicodeScalars {
+      switch scalar {
       case "\\": escaped += "\\\\"
       case "\"": escaped += "\\\""
       case "\n": escaped += "\\n"
       case "\t": escaped += "\\t"
-      default: escaped.append(character)
+      case "\r": escaped += "\\r"
+      case _ where scalar.value < 0x20 || scalar.value == 0x7F:
+        escaped += String(format: "\\u%04X", scalar.value)
+      default: escaped.unicodeScalars.append(scalar)
       }
     }
     return "\"\(escaped)\""

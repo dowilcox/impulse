@@ -145,6 +145,17 @@
       #expect(ProjectSettingsFile.setting(.review, in: "") == "[finish]\nland = \"review\"\n")
     }
 
+    @Test func controlCharactersAreEscaped() throws {
+      var config = ProjectConfig(setupScript: "npm ci\r\nnpm test")
+      config.checkScript = "a\u{7}b\u{7F}"
+      let text = ProjectSettingsFile.text(config)
+      #expect(text.contains(#"setup = "npm ci\r\nnpm test""#))
+      #expect(text.contains(#"check = "a\u0007b\u007F""#))
+      let read = try ProjectConfig.parse(text).get()
+      #expect(read.setupScript == "npm ci\r\nnpm test")
+      #expect(read.checkScript == "a\u{7}b\u{7F}")
+    }
+
     @Test func mergingIntoAFileWithoutManagedSectionsAppends() {
       let merged = ProjectSettingsFile.merging(ProjectConfig(setupScript: "npm ci"), into: "[lsp]\nx = 1\n")
       #expect(merged == "[lsp]\nx = 1\n\n[scripts]\nsetup = \"npm ci\"\n")
