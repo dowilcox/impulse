@@ -67,8 +67,10 @@ extension MainWindowController {
   }
 
   private func loadProjectSetup(_ model: ProjectSetupModel, root: String, section: String?) {
+    // Reading the same repository again keeps the screen, and its place,
+    // until the settings are in.
+    if model.root != root || model.loadError != nil { model.isLoading = true }
     model.root = root
-    model.isLoading = true
     DispatchQueue.global(qos: .userInitiated).async {
       let common = GitClient.commonGitDirectory(forPath: root)
       let localText = common.flatMap { try? String(contentsOfFile: ProjectConfig.localPath(commonGitDirectory: $0), encoding: .utf8) }
@@ -245,8 +247,8 @@ extension MainWindowController {
     }
   }
 
-  /// Save what the screen has into `.impulse/project.toml`, trust exactly
-  /// what was written, and reload. Impulse's own local file, folded into
+  /// Save what the screen has into `.impulse/project.toml` and trust
+  /// exactly what was written. Impulse's own local file, folded into
   /// the screen, is removed: its settings are in the project's now. A file
   /// changed since the screen read it is only written over once the user
   /// says so (`overwriting`). `then` says whether the settings were saved.
@@ -271,12 +273,12 @@ extension MainWindowController {
           guard let self else { return }
           model.isSaving = false
           switch outcome {
-          case .saved(let digest):
+          case .saved(let digest, let text, let local):
             var trust = ProjectTrustStore.current
             trust.trust(root: Self.trustKey(for: root), digest: digest)
             ProjectTrustStore.current = trust
             self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
-            self.loadProjectSetup(model, root: root, section: nil)
+            model.markSaved(text: text, local: local)
             then?(true)
           case .changed:
             self.askAboutChangedSettings(model, then: then)
@@ -332,8 +334,8 @@ extension MainWindowController {
   }
 
   private enum SaveOutcome {
-    /// The digest of what was written.
-    case saved(String)
+    /// What was written and its digest, and the local file's state after.
+    case saved(digest: String, text: String, local: ProjectSetupModel.LocalFile?)
     /// The file isn't what the screen read.
     case changed
     case failed(Error)
@@ -349,7 +351,8 @@ extension MainWindowController {
     let path = (root as NSString).appendingPathComponent(ProjectConfig.relativePath)
     let existing = try? String(contentsOfFile: path, encoding: .utf8)
     if let loaded, existing != loaded { return .changed }
-    let data = Data(ProjectSettingsFile.merging(config, into: existing ?? "").utf8)
+    let text = ProjectSettingsFile.merging(config, into: existing ?? "")
+    let data = Data(text.utf8)
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -357,13 +360,13 @@ extension MainWindowController {
     } catch {
       return .failed(error)
     }
-    if let local, let common = GitClient.commonGitDirectory(forPath: root) {
-      let localPath = ProjectConfig.localPath(commonGitDirectory: common)
-      if (try? String(contentsOfFile: localPath, encoding: .utf8)) == local {
-        try? FileManager.default.removeItem(atPath: localPath)
-      }
+    let localPath = GitClient.commonGitDirectory(forPath: root).map(ProjectConfig.localPath(commonGitDirectory:))
+    if let local, let localPath, (try? String(contentsOfFile: localPath, encoding: .utf8)) == local {
+      try? FileManager.default.removeItem(atPath: localPath)
     }
-    return .saved(ProjectConfig.digest(data))
+    let localText = localPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+    return .saved(
+      digest: ProjectConfig.digest(data), text: text, local: savedSettings(committed: text, local: localText).local)
   }
 
   /// Write the current ports and values into the env file of every task

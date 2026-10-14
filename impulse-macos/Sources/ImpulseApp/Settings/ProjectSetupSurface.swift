@@ -125,6 +125,16 @@ final class ProjectSetupModel {
   /// What task n adds to each port, n times.
   var offset: Int { Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100 }
 
+  /// Saved: the file holds what the screen shows, with `local` what's now
+  /// in the local file. Nothing is read again, so the screen keeps its
+  /// place and focus.
+  func markSaved(text: String, local: LocalFile?) {
+    loadedText = text
+    localFile = local
+    dropsComments = ProjectSettingsFile.managedSectionsHaveComments(text)
+    unknownKeys = ProjectSettingsFile.unknownManagedKeys(text)
+  }
+
   /// Choose what the Database row does. Dump-and-load and an empty
   /// database are commands in the setup script, so they're shown (and can
   /// be edited) there.
