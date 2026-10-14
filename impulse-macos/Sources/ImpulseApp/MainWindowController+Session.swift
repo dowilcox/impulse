@@ -143,13 +143,8 @@ extension MainWindowController {
     }
   }
 
-  private func dirtyEditors() -> [EditorTab] {
-    tabManager.allSurfaces.compactMap { tab in
-      if case .editor(let editor) = tab, editor.isModified {
-        return editor
-      }
-      return nil
-    }
+  private func unsavedSurfaces() -> [TabEntry] {
+    tabManager.allSurfaces.filter(\.hasUnsavedChanges)
   }
 
   func runningTerminalProcessCount() -> Int {
@@ -235,7 +230,7 @@ extension MainWindowController {
     return "\(summary.informativeText)\n\n\(details)"
   }
 
-  private func reviewDirtyEditorsBeforeWindowClose(_ dirty: [EditorTab]) {
+  private func reviewDirtyEditorsBeforeWindowClose(_ dirty: [TabEntry]) {
     reviewingDirtyWindowClose = true
     var remaining = dirty
 
@@ -249,14 +244,14 @@ extension MainWindowController {
         return
       }
 
-      let editor = remaining.removeFirst()
-      guard let location = self.tabManager.location(of: editor) else {
+      let surface = remaining.removeFirst()
+      guard let location = self.tabManager.location(of: surface) else {
         next()
         return
       }
 
       self.tabManager.reveal(location)
-      self.reviewAndSave(editor: editor) { proceed in
+      self.reviewAndSave(surface: surface) { proceed in
         if proceed {
           DispatchQueue.main.async { next() }
         } else {
@@ -281,7 +276,7 @@ extension MainWindowController {
     }
     guard !reviewingDirtyWindowClose else { return false }
 
-    let dirty = dirtyEditors()
+    let dirty = unsavedSurfaces()
     guard !dirty.isEmpty else {
       return confirmClosingTerminalProcessesIfNeeded()
     }

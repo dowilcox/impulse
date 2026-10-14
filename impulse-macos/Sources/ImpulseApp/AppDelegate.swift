@@ -317,10 +317,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.commandsOnSaveQuitTimeout, execute: finish)
   }
 
-  /// One dirty editor scheduled for review during quit.
+  /// One editor or tool with unsaved changes, scheduled for review during
+  /// quit.
   private struct DirtyEditorRef {
     let controller: MainWindowController
-    let editor: EditorTab
+    let surface: TabEntry
   }
 
   private func collectDirtyEditors() -> [DirtyEditorRef] {
@@ -328,8 +329,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     for window in NSApp.windows {
       guard let controller = window.windowController as? MainWindowController else { continue }
       for tab in controller.tabManager.allSurfaces {
-        if case .editor(let editor) = tab, editor.isModified {
-          result.append(DirtyEditorRef(controller: controller, editor: editor))
+        if tab.hasUnsavedChanges {
+          result.append(DirtyEditorRef(controller: controller, surface: tab))
         }
       }
     }
@@ -356,13 +357,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let ref = remaining.removeFirst()
       // The editor may have been closed while we were processing earlier
       // tabs in the same window; skip stale entries.
-      guard let location = ref.controller.tabManager.location(of: ref.editor) else {
+      guard let location = ref.controller.tabManager.location(of: ref.surface) else {
         next()
         return
       }
       ref.controller.window?.makeKeyAndOrderFront(nil)
       ref.controller.tabManager.reveal(location)
-      ref.controller.reviewAndSave(editor: ref.editor) { proceed in
+      ref.controller.reviewAndSave(surface: ref.surface) { proceed in
         if proceed {
           DispatchQueue.main.async { next() }
         } else {

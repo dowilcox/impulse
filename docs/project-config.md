@@ -29,6 +29,8 @@ With no settings saved yet, it fills each section from what it finds. Once the p
 
 Everything is editable. An entry that can't be saved as it is (a port that isn't a number, a name given twice, a placeholder that doesn't exist, an action without a command) is marked in red, and **Save** waits until it's fixed; rows left empty are skipped. **Save** writes `.impulse/project.toml` in the main checkout. It rewrites only the sections the tab manages and keeps the rest of the file as written, saying so first if that would drop comments in those sections, or settings there it doesn't know (`lint` under `[scripts]`). If the file changed since the tab read it (you edited it, or a pull brought a new version), Save asks first: **Reload** shows the file as it is now, and **Save Anyway** writes the tab's settings over it. Saving trusts exactly what it wrote, so the settings work in the next task without a prompt, before you commit them. **Open File** opens the file in the editor.
 
+Until you save, the tab's title has a `*`. **⌘S** saves, and closing the tab, its window or Impulse asks whether to save first. Opening Project Setup again keeps your changes; opening it for another repository asks before discarding them.
+
 If `.impulse/project.toml` can't be read (a TOML mistake made by hand, say), the tab says so, with the error and where it is, instead of showing settings: new tasks get none of them until it's fixed. **Open File** opens it, and **Reload** reads it again.
 
 If the repository also has `.git/impulse/project.toml` (see [Settings for this Mac only](#settings-for-this-mac-only)), a note at the top says what happens to it:

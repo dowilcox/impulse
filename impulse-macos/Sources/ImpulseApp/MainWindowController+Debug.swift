@@ -310,7 +310,7 @@ extension MainWindowController {
       } else if action == "project-setup-save" {
         // Save what Project Setup proposed, which trusts it.
         for case .tool(let view) in tabManager.allSurfaces {
-          (view as? ProjectSetupSurface)?.model.onSave?()
+          (view as? ProjectSetupSurface)?.model.onSave?(nil)
         }
       } else if action == "agent-submit" {
         tabManager.selectedTerminal?.activeTerminal?.agentEvent(.submit)

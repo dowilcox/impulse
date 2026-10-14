@@ -25,9 +25,10 @@ extension MainWindowController {
         as? ProjectSetupSurface
     else { return }
     let model = surface.model
-    model.onSave = { [weak self, weak model] in
-      guard let model else { return }
-      self?.saveProjectSetup(model)
+    surface.onModifiedChange = { [weak self] in self?.tabManager.refreshSegmentLabels() }
+    model.onSave = { [weak self, weak model] then in
+      guard let self, let model else { return }
+      self.saveProjectSetup(model, then: then)
     }
     model.onTry = { [weak self, weak model] in
       guard let self, let model else { return }
@@ -63,7 +64,20 @@ extension MainWindowController {
       guard let model else { return }
       self?.chooseProjectPath(in: model.root, folders: folders, then: done)
     }
-    loadProjectSetup(model, root: root, section: section)
+    // Changes not saved yet stay: opening the tab again shows them, and
+    // another repository's setup only replaces them once the user says so.
+    guard model.isModified else { return loadProjectSetup(model, root: root, section: section) }
+    if model.root == root {
+      if let section { model.reveal(section) }
+      return
+    }
+    gitConfirm(
+      title: "Discard your changes to \(model.name)'s setup?",
+      message: "Project Setup shows one repository at a time, and the changes made to \(model.name)'s aren't saved.",
+      confirmTitle: "Discard Changes", destructive: true
+    ) { [weak self] discard in
+      if discard { self?.loadProjectSetup(model, root: root, section: section) }
+    }
   }
 
   private func loadProjectSetup(_ model: ProjectSetupModel, root: String, section: String?) {
@@ -98,6 +112,7 @@ extension MainWindowController {
           return
         }
         Self.fill(model, existing: saved.config, found: found, dump: dump, empty: empty)
+        model.savedConfig = model.config()
         // 0.33's dump and load ran only in bash and zsh and could wait forever.
         if let earlierDump, let dump, model.setup.contains(earlierDump) {
           model.setup = model.setup.replacingOccurrences(of: earlierDump, with: dump)
@@ -108,10 +123,7 @@ extension MainWindowController {
         model.unknownKeys = committedText.map(ProjectSettingsFile.unknownManagedKeys) ?? []
         model.taskCount = taskCount
         model.isLoading = false
-        if let section {
-          model.revealSection = section
-          DispatchQueue.main.async { model.revealToken += 1 }
-        }
+        if let section { model.reveal(section) }
         self?.measureClones(model)
       }
     }
@@ -283,7 +295,7 @@ extension MainWindowController {
             trust.trust(root: Self.trustKey(for: root), digest: digest)
             ProjectTrustStore.current = trust
             self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
-            model.markSaved(text: text, local: local)
+            model.markSaved(config, text: text, local: local)
             then?(true)
           case .changed:
             self.askAboutChangedSettings(model, then: then)

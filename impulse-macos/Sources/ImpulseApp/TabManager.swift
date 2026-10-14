@@ -42,6 +42,18 @@ struct TabInfo {
 
 /// Discriminated union representing either a terminal, editor, or image preview tab.
 /// Stores the NSView and the metadata needed for display in the tab bar.
+extension TabEntry {
+  /// Whether closing the surface would lose changes: an editor's unsaved
+  /// text, a tool's unsaved settings.
+  var hasUnsavedChanges: Bool {
+    switch self {
+    case .editor(let editor): return editor.isModified
+    case .tool(let view): return view.toolIsModified
+    default: return false
+    }
+  }
+}
+
 enum TabEntry {
   case terminal(TerminalContainer)
   case editor(EditorTab)
@@ -108,7 +120,7 @@ enum TabEntry {
     case .history(_, let view):
       return view.title
     case .tool(let view):
-      return view.toolTitle
+      return view.toolIsModified ? "\(view.toolTitle) *" : view.toolTitle
     }
   }
 
@@ -1670,6 +1682,19 @@ final class TabManager: NSObject {
     }
   }
 
+  /// Where an editor or a tool is.
+  func location(of surface: TabEntry) -> SurfaceLocation? {
+    switch surface {
+    case .editor(let editor): return location(of: editor)
+    case .tool(let view):
+      return locate {
+        if case .tool(let candidate) = $0 { return candidate === view }
+        return false
+      }
+    default: return nil
+    }
+  }
+
   func location(ofTerminal terminal: TerminalTab) -> SurfaceLocation? {
     locate {
       if case .terminal(let container) = $0 { return container.terminals.contains { $0 === terminal } }
@@ -1950,10 +1975,7 @@ final class TabManager: NSObject {
       var isDirectInteractionActive = false
       var progress: TerminalProgress? = nil
       var sessionStatus: TerminalSessionStatus? = nil
-      let isDirty = tab.surfaces.contains {
-        if case .editor(let editor) = $0 { return editor.isModified }
-        return false
-      }
+      let isDirty = tab.surfaces.contains(where: \.hasUnsavedChanges)
       switch surface {
       case .terminal(let container):
         isDirectInteractionActive = container.activeTerminal?.isDirectInteraction ?? false

@@ -90,14 +90,11 @@ extension MainWindowController {
     lspDidClose(editor: editor)
   }
 
-  /// Walks the surfaces' unsaved editors one sheet at a time, then confirms
-  /// running terminal processes, then calls `proceed`. Cancelling anywhere
-  /// stops (and calls `cancelled`).
+  /// Walks the surfaces' unsaved editors and tools one sheet at a time,
+  /// then confirms running terminal processes, then calls `proceed`.
+  /// Cancelling anywhere stops (and calls `cancelled`).
   func confirmClosing(_ surfaces: [TabEntry], proceed: @escaping () -> Void, cancelled: (() -> Void)? = nil) {
-    var dirty = surfaces.compactMap { surface -> EditorTab? in
-      if case .editor(let editor) = surface, editor.isModified { return editor }
-      return nil
-    }
+    var dirty = surfaces.filter(\.hasUnsavedChanges)
     let terminals = surfaces.compactMap { surface -> TerminalContainer? in
       if case .terminal(let container) = surface { return container }
       return nil
@@ -118,23 +115,18 @@ extension MainWindowController {
         confirmTerminals()
         return
       }
-      let editor = dirty.removeFirst()
-      confirmClosingEditor(editor) { shouldClose in
+      let surface = dirty.removeFirst()
+      confirmClosingUnsaved(surface) { shouldClose in
         if shouldClose { next() } else { cancelled?() }
       }
     }
     next()
   }
 
-  private func confirmClosingEditor(_ editor: EditorTab, completion: @escaping (Bool) -> Void) {
-    let filename =
-      editor.filePath.map {
-        ($0 as NSString).lastPathComponent
-      } ?? "Untitled"
-
+  private func confirmClosingUnsaved(_ surface: TabEntry, completion: @escaping (Bool) -> Void) {
     let alert = NSAlert()
     alert.messageText = "Unsaved Changes"
-    alert.informativeText = "\"\(filename)\" has unsaved changes. Close anyway?"
+    alert.informativeText = "\"\(unsavedName(surface))\" has unsaved changes. Close anyway?"
     alert.alertStyle = .warning
     alert.addButton(withTitle: "Save & Close")
     alert.addButton(withTitle: "Don't Save")
@@ -153,7 +145,7 @@ extension MainWindowController {
         // tears down the editor before anything is written. The normal save
         // runs its formatter and post-save steps; a failed save says so and
         // the tab stays open.
-        self.saveEditorTab(editor, completion: completion)
+        self.saveUnsaved(surface, completion: completion)
       case .alertSecondButtonReturn:
         completion(true)
       default:
@@ -203,15 +195,32 @@ extension MainWindowController {
     }
   }
 
-  /// Presents the standard per-document "Do you want to save the changes
-  /// made to X?" sheet for a dirty editor and invokes `completion` with
-  /// `true` if the user chose Save or Don't Save, `false` if they cancelled.
-  /// Used by the quit flow to walk dirty tabs one at a time.
-  func reviewAndSave(editor: EditorTab, completion: @escaping (Bool) -> Void) {
-    let filename = editor.filePath.map { ($0 as NSString).lastPathComponent } ?? "Untitled"
+  /// What the prompts call a surface with unsaved changes.
+  private func unsavedName(_ surface: TabEntry) -> String {
+    switch surface {
+    case .editor(let editor): return editor.filePath.map { ($0 as NSString).lastPathComponent } ?? "Untitled"
+    case .tool(let view): return view.toolTitle
+    default: return "Untitled"
+    }
+  }
 
+  /// Save an editor or a tool the normal way; `completion` says whether
+  /// it was saved.
+  private func saveUnsaved(_ surface: TabEntry, completion: @escaping (Bool) -> Void) {
+    switch surface {
+    case .editor(let editor): saveEditorTab(editor, completion: completion)
+    case .tool(let view): view.saveTool(completion: completion)
+    default: completion(true)
+    }
+  }
+
+  /// Presents the standard per-document "Do you want to save the changes
+  /// made to X?" sheet for a dirty editor or tool and invokes `completion`
+  /// with `true` if the user chose Save or Don't Save, `false` if they
+  /// cancelled. Used by the quit flow to walk dirty tabs one at a time.
+  func reviewAndSave(surface: TabEntry, completion: @escaping (Bool) -> Void) {
     let alert = NSAlert()
-    alert.messageText = "Do you want to save the changes made to \(filename)?"
+    alert.messageText = "Do you want to save the changes made to \(unsavedName(surface))?"
     alert.informativeText = "Your changes will be lost if you don't save them."
     alert.alertStyle = .warning
     alert.addButton(withTitle: "Save")
@@ -222,8 +231,8 @@ extension MainWindowController {
       completion(false)
       return
     }
-    alert.beginSheetModal(for: window) { [weak self, weak editor] response in
-      guard let self, let editor else {
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self else {
         completion(false)
         return
       }
@@ -231,7 +240,7 @@ extension MainWindowController {
       case .alertFirstButtonReturn:
         // The normal save (formatter, commands on save, language servers),
         // asking for a name if it's untitled.
-        self.saveEditorTab(editor, completion: completion)
+        self.saveUnsaved(surface, completion: completion)
       case .alertThirdButtonReturn:
         completion(true)
       default:

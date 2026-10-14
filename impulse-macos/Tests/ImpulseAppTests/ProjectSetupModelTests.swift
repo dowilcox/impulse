@@ -26,6 +26,25 @@
       #expect(model.setup == "npm ci && composer install")
     }
 
+    @Test func changesAreToldFromWhatWasSaved() {
+      let model = model()
+      model.isLoading = false
+      model.setup = "npm ci"
+      model.ports = [.init(name: "APP_PORT", value: "8000")]
+      #expect(!model.isModified, "nothing read or saved yet")
+      model.savedConfig = model.config()
+      #expect(!model.isModified)
+      model.check = "npm test"
+      #expect(model.isModified)
+      model.check = "  "
+      #expect(!model.isModified, "blank is no script, as saved")
+      model.ports.append(.init(name: "", value: ""))
+      #expect(!model.isModified, "an empty row isn't saved")
+      model.markSaved(model.config(), text: "", local: nil)
+      model.ports[0].value = "8001"
+      #expect(model.isModified)
+    }
+
     @Test func entriesThatCantBeSavedAreNamed() {
       let model = model()
       model.ports = [

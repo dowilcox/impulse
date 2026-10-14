@@ -51,6 +51,8 @@ final class ProjectSetupModel {
   /// `.impulse/project.toml` as the screen read it (nil: there was none),
   /// so saving can tell it was changed meanwhile.
   @ObservationIgnored var loadedText: String?
+  /// The settings as last read or saved, to tell what's changed since.
+  var savedConfig: ProjectConfig?
   /// Why `.impulse/project.toml` can't be read, when it can't: the screen
   /// says so instead of showing (and saving over) its settings.
   var loadError: String?
@@ -98,7 +100,8 @@ final class ProjectSetupModel {
   var revealSection: String?
   var revealToken = 0
 
-  @ObservationIgnored var onSave: (() -> Void)?
+  /// Save; the callback, if any, says whether it was saved.
+  @ObservationIgnored var onSave: ((((Bool) -> Void)?) -> Void)?
   @ObservationIgnored var onTry: (() -> Void)?
   @ObservationIgnored var onReapply: (() -> Void)?
   @ObservationIgnored var onShowCompose: (() -> Void)?
@@ -115,6 +118,18 @@ final class ProjectSetupModel {
 
   var name: String { (root as NSString).lastPathComponent }
 
+  /// Whether the screen holds changes not saved yet.
+  var isModified: Bool {
+    guard !isLoading, loadError == nil, let savedConfig else { return false }
+    return config() != savedConfig
+  }
+
+  /// Scroll to a section ("actions") once the screen shows it.
+  func reveal(_ section: String) {
+    revealSection = section
+    DispatchQueue.main.async { self.revealToken += 1 }
+  }
+
   /// What saving drops from `.impulse/project.toml` because the screen
   /// doesn't show it ("comments and scripts.lint"), if anything.
   var dropped: String? {
@@ -125,10 +140,11 @@ final class ProjectSetupModel {
   /// What task n adds to each port, n times.
   var offset: Int { Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100 }
 
-  /// Saved: the file holds what the screen shows, with `local` what's now
-  /// in the local file. Nothing is read again, so the screen keeps its
-  /// place and focus.
-  func markSaved(text: String, local: LocalFile?) {
+  /// Saved: the file holds `config` (what the screen showed) as `text`,
+  /// with `local` what's now in the local file. Nothing is read again, so
+  /// the screen keeps its place and focus.
+  func markSaved(_ config: ProjectConfig, text: String, local: LocalFile?) {
+    savedConfig = config
     loadedText = text
     localFile = local
     dropsComments = ProjectSettingsFile.managedSectionsHaveComments(text)
@@ -291,10 +307,19 @@ final class ProjectSetupModel {
 
 final class ProjectSetupSurface: NSView, ToolSurface {
   let model: ProjectSetupModel
+  /// Called when `toolIsModified` changes, for the tab's title.
+  var onModifiedChange: (() -> Void)?
+  private var wasModified = false
 
   var toolKind: String { "project-setup" }
   var toolTitle: String { "Project Setup" }
   var toolSymbol: String { "hammer" }
+  var toolIsModified: Bool { model.isModified }
+
+  func saveTool(completion: @escaping (Bool) -> Void) {
+    guard let onSave = model.onSave else { return completion(false) }
+    onSave(completion)
+  }
 
   init(palette: ChromePalette) {
     model = ProjectSetupModel(palette: palette)
@@ -308,6 +333,17 @@ final class ProjectSetupSurface: NSView, ToolSurface {
       hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
       hosting.trailingAnchor.constraint(equalTo: trailingAnchor),
     ])
+    observeModified()
+  }
+
+  /// Follow `model.isModified`, re-armed after each change.
+  private func observeModified() {
+    let modified = withObservationTracking { model.isModified } onChange: { [weak self] in
+      DispatchQueue.main.async { self?.observeModified() }
+    }
+    guard modified != wasModified else { return }
+    wasModified = modified
+    onModifiedChange?()
   }
 
   @available(*, unavailable)
@@ -371,7 +407,7 @@ struct ProjectSetupView: View {
         Text(model.problemCount == 1 ? "1 entry to fix" : "\(model.problemCount) entries to fix")
           .font(ChromeFont.ui(11.5)).foregroundStyle(model.palette.danger)
       }
-      ChromeButton(title: model.isSaving ? "Saving…" : "Save", icon: .check, kind: .primary) { model.onSave?() }
+      ChromeButton(title: model.isSaving ? "Saving…" : "Save", icon: .check, kind: .primary) { model.onSave?(nil) }
         .disabled(model.isLoading || model.isSaving || model.loadError != nil || model.problemCount > 0)
     }
     .padding(.horizontal, 20)

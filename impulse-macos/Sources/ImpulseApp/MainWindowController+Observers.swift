@@ -535,6 +535,8 @@ extension MainWindowController {
         guard self.window?.isKeyWindow == true else { return }
         if let editor = self.tabManager.selectedEditor {
           self.saveEditorTab(editor)
+        } else if case .tool(let view)? = self.tabManager.selectedTab?.focused {
+          view.saveTool { _ in }
         }
       }
     )
