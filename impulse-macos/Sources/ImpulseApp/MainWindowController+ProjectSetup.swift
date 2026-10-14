@@ -52,6 +52,10 @@ extension MainWindowController {
       guard let model, let common = GitClient.commonGitDirectory(forPath: model.root) else { return }
       self?.openFile(path: ProjectConfig.localPath(commonGitDirectory: common))
     }
+    model.onReload = { [weak self, weak model] in
+      guard let model else { return }
+      self?.loadProjectSetup(model, root: model.root, section: nil)
+    }
     model.onChoosePath = { [weak self, weak model] folders, done in
       guard let model else { return }
       self?.chooseProjectPath(in: model.root, folders: folders, then: done)
@@ -67,6 +71,10 @@ extension MainWindowController {
       let localText = common.flatMap { try? String(contentsOfFile: ProjectConfig.localPath(commonGitDirectory: $0), encoding: .utf8) }
       let committedText = try? String(
         contentsOfFile: (root as NSString).appendingPathComponent(ProjectConfig.relativePath), encoding: .utf8)
+      let unreadable = committedText.flatMap { text -> String? in
+        if case .failure(.invalid(let message)) = ProjectConfig.parse(text) { return message }
+        return nil
+      }
       let saved = Self.savedSettings(committed: committedText, local: localText)
       let found = ProjectDetector.suggest(root: root, ignored: GitOperations.ignoredEntries(root: root))
       let services = ComposeFile.find(in: root).map { ComposeFile.parse($0.text).services } ?? []
@@ -78,6 +86,11 @@ extension MainWindowController {
       let empty = ProjectDetector.freshDatabase(root: root)
       let taskCount = TaskRegistryStore.registry(root: root)?.tasks.filter { $0.slot != nil }.count ?? 0
       DispatchQueue.main.async { [weak self] in
+        model.loadError = unreadable
+        guard unreadable == nil else {
+          model.isLoading = false
+          return
+        }
         Self.fill(model, existing: saved.config, found: found, dump: dump, empty: empty)
         // 0.33's dump and load ran only in bash and zsh and could wait forever.
         if let earlierDump, let dump, model.setup.contains(earlierDump) {
@@ -108,6 +121,7 @@ extension MainWindowController {
   {
     let project = committed.flatMap { try? ProjectConfig.parse($0).get() }
     guard let local else { return (project, nil) }
+    if case .failure(.invalid(let message)) = ProjectConfig.parse(local) { return (project, .unreadable(message)) }
     let applied = try? ProjectConfig.parse(layers: [committed, local].compactMap { $0 }).get()
     if ProjectSettingsFile.isWrittenByImpulse(local, over: project),
       let folded = try? ProjectConfig.parse(layers: [local, committed].compactMap { $0 }).get()
@@ -231,6 +245,7 @@ extension MainWindowController {
   /// what was written, and reload. Impulse's own local file, folded into
   /// the screen, is removed: its settings are in the project's now.
   private func saveProjectSetup(_ model: ProjectSetupModel, then: (() -> Void)? = nil) {
+    guard model.loadError == nil else { return }
     let root = model.root
     let config = model.config()
     var folded: String?

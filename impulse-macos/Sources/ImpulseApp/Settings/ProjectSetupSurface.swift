@@ -40,12 +40,17 @@ final class ProjectSetupModel {
   enum LocalFile: Equatable {
     case impulses(text: String, dropped: [String])
     case handEdited(overrides: [String])
+    /// It doesn't parse: the message says where.
+    case unreadable(String)
   }
 
   var palette: ChromePalette
   /// The repository's main checkout.
   var root = ""
   var isLoading = true
+  /// Why `.impulse/project.toml` can't be read, when it can't: the screen
+  /// says so instead of showing (and saving over) its settings.
+  var loadError: String?
   var isSaving = false
   /// What the repository suggests. Fields the saved settings leave empty
   /// offer it rather than being filled with it.
@@ -96,6 +101,7 @@ final class ProjectSetupModel {
   @ObservationIgnored var onShowCompose: (() -> Void)?
   @ObservationIgnored var onOpenFile: (() -> Void)?
   @ObservationIgnored var onOpenLocalFile: (() -> Void)?
+  @ObservationIgnored var onReload: (() -> Void)?
   /// Pick a file (or with `true`, a folder) in the repository; `done` gets
   /// its path relative to the root.
   @ObservationIgnored var onChoosePath: ((Bool, @escaping (String) -> Void) -> Void)?
@@ -219,6 +225,8 @@ struct ProjectSetupView: View {
           Text("Looking through \(model.name)…").font(ChromeFont.ui(12)).foregroundStyle(chrome.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let error = model.loadError {
+        unreadable(error)
       } else {
         ScrollViewReader { proxy in
           ScrollView {
@@ -251,7 +259,7 @@ struct ProjectSetupView: View {
         model.onOpenFile?()
       }
       ChromeButton(title: model.isSaving ? "Saving…" : "Save", icon: .check, kind: .primary) { model.onSave?() }
-        .disabled(model.isLoading || model.isSaving)
+        .disabled(model.isLoading || model.isSaving || model.loadError != nil)
     }
     .padding(.horizontal, 20)
     .frame(height: 58)
@@ -355,6 +363,29 @@ struct ProjectSetupView: View {
 
   // MARK: Sections
 
+  /// In place of the settings when the file doesn't parse.
+  private func unreadable(_ message: String) -> some View {
+    let chrome = model.palette
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 6) {
+        Icon(.triangleAlert, size: 14).foregroundStyle(chrome.warning)
+        Text("\(ProjectConfig.relativePath) can't be read").font(ChromeFont.ui(13, weight: .semibold))
+          .foregroundStyle(chrome.text)
+      }
+      caption("New tasks get none of its settings until it's fixed, and this screen can't show or save them.")
+      Text(message).font(ChromeFont.mono(11.5)).foregroundStyle(chrome.textSecondary).textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 10) {
+        ChromeButton(title: "Open File", kind: .primary) { model.onOpenFile?() }
+        ChromeButton(title: "Reload") { model.onReload?() }
+      }
+    }
+    .padding(.horizontal, 28)
+    .padding(.vertical, 20)
+    .frame(maxWidth: 820, alignment: .leading)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
   @ViewBuilder private var notes: some View {
     let local = ".git/impulse/project.toml"
     switch model.localFile {
@@ -368,6 +399,11 @@ struct ProjectSetupView: View {
           "On this Mac, \(local) "
             + (overrides.isEmpty ? "has settings of its own" : "overrides the project's \(list(overrides))")
             + ". It was edited by hand, so saving leaves it alone.")
+        ChromeButton(title: "Open", kind: .ghost) { model.onOpenLocalFile?() }
+      }
+    case .unreadable(let message)?:
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        note("On this Mac, \(local) can't be read, so new tasks get none of the project's settings until it's fixed: \(message)")
         ChromeButton(title: "Open", kind: .ghost) { model.onOpenLocalFile?() }
       }
     case nil:

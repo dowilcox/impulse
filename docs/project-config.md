@@ -29,10 +29,13 @@ With no settings saved yet, it fills each section from what it finds. Once the p
 
 Everything is editable. **Save** writes `.impulse/project.toml` in the main checkout. It rewrites only the sections the tab manages and keeps the rest of the file as written, saying so first if that would drop comments in those sections, or settings there it doesn't know (`lint` under `[scripts]`). Saving trusts exactly what it wrote, so the settings work in the next task without a prompt, before you commit them. **Open File** opens the file in the editor.
 
+If `.impulse/project.toml` can't be read (a TOML mistake made by hand, say), the tab says so, with the error and where it is, instead of showing settings: new tasks get none of them until it's fixed. **Open File** opens it, and **Reload** reads it again.
+
 If the repository also has `.git/impulse/project.toml` (see [Settings for this Mac only](#settings-for-this-mac-only)), a note at the top says what happens to it:
 
 - **Written by Impulse** (by an earlier version's Project Setup, or by Finish Task remembering how to land): its settings are shown along with the project's, and Save moves them into `.impulse/project.toml` and removes it. Where the two differ, the note names the settings, and the project's are kept.
 - **Edited by hand:** it's left alone. The tab shows the project's own settings, and the note names the ones the file overrides on your Mac, with **Open** to edit it.
+- **Can't be read:** the note gives the error, with **Open**; until it's fixed, new tasks get none of the project's settings.
 
 **Try in a New Task** saves, then opens New Task, so you can see the settings work in a throwaway task (archive it afterwards). **Re-apply Values to N Tasks** saves, then writes the current ports and values into the env files of tasks that already exist, since a task's values are otherwise only written when it's created.
 
