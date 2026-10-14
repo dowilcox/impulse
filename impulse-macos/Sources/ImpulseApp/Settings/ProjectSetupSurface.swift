@@ -154,6 +154,100 @@ final class ProjectSetupModel {
     return script.replacingOccurrences(of: joined, with: "").trimmingCharacters(in: .whitespaces)
   }
 
+  // MARK: Problems
+
+  /// Why a port row can't be saved as shown; nil when it can, or when it's
+  /// left empty (skipped).
+  func problem(port pair: Pair) -> String? {
+    if let problem = problem(name: pair, in: ports, variable: true) { return problem }
+    if isBlank(pair) { return nil }
+    if names(values).contains(trimmed(pair.name)) { return "Also a value for each task" }
+    guard let port = Int(trimmed(pair.value)), (1...65535).contains(port) else { return "Not a port number (1–65535)" }
+    return nil
+  }
+
+  func problem(value pair: Pair) -> String? {
+    if let problem = problem(name: pair, in: values, variable: true) { return problem }
+    if isBlank(pair) { return nil }
+    if names(ports).contains(trimmed(pair.name)) { return "Also a port" }
+    let known = Set(["task", "task_", "slot"]).union(names(ports))
+    if let unknown = Self.placeholders(in: pair.value).first(where: { !known.contains($0) }) {
+      return "No {\(unknown)}: use {task}, {task_}, {slot} or a port's name"
+    }
+    return nil
+  }
+
+  func problem(rule pair: Pair) -> String? {
+    if let problem = problem(name: pair, in: rules, variable: false, missing: "Needs a file name") { return problem }
+    if !isBlank(pair), trimmed(pair.value).isEmpty { return "Needs a command" }
+    return nil
+  }
+
+  func problem(action row: ActionRow) -> String? {
+    let name = trimmed(row.action.name)
+    let command = trimmed(row.action.command)
+    guard row.isOn, !(name.isEmpty && command.isEmpty) else { return nil }
+    if name.isEmpty { return "Needs a name" }
+    if command.isEmpty { return "Needs a command" }
+    if actions.filter({ $0.isOn && trimmed($0.action.name) == name }).count > 1 { return "\(name) is listed twice" }
+    return nil
+  }
+
+  var offsetProblem: String? {
+    let value = trimmed(portOffset)
+    return value.isEmpty || Int(value).map({ $0 > 0 }) == true ? nil : "A whole number above 0"
+  }
+
+  var databaseProblem: String? {
+    database == .clone && trimmed(databaseFolder).isEmpty ? "Choose the folder that holds the data" : nil
+  }
+
+  /// How many entries can't be saved as shown. Save waits for none, so
+  /// nothing on the screen is dropped without a word.
+  var problemCount: Int {
+    ports.filter { problem(port: $0) != nil }.count + values.filter { problem(value: $0) != nil }.count
+      + rules.filter { problem(rule: $0) != nil }.count + actions.filter { problem(action: $0) != nil }.count
+      + (offsetProblem == nil ? 0 : 1) + (databaseProblem == nil ? 0 : 1)
+  }
+
+  /// A row's name: given, a variable name where it goes into an env file,
+  /// and not given twice.
+  private func problem(name pair: Pair, in list: [Pair], variable: Bool, missing: String = "Needs a name") -> String? {
+    guard !isBlank(pair) else { return nil }
+    let name = trimmed(pair.name)
+    if name.isEmpty { return missing }
+    if variable, !Self.isVariableName(name) { return "Not a variable name (letters, digits and _)" }
+    if list.filter({ trimmed($0.name) == name }).count > 1 { return "\(name) is listed twice" }
+    return nil
+  }
+
+  private func isBlank(_ pair: Pair) -> Bool { trimmed(pair.name).isEmpty && trimmed(pair.value).isEmpty }
+
+  private func names(_ list: [Pair]) -> Set<String> { Set(list.map { trimmed($0.name) }.filter { !$0.isEmpty }) }
+
+  private func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespaces) }
+
+  static func isVariableName(_ name: String) -> Bool {
+    guard let first = name.unicodeScalars.first, first == "_" || (first.isASCII && first.properties.isAlphabetic) else {
+      return false
+    }
+    return name.unicodeScalars.allSatisfy { $0 == "_" || ($0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0))) }
+  }
+
+  /// The `{NAME}` placeholders in a value (not other braces, as in JSON).
+  static func placeholders(in value: String) -> [String] {
+    var names: [String] = []
+    var rest = Substring(value)
+    while let open = rest.firstIndex(of: "{") {
+      rest = rest[rest.index(after: open)...]
+      guard let close = rest.firstIndex(of: "}") else { break }
+      let name = String(rest[..<close])
+      if isVariableName(name) { names.append(name) }
+      rest = rest[rest.index(after: close)...]
+    }
+    return names
+  }
+
   /// The settings as the screen has them.
   func config() -> ProjectConfig {
     func text(_ value: String) -> String? {
@@ -161,7 +255,9 @@ final class ProjectSetupModel {
       return trimmed.isEmpty ? nil : trimmed
     }
     var config = ProjectConfig(
-      actions: actions.filter(\.isOn).map(\.action).filter { !$0.name.isEmpty && !$0.command.isEmpty },
+      actions: actions.filter(\.isOn).map(\.action)
+        .map { .init(name: trimmed($0.name), command: trimmed($0.command), cwd: $0.cwd, open: $0.open) }
+        .filter { !$0.name.isEmpty && !$0.command.isEmpty },
       setupScript: text(setup), archiveScript: text(archive),
       worktreeCopy: copies.filter(\.isOn).compactMap { text($0.path) })
     config.checkScript = text(check)
@@ -271,8 +367,12 @@ struct ProjectSetupView: View {
       ChromeButton(title: "Open File", kind: .ghost, help: "Open \(ProjectConfig.relativePath) in the editor") {
         model.onOpenFile?()
       }
+      if model.problemCount > 0 {
+        Text(model.problemCount == 1 ? "1 entry to fix" : "\(model.problemCount) entries to fix")
+          .font(ChromeFont.ui(11.5)).foregroundStyle(model.palette.danger)
+      }
       ChromeButton(title: model.isSaving ? "Saving…" : "Save", icon: .check, kind: .primary) { model.onSave?() }
-        .disabled(model.isLoading || model.isSaving || model.loadError != nil)
+        .disabled(model.isLoading || model.isSaving || model.loadError != nil || model.problemCount > 0)
     }
     .padding(.horizontal, 20)
     .frame(height: 58)
@@ -305,7 +405,9 @@ struct ProjectSetupView: View {
         .id("ports")
 
       section("Values for each task", detail: "Written into each new task's \(model.envFile). Use {task}, {task_}, {slot} and port names.") {
-        pairs(Binding(get: { model.values }, set: { model.values = $0 }), namePlaceholder: "DB_DATABASE", valuePlaceholder: "myapp_{task_}")
+        pairs(
+          Binding(get: { model.values }, set: { model.values = $0 }), namePlaceholder: "DB_DATABASE",
+          valuePlaceholder: "myapp_{task_}", problem: model.problem(value:))
         suggested(model.found?.values ?? [:], in: Binding(get: { model.values }, set: { model.values = $0 }))
         ChromeButton(title: "Add Value", icon: .plus, kind: .ghost) { model.values.append(.init(name: "", value: "")) }
       }
@@ -337,7 +439,9 @@ struct ProjectSetupView: View {
       }
 
       section("When files change", detail: "After a pull, merge or checkout brings in a change to one of these files, Impulse offers to run its command.") {
-        pairs(Binding(get: { model.rules }, set: { model.rules = $0 }), namePlaceholder: "composer.lock", valuePlaceholder: "composer install")
+        pairs(
+          Binding(get: { model.rules }, set: { model.rules = $0 }), namePlaceholder: "composer.lock",
+          valuePlaceholder: "composer install", problem: model.problem(rule:))
         suggested(model.found?.onChange ?? [:], in: Binding(get: { model.rules }, set: { model.rules = $0 }))
         ChromeButton(title: "Add Rule", icon: .plus, kind: .ghost) { model.rules.append(.init(name: "", value: "")) }
       }
@@ -350,10 +454,13 @@ struct ProjectSetupView: View {
       section("Actions", detail: "Commands in the palette's a: list.") {
         if model.actions.isEmpty { caption("No actions yet.") }
         ForEach(Binding(get: { model.actions }, set: { model.actions = $0 })) { $row in
-          HStack(spacing: 8) {
-            Toggle("", isOn: $row.isOn).toggleStyle(.checkbox).labelsHidden()
-            TextField("Name", text: $row.action.name).textFieldStyle(.roundedBorder).font(ChromeFont.ui(12)).frame(width: 160)
-            TextField("Command", text: $row.action.command).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
+          VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+              Toggle("", isOn: $row.isOn).toggleStyle(.checkbox).labelsHidden()
+              TextField("Name", text: $row.action.name).textFieldStyle(.roundedBorder).font(ChromeFont.ui(12)).frame(width: 160)
+              TextField("Command", text: $row.action.command).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
+            }
+            problem(model.problem(action: row)).padding(.leading, 22)
           }
         }
         ChromeButton(title: "Add Action", icon: .plus, kind: .ghost) {
@@ -469,6 +576,7 @@ struct ProjectSetupView: View {
           model.onChoosePath?(true) { model.databaseFolder = $0 }
         }
       }
+      problem(model.databaseProblem).padding(.leading, 60)
       HStack(spacing: 8) {
         Text("Service").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary).frame(width: 52, alignment: .leading)
         TextField("mysql", text: Binding(get: { model.databaseService }, set: { model.databaseService = $0 }))
@@ -496,18 +604,21 @@ struct ProjectSetupView: View {
         caption("None found. Add the variables your app or Compose file reads its ports from.")
       }
       ForEach(Binding(get: { model.ports }, set: { model.ports = $0 })) { $pair in
-        HStack(spacing: 8) {
-          TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
-          TextField("8000", text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 90)
-          Text(Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
-            .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
-          Spacer(minLength: 0)
-          ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
-            // Read through the binding before the list is changed: reading it
-            // during removeAll overlaps the write to `ports` (a crash).
-            let id = pair.id
-            model.ports.removeAll { $0.id == id }
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(spacing: 8) {
+            TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
+            TextField("8000", text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 90)
+            Text(Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
+              .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
+            Spacer(minLength: 0)
+            ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
+              // Read through the binding before the list is changed: reading it
+              // during removeAll overlaps the write to `ports` (a crash).
+              let id = pair.id
+              model.ports.removeAll { $0.id == id }
+            }
           }
+          problem(model.problem(port: pair))
         }
       }
       suggested((model.found?.ports ?? [:]).mapValues(String.init), in: Binding(get: { model.ports }, set: { model.ports = $0 }))
@@ -517,6 +628,12 @@ struct ProjectSetupView: View {
         Text("Offset per task").font(ChromeFont.ui(11.5)).foregroundStyle(chrome.textSecondary)
         TextField("100", text: Binding(get: { model.portOffset }, set: { model.portOffset = $0 }))
           .textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 70)
+      }
+      if let offsetProblem = model.offsetProblem {
+        HStack {
+          Spacer()
+          problem(offsetProblem)
+        }
       }
     }
   }
@@ -646,16 +763,29 @@ struct ProjectSetupView: View {
     }
   }
 
-  private func pairs(_ list: Binding<[ProjectSetupModel.Pair]>, namePlaceholder: String, valuePlaceholder: String) -> some View {
+  private func pairs(
+    _ list: Binding<[ProjectSetupModel.Pair]>, namePlaceholder: String, valuePlaceholder: String,
+    problem: @escaping (ProjectSetupModel.Pair) -> String?
+  ) -> some View {
     ForEach(list) { $pair in
-      HStack(spacing: 8) {
-        TextField(namePlaceholder, text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
-        TextField(valuePlaceholder, text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
-        ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
-          let id = pair.id
-          list.wrappedValue.removeAll { $0.id == id }
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 8) {
+          TextField(namePlaceholder, text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
+          TextField(valuePlaceholder, text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12))
+          ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
+            let id = pair.id
+            list.wrappedValue.removeAll { $0.id == id }
+          }
         }
+        self.problem(problem(pair))
       }
+    }
+  }
+
+  /// Why the entry above can't be saved, if it can't.
+  @ViewBuilder private func problem(_ message: String?) -> some View {
+    if let message {
+      Text(message).font(ChromeFont.ui(11)).foregroundStyle(model.palette.danger).fixedSize(horizontal: false, vertical: true)
     }
   }
 

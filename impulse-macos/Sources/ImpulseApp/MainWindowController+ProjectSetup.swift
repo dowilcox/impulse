@@ -259,6 +259,11 @@ extension MainWindowController {
       then?(false)
       return
     }
+    guard model.problemCount == 0 else {
+      toasts.show(Toast(kind: .warning, message: "Fix the entries marked in red first: they can't be saved as they are."))
+      then?(false)
+      return
+    }
     let root = model.root
     let config = model.config()
     let loaded = model.loadedText
