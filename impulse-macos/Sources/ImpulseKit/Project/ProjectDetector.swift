@@ -203,18 +203,20 @@ public enum ProjectDetector {
       suggestions.onChange["Dockerfile"] = "docker compose build && docker compose up -d --renew-anon-volumes"
     }
 
-    let npmScripts = read("package.json").flatMap(scripts) ?? []
+    let packageJSON = read("package.json")
+    let npmScripts = packageJSON.flatMap(scripts) ?? []
+    let runner = scriptRunner(packageJSON: packageJSON, exists: exists)
     let composerScripts = read("composer.json").flatMap(scripts) ?? []
     var check: [String] = []
     for name in ["typecheck", "type-check", "check-types", "lint"] where npmScripts.contains(name) {
-      check.append("npm run \(name)")
+      check.append("\(runner.run) \(name)")
     }
-    if npmScripts.contains("test") { check.append("npm test") }
+    if npmScripts.contains("test") { check.append(runner.test) }
     if composerScripts.contains("test") { check.append("composer test") }
     suggestions.check = check.isEmpty ? nil : check.joined(separator: " && ")
 
     suggestions.actions =
-      npmScripts.prefix(12).map { ProjectConfig.Action(name: $0, command: "npm run \($0)") }
+      npmScripts.prefix(12).map { ProjectConfig.Action(name: $0, command: "\(runner.run) \($0)") }
       + composerScripts.prefix(6).filter { !$0.hasPrefix("pre-") && !$0.hasPrefix("post-") }
       .map { ProjectConfig.Action(name: "composer \($0)", command: "composer \($0)") }
       + (read("Makefile").map(makeTargets) ?? []).prefix(8).map {
@@ -281,6 +283,27 @@ public enum ProjectDetector {
       values[key] = value
     }
     return values
+  }
+
+  /// How the project runs its package.json scripts: the package manager
+  /// its `packageManager` field names, else the one its lock file belongs
+  /// to, else npm. Bun's own `bun test` is its test runner, not the script.
+  static func scriptRunner(packageJSON: String?, exists: (String) -> Bool) -> (run: String, test: String) {
+    let declared = packageJSON.flatMap { json -> String? in
+      guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+        let field = object["packageManager"] as? String
+      else { return nil }
+      return field.split(separator: "@").first.map(String.init)
+    }
+    let locks = [
+      ("package-lock.json", "npm"), ("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("bun.lock", "bun"), ("bun.lockb", "bun"),
+    ]
+    switch declared ?? locks.first(where: { exists($0.0) })?.1 {
+    case "pnpm": return ("pnpm run", "pnpm test")
+    case "yarn": return ("yarn run", "yarn test")
+    case "bun": return ("bun run", "bun run test")
+    default: return ("npm run", "npm test")
+    }
   }
 
   /// The names under `"scripts"` in a package.json or composer.json.

@@ -124,6 +124,29 @@
       #expect(found.ports == ["DB_PORT": 3306, "REVERB_PORT": 8080])
     }
 
+    @Test func scriptsRunWithTheProjectsPackageManager() throws {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent("detect-\(UUID().uuidString)").path
+      try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(atPath: root) }
+      func write(_ name: String, _ text: String) throws {
+        try text.write(toFile: (root as NSString).appendingPathComponent(name), atomically: true, encoding: .utf8)
+      }
+      try write("package.json", #"{"scripts": {"dev": "vite", "lint": "eslint .", "test": "vitest"}}"#)
+      try write("pnpm-lock.yaml", "")
+      var found = ProjectDetector.suggest(root: root, ignored: [])
+      #expect(found.check == "pnpm run lint && pnpm test")
+      #expect(found.actions.first == .init(name: "dev", command: "pnpm run dev"))
+
+      try FileManager.default.removeItem(atPath: (root as NSString).appendingPathComponent("pnpm-lock.yaml"))
+      try write("bun.lock", "")
+      found = ProjectDetector.suggest(root: root, ignored: [])
+      #expect(found.check == "bun run lint && bun run test", "bun test is Bun's own runner")
+
+      try write("package.json", #"{"packageManager": "yarn@4.5.0", "scripts": {"test": "vitest"}}"#)
+      found = ProjectDetector.suggest(root: root, ignored: [])
+      #expect(found.check == "yarn test", "packageManager wins over the lock file")
+    }
+
     @Test func databaseCommandsForSetup() {
       let mysql = ProjectDetector.dumpAndLoad(service: "mysql", image: "mysql:8.4")
       #expect(mysql?.hasPrefix("until docker compose exec -T mysql sh -c 'mysqladmin ping") == true)
