@@ -2,6 +2,36 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.33.1
+
+**Project Setup shows what's saved, and saves what it shows.** A field
+you empty stays empty after saving instead of filling back in with a
+suggestion; what it found is offered beneath the field (**Use**,
+**Add**). An entry that can't be saved as it is (a port that isn't a
+number, a name given twice, a `{placeholder}` that doesn't exist) is
+marked in red, and Save waits for it instead of dropping it.
+
+### Project Setup
+
+- Unsaved changes: the tab's title gets a `*`, ⌘S saves, and closing the tab, its window or Impulse asks first. Opening the tab again keeps your changes; opening it for another repository asks before discarding them.
+- Saving keeps your place on the page instead of jumping back to the top.
+- If `.impulse/project.toml` changed since the tab read it, Save asks: **Reload** or **Save Anyway**. It used to write the tab's older settings over the change.
+- A `project.toml` that can't be read shows its error, with **Open File** and **Reload**, instead of looking like a project with no settings that Save would then overwrite.
+- The note before saving names settings Impulse doesn't know in the sections it rewrites (`lint` under `[scripts]`), not only comments.
+- A script pasted with Windows line endings no longer saves a `project.toml` that can't be read.
+- A server every checkout shares on your Mac (MySQL on 3306, Redis on 6379, a mail catcher) keeps its port unless the Compose file publishes it. With Laravel's own `.env`, tasks were connecting to a database port nothing listened on.
+- The suggested check script and actions use the project's package manager (`pnpm run lint`, `yarn test`, `bun run test`), not always npm.
+- **Dump and load** starts the task's database, gives up after two minutes instead of waiting forever, and runs in fish as well as bash and zsh. A setup script with the earlier command gets the new one when Project Setup opens.
+- Switching the database option back to **Nothing** no longer leaves a setup script starting with `&&`.
+- Removing a port no longer crashes Impulse.
+
+### Also
+
+- The session is saved every 15 seconds while it changes, so a crash no longer loses the workspaces and tasks opened since launch.
+- A History, Review or tool tab shows its own workspace's branch, changes and folder in the titlebar, Changes panel and status bar, not those of the workspace selected before it.
+- In the Changes panel, **+** stages a file on the first click.
+- Disabled buttons look disabled.
+
 ## 0.33.0
 
 **Project settings live in the project.** Project Setup saves into
